@@ -57,7 +57,7 @@ struct Symbol [ticker, price_precision, volume_precision]
 --- or `year`, and how many of them a bar spans
 struct Period [unit, span]
 
-struct Chart [id, bars, symbol, period, styles, zone, locale, space, gap, offset_right, right_bars, scroll_on, zoom_on, anchor_main, anchor_x, panes, inds, overlays, x, y, w, h, main_w, axis_w, xaxis_h, cross, drag, touches, from, to, real_from, real_to, more_older, more_newer, wants, s, dirty, actions, hi, hi_x, lo, lo_x, extra, drawing, last_tap, tapped, fling, separators]
+struct Chart [id, bars, symbol, period, styles, zone, locale, space, gap, offset_right, right_bars, scroll_on, zoom_on, anchor_main, anchor_x, panes, inds, overlays, x, y, w, h, main_w, axis_w, xaxis_h, cross, drag, touches, from, to, real_from, real_to, more_older, more_newer, wants, s, dirty, actions, hi, hi_x, lo, lo_x, extra, drawing, last_tap, tapped, fling, separators, clock, glide_x, glide_t]
 
 fn _empty_range[]
     Range[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -74,7 +74,7 @@ fn _empty_bars[]
 --- a chart of no bars, named `id`, in klinecharts' light styles
 fn new[id]
     candle = pane_of['candle_pane', 0.0]
-    Chart[id, _empty_bars[], Symbol['', 2, 0], Period['minute', 1], styles.defaults[], '', 'en-US', 10.0, 7.0, 80.0, 8.0, true, true, 'cursor', 'cursor', [candle], [], [], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Cross[-1.0, -1.0, ''], _no_drag[], [], 0, 0, 0, 0, false, false, '', 1.0, true, [], 0.0, 0.0, 0.0, 0.0, map[], '', -1.0, false, 0.0, []]
+    Chart[id, _empty_bars[], Symbol['', 2, 0], Period['minute', 1], styles.defaults[], '', 'en-US', 10.0, 7.0, 80.0, 8.0, true, true, 'cursor', 'cursor', [candle], [], [], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Cross[-1.0, -1.0, ''], _no_drag[], [], 0, 0, 0, 0, false, false, '', 1.0, true, [], 0.0, 0.0, 0.0, 0.0, map[], '', -1.0, false, 0.0, [], 0.0, 0.0, 0.0]
 
 --- ---- the styles ----
 
@@ -965,11 +965,45 @@ fn prepare[c, k, x, y, w, h]
     k.w = w / s
     k.h = h / s
     k.actions = []
+    k.clock = lory.time[c]
     k = calc_all[k]
     k = layout[k]
     if k.axis_w eq 0.0
         k = _settle[c, k]
+    k = _glide[k, lory.dt[c]]
     adjust[k]
+
+--- a drag let go while it moved goes on moving, slower each frame, till
+--- it stops or meets an end (TradingView's kinetic scroll); a press, the
+--- wheel or a swipe stops it
+fn _glide[k, dt]
+    if k.fling eq 0.0 or k.drag.what ne ''
+        return k
+    before = k.right_bars
+    k = scroll_by[k, k.fling * dt]
+    k.fling = k.fling * max[0.0, 1.0 - 3.5 * dt]
+    if abs[k.fling] lt 40.0 or abs[k.right_bars - before] lt 0.000001
+        k.fling = 0.0
+    k
+
+--- the drag's speed across, as the frames saw it (CSS pixels a second)
+fn _sample_glide[k, ex]
+    if k.clock gt k.glide_t
+        dt = (k.clock - k.glide_t) / 1000.0
+        if dt lt 0.2
+            k.fling = 0.6 * ((ex - k.glide_x) / dt) + 0.4 * k.fling
+        else
+            k.fling = 0.0
+        k.glide_x = ex
+        k.glide_t = k.clock
+    k
+
+--- a drag let go: it glides where it moved in the last tenth of a second,
+--- fast enough to mean it
+fn _let_go[k]
+    if k.drag.what ne 'scroll' or k.clock - k.glide_t gt 100.0 or abs[k.fling] lt 250.0
+        k.fling = 0.0
+    k
 
 --- the frame's second half, once its events are taken: the view, the
 --- ranges, the ticks and the axis's width settled
@@ -1033,56 +1067,206 @@ fn take[k, ev]
     ex = ev.x / k.s - k.x
     ey = ev.y / k.s - k.y
     if ev.on eq 'wheel'
-        if _inside_plot[k, ex, ey] or _on_x_axis[k, ex, ey]
-            if abs[ev.dx] gt abs[ev.dy]
-                k = scroll_by[k, 0.0 - ev.dx]
-            else
-                d = 0.0 - ev.dy / 100.0
-                if d ne 0.0
-                    scale = sign[d] * min[1.0, abs[d]]
-                    k = zoom[k, scale, ex]
-        return k
+        k.fling = 0.0
+        return _wheeled[k, ev, ex, ey]
     if ev.device eq 'touch'
         return _touch[k, ev, ex, ey]
     if ev.on eq 'down'
+        pressed = _pressed_button[k, ex, ey]
+        if pressed ne ''
+            return _press_button[k, pressed]
         sep = separator_at[k, ex, ey]
         if sep ne ''
             i = pane_index[k, sep]
             k.drag = Drag['separator', ex, ey, 0.0, sep, k.panes[i - 1].h, k.panes[i].h, _empty_range[], 1.0]
             return k
+        k.fling = 0.0
         if _inside_plot[k, ex, ey]
             id = pane_at[k, ey]
             k.drag = Drag['scroll', ex, ey, k.right_bars, id, 0.0, 0.0, pane[k, id].rng, 1.0]
+            k.glide_x = ex
+            k.glide_t = k.clock
             return k
         if _on_y_axis[k, ex, ey]
             id = pane_at[k, ey]
             k.drag = Drag['yaxis', ex, ey, 0.0, id, 0.0, 0.0, pane[k, id].rng, 1.0]
             return k
         if _on_x_axis[k, ex, ey]
-            k.drag = Drag['xaxis', ex, ey, 0.0, '', 0.0, 0.0, _empty_range[], 1.0]
+            k.drag = Drag['xaxis', ex, ey, k.right_bars, '', 0.0, 0.0, _empty_range[], k.space]
         return k
     if ev.on eq 'move'
         return _moved[k, ex, ey]
     if ev.on eq 'up'
+        k = _let_go[k]
         k.drag = _no_drag[]
         return k
     if ev.on eq 'leave'
         k.drag = _no_drag[]
         k.cross = Cross[-1.0, -1.0, '']
         return k
+    --- (a double click of the price axis fits its prices to the bars again,
+    --- of the time axis gives the bars their first space and shows the
+    --- newest, as TradingView's resets)
     if ev.on eq 'dblclick' or ev.on eq 'double'
         if _on_y_axis[k, ex, ey]
             k = unfix[k, pane_at[k, ey]]
+        if _on_x_axis[k, ex, ey]
+            k = reset_view[k]
         return k
-    if ev.on eq 'key' and ev.shift
+    if ev.on eq 'key'
+        return _key[k, ev]
+    k
+
+--- ---- the buttons TradingView keeps over a chart ----
+
+--- where a pane's `A` sits, at the bottom of its price axis — shown while
+--- its prices do not fit the bars, a press fits them again: its centre and
+--- radius
+fn auto_button[k, p]
+    [k.main_w + k.axis_w - 12.0, p.top + p.h - 12.0, 9.0]
+
+--- whether the newest bar is out of view to the right: then a `»` at the
+--- plot's bottom right goes back to it
+fn shows_newest[k]
+    count[k] gt 0 and k.to lt count[k]
+
+fn newest_button[k]
+    p = k.panes[0]
+    [k.main_w - 22.0, p.top + p.h - 22.0, 12.0]
+
+fn _within[b, x, y]
+    dx = x - b[0]
+    dy = y - b[1]
+    dx * dx + dy * dy lte b[2] * b[2]
+
+--- the button a press is on: `newest`, `auto:` and a pane's id, or ``
+fn _pressed_button[k, ex, ey]
+    if shows_newest[k] and _within[newest_button[k], ex, ey]
+        return 'newest'
+    for p in k.panes
+        if not p.auto and p.scroll_zoom and _within[auto_button[k, p], ex, ey]
+            return 'auto:`p.id`'
+    ''
+
+fn _press_button[k, pressed]
+    k.fling = 0.0
+    if pressed eq 'newest'
+        return scroll_to_real_time[k]
+    unfix[k, slice[pressed, 5, len[pressed]]]
+
+--- the view as a chart begins: the bars' first space, the newest bar in
+--- view, every pane's prices fitted to its bars
+fn reset_view[k]
+    k.fling = 0.0
+    k = set_space[k, 10.0]
+    k = scroll_to_real_time[k]
+    for p in k.panes
+        k = unfix[k, p.id]
+    k
+
+--- the keys TradingView moves a chart by: left and right a bar (with
+--- Shift three, as klinecharts'), up and down zoom, Shift with = and -
+--- zoom, Alt with R resets
+fn _key[k, ev]
+    step = 1.0
+    if ev.shift
+        step = 3.0
         if ev.code eq 'Equal'
             return zoom[k, 0.5, _cross_or_middle[k]]
         if ev.code eq 'Minus'
             return zoom[k, -0.5, _cross_or_middle[k]]
-        if ev.code eq 'ArrowLeft'
-            return scroll_by[k, -3.0 * k.space]
-        if ev.code eq 'ArrowRight'
-            return scroll_by[k, 3.0 * k.space]
+    if ev.alt and ev.code eq 'KeyR'
+        return reset_view[k]
+    if ev.code eq 'ArrowLeft'
+        return scroll_by[k, step * k.space]
+    if ev.code eq 'ArrowRight'
+        return scroll_by[k, 0.0 - step * k.space]
+    if ev.code eq 'ArrowUp'
+        return zoom[k, 0.5, _cross_or_middle[k]]
+    if ev.code eq 'ArrowDown'
+        return zoom[k, -0.5, _cross_or_middle[k]]
+    k
+
+--- the wheel and a trackpad's swipes, as TradingView takes them: a pinch,
+--- or the wheel with Ctrl, zooms the bars about the pointer; two fingers
+--- move the view — across in time, up and down the prices of the pane
+--- under them (which then stop fitting themselves to the bars) — whichever
+--- way they mostly go; a mouse's wheel zooms the bars. Over the price axis
+--- either stretches the prices; over the time axis a swipe across moves in
+--- time and one up or down zooms.
+fn _wheeled[k, ev, ex, ey]
+    if _on_y_axis[k, ex, ey]
+        return _stretch_y[k, pane_at[k, ey], ev.dy]
+    if not _inside_plot[k, ex, ey] and not _on_x_axis[k, ex, ey]
+        return k
+    if ev.ctrl
+        --- (a pinch's steps are small, so each counts for more)
+        return _zoom_by[k, 0.0 - ev.dy / 25.0, ex]
+    across = abs[ev.dx] gte abs[ev.dy]
+    if ev.device ne 'trackpad'
+        if across
+            return scroll_by[k, 0.0 - ev.dx]
+        return _zoom_by[k, 0.0 - ev.dy / 100.0, ex]
+    if across
+        return scroll_by[k, 0.0 - ev.dx]
+    if _on_x_axis[k, ex, ey]
+        return _zoom_by[k, 0.0 - ev.dy / 100.0, ex]
+    _move_y[k, pane_at[k, ey], 0.0 - ev.dy]
+
+fn _zoom_by[k, d, x]
+    if d eq 0.0
+        return k
+    zoom[k, sign[d] * min[1.0, abs[d]], x]
+
+--- a range moved by a share of its height (on a logarithmic axis, of the
+--- logarithms' span)
+fn _shifted[k, p, r, share]
+    if p.axis eq 'logarithm'
+        dif = r.real_span * share
+        return _range_of[k, p, _signed_pow[r.real_from + dif], _signed_pow[r.real_to + dif]]
+    dif = r.span * share
+    _range_of[k, p, r.from + dif, r.to + dif]
+
+--- a range stretched about its middle by `scale` (more than 1: wider, the
+--- prices drawn smaller)
+fn _stretched[k, p, r, scale]
+    if p.axis eq 'logarithm'
+        dif = (r.real_span * scale - r.real_span) / 2.0
+        return _range_of[k, p, _signed_pow[r.real_from - dif], _signed_pow[r.real_to + dif]]
+    dif = (r.span * scale - r.span) / 2.0
+    _range_of[k, p, r.from - dif, r.to + dif]
+
+--- a pane's prices moved `dist` CSS pixels down the screen, fitted to the
+--- bars no more
+fn _move_y[k, id, dist]
+    i = pane_index[k, id]
+    if i lt 0
+        return k
+    p = k.panes[i]
+    if not p.scroll_zoom or p.h lte 0.0
+        return k
+    share = dist / p.h
+    if p.reverse
+        share = 0.0 - share
+    p.rng = _shifted[k, p, p.rng, share]
+    p.auto = false
+    p.ticks = y_ticks[k, p]
+    k.panes[i] = p
+    k
+
+--- a pane's prices stretched by the wheel or a swipe over its axis: up
+--- draws them larger (TradingView's), at most a fifth a step
+fn _stretch_y[k, id, dy]
+    i = pane_index[k, id]
+    if i lt 0 or dy eq 0.0
+        return k
+    p = k.panes[i]
+    if not p.scroll_zoom
+        return k
+    p.rng = _stretched[k, p, p.rng, 1.0 + max[-0.2, min[0.2, dy / 300.0]]]
+    p.auto = false
+    p.ticks = y_ticks[k, p]
+    k.panes[i] = p
     k
 
 fn _cross_or_middle[k]
@@ -1112,6 +1296,7 @@ fn _moved[k, ex, ey]
         k.panes[i] = below
         return layout[k]
     if d.what eq 'scroll'
+        k = _sample_glide[k, ex]
         k = _drag_y[k, d, ey]
         k.right_bars = d.start_right - (ex - d.x0) / k.space
         k.actions = push[k.actions, 'scroll']
@@ -1125,43 +1310,54 @@ fn _moved[k, ex, ey]
         p = k.panes[i]
         if not p.scroll_zoom
             return k
-        --- (klinecharts scales by the page's y now over at the press: the
-        --- chart's own y here, from the chart's top)
-        y0 = max[1.0, d.y0 + k.y]
-        scale = max[0.01, (ey + k.y) / y0]
-        r = d.start
-        span = r.span * scale
-        dif = (span - r.span) / 2.0
-        p.rng = _range_of[k, p, r.from - dif, r.to + dif]
+        --- (TradingView's: by the distances from the pane's bottom at the
+        --- press and now, each with a fifth of the pane's height added, so
+        --- a drag near the bottom does not run away)
+        damp = max[1.0, p.h - 1.0] * 0.2
+        at_press = p.top + p.h - d.y0
+        at_now = p.top + p.h - ey
+        scale = max[0.1, (at_press + damp) / max[1.0, at_now + damp]]
+        p.rng = _stretched[k, p, d.start, scale]
         p.auto = false
+        p.ticks = y_ticks[k, p]
         k.panes[i] = p
         return k
     if d.what eq 'xaxis'
-        x0 = max[1.0, d.x0 + k.x]
-        scale = x0 / max[1.0, ex + k.x]
-        z = (scale - d.scale) * 10.0
-        k.drag.scale = scale
-        return zoom[k, z, d.x0]
+        --- (TradingView's: the bars' space by the distances from the plot's
+        --- right edge at the press and now, the bars at that edge kept)
+        k = set_space[k, d.scale * max[1.0, k.main_w - d.x0] / max[1.0, k.main_w - ex]]
+        k.right_bars = d.start_right
+        k.actions = push[k.actions, 'zoom']
+        return adjust[k]
     if _inside_plot[k, ex, ey]
         k.cross = Cross[ex, ey, pane_at[k, ey]]
     else
         k.cross = Cross[-1.0, -1.0, '']
     k
 
---- a scroll's drag up or down moves a pane whose range is fixed
+--- a scroll's drag up or down moves the pane's prices (TradingView's):
+--- one fitted to its bars stops fitting once the drag has gone four
+--- pixels up or down, and moves from there, so a drag across leaves it
 fn _drag_y[k, d, ey]
     i = pane_index[k, d.pane]
     if i lt 0
         return k
     p = k.panes[i]
-    if p.auto or not p.scroll_zoom
+    if not p.scroll_zoom or p.h lte 0.0
         return k
-    dist = ey - d.y0
+    if p.auto
+        if abs[ey - d.y0] lt 4.0
+            return k
+        p.auto = false
+        k.panes[i] = p
+        k.drag.start = p.rng
+        k.drag.y0 = ey
+        return k
+    share = (ey - d.y0) / p.h
     if p.reverse
-        dist = d.y0 - ey
-    r = d.start
-    dif = r.span * (dist / max[1.0, p.h])
-    p.rng = _range_of[k, p, r.from + dif, r.to + dif]
+        share = 0.0 - share
+    p.rng = _shifted[k, p, d.start, share]
+    p.ticks = y_ticks[k, p]
     k.panes[i] = p
     k
 
@@ -1169,6 +1365,9 @@ fn _drag_y[k, d, ey]
 --- drag then moves), two pinch it
 fn _touch[k, ev, ex, ey]
     if ev.on eq 'down'
+        pressed = _pressed_button[k, ex, ey]
+        if pressed ne '' and len[k.touches] eq 0
+            return _press_button[k, pressed]
         k.touches = push[_without[k.touches, ev.id], Touch[ev.id, ex, ey]]
         if len[k.touches] eq 2
             a = k.touches[0]
@@ -1181,6 +1380,9 @@ fn _touch[k, ev, ex, ey]
             else
                 k.cross = Cross[-1.0, -1.0, '']
                 k.drag = Drag['scroll', ex, ey, k.right_bars, pane_at[k, ey], 0.0, 0.0, pane[k, pane_at[k, ey]].rng, 1.0]
+                k.fling = 0.0
+                k.glide_x = ex
+                k.glide_t = k.clock
             k.tapped = true
             return k
         return take[k, lory.Ev['down', ev.x, ev.y, 0, 0.0, 0.0, '', '', '', false, false, false, false, 'mouse', ev.id]]
@@ -1211,6 +1413,8 @@ fn _touch[k, ev, ex, ey]
             k.cross = Cross[ex, ey, pane_at[k, ey]]
         k.tapped = false
         if len[k.touches] eq 0
+            if k.drag.what eq 'scroll'
+                k = _let_go[k]
             k.drag = _no_drag[]
         return k
     k
@@ -1301,3 +1505,130 @@ test the_y_ticks_are_round_numbers[]
     --- of the span below)
     abs[p.rng.from - 218.6] lt 0.0001
     p.rng.to gt 300.0
+
+--- a chart of 200 bars laid out 860 by 400, its ranges found: for the
+--- tests of what moves it
+fn _laid[]
+    k = set_bars[new['k'], _sample[200], false, false]
+    k.w = 860.0
+    k.axis_w = 60.0
+    k.h = 400.0
+    k = layout[k]
+    k = adjust[k]
+    ranges[k]
+
+fn _pointer[on, x, y]
+    lory.Ev[on, x, y, 0, 0.0, 0.0, '', '', '', false, false, false, false, 'mouse', '1']
+
+fn _wheel_of[x, y, dx, dy, device, ctrl]
+    lory.Ev['wheel', x, y, 0, dx, dy, '', '', '', false, ctrl, false, false, device, '']
+
+fn _key_of[code]
+    lory.Ev['key', 0.0, 0.0, 0, 0.0, 0.0, code, code, '', false, false, false, false, '', '']
+
+test a_drag_moves_the_bars_and_the_prices[]
+    k = _laid[]
+    before = k.panes[0].rng
+    right = k.right_bars
+    k = take[k, _pointer['down', 400.0, 200.0]]
+    k = take[k, _pointer['move', 400.0, 202.0]]
+    --- (two pixels up or down leave the prices fitted to the bars)
+    k.panes[0].auto
+    k = take[k, _pointer['move', 450.0, 210.0]]
+    not k.panes[0].auto
+    k = take[k, _pointer['move', 450.0, 260.0]]
+    k = take[k, _pointer['up', 450.0, 260.0]]
+    --- (fifty pixels across is five bars of ten; fifty down from where
+    --- the prices stopped fitting moves them by fifty pixels' worth)
+    abs[k.right_bars - (right - 5.0)] lt 0.000001
+    p = k.panes[0]
+    abs[p.rng.from - (before.from + before.span * 50.0 / p.h)] lt 0.000001
+    abs[p.rng.span - before.span] lt 0.000001
+
+test a_swipe_moves_the_view_and_a_wheel_zooms_it[]
+    k = _laid[]
+    right = k.right_bars
+    --- (two fingers across: the bars move with them, the prices still fit)
+    k = take[k, _wheel_of[400.0, 200.0, 30.0, 2.0, 'trackpad', false]]
+    abs[k.right_bars - (right + 3.0)] lt 0.000001
+    k.panes[0].auto
+    --- (up and down: the prices move, and fit the bars no more)
+    before = k.panes[0].rng
+    k = take[k, _wheel_of[400.0, 200.0, 0.0, 20.0, 'trackpad', false]]
+    not k.panes[0].auto
+    p = k.panes[0]
+    abs[p.rng.from - (before.from - before.span * 20.0 / p.h)] lt 0.000001
+    --- (a mouse's wheel zooms the bars, and so does a pinch)
+    k = take[k, _wheel_of[400.0, 200.0, 0.0, -100.0, 'mouse', false]]
+    abs[k.space - 11.0] lt 0.000001
+    k = take[k, _wheel_of[400.0, 200.0, 0.0, -25.0, 'trackpad', true]]
+    abs[k.space - 12.1] lt 0.000001
+
+test the_axes_stretch_and_reset[]
+    k = _laid[]
+    before = k.panes[0].rng
+    --- (the wheel over the price axis: up draws the prices larger)
+    k = take[k, _wheel_of[830.0, 200.0, 0.0, -30.0, 'mouse', false]]
+    not k.panes[0].auto
+    abs[k.panes[0].rng.span - before.span * 0.9] lt 0.000001
+    --- (a double click of the price axis fits them to the bars again)
+    k = take[k, _pointer['double', 830.0, 200.0]]
+    k.panes[0].auto
+    --- (a drag of the time axis: the space by the distances from the
+    --- plot's right edge, 400 at the press and 200 now)
+    on_axis = k.h - k.xaxis_h / 2.0
+    k = take[k, _pointer['down', 400.0, on_axis]]
+    k = take[k, _pointer['move', 600.0, on_axis]]
+    abs[k.space - 20.0] lt 0.000001
+    k = take[k, _pointer['up', 600.0, on_axis]]
+    k = take[k, _pointer['double', 400.0, on_axis]]
+    abs[k.space - 10.0] lt 0.000001
+
+test the_arrows_move_and_zoom[]
+    k = _laid[]
+    right = k.right_bars
+    --- (left: a bar back in time)
+    k = take[k, _key_of['ArrowLeft']]
+    abs[k.right_bars - (right - 1.0)] lt 0.000001
+    k = take[k, _key_of['ArrowRight']]
+    abs[k.right_bars - right] lt 0.000001
+    k = take[k, _key_of['ArrowUp']]
+    abs[k.space - 10.5] lt 0.000001
+
+test a_fast_drag_let_go_glides[]
+    k = _laid[]
+    k.clock = 1000.0
+    k = take[k, _pointer['down', 400.0, 200.0]]
+    k.clock = 1016.0
+    k = take[k, _pointer['move', 420.0, 200.0]]
+    k.clock = 1032.0
+    k = take[k, _pointer['move', 440.0, 200.0]]
+    k = take[k, _pointer['up', 440.0, 200.0]]
+    --- (twenty pixels a sixtieth of a second is 1,250 a second)
+    k.fling gt 1000.0
+    right = k.right_bars
+    k = _glide[k, 0.016]
+    k.right_bars lt right
+    k.fling lt 1000.0
+    --- (a press stops it, and a slow drag let go does not glide)
+    k = take[k, _pointer['down', 400.0, 200.0]]
+    k.fling eq 0.0
+    k.clock = 1500.0
+    k = take[k, _pointer['move', 401.0, 200.0]]
+    k = take[k, _pointer['up', 401.0, 200.0]]
+    k.fling eq 0.0
+
+test the_buttons_fit_the_prices_and_go_back_to_the_newest_bar[]
+    k = _laid[]
+    k = _move_y[k, 'candle_pane', 40.0]
+    not k.panes[0].auto
+    b = auto_button[k, k.panes[0]]
+    k = take[k, _pointer['down', b[0], b[1]]]
+    k.panes[0].auto
+    not shows_newest[k]
+    k = scroll_by[k, 600.0]
+    shows_newest[k]
+    n = newest_button[k]
+    k = take[k, _pointer['down', n[0], n[1]]]
+    not shows_newest[k]
+    abs[k.right_bars - 8.0] lt 0.000001

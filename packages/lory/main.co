@@ -34,7 +34,8 @@ struct Held [made, asked, chars, glyphs, size, ascent, descent, pad, spread, aw,
 --- `blur`), where (x, y, the drawing's pixels from its top left), which
 --- `button`, the wheel's `dx` and `dy`, the `key` and its `code`, the
 --- `words` typed, the modifiers, and which pointer (`device`: mouse,
---- touch, pen, ray; `id`)
+--- touch, pen, ray; `id`) — of a wheel, whether it is a trackpad's swipe
+--- (`trackpad`) or a wheel's notch (`mouse`); a pinch is a wheel with Ctrl
 struct Ev [on, x, y, button, dx, dy, key, code, words, shift, ctrl, alt, meta, device, id]
 
 --- (`deep`: the calls of a scene in three dimensions, drawn in each view
@@ -197,6 +198,11 @@ fn _event[j]
         e.dy = 0.0 + j.dy
         e.shift = _flag[j.shift]
         e.ctrl = _flag[j.ctrl]
+        --- (`trackpad` for a swipe, `mouse` for a wheel's notches)
+        e.device = 'mouse'
+        if j.device.ok
+            e.device = '`j.device`'
+
     if e.on eq 'key' or e.on eq 'keyup'
         e.key = '`j.key`'
         e.code = '`j.code`'

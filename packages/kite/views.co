@@ -911,6 +911,30 @@ fn indicator_legends[k, ind, i]
 
 --- ---- all of it ----
 
+--- the buttons TradingView keeps over a chart: a pane's `A` while its
+--- prices do not fit the bars, and `»` while the newest bar is out of view
+fn nav_buttons[c, k]
+    ink = store.col[k, 'yAxis.tickText.color']
+    under = store.col[k, 'background']
+    under.a = 1.0
+    disc = ink
+    disc.a = 0.16
+    for p in k.panes
+        if not p.auto and p.scroll_zoom
+            b = store.auto_button[k, p]
+            --- (on the chart's own background, over any tick's label)
+            c = lory.circle[c, _sx[k, b[0]], _sy[k, b[1]], (b[2] + 1.0) * k.s, under]
+            c = lory.circle[c, _sx[k, b[0]], _sy[k, b[1]], b[2] * k.s, disc]
+            w = store.text_w[c, k, 'A', 11.0]
+            c = words_at[c, k, b[0] - w / 2.0, b[1] - 6.5, 'A', 11.0, ink]
+    if store.shows_newest[k]
+        b = store.newest_button[k]
+        c = lory.circle[c, _sx[k, b[0]], _sy[k, b[1]], (b[2] + 1.0) * k.s, under]
+        c = lory.circle[c, _sx[k, b[0]], _sy[k, b[1]], b[2] * k.s, disc]
+        w = store.text_w[c, k, '»', 15.0]
+        c = words_at[c, k, b[0] - w / 2.0, b[1] - 9.5, '»', 15.0, ink]
+    c
+
 --- the chart drawn whole, in klinecharts' order: behind, the grid; then
 --- each pane's candles and figures, the price marks; the axes, the
 --- separators; over all, the crosshair and the tooltips
@@ -933,6 +957,7 @@ fn everything[c, k]
     c = last_values[c, k]
     c = last_label[c, k]
     c = separators[c, k]
+    c = nav_buttons[c, k]
     c = lory.clip[c, _sx[k, 0.0], _sy[k, 0.0], k.w * k.s, k.h * k.s]
     c = crosshair[c, k]
     c = lory.unclip[c, box_was]

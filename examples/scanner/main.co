@@ -83,6 +83,10 @@ fn draw[frame]
     c = lory.clear[c, lory.hex[scanner.background[]]]
     k = chart_of[]
     pressed = scanner.take_zoom[c, k]
+    --- (a zoom button fits the prices to the bars again first: a drag or a
+    --- swipe up or down had moved them by hand)
+    if pressed ne ''
+        k = kite.unfix[k, 'candle_pane']
     k = kite.update[c, k, 0.0, 0.0, lory.width[c], lory.height[c]]
     k = scanner.y_zoom[k]
     c = kite.draw[c, k]
