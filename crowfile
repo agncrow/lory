@@ -1,0 +1,5 @@
+--- The repository's root: the examples and the parity programs reach the
+--- package through crow_modules/lory, a link to packages/lory, as a
+--- program that installs it does.
+name = 'lory_repository'
+deps = map[lory = 'packages/lory']

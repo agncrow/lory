@@ -1,0 +1,805 @@
+--- Lory's controls (docs/lory-design.md, decision 7): a view is a tree of
+--- the same vocabulary as Crow's `ui` — a column, a row, a panel, a
+--- heading, a label, a button, a field, a slider, a toggle, a select, a
+--- table, an area the program draws into — laid out with layout.co's
+--- spacing and type scale, drawn by Lory, and answered from the frame's
+--- input:
+---
+---     fn view[s]
+---         gui.panel[[gui.heading['Settings'], gui.slider['vol', s.vol, 0.0, 1.0], gui.button['save', 'Save']]]
+---
+---     fn draw[frame]
+---         c = lory.begin[frame]
+---         shown = gui.show[c, view[state]]
+---         for e in shown.events
+---             if e.id eq 'save' …
+---         lory.end[shown.canvas]
+---
+--- What a control holds between frames — which is pressed, which has the
+--- focus, what a field holds while it is typed in, where a list is
+--- scrolled — is Lory's (`use memory`, under 'lory.gui'); what it shows is
+--- the program's, handed to it again each frame.
+
+use memory
+use lory
+
+--- a control: what it is (`tag`), the `id` its events name, its words, its
+--- number and range, its choices or a table's header, a table's rows, the
+--- controls inside it, and a size asked for (0: its own)
+struct Node [tag, id, words, num, lo, hi, items, rows, kids, wide, tall]
+
+struct Size [w, h]
+
+--- what a reader did to a control: `act` is `press`, `change` (a slider,
+--- `num`), `edit` (a field, `words`), `submit` (Enter in a field), `toggle`
+--- (`num` 1 or 0), `choose` (a select or a table's row: `words`, `num`)
+struct Event [id, act, words, num]
+
+--- the colours controls are drawn in
+struct Look [page, panel, edge, ink, muted, accent, on_accent, field, hover, press, focus]
+
+--- what the controls hold between frames
+struct Held [hover, press, focus, texts, scrolls, drag, open, opened, keyboard]
+
+--- one drawing of the tree: the canvas, what is held, the events so far,
+--- the boxes of the controls with ids, the focusable ids in order, and the
+--- select drawn open over the rest
+struct Pass [c, held, events, look, s, boxes, order, over, over_x, over_y, over_w]
+
+--- what showing a tree answers: the canvas drawn on, the events, and each
+--- control's box by id (x, y, width, height), for an area the program
+--- draws into
+struct Shown [canvas, events, boxes]
+
+--- ---- the vocabulary ----
+
+fn _node[tag, id, words, kids]
+    Node[tag, id, words, 0.0, 0.0, 0.0, [], [['']], kids, 0.0, 0.0]
+
+fn _none[]
+    nothing = [_node['space', '', '', []]]
+    slice[nothing, 0, 0]
+
+--- controls one above another
+fn column[kids]
+    _node['column', '', '', kids]
+
+--- controls side by side
+fn row[kids]
+    _node['row', '', '', kids]
+
+--- a card: its controls in a column, on a raised background
+fn panel[kids]
+    _node['panel', '', '', kids]
+
+--- a column `tall` CSS pixels high whose controls scroll
+fn scroll[id, tall, kids]
+    n = _node['scroll', id, '', kids]
+    n.tall = tall
+    n
+
+fn heading[words]
+    _node['heading', '', words, _none[]]
+
+fn label[words]
+    _node['label', '', words, _none[]]
+
+--- smaller, quieter words
+fn note[words]
+    _node['note', '', words, _none[]]
+
+fn button[id, words]
+    _node['button', id, words, _none[]]
+
+--- a field to type in, holding `value`
+fn field[id, value]
+    _node['field', id, value, _none[]]
+
+fn slider[id, value, lo, hi]
+    n = _node['slider', id, '', _none[]]
+    n.num = value
+    n.lo = lo
+    n.hi = hi
+    n
+
+fn toggle[id, words, on]
+    n = _node['toggle', id, words, _none[]]
+    if on
+        n.num = 1.0
+    n
+
+--- one of `choices`, `chosen` shown
+fn select[id, choices, chosen]
+    n = _node['select', id, chosen, _none[]]
+    n.items = choices
+    n
+
+--- a table: its header and its rows of text, `tall` CSS pixels high (0:
+--- every row); a row pressed is chosen
+fn table[id, header, rows, tall]
+    n = _node['table', id, '', _none[]]
+    n.items = header
+    n.rows = rows
+    n.tall = tall
+    n
+
+--- a box `wide` by `tall` CSS pixels the program draws into (its box is
+--- in `Shown.boxes`); pressing it is an event
+fn area[id, wide, tall]
+    n = _node['area', id, '', _none[]]
+    n.wide = wide
+    n.tall = tall
+    n
+
+--- room, `tall` CSS pixels high
+fn space[tall]
+    n = _node['space', '', '', _none[]]
+    n.tall = tall
+    n
+
+--- the control, `wide` CSS pixels wide
+fn sized[n, wide]
+    n.wide = wide
+    n
+
+--- ---- the look ----
+
+fn dark[]
+    Look[lory.hex['#0f1317'], lory.hex['#171d24'], lory.hex['#2a3440'], lory.hex['#e8edf2'], lory.hex['#8a9bad'], lory.hex['#3b82f6'], lory.hex['#ffffff'], lory.hex['#0b0f13'], lory.hex['#222b35'], lory.hex['#2c3743'], lory.hex['#60a5fa']]
+
+fn light[]
+    Look[lory.hex['#f6f7f9'], lory.hex['#ffffff'], lory.hex['#d8dee5'], lory.hex['#16202a'], lory.hex['#5b6b7c'], lory.hex['#2563eb'], lory.hex['#ffffff'], lory.hex['#ffffff'], lory.hex['#eef1f4'], lory.hex['#e2e7ec'], lory.hex['#2563eb']]
+
+--- ---- sizes, in CSS pixels (layout.co's scale: space s 8, m 16; type m 16) ----
+
+fn _gap[]
+    10.0
+
+fn _pad[]
+    16.0
+
+fn _type[tag]
+    if tag eq 'heading'
+        return 22.0
+    if tag eq 'note'
+        return 13.0
+    15.0
+
+fn _control_h[]
+    34.0
+
+fn _row_h[]
+    30.0
+
+--- ---- measuring ----
+
+fn _words_w[p, words, size]
+    lory.measure[p.c, words, size * p.s] / p.s
+
+fn _cols[p, n]
+    --- (a table's columns: each as wide as its widest cell)
+    k = len[n.items]
+    ws = []
+    for i in range[k]
+        w = _words_w[p, upper[n.items[i]], 13.0] + 24.0
+        for r in n.rows
+            if i lt len[r]
+                w = max[w, _words_w[p, r[i], 14.0] + 24.0]
+        ws = push[ws, w]
+    ws
+
+--- how big the control is, in CSS pixels, with `room` across
+fn _measure[p, n, room]
+    t = n.tag
+    if t eq 'heading' or t eq 'label' or t eq 'note'
+        size = _type[t]
+        w = _words_w[p, n.words, size]
+        lines = 1.0
+        if w gt room and room gt 0.0
+            lines = len[_wrap[p, n.words, size, room]] + 0.0
+            w = room
+        return Size[w, lines * size * 1.4]
+    if t eq 'button'
+        return Size[max[_words_w[p, n.words, 15.0] + 28.0, 64.0], _control_h[]]
+    if t eq 'field'
+        w = 220.0
+        if n.wide gt 0.0
+            w = n.wide
+        return Size[w, _control_h[]]
+    if t eq 'select'
+        w = 60.0
+        for o in n.items
+            w = max[w, _words_w[p, o, 15.0] + 48.0]
+        if n.wide gt 0.0
+            w = n.wide
+        return Size[w, _control_h[]]
+    if t eq 'slider'
+        w = 200.0
+        if n.wide gt 0.0
+            w = n.wide
+        return Size[w, 28.0]
+    if t eq 'toggle'
+        return Size[48.0 + _words_w[p, n.words, 15.0], 24.0]
+    if t eq 'space'
+        return Size[0.0, n.tall]
+    if t eq 'area'
+        return Size[n.wide, n.tall]
+    if t eq 'table'
+        w = 0.0
+        for cw in _cols[p, n]
+            w = w + cw
+        h = _row_h[] * (len[n.rows] + 1.0)
+        if n.tall gt 0.0
+            h = min[h, n.tall]
+        return Size[w, h]
+    if t eq 'row'
+        w = 0.0
+        h = 0.0
+        first = true
+        for k in n.kids
+            m = _measure[p, k, 0.0]
+            if not first
+                w = w + _gap[]
+            w = w + m.w
+            h = max[h, m.h]
+            first = false
+        return Size[w, h]
+    --- (a column, a panel and a scroll: one above another)
+    inner = room
+    if t eq 'panel'
+        inner = room - 2.0 * _pad[]
+    w = 0.0
+    h = 0.0
+    first = true
+    for k in n.kids
+        m = _measure[p, k, inner]
+        if not first
+            h = h + _gap[]
+        h = h + m.h
+        w = max[w, m.w]
+        first = false
+    if t eq 'panel'
+        w = w + 2.0 * _pad[]
+        h = h + 2.0 * _pad[]
+    if t eq 'scroll'
+        h = n.tall
+    --- (a container asked to be a width is that width)
+    if n.wide gt 0.0
+        w = n.wide
+    Size[w, h]
+
+--- the words broken into lines no wider than `room`
+fn _wrap[p, words, size, room]
+    lines = []
+    typed = ''
+    for word in split[words, ' ']
+        tried = word
+        if typed ne ''
+            tried = '`typed` `word`'
+        if typed ne '' and _words_w[p, tried, size] gt room
+            lines = push[lines, typed]
+            typed = word
+        else
+            typed = tried
+    lines = push[lines, typed]
+    lines
+
+--- ---- input ----
+
+fn _inside[x, y, bx, by, bw, bh]
+    x gte bx and y gte by and x lt bx + bw and y lt by + bh
+
+--- whether the frame pressed the box: a `down` in it, then an `up` in it
+--- while it was the one pressed (this frame or an earlier one)
+fn _pressed_in[p, id, x, y, w, h]
+    pressed = false
+    held = p.held
+    for e in lory.events[p.c]
+        if e.on eq 'down' and _inside[e.x, e.y, x, y, w, h]
+            held.press = id
+        if e.on eq 'up'
+            if held.press eq id and _inside[e.x, e.y, x, y, w, h]
+                pressed = true
+    PressedIn[held, pressed]
+
+struct PressedIn [held, pressed]
+
+fn _event[p, id, act, words, num]
+    p.events = push[p.events, Event[id, act, words, num]]
+    p
+
+fn _box[p, id, x, y, w, h]
+    if id ne ''
+        p.boxes[id] = [x / p.s, y / p.s, w / p.s, h / p.s]
+    p
+
+--- the pointer over the box (it is hovered), shown by its pointer shape
+fn _hovered[p, id, x, y, w, h]
+    c = p.c
+    if lory.pointing[c] and _inside[lory.pointer_x[c], lory.pointer_y[c], x, y, w, h] and _shows[p, x, y, w, h]
+        if lory.shows[c, lory.pointer_x[c], lory.pointer_y[c], 1.0, 1.0]
+            held = p.held
+            held.hover = id
+            p.held = held
+            return true
+    false
+
+fn _shows[p, x, y, w, h]
+    lory.shows[p.c, x, y, w, h]
+
+--- Enter or space typed while the control has the focus
+fn _keyed[p, id]
+    if p.held.focus ne id
+        return false
+    for e in lory.events[p.c]
+        if e.on eq 'key' and (e.key eq 'Enter' or e.key eq ' ')
+            return true
+    false
+
+--- ---- drawing ----
+
+fn _focus_ring[p, id, x, y, w, h, r]
+    if p.held.focus eq id
+        s = p.s
+        p.c = lory.round_outline[p.c, x - 3.0 * s, y - 3.0 * s, w + 6.0 * s, h + 6.0 * s, r + 3.0 * s, 2.0 * s, lory.fade[p.look.focus, 0.8]]
+    p
+
+--- the control drawn with its top left at (x, y), `w` wide (in drawing
+--- pixels), its events answered
+fn _place[p, n, x, y, w]
+    t = n.tag
+    s = p.s
+    look = p.look
+    m = _measure[p, n, w / s]
+    h = m.h * s
+    p = _box[p, n.id, x, y, w, h]
+    if not _shows[p, x, y - 2000.0 * s, w, h + 4000.0 * s]
+        return p
+    if t eq 'heading' or t eq 'label' or t eq 'note'
+        size = _type[t]
+        color = look.ink
+        if t eq 'note'
+            color = look.muted
+        ly = y
+        for one in _wrap[p, n.words, size, w / s]
+            p.c = lory.text[p.c, x, ly + 0.2 * size * s, one, size * s, color]
+            ly = ly + size * 1.4 * s
+        return p
+    if t eq 'button'
+        bw = m.w * s
+        hot = _hovered[p, n.id, x, y, bw, h]
+        got = _pressed_in[p, n.id, x, y, bw, h]
+        p.held = got.held
+        if got.pressed or _keyed[p, n.id]
+            p = _event[p, n.id, 'press', n.words, 0.0]
+        if got.pressed
+            held = p.held
+            held.focus = n.id
+            p.held = held
+        p.order = push[p.order, n.id]
+        fill = look.accent
+        if hot
+            fill = lory.mix[look.accent, lory.white[], 0.12]
+        if p.held.press eq n.id and lory.pressed[p.c]
+            fill = lory.mix[look.accent, lory.black[], 0.15]
+        p.c = lory.round_rect[p.c, x, y, bw, h, 8.0 * s, fill]
+        p = _focus_ring[p, n.id, x, y, bw, h, 8.0 * s]
+        p.c = lory.text_centered[p.c, x + bw / 2.0, y + h / 2.0, n.words, 15.0 * s, look.on_accent]
+        if hot
+            p.c = lory.cursor[p.c, 'pointer']
+        return p
+    if t eq 'field'
+        return _field[p, n, x, y, m.w * s, h]
+    if t eq 'select'
+        return _select[p, n, x, y, m.w * s, h]
+    if t eq 'slider'
+        return _slider[p, n, x, y, m.w * s, h]
+    if t eq 'toggle'
+        return _toggle[p, n, x, y, m.w * s, h]
+    if t eq 'table'
+        return _table[p, n, x, y, w, h]
+    if t eq 'area'
+        got = _pressed_in[p, n.id, x, y, m.w * s, h]
+        p.held = got.held
+        if got.pressed
+            p = _event[p, n.id, 'press', '', 0.0]
+        return p
+    if t eq 'space'
+        return p
+    if t eq 'row'
+        cx = x
+        for k in n.kids
+            km = _measure[p, k, 0.0]
+            --- (a row's controls are centred on its line; its columns and
+            --- panels stand at its top)
+            ky = y + (h - km.h * s) / 2.0
+            if _holds[k]
+                ky = y
+            p = _place[p, k, cx, ky, km.w * s]
+            cx = cx + (km.w + _gap[]) * s
+        return p
+    --- (a column, a panel, a scroll)
+    ix = x
+    iy = y
+    iw = w
+    if t eq 'panel'
+        p.c = lory.round_rect[p.c, x, y, w, h, 12.0 * s, look.panel]
+        p.c = lory.round_outline[p.c, x, y, w, h, 12.0 * s, 1.0 * s, look.edge]
+        ix = x + _pad[] * s
+        iy = y + _pad[] * s
+        iw = w - 2.0 * _pad[] * s
+    kept = lory.clipped[p.c]
+    if t eq 'scroll'
+        p = _scrolled[p, n, x, y, w, h]
+        iy = y - _scroll_of[p, n.id] * s
+        p.c = lory.clip[p.c, x, y, w, h]
+    for k in n.kids
+        km = _measure[p, k, iw / s]
+        kw = km.w * s
+        if k.tag eq 'column' or k.tag eq 'panel' or k.tag eq 'scroll' or k.tag eq 'table' or k.tag eq 'heading' or k.tag eq 'label' or k.tag eq 'note'
+            kw = iw
+        p = _place[p, k, ix, iy, kw]
+        iy = iy + (km.h + _gap[]) * s
+    if t eq 'scroll'
+        p.c = lory.unclip[p.c, kept]
+    p
+
+--- whether the control holds others
+fn _holds[n]
+    n.tag eq 'column' or n.tag eq 'row' or n.tag eq 'panel' or n.tag eq 'scroll' or n.tag eq 'table'
+
+fn _scroll_of[p, id]
+    if id in p.held.scrolls
+        return p.held.scrolls[id]
+    0.0
+
+--- the wheel over a scrolled column moves it, as far as its controls go
+fn _scrolled[p, n, x, y, w, h]
+    s = p.s
+    inner = 0.0
+    first = true
+    for k in n.kids
+        if not first
+            inner = inner + _gap[]
+        inner = inner + _measure[p, k, w / s].h
+        first = false
+    most = max[0.0, inner - n.tall]
+    at = _scroll_of[p, n.id]
+    for e in lory.events[p.c]
+        if e.on eq 'wheel' and _inside[e.x, e.y, x, y, w, h]
+            at = at + e.dy / s
+    at = max[0.0, min[most, at]]
+    held = p.held
+    held.scrolls[n.id] = at
+    p.held = held
+    if most gt 0.0
+        --- (the bar: where the view is, of all there is)
+        bar = h * n.tall / inner
+        by = y + (h - bar) * at / most
+        p.c = lory.round_rect[p.c, x + w - 5.0 * s, by, 4.0 * s, bar, 2.0 * s, lory.fade[p.look.muted, 0.5]]
+    p
+
+fn _field[p, n, x, y, w, h]
+    s = p.s
+    look = p.look
+    hot = _hovered[p, n.id, x, y, w, h]
+    got = _pressed_in[p, n.id, x, y, w, h]
+    held = got.held
+    p.order = push[p.order, n.id]
+    focused = held.focus eq n.id
+    if got.pressed and not focused
+        held.focus = n.id
+        held.texts[n.id] = n.words
+        focused = true
+    p.held = held
+    shown = n.words
+    if focused
+        held = p.held
+        if not (n.id in held.texts)
+            held.texts[n.id] = n.words
+        typed = held.texts[n.id]
+        before = typed
+        for e in lory.events[p.c]
+            if e.on eq 'text'
+                typed = '`typed``e.words`'
+            if e.on eq 'key' and e.key eq 'Backspace'
+                pieces = split[typed, '']
+                if len[pieces] gt 0
+                    typed = join[slice[pieces, 0, len[pieces] - 1], '']
+            if e.on eq 'key' and e.key eq 'Enter'
+                p = _event[p, n.id, 'submit', typed, 0.0]
+        held.texts[n.id] = typed
+        p.held = held
+        if typed ne before
+            p = _event[p, n.id, 'edit', typed, 0.0]
+        shown = typed
+    p.c = lory.round_rect[p.c, x, y, w, h, 8.0 * s, look.field]
+    edge = look.edge
+    if focused
+        edge = look.focus
+    else
+        if hot
+            edge = look.muted
+    p.c = lory.round_outline[p.c, x, y, w, h, 8.0 * s, 1.0 * s, edge]
+    kept = lory.clipped[p.c]
+    p.c = lory.clip[p.c, x + 4.0 * s, y, w - 8.0 * s, h]
+    tw = lory.measure[p.c, shown, 15.0 * s]
+    --- (a long text shows its end while it is typed)
+    tx = x + 10.0 * s
+    if focused and tw gt w - 24.0 * s
+        tx = x + w - 14.0 * s - tw
+    p.c = lory.text[p.c, tx, y + (h - lory.line_height[p.c, 15.0 * s]) / 2.0, shown, 15.0 * s, look.ink]
+    if focused
+        --- (the caret, at the end, blinking)
+        if (int[lory.time[p.c] / 530.0] % 2) eq 0
+            p.c = lory.rect[p.c, tx + tw + 1.0 * s, y + 8.0 * s, 1.5 * s, h - 16.0 * s, look.ink]
+    p.c = lory.unclip[p.c, kept]
+    if hot
+        p.c = lory.cursor[p.c, 'text']
+    p
+
+fn _slider[p, n, x, y, w, h]
+    s = p.s
+    look = p.look
+    hot = _hovered[p, n.id, x, y, w, h]
+    held = p.held
+    span = n.hi - n.lo
+    value = n.num
+    knob = 8.0 * s
+    track_x = x + knob
+    track_w = w - 2.0 * knob
+    before = value
+    for e in lory.events[p.c]
+        if e.on eq 'down' and _inside[e.x, e.y, x, y, w, h]
+            held.drag = n.id
+            held.focus = n.id
+        if held.drag eq n.id and (e.on eq 'down' or e.on eq 'move')
+            if span ne 0.0 and track_w gt 0.0
+                value = n.lo + span * max[0.0, min[1.0, (e.x - track_x) / track_w]]
+        if e.on eq 'up' and held.drag eq n.id
+            held.drag = ''
+        if held.focus eq n.id and e.on eq 'key'
+            if e.key eq 'ArrowRight' or e.key eq 'ArrowUp'
+                value = min[n.hi, value + span / 20.0]
+            if e.key eq 'ArrowLeft' or e.key eq 'ArrowDown'
+                value = max[n.lo, value - span / 20.0]
+    p.held = held
+    p.order = push[p.order, n.id]
+    if value ne before
+        p = _event[p, n.id, 'change', '', value]
+    at = 0.0
+    if span ne 0.0
+        at = (value - n.lo) / span
+    cy = y + h / 2.0
+    p.c = lory.round_rect[p.c, track_x, cy - 2.0 * s, track_w, 4.0 * s, 2.0 * s, look.edge]
+    p.c = lory.round_rect[p.c, track_x, cy - 2.0 * s, track_w * at, 4.0 * s, 2.0 * s, look.accent]
+    kx = track_x + track_w * at
+    p.c = lory.circle[p.c, kx, cy, knob, look.ink]
+    if hot or p.held.drag eq n.id
+        p.c = lory.circle[p.c, kx, cy, knob + 5.0 * s, lory.fade[look.accent, 0.25]]
+        p.c = lory.cursor[p.c, 'pointer']
+    p = _focus_ring[p, n.id, x, y, w, h, 8.0 * s]
+    p
+
+fn _toggle[p, n, x, y, w, h]
+    s = p.s
+    look = p.look
+    hot = _hovered[p, n.id, x, y, w, h]
+    got = _pressed_in[p, n.id, x, y, w, h]
+    p.held = got.held
+    on = n.num gt 0.5
+    p.order = push[p.order, n.id]
+    if got.pressed or _keyed[p, n.id]
+        on = not on
+        num = 0.0
+        if on
+            num = 1.0
+        p = _event[p, n.id, 'toggle', n.words, num]
+    tw = 40.0 * s
+    th = 22.0 * s
+    ty = y + (h - th) / 2.0
+    fill = look.edge
+    if on
+        fill = look.accent
+    p.c = lory.round_rect[p.c, x, ty, tw, th, th / 2.0, fill]
+    kx = x + th / 2.0
+    if on
+        kx = x + tw - th / 2.0
+    p.c = lory.circle[p.c, kx, ty + th / 2.0, th / 2.0 - 3.0 * s, lory.white[]]
+    p = _focus_ring[p, n.id, x, ty, tw, th, th / 2.0]
+    p.c = lory.text[p.c, x + tw + 8.0 * s, y + (h - lory.line_height[p.c, 15.0 * s]) / 2.0, n.words, 15.0 * s, look.ink]
+    if hot
+        p.c = lory.cursor[p.c, 'pointer']
+    p
+
+fn _select[p, n, x, y, w, h]
+    s = p.s
+    look = p.look
+    hot = _hovered[p, n.id, x, y, w, h]
+    got = _pressed_in[p, n.id, x, y, w, h]
+    held = got.held
+    p.order = push[p.order, n.id]
+    if got.pressed or _keyed[p, n.id]
+        if held.open eq n.id
+            held.open = ''
+        else
+            held.open = n.id
+            held.opened = true
+        held.focus = n.id
+    p.held = held
+    fill = look.field
+    if hot
+        fill = look.hover
+    p.c = lory.round_rect[p.c, x, y, w, h, 8.0 * s, fill]
+    p.c = lory.round_outline[p.c, x, y, w, h, 8.0 * s, 1.0 * s, look.edge]
+    p = _focus_ring[p, n.id, x, y, w, h, 8.0 * s]
+    p.c = lory.text[p.c, x + 10.0 * s, y + (h - lory.line_height[p.c, 15.0 * s]) / 2.0, n.words, 15.0 * s, look.ink]
+    p.c = lory.text_right[p.c, x + w - 10.0 * s, y + (h - lory.line_height[p.c, 12.0 * s]) / 2.0, '▼', 12.0 * s, look.muted]
+    if p.held.open eq n.id
+        p.over = [n]
+        p.over_x = x
+        p.over_y = y + h + 4.0 * s
+        p.over_w = w
+    if hot
+        p.c = lory.cursor[p.c, 'pointer']
+    p
+
+--- an open select's choices, drawn over everything else
+fn _open_select[p]
+    if len[p.over] eq 0
+        return p
+    n = p.over[0]
+    s = p.s
+    look = p.look
+    x = p.over_x
+    y = p.over_y
+    w = p.over_w
+    rh = 32.0 * s
+    h = rh * len[n.items] + 8.0 * s
+    p.c = lory.round_rect[p.c, x, y + 2.0 * s, w, h, 8.0 * s, lory.fade[lory.black[], 0.35]]
+    p.c = lory.round_rect[p.c, x, y, w, h, 8.0 * s, look.panel]
+    p.c = lory.round_outline[p.c, x, y, w, h, 8.0 * s, 1.0 * s, look.edge]
+    held = p.held
+    chose = false
+    for i in range[len[n.items]]
+        o = n.items[i]
+        oy = y + 4.0 * s + rh * i
+        if lory.pointing[p.c] and _inside[lory.pointer_x[p.c], lory.pointer_y[p.c], x, oy, w, rh]
+            p.c = lory.rect[p.c, x + 4.0 * s, oy, w - 8.0 * s, rh, look.hover]
+        for e in lory.events[p.c]
+            if e.on eq 'up' and _inside[e.x, e.y, x, oy, w, rh] and not held.opened
+                p = _event[p, n.id, 'choose', o, i + 0.0]
+                chose = true
+        color = look.ink
+        if o eq n.words
+            color = look.accent
+        p.c = lory.text[p.c, x + 12.0 * s, oy + (rh - lory.line_height[p.c, 15.0 * s]) / 2.0, o, 15.0 * s, color]
+    --- (a press anywhere else closes it; the press that opened it does not)
+    for e in lory.events[p.c]
+        if e.on eq 'down' and not _inside[e.x, e.y, x, y, w, h]
+            if not held.opened
+                held.open = ''
+    if chose
+        held.open = ''
+    held.opened = false
+    p.held = held
+    p
+
+fn _table[p, n, x, y, w, h]
+    s = p.s
+    look = p.look
+    cols = _cols[p, n]
+    rh = _row_h[] * s
+    p.c = lory.round_rect[p.c, x, y, w, h, 8.0 * s, look.panel]
+    p.c = lory.round_outline[p.c, x, y, w, h, 8.0 * s, 1.0 * s, look.edge]
+    --- (the header)
+    cx = x
+    for i in range[len[n.items]]
+        p.c = lory.text[p.c, cx + 12.0 * s, y + (rh - lory.line_height[p.c, 13.0 * s]) / 2.0, upper[n.items[i]], 13.0 * s, look.muted]
+        cx = cx + cols[i] * s
+    p.c = lory.rect[p.c, x, y + rh - 1.0 * s, w, 1.0 * s, look.edge]
+    --- (the rows, scrolled under the header where the table is held short)
+    body_h = h - rh
+    inner = rh * len[n.rows]
+    most = max[0.0, inner - body_h]
+    at = _scroll_of[p, n.id] * s
+    for e in lory.events[p.c]
+        if e.on eq 'wheel' and _inside[e.x, e.y, x, y, w, h]
+            at = at + e.dy
+    at = max[0.0, min[most, at]]
+    held = p.held
+    held.scrolls[n.id] = at / s
+    p.held = held
+    kept = lory.clipped[p.c]
+    p.c = lory.clip[p.c, x, y + rh, w, body_h]
+    first = int[at / rh]
+    last = min[len[n.rows], first + int[body_h / rh] + 2]
+    i = first
+    while i lt last
+        r = n.rows[i]
+        ry = y + rh + rh * i - at
+        inside = lory.pointing[p.c] and _inside[lory.pointer_x[p.c], lory.pointer_y[p.c], x, ry, w, rh] and ry + rh gt y + rh
+        if inside
+            p.c = lory.rect[p.c, x + 1.0 * s, ry, w - 2.0 * s, rh, look.hover]
+        for e in lory.events[p.c]
+            if e.on eq 'up' and _inside[e.x, e.y, x, ry, w, rh] and e.y gt y + rh
+                first_cell = ''
+                if len[r] gt 0
+                    first_cell = r[0]
+                p = _event[p, n.id, 'choose', first_cell, i + 0.0]
+        cx = x
+        for j in range[min[len[r], len[cols]]]
+            p.c = lory.text[p.c, cx + 12.0 * s, ry + (rh - lory.line_height[p.c, 14.0 * s]) / 2.0, r[j], 14.0 * s, look.ink]
+            cx = cx + cols[j] * s
+        if i + 1 lt len[n.rows]
+            p.c = lory.rect[p.c, x + 8.0 * s, ry + rh - 1.0 * s, w - 16.0 * s, 1.0 * s, lory.fade[look.edge, 0.6]]
+        i = i + 1
+    p.c = lory.unclip[p.c, kept]
+    if most gt 0.0
+        bar = body_h * body_h / inner
+        by = y + rh + (body_h - bar) * at / most
+        p.c = lory.round_rect[p.c, x + w - 6.0 * s, by, 4.0 * s, bar, 2.0 * s, lory.fade[look.muted, 0.5]]
+    p
+
+fn _fresh[]
+    Held['', '', '', map['' = ''], map['' = 0.0], '', '', false, false]
+
+--- Tab moves the focus to the next control (Shift-Tab to the one before)
+fn _tabbed[p]
+    held = p.held
+    k = len[p.order]
+    if k eq 0
+        return p
+    for e in lory.events[p.c]
+        if e.on eq 'key' and e.key eq 'Tab'
+            at = -1
+            for i in range[k]
+                if p.order[i] eq held.focus
+                    at = i
+            if e.shift
+                at = at - 1
+                if at lt 0
+                    at = k - 1
+            else
+                at = (at + 1) % k
+            held.focus = p.order[at]
+    p.held = held
+    p
+
+--- the tree drawn on the canvas at (x, y), `w` CSS pixels wide, in the
+--- look given, and what the reader did to it this frame
+fn show_at[c, tree, x, y, w, look]
+    held = recall['lory.gui', _fresh[]]
+    held.hover = ''
+    was_focus = held.focus
+    --- (a press anywhere takes the focus away; the control pressed takes it)
+    for e in lory.events[c]
+        if e.on eq 'down'
+            held.focus = ''
+    p = Pass[c, held, [], look, lory.px[c], map['' = [0.0]], [], _none[], 0.0, 0.0, 0.0]
+    p = _place[p, tree, x * p.s, y * p.s, w * p.s]
+    p = _open_select[p]
+    p = _tabbed[p]
+    held = p.held
+    for e in lory.events[c]
+        if e.on eq 'up'
+            held.press = ''
+    --- (a field given the focus brings up a phone's keyboard)
+    if held.focus ne was_focus
+        if held.focus in held.texts
+            p.c = lory.keyboard[p.c, true]
+            held.keyboard = true
+        else
+            if held.keyboard
+                p.c = lory.keyboard[p.c, false]
+                held.keyboard = false
+    if held.hover eq ''
+        p.c = lory.cursor[p.c, 'default']
+    remember['lory.gui', held]
+    Shown[p.c, p.events, p.boxes]
+
+--- the tree drawn across the whole canvas, in the dark look, with room
+--- around it
+fn show[c, tree]
+    s = lory.px[c]
+    show_at[c, tree, 24.0, 24.0, lory.width[c] / s - 48.0, dark[]]

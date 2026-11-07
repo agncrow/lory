@@ -1,0 +1,83 @@
+--- Controls drawn by Lory: a form beside a table, every control answered
+--- from the frame's input. The program's state is a record kept in
+--- process memory between frames; the controls' own (focus, what is being
+--- typed, where the table is scrolled) is Lory's.
+use sys
+use memory
+use lory
+use lory.gui
+
+struct App [name, volume, loud, fruit, picked, presses]
+
+fn fresh[]
+    App['Ada', 0.4, false, 'pear', -1, 0]
+
+fn rows[]
+    out = []
+    names = ['apple', 'pear', 'plum', 'fig', 'kiwi', 'lime', 'date', 'mango', 'peach', 'cherry', 'grape', 'melon', 'lemon', 'guava']
+    for i in range[len[names]]
+        out = push[out, [names[i], str[(i * 37) % 100], str[(i * 13) % 9 + 1]]]
+    out
+
+fn form_of[a]
+    picked = 'none'
+    if a.picked gte 0
+        picked = rows[][a.picked][0]
+    form = gui.panel[[gui.heading['A form drawn in WebGL'], gui.note['Every control here is drawn by Lory, from Crow.'], gui.label['Your name'], gui.field['name', a.name], gui.label['Volume'], gui.slider['volume', a.volume, 0.0, 1.0], gui.toggle['loud', 'Loud', a.loud], gui.label['Fruit'], gui.select['fruit', ['apple', 'pear', 'plum', 'fig'], a.fruit], gui.row[[gui.button['press', 'Press me'], gui.label['pressed `a.presses` times']]], gui.note['Hello, `a.name`: volume `fmt[a.volume, decimals = 2]`, `a.fruit`, row `picked`.']]]
+    stock = gui.panel[[gui.heading['Stock'], gui.table['stock', ['fruit', 'price', 'crates'], rows[], 260.0]]]
+    gui.row[[gui.sized[form, 380.0], gui.sized[stock, 320.0]]]
+
+fn applied[a, e]
+    if e.id eq 'name' and e.act eq 'edit'
+        a.name = e.words
+    if e.id eq 'volume'
+        a.volume = e.num
+    if e.id eq 'loud'
+        a.loud = e.num gt 0.5
+    if e.id eq 'fruit'
+        a.fruit = e.words
+    if e.id eq 'stock'
+        a.picked = int[e.num]
+    if e.id eq 'press'
+        a.presses = a.presses + 1
+    a
+
+fn draw[frame]
+    a = recall['app', fresh[]]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    shown = gui.show[c, form_of[a]]
+    for e in shown.events
+        a = applied[a, e]
+    remember['app', a]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+fn screen[given]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+test a_press_and_a_release_on_the_button_is_a_press[]
+    c = lory.begin[screen['[]']]
+    first = gui.show[c, form_of[fresh[]]]
+    b = first.boxes['press']
+    x = b[0] + 5.0
+    y = b[1] + 5.0
+    c = lory.begin[screen['[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]']]
+    second = gui.show[c, form_of[fresh[]]]
+    len[second.events] eq 1
+    second.events[0].id eq 'press'
+
+test typing_into_the_field_edits_it[]
+    c = lory.begin[screen['[]']]
+    first = gui.show[c, form_of[fresh[]]]
+    b = first.boxes['name']
+    x = b[0] + 5.0
+    y = b[1] + 5.0
+    c = lory.begin[screen['[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "text", "text": "!"}]']]
+    second = gui.show[c, form_of[fresh[]]]
+    edits = []
+    for e in second.events
+        if e.act eq 'edit'
+            edits = push[edits, e.words]
+    edits eq ['Ada!']

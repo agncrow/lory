@@ -1,0 +1,42 @@
+--- Shapes and text, drawn by Lory: a rounded panel, a ring that turns
+--- with the frame's time, lines, and text at three sizes.
+use sys
+use math
+use lory
+
+fn draw[frame]
+    c = lory.begin[frame]
+    s = lory.px[c]
+    c = lory.clear[c, lory.hex['#0f1317']]
+    c = lory.round_rect[c, 24.0 * s, 24.0 * s, 360.0 * s, 220.0 * s, 16.0 * s, lory.hex['#1c232b']]
+    c = lory.round_outline[c, 24.0 * s, 24.0 * s, 360.0 * s, 220.0 * s, 16.0 * s, 2.0 * s, lory.hex['#3b4a5a']]
+    c = lory.text[c, 48.0 * s, 44.0 * s, 'Lory draws this', 28.0 * s, lory.white[]]
+    c = lory.text[c, 48.0 * s, 84.0 * s, 'Shapes, lines and text from Crow — 1.5 × 2 = 3', 16.0 * s, lory.hex['#9fb3c8']]
+    c = lory.rect[c, 48.0 * s, 120.0 * s, 80.0 * s, 80.0 * s, lory.hex['#e8590c']]
+    c = lory.circle[c, 188.0 * s, 160.0 * s, 40.0 * s, lory.hex['#37b24d']]
+    turn = lory.time[c] / 1000.0
+    c = lory.ring[c, 288.0 * s, 160.0 * s, 40.0 * s, 6.0 * s, lory.hex['#4dabf7']]
+    c = lory.line[c, 288.0 * s, 160.0 * s, (288.0 + 36.0 * cos[turn]) * s, (160.0 + 36.0 * sin[turn]) * s, 3.0 * s, lory.hex['#ffd43b']]
+    lory.end[c]
+
+sys.frames[draw]
+
+test the_first_frame_makes_the_objects_asks_for_the_atlas_and_draws[]
+    frame = json['{"t": 0, "width": 800, "height": 600, "ratio": 2, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 800, "height": 600, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+    c = lory.begin[frame]
+    c = lory.rect[c, 10.0, 10.0, 20.0, 20.0, lory.white[]]
+    calls = lory.batch[c]
+    names = []
+    for call in calls
+        names = push[names, call[0]]
+    '#3' in names
+    '#7' in names
+    'drawArrays' in names
+
+test text_is_drawn_once_the_page_has_said_what_the_atlas_holds[]
+    said = '{"what": "atlas", "id": 7, "width": 512, "height": 256, "size": 48, "ascent": 40, "descent": 10, "pad": 7, "spread": 6, "glyphs": [{"char": "H", "x": 0, "y": 0, "width": 40, "height": 64, "advance": 30}, {"char": "i", "x": 40, "y": 0, "width": 20, "height": 64, "advance": 12}]}'
+    frame = json['{"t": 16, "width": 800, "height": 600, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 800, "height": 600, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": [`said`]}']
+    c = lory.begin[frame]
+    c = lory.text[c, 10.0, 10.0, 'Hi', 24.0, lory.white[]]
+    len[c.verts] eq 2 * 6 * lory.floats[]
+    lory.measure[c, 'Hi', 48.0] eq 42.0

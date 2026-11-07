@@ -1,0 +1,6 @@
+.crow_build/
+target/
+dist/
+*.wasm
+# a page `crow build --target web` writes beside its program
+*_web/
