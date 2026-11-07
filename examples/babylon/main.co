@@ -23,8 +23,8 @@ fn picture[c]
     light = space.shining[space.light[dim, black, black, [0.0, -1.0, 0.0]], dim]
     c = space.scene[c, cam, light]
     white = lory.Color[1.0, 1.0, 1.0, 1.0]
-    c = space.draw[c, 'ground', lory.identity[], white]
-    c = space.draw[c, 'sphere', lory.translation[0.0, 1.0, 0.0], white]
+    c = space.draw[c, 'ground', lory.identity[], space.plain[white]]
+    c = space.draw[c, 'sphere', lory.translation[0.0, 1.0, 0.0], space.plain[white]]
     c
 
 fn draw[frame]
@@ -46,4 +46,4 @@ test the_light_is_babylons_hemisphere_and_its_highlight[]
     c = picture[lory.begin[_frame[]]]
     calls = str[lory.batch[c]]
     'f32:0.7 0.7 0.7' in calls
-    'clamp(tint.rgb * (hemi + sun * d), 0.0, 1.0)' in calls
+    'clamp(tint.rgb * (hemi + sun * d * sh), 0.0, 1.0)' in calls

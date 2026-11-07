@@ -38,11 +38,15 @@ struct Held [made, asked, chars, glyphs, size, ascent, descent, pad, spread, aw,
 struct Ev [on, x, y, button, dx, dy, key, code, words, shift, ctrl, alt, meta, device, id]
 
 --- (`deep`: the calls of a scene in three dimensions, drawn in each view
---- before the flat drawing, `@eye` in them the view's matrix — `eye`'s on a
---- screen, the headset's in it — and `@eyepos` where the eye is)
+--- before the flat drawing — on a screen inside `box` where one is set,
+--- its left, top, width and height in pixels — `@eye` in them the view's
+--- matrix, `eye`'s on a screen and the headset's in it, and `@eyepos`
+--- where the eye is)
 --- (`rig`: in a headset, where the reader stands and faces in the scene,
 --- as the matrix from the scene to the reader's own space)
-struct Canvas [frame, width, height, ratio, t, xr, verts, clear, missing, held, panel, clip, seg_at, seg_image, asks, events, px, py, down, there, said, deep, eye, eyepos, dt, rig]
+--- (`early`: calls drawn once a frame before its views, into a target of
+--- their own — a shadow's depth — the frame's target bound again after)
+struct Canvas [frame, width, height, ratio, t, xr, verts, clear, missing, held, panel, clip, seg_at, seg_image, asks, events, px, py, down, there, said, deep, eye, eyepos, dt, rig, box, early]
 
 --- a colour: red, green, blue and opacity, each 0 to 1
 struct Color [r, g, b, a]
@@ -232,7 +236,7 @@ fn begin[frame]
         if s.what eq 'atlas'
             if s.id eq _atlas_id[]
                 held = _take_atlas[held, s]
-    c = Canvas[frame, 0.0 + frame.width, 0.0 + frame.height, 0.0 + frame.ratio, 0.0 + frame.t, frame.xr eq true, [], Color[0.0, 0.0, 0.0, 1.0], '', held, 1.6, _unclipped[], [0], [0], [], [], -1.0, -1.0, false, false, frame.said, [], identity[], [0.0, 0.0, 0.0], 0.0, identity[]]
+    c = Canvas[frame, 0.0 + frame.width, 0.0 + frame.height, 0.0 + frame.ratio, 0.0 + frame.t, frame.xr eq true, [], Color[0.0, 0.0, 0.0, 1.0], '', held, 1.6, _unclipped[], [0], [0], [], [], -1.0, -1.0, false, false, frame.said, [], identity[], [0.0, 0.0, 0.0], 0.0, identity[], [0.0, 0.0, 0.0, 0.0], []]
     for p in frame.pointers
         c.px = 0.0 + p.x
         c.py = 0.0 + p.y
@@ -753,8 +757,19 @@ fn _deep[calls, c, v]
     calls = push[calls, ['enable', 'DEPTH_TEST']]
     calls = push[calls, ['depthFunc', 'LEQUAL']]
     calls = push[calls, ['disable', 'BLEND']]
+    --- (on a screen, a scene framed in a box is drawn there alone)
+    framed = not c.xr and c.box[2] gt 0.0
+    if framed
+        b = c.box
+        gy = c.height - b[1] - b[3]
+        calls = push[calls, ['viewport', str[b[0]], str[gy], str[b[2]], str[b[3]]]]
+        calls = push[calls, ['enable', 'SCISSOR_TEST']]
+        calls = push[calls, ['scissor', str[b[0]], str[gy], str[b[2]], str[b[3]]]]
     --- (the scene's calls, then the flat drawing's state put back)
     todo = push[c.deep, ['disable', 'DEPTH_TEST']]
+    if framed
+        todo = push[todo, ['disable', 'SCISSOR_TEST']]
+        todo = push[todo, ['viewport', str[0.0 + v.x], str[0.0 + v.y], str[0.0 + v.width], str[0.0 + v.height]]]
     for d in todo
         out = []
         for a in d
@@ -828,6 +843,12 @@ fn _made[c]
     if n gt 0
         packed = sys.base64[sys.float_bytes[c.verts, 4, true]]
         calls = push[calls, ['bufferData', 'ARRAY_BUFFER', 'base64f32:`packed`', 'DYNAMIC_DRAW']]
+    --- (what is drawn once a frame before its views — a shadow's depth —
+    --- into a target of its own, the frame's put back after)
+    if len[c.early] gt 0
+        for d in c.early
+            calls = push[calls, d]
+        calls = push[calls, ['bindFramebuffer', 'FRAMEBUFFER', '@framebuffer']]
     calls = push[calls, ['enable', 'BLEND']]
     calls = push[calls, ['blendFuncSeparate', 'SRC_ALPHA', 'ONE_MINUS_SRC_ALPHA', 'ONE', 'ONE_MINUS_SRC_ALPHA']]
     calls = push[calls, ['useProgram', _id[_program_id[]]]]

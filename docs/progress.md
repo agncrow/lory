@@ -90,6 +90,42 @@ To run it: build both programs for the web in examples/babylon, serve
 `babylon/reference/index.html` (and the `sun` pair) with headless
 Chrome, then `python3 compare.py lory.png babylon.png diff.png`.
 
-Next: phase 7 (Myna on Lory); phase 8 (PBR, shadows, post-processing) —
-and with PBR, the comparison of a Khronos glTF sample against Babylon's
-PBR material.
+## Phase 7 — Myna on Lory (2026-11-07)
+
+Myna's workbench drawn in WebGL (Myna's `drawn/main.co`, built for the
+web and served by Myna at `/drawn`; its data from `myna/drawn.co`'s JSON
+routes beside MLflow's API): Experiments (runs table, a run's metric as a
+chart), Runs in 3D (each run a ball, placed by two parameters and a
+metric, picked by the pointer or a controller's ray), Models, Catalog
+(tables and their newest rows), Notebooks (cells), Jobs (runs and what
+each wrote). What it asked of Lory: `gui.chosen` (a table's chosen row),
+an `area` of no width taking its column's, and a scene framed in a box
+(`space.within`: its viewport, scissor, proportions, ray and orbit are
+the box's, so a press on a control turns nothing; in a headset the box
+is ignored and the scene is the world).
+
+## Phase 8 — materials, shadows, levels of detail (2026-11-07)
+
+- `space.plain[color]` is the standard material (unchanged: the Babylon
+  comparison stands); `space.surface[color, metallic, roughness]` is
+  glTF's metallic-roughness material — GGX distribution, Smith's
+  height-correlated visibility, Schlick's Fresnel, the sky's light from
+  an analytic split-sum, in linear light, ACES tone mapping, then gamma.
+  `space.glowing` adds emitted light. A glTF model's parts are drawn in
+  their own material (base colour, metallic and roughness factors,
+  emissive factor).
+- `space.shadows[c, light, center, reach]`: the sun's shadow map (2048²,
+  24-bit depth, drawn first into a framebuffer through `c.early`, then
+  sampled with 3×3 percentage-closer filtering and a slope bias).
+- `space.level[c, names, reach, matrix]` picks a model's level of detail
+  by the eye's distance (the orbit's on a screen, the head's in a
+  headset).
+- examples/materials draws them: metal and non-metal balls by roughness,
+  their shadows, and a ball drawn at the level its distance asks for.
+
+Not started, and why: bloom and other post-processing (a second pass
+over an image of the frame costs every phone's fill rate, and no Myna or
+game view needs it yet); WebGPU (WebXR on the Quest's browser is WebGL's;
+Lory's batch is WebGL2's calls by name, so WebGPU would be a second
+renderer, worth it only when compute shaders are needed); shadows from
+lights other than the sun; image-based lighting from an environment map.

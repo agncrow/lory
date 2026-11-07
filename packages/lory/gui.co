@@ -124,8 +124,15 @@ fn table[id, header, rows, tall]
     n.tall = tall
     n
 
+--- the table with its row `i` shown chosen (the row the program holds
+--- picked; -1 for none)
+fn chosen[n, i]
+    n.num = i + 1.0
+    n
+
 --- a box `wide` by `tall` CSS pixels the program draws into (its box is
---- in `Shown.boxes`); pressing it is an event
+--- in `Shown.boxes`; `wide` 0 is the width of the column it stands in);
+--- pressing it is an event
 fn area[id, wide, tall]
     n = _node['area', id, '', _none[]]
     n.wide = wide
@@ -224,6 +231,8 @@ fn _measure[p, n, room]
     if t eq 'space'
         return Size[0.0, n.tall]
     if t eq 'area'
+        if n.wide eq 0.0
+            return Size[room, n.tall]
         return Size[n.wide, n.tall]
     if t eq 'table'
         w = 0.0
@@ -437,7 +446,7 @@ fn _place[p, n, x, y, w]
     for k in n.kids
         km = _measure[p, k, iw / s]
         kw = km.w * s
-        if k.tag eq 'column' or k.tag eq 'panel' or k.tag eq 'scroll' or k.tag eq 'table' or k.tag eq 'heading' or k.tag eq 'label' or k.tag eq 'note'
+        if k.tag eq 'column' or k.tag eq 'panel' or k.tag eq 'scroll' or k.tag eq 'table' or k.tag eq 'heading' or k.tag eq 'label' or k.tag eq 'note' or (k.tag eq 'area' and k.wide eq 0.0)
             kw = iw
         p = _place[p, k, ix, iy, kw]
         iy = iy + (km.h + _gap[]) * s
@@ -720,8 +729,11 @@ fn _table[p, n, x, y, w, h]
         r = n.rows[i]
         ry = y + rh + rh * i - at
         inside = lory.pointing[p.c] and _inside[lory.pointer_x[p.c], lory.pointer_y[p.c], x, ry, w, rh] and ry + rh gt y + rh
-        if inside
-            p.c = lory.rect[p.c, x + 1.0 * s, ry, w - 2.0 * s, rh, look.hover]
+        if 0.0 + i eq n.num - 1.0
+            p.c = lory.rect[p.c, x + 1.0 * s, ry, w - 2.0 * s, rh, lory.fade[look.accent, 0.28]]
+        else
+            if inside
+                p.c = lory.rect[p.c, x + 1.0 * s, ry, w - 2.0 * s, rh, look.hover]
         for e in lory.events[p.c]
             if e.on eq 'up' and _inside[e.x, e.y, x, ry, w, rh] and e.y gt y + rh
                 first_cell = ''

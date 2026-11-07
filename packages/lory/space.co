@@ -9,12 +9,21 @@
 ---         c = space.mesh[c, 'ball', space.sphere[1.0, 32]]
 ---     cam = space.orbit[c, 'view', [0.0, 1.0, 0.0], 6.0]
 ---     c = space.scene[c, cam, space.daylight[]]
----     c = space.draw[c, 'ball', lory.translation[0.0, 1.0, 0.0], lory.hex['#3b82f6']]
+---     c = space.draw[c, 'ball', lory.translation[0.0, 1.0, 0.0], space.plain[lory.hex['#3b82f6']]]
 ---     lory.end[c]
 ---
 --- A scene is drawn before the flat drawing, so the flat drawing — a
---- chart's labels, a panel of controls — is over it. Distances are metres:
---- in a headset the floor is at 0 and the reader stands at the origin.
+--- chart's labels, a panel of controls — is over it; `within` frames it in
+--- a box on a screen. Distances are metres: in a headset the floor is at 0
+--- and the reader stands at the origin.
+---
+--- A surface is drawn in a look: `plain[color]`, the standard material
+--- (the one Babylon.js's StandardMaterial is: examples/babylon holds the
+--- two to each other), or `surface[color, metallic, roughness]`, glTF's
+--- metallic-roughness material, lit physically in linear light and tone
+--- mapped (ACES) — a glTF model's parts are drawn in their own. The sun
+--- casts shadows where `shadows` is asked for after `scene`, and `level`
+--- picks the mesh of a model's levels of detail its distance asks for.
 
 use sys
 use memory
@@ -27,7 +36,13 @@ struct Shape [at, facing, uv]
 
 --- a part of a model: its vertex array, how many it draws and how (by
 --- index: of which type, from where), its matrix, colour and image
-struct Part [vao, count, indexed, itype, ioffset, mode, matrix, color, image, normals, uvs]
+--- (and its material's metalness, roughness and glow, and whether it is
+--- lit physically: a glTF part is, a shape made here is not)
+struct Part [vao, count, indexed, itype, ioffset, mode, matrix, color, image, normals, uvs, metal, rough, glow, physical]
+
+--- what a surface is drawn in: its colour, metalness and roughness (0 to
+--- 1), the light it gives off, and whether it is lit physically
+struct Look [color, metal, rough, glow, physical]
 
 --- a mesh or a model held on the page: its parts, whether every byte of
 --- it is in, how many buffers are still on their way, its bounds, the
@@ -35,8 +50,8 @@ struct Part [vao, count, indexed, itype, ioffset, mode, matrix, color, image, no
 struct Mesh [name, parts, ready, waiting, lo, hi, ask, url, buffers]
 
 --- what the scene holds between frames: whether its program is made, its
---- meshes, and the next object id
-struct Held [made, meshes, next]
+--- meshes, the next object id, and whether the shadows' target is made
+struct Held [made, meshes, next, shadowing]
 
 --- a camera that orbits a point: its turn about the vertical, its tilt,
 --- its distance, the point, and a drag under way
@@ -62,7 +77,7 @@ fn _uniform_base[]
     20
 
 fn _uniforms[]
-    ['eye', 'model', 'eyepos', 'tint', 'sky', 'ground', 'sun', 'way', 'picture', 'textured', 'shine']
+    ['eye', 'model', 'eyepos', 'tint', 'sky', 'ground', 'sun', 'way', 'picture', 'textured', 'shine', 'physical', 'metal', 'rough', 'glow', 'shadow_map', 'sun_eye', 'shadowed', 'shadow_texel']
 
 fn _uniform[name]
     names = _uniforms[]
@@ -72,8 +87,29 @@ fn _uniform[name]
             at = i
     '#`_uniform_base[] + at`'
 
+--- the shadows' objects: the depth program, its shaders, its target and
+--- the texture it draws into, and its two uniforms
+fn _depth_program_id[]
+    13
+
+fn _depth_target_id[]
+    16
+
+fn _depth_texture_id[]
+    17
+
+fn _depth_sun_id[]
+    40
+
+fn _depth_model_id[]
+    41
+
+--- the shadow map's size, in texels a side
+fn _shadow_size[]
+    2048
+
 fn _fresh[]
-    Held[false, map[], 100]
+    Held[false, map[], 100, false]
 
 fn _held[]
     recall['lory.space', _fresh[]]
@@ -128,19 +164,71 @@ uniform vec3 way;
 uniform vec3 shine;
 uniform sampler2D picture;
 uniform float textured;
+uniform float physical;
+uniform float metal;
+uniform float rough;
+uniform vec3 glow;
+uniform highp sampler2D shadow_map;
+uniform mat4 sun_eye;
+uniform float shadowed;
+uniform float shadow_texel;
 out vec4 out_color;
+const float PI = 3.14159265;
+vec3 lin(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+float shade(vec3 n, vec3 l) {
+  if (shadowed < 0.5) return 1.0;
+  vec4 p = sun_eye * vec4(v_at, 1.0);
+  vec3 q = p.xyz / p.w * 0.5 + 0.5;
+  if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0 || q.z > 1.0) return 1.0;
+  float bias = max(0.004 * (1.0 - dot(n, l)), 0.0015);
+  float lit = 0.0;
+  for (int x = -1; x <= 1; x++) {
+    for (int y = -1; y <= 1; y++) {
+      float d = texture(shadow_map, q.xy + vec2(float(x), float(y)) * shadow_texel).r;
+      lit += q.z - bias > d ? 0.0 : 1.0;
+    }
+  }
+  return lit / 9.0;
+}
 void main() {
   vec3 n = normalize(v_facing);
   if (!gl_FrontFacing) n = -n;
   vec4 texel = textured > 0.5 ? texture(picture, v_uv) : vec4(1.0);
   vec3 to_sun = normalize(-way);
-  vec3 hemi = mix(ground, sky, 0.5 + 0.5 * n.y);
-  float d = max(dot(n, to_sun), 0.0);
   vec3 v = normalize(eyepos - v_at);
   vec3 h = normalize(to_sun + v);
+  float sh = shade(n, to_sun);
+  if (physical > 0.5) {
+    vec3 base = lin(tint.rgb * texel.rgb);
+    float r = clamp(rough, 0.04, 1.0);
+    float a2 = r * r * r * r;
+    float nl = max(dot(n, to_sun), 0.0);
+    float nv = max(dot(n, v), 0.0001);
+    float nh = max(dot(n, h), 0.0);
+    float vh = max(dot(v, h), 0.0);
+    vec3 f0 = mix(vec3(0.04), base, metal);
+    vec3 f = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+    float dd = nh * nh * (a2 - 1.0) + 1.0;
+    float dist = a2 / (PI * dd * dd);
+    float vis = 0.5 / max(nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2), 0.00001);
+    vec3 kd = (1.0 - f) * (1.0 - metal);
+    vec3 direct = (kd * base / PI + dist * vis * f) * lin(sun) * PI * nl * sh;
+    vec3 refl = reflect(-v, n);
+    vec3 diffuse_sky = lin(mix(ground, sky, 0.5 + 0.5 * n.y));
+    vec3 mirror_sky = lin(mix(ground, sky, 0.5 + 0.5 * refl.y));
+    vec4 rr = r * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+    float aa = min(rr.x * rr.x, exp2(-9.28 * nv)) * rr.x + rr.y;
+    vec2 ab = vec2(-1.04, 1.04) * aa + rr.zw;
+    vec3 col = direct + kd * base * diffuse_sky + mirror_sky * (f0 * ab.x + ab.y) + lin(glow);
+    out_color = vec4(pow(aces(col), vec3(1.0 / 2.2)), tint.a * texel.a);
+    return;
+  }
+  vec3 hemi = mix(ground, sky, 0.5 + 0.5 * n.y);
+  float d = max(dot(n, to_sun), 0.0);
   float s = pow(max(dot(n, h), 0.0), 64.0);
-  vec3 lit = clamp(tint.rgb * (hemi + sun * d), 0.0, 1.0) * texel.rgb;
-  out_color = vec4(lit + shine * s, tint.a * texel.a);
+  vec3 lit = clamp(tint.rgb * (hemi + sun * d * sh), 0.0, 1.0) * texel.rgb;
+  out_color = vec4(lit + shine * s * sh + glow, tint.a * texel.a);
 }'
     [vs, fs]
 
@@ -204,6 +292,11 @@ fn perspective[fov, aspect, near, far]
     f = 1.0 / tan[fov / 2.0]
     [f / aspect, 0.0, 0.0, 0.0, 0.0, f, 0.0, 0.0, 0.0, 0.0, (far + near) / (near - far), -1.0, 0.0, 0.0, 2.0 * far * near / (near - far), 0.0]
 
+--- a box seen straight along: everything from `near` to `far` in front,
+--- `half` either side of the middle
+fn orthographic[half, near, far]
+    [1.0 / half, 0.0, 0.0, 0.0, 0.0, 1.0 / half, 0.0, 0.0, 0.0, 0.0, -2.0 / (far - near), 0.0, 0.0, 0.0, 0.0 - (far + near) / (far - near), 1.0]
+
 fn _sub[a, b]
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 
@@ -219,10 +312,14 @@ fn _unit[a]
         return [0.0, 1.0, 0.0]
     [a[0] / n, a[1] / n, a[2] / n]
 
---- a view from an eye at `from` looking at `to`, up being up
+--- a view from an eye at `from` looking at `to`, up being up (or, looking
+--- straight up or down, the way -z goes)
 fn look_at[from, to]
     z = _unit[_sub[from, to]]
-    x = _unit[_cross[[0.0, 1.0, 0.0], z]]
+    up = [0.0, 1.0, 0.0]
+    if abs[z[1]] gt 0.999
+        up = [0.0, 0.0, -1.0]
+    x = _unit[_cross[up, z]]
     y = _cross[z, x]
     [x[0], y[0], z[0], 0.0, x[1], y[1], z[1], 0.0, x[2], y[2], z[2], 0.0, 0.0 - _dot[x, from], 0.0 - _dot[y, from], 0.0 - _dot[z, from], 1.0]
 
@@ -384,7 +481,7 @@ fn mesh[c, name, s]
     asks = push[asks, ['bindVertexArray', 'null']]
     c.asks = asks
     b = _bounds_of[s.at]
-    part = Part[vao, n, false, '', 0, 'TRIANGLES', lory.identity[], lory.white[], 0, true, true]
+    part = Part[vao, n, false, '', 0, 'TRIANGLES', lory.identity[], lory.white[], 0, true, true, 0.0, 1.0, _black[], false]
     h.meshes[name] = Mesh[name, [part], true, 0, b[0], b[1], 0, '', [buf]]
     remember['lory.space', h]
     c
@@ -404,7 +501,7 @@ fn _orbiting[c, id, first]
     key = 'lory.space.orbit.`id`'
     o = recall[key, first]
     for e in lory.events[c]
-        if e.on eq 'down' and e.device ne 'ray'
+        if e.on eq 'down' and e.device ne 'ray' and _in_box[c, e.x, e.y]
             o.dragging = true
             o.from_x = e.x
             o.from_y = e.y
@@ -415,7 +512,7 @@ fn _orbiting[c, id, first]
             o.pitch = max[-1.5, min[1.5, o.from_pitch + (e.y - o.from_y) * 0.008 / lory.px[c]]]
         if e.on eq 'up' or e.on eq 'leave'
             o.dragging = false
-        if e.on eq 'wheel'
+        if e.on eq 'wheel' and _in_box[c, e.x, e.y]
             o.distance = max[0.05, min[10000.0, o.distance * exp[e.dy / 600.0]]]
     remember[key, o]
     o
@@ -446,6 +543,50 @@ fn shining[l, color]
     l.shine = color
     l
 
+--- ---- what a surface is drawn in ----
+
+fn _black[]
+    lory.Color[0.0, 0.0, 0.0, 1.0]
+
+--- the standard material in a colour: lit by the sky, the ground and the
+--- sun, with the light's highlight
+fn plain[color]
+    Look[color, 0.0, 1.0, _black[], false]
+
+--- glTF's metallic-roughness material: a colour, how metallic it is and
+--- how rough (0 to 1 each), lit physically
+fn surface[color, metallic, roughness]
+    Look[color, max[0.0, min[1.0, metallic]], max[0.0, min[1.0, roughness]], _black[], true]
+
+--- the look giving off light of a colour (not lit by anything: seen in the
+--- dark)
+fn glowing[look, color]
+    look.glow = color
+    look
+
+--- ---- framed on a screen ----
+
+--- the scene framed on a screen in a box (left, top, width, height in
+--- pixels: a `Shown`'s box): drawn there alone, seen in its proportions,
+--- turned and pointed into there only — in a headset the scene is the world
+fn within[c, box]
+    c.box = [0.0 + box[0], 0.0 + box[1], 0.0 + box[2], 0.0 + box[3]]
+    c
+
+--- whether a point of the canvas is inside the scene's box (anywhere,
+--- where none is set)
+fn _in_box[c, x, y]
+    if c.box[2] lte 0.0
+        return true
+    b = c.box
+    x gte b[0] and x lte b[0] + b[2] and y gte b[1] and y lte b[1] + b[3]
+
+--- the scene's width over its height
+fn _aspect[c]
+    if c.box[2] gt 0.0
+        return c.box[2] / max[1.0, c.box[3]]
+    c.width / max[1.0, c.height]
+
 fn _scaled[col, k]
     lory.Color[col.r * k, col.g * k, col.b * k, col.a]
 
@@ -464,7 +605,7 @@ fn scene[c, o, l]
         h.made = true
         remember['lory.space', h]
     from = eye_of[o]
-    aspect = c.width / max[1.0, c.height]
+    aspect = _aspect[c]
     near = max[0.01, o.distance / 1000.0]
     c.eye = lory.mul[perspective[0.8, aspect, near, o.distance * 100.0 + 100.0], look_at[from, o.target]]
     c.eyepos = from
@@ -480,12 +621,114 @@ fn scene[c, o, l]
     deep = push[deep, ['uniform3fv', _uniform['way'], 'f32:`w[0]` `w[1]` `w[2]`']]
     deep = push[deep, ['uniform3fv', _uniform['shine'], _three[l.shine]]]
     deep = push[deep, ['uniform1i', _uniform['picture'], '2']]
+    deep = push[deep, ['uniform1i', _uniform['shadow_map'], '3']]
+    deep = push[deep, ['uniform1f', _uniform['shadowed'], '0']]
     c.deep = deep
     c
 
---- a held mesh or model drawn where `matrix` puts it, in a colour (a
---- model's own colours are multiplied by it: white keeps them)
-fn draw[c, name, matrix, color]
+--- the sun's shadows, cast within `reach` metres of `center` by what is
+--- drawn after this (asked for after `scene`, with its light)
+fn shadows[c, l, center, reach]
+    h = _held[]
+    size = _shadow_size[]
+    if not h.shadowing
+        c = _shadow_setup[c]
+        h.shadowing = true
+        remember['lory.space', h]
+    w = l.way
+    from = [center[0] - w[0] * reach * 2.0, center[1] - w[1] * reach * 2.0, center[2] - w[2] * reach * 2.0]
+    sun_eye = lory.mul[orthographic[reach, 0.05, reach * 4.0], look_at[from, center]]
+    early = c.early
+    early = push[early, ['bindFramebuffer', 'FRAMEBUFFER', '#`_depth_target_id[]`']]
+    early = push[early, ['viewport', '0', '0', str[size], str[size]]]
+    early = push[early, ['enable', 'DEPTH_TEST']]
+    early = push[early, ['depthFunc', 'LESS']]
+    early = push[early, ['disable', 'BLEND']]
+    early = push[early, ['clear', 'DEPTH_BUFFER_BIT']]
+    early = push[early, ['useProgram', '#`_depth_program_id[]`']]
+    early = push[early, ['uniformMatrix4fv', '#`_depth_sun_id[]`', 'false', _matrix[sun_eye]]]
+    c.early = early
+    deep = c.deep
+    deep = push[deep, ['activeTexture', 'TEXTURE3']]
+    deep = push[deep, ['bindTexture', 'TEXTURE_2D', '#`_depth_texture_id[]`']]
+    deep = push[deep, ['uniform1f', _uniform['shadowed'], '1']]
+    deep = push[deep, ['uniform1f', _uniform['shadow_texel'], str[1.0 / size]]]
+    deep = push[deep, ['uniformMatrix4fv', _uniform['sun_eye'], 'false', _matrix[sun_eye]]]
+    c.deep = deep
+    c
+
+--- the shadows' program, and the depth texture it draws into, once
+fn _shadow_setup[c]
+    vs = '#version 300 es
+layout(location = 0) in vec3 at;
+uniform mat4 sun;
+uniform mat4 model;
+void main() { gl_Position = sun * model * vec4(at, 1.0); }'
+    fs = '#version 300 es
+precision mediump float;
+void main() {}'
+    size = str[_shadow_size[]]
+    p = '#`_depth_program_id[]`'
+    t = '#`_depth_texture_id[]`'
+    f = '#`_depth_target_id[]`'
+    asks = c.asks
+    asks = push[asks, ['#14', 'createShader', 'VERTEX_SHADER']]
+    asks = push[asks, ['shaderSource', '#14', '=`vs`']]
+    asks = push[asks, ['compileShader', '#14']]
+    asks = push[asks, ['#15', 'createShader', 'FRAGMENT_SHADER']]
+    asks = push[asks, ['shaderSource', '#15', '=`fs`']]
+    asks = push[asks, ['compileShader', '#15']]
+    asks = push[asks, [p, 'createProgram']]
+    asks = push[asks, ['attachShader', p, '#14']]
+    asks = push[asks, ['attachShader', p, '#15']]
+    asks = push[asks, ['linkProgram', p]]
+    asks = push[asks, ['#`_depth_sun_id[]`', 'getUniformLocation', p, '=sun']]
+    asks = push[asks, ['#`_depth_model_id[]`', 'getUniformLocation', p, '=model']]
+    asks = push[asks, [t, 'createTexture']]
+    asks = push[asks, ['activeTexture', 'TEXTURE3']]
+    asks = push[asks, ['bindTexture', 'TEXTURE_2D', t]]
+    asks = push[asks, ['texImage2D', 'TEXTURE_2D', '0', 'DEPTH_COMPONENT24', size, size, '0', 'DEPTH_COMPONENT', 'UNSIGNED_INT', 'null']]
+    asks = push[asks, ['texParameteri', 'TEXTURE_2D', 'TEXTURE_MIN_FILTER', 'NEAREST']]
+    asks = push[asks, ['texParameteri', 'TEXTURE_2D', 'TEXTURE_MAG_FILTER', 'NEAREST']]
+    asks = push[asks, ['texParameteri', 'TEXTURE_2D', 'TEXTURE_WRAP_S', 'CLAMP_TO_EDGE']]
+    asks = push[asks, ['texParameteri', 'TEXTURE_2D', 'TEXTURE_WRAP_T', 'CLAMP_TO_EDGE']]
+    asks = push[asks, [f, 'createFramebuffer']]
+    asks = push[asks, ['bindFramebuffer', 'FRAMEBUFFER', f]]
+    asks = push[asks, ['framebufferTexture2D', 'FRAMEBUFFER', 'DEPTH_ATTACHMENT', 'TEXTURE_2D', t, '0']]
+    asks = push[asks, ['bindFramebuffer', 'FRAMEBUFFER', '@framebuffer']]
+    asks = push[asks, ['activeTexture', 'TEXTURE0']]
+    c.asks = asks
+    c
+
+--- ---- levels of detail ----
+
+--- where the eye is: the orbit's on a screen, the head's in a headset
+fn _eye_point[c]
+    if not lory.in_headset[c]
+        return c.eyepos
+    for v in c.frame.views
+        m = lory.mul[_floats[v.camera], c.rig]
+        if len[m] eq 16
+            return [0.0 - (m[0] * m[12] + m[1] * m[13] + m[2] * m[14]), 0.0 - (m[4] * m[12] + m[5] * m[13] + m[6] * m[14]), 0.0 - (m[8] * m[12] + m[9] * m[13] + m[10] * m[14])]
+    c.eyepos
+
+--- of a model's levels of detail (`names`, nearest first), the one for
+--- where `matrix` puts it: the first whose distance in `reach` (one fewer
+--- than the names) the eye is nearer than, else the last
+fn level[c, names, reach, matrix]
+    eye = _eye_point[c]
+    d = _sub[[matrix[12], matrix[13], matrix[14]], eye]
+    far = sqrt[_dot[d, d]]
+    for i in range[len[reach]]
+        if far lt reach[i]
+            return names[i]
+    names[len[names] - 1]
+
+--- a held mesh or model drawn where `matrix` puts it, in a look (a model's
+--- own colours are multiplied by its colour: white keeps them; a model's
+--- parts keep their own metalness and roughness unless the look is
+--- physical)
+fn draw[c, name, matrix, look]
     h = _held[]
     if not (name in h.meshes)
         return c
@@ -493,10 +736,27 @@ fn draw[c, name, matrix, color]
     if not m.ready
         return c
     deep = c.deep
+    early = c.early
+    casting = len[early] gt 0
+    color = look.color
     for part in m.parts
-        deep = push[deep, ['uniformMatrix4fv', _uniform['model'], 'false', _matrix[lory.mul[matrix, part.matrix]]]]
+        placed = _matrix[lory.mul[matrix, part.matrix]]
+        deep = push[deep, ['uniformMatrix4fv', _uniform['model'], 'false', placed]]
         k = part.color
         deep = push[deep, ['uniform4fv', _uniform['tint'], _four[lory.Color[k.r * color.r, k.g * color.g, k.b * color.b, k.a * color.a]]]]
+        metal = part.metal
+        rough = part.rough
+        if look.physical
+            metal = look.metal
+            rough = look.rough
+        physical = '0'
+        if look.physical or part.physical
+            physical = '1'
+        g = part.glow
+        deep = push[deep, ['uniform1f', _uniform['physical'], physical]]
+        deep = push[deep, ['uniform1f', _uniform['metal'], str[metal]]]
+        deep = push[deep, ['uniform1f', _uniform['rough'], str[rough]]]
+        deep = push[deep, ['uniform3fv', _uniform['glow'], _three[lory.Color[g.r + look.glow.r, g.g + look.glow.g, g.b + look.glow.b, 1.0]]]]
         if part.image gt 0
             deep = push[deep, ['activeTexture', 'TEXTURE2']]
             deep = push[deep, ['bindTexture', 'TEXTURE_2D', '#`part.image`']]
@@ -508,12 +768,20 @@ fn draw[c, name, matrix, color]
             deep = push[deep, ['vertexAttrib3f', '1', '0', '1', '0']]
         if not part.uvs
             deep = push[deep, ['vertexAttrib2f', '2', '0', '0']]
+        drawn = ['drawArrays', part.mode, '0', str[part.count]]
         if part.indexed
-            deep = push[deep, ['drawElements', part.mode, str[part.count], part.itype, str[part.ioffset]]]
-        else
-            deep = push[deep, ['drawArrays', part.mode, '0', str[part.count]]]
+            drawn = ['drawElements', part.mode, str[part.count], part.itype, str[part.ioffset]]
+        deep = push[deep, drawn]
+        --- (and into the sun's depth, where shadows are cast)
+        if casting
+            early = push[early, ['uniformMatrix4fv', '#`_depth_model_id[]`', 'false', placed]]
+            early = push[early, ['bindVertexArray', '#`part.vao`']]
+            early = push[early, drawn]
     deep = push[deep, ['bindVertexArray', 'null']]
     c.deep = deep
+    if casting
+        early = push[early, ['bindVertexArray', 'null']]
+        c.early = early
     c
 
 fn _matrix[m]
@@ -776,10 +1044,21 @@ fn _read_gltf[c, h, m, body]
                 mode = _modes[0 + prim.mode]
             color = lory.white[]
             image = 0
+            --- (glTF's defaults: fully metallic, fully rough, no glow)
+            metal = 1.0
+            rough = 1.0
+            glow = _black[]
             if prim.material.ok
                 mat = materials[0 + prim.material]
+                if mat.emissiveFactor.ok
+                    e = _floats[mat.emissiveFactor]
+                    glow = lory.Color[e[0], e[1], e[2], 1.0]
                 if mat.pbrMetallicRoughness.ok
                     pbr = mat.pbrMetallicRoughness
+                    if pbr.metallicFactor.ok
+                        metal = 0.0 + pbr.metallicFactor
+                    if pbr.roughnessFactor.ok
+                        rough = 0.0 + pbr.roughnessFactor
                     if pbr.baseColorFactor.ok
                         f = _floats[pbr.baseColorFactor]
                         color = lory.Color[f[0], f[1], f[2], f[3]]
@@ -795,7 +1074,7 @@ fn _read_gltf[c, h, m, body]
                                 uri = '`base``uri`'
                             asks = push[asks, ['#`made_id`', '@image', '=`uri`']]
                         image = image_ids[ikey]
-            parts = push[parts, Part[vao, count, indexed, itype, ioff, mode, pl.matrix, color, image, normals, uvs]]
+            parts = push[parts, Part[vao, count, indexed, itype, ioff, mode, pl.matrix, color, image, normals, uvs, metal, rough, glow, true]]
     c.asks = asks
     h.meshes[m.name] = Mesh[m.name, parts, waiting eq 0, waiting, lo, hi, 0, m.url, owned]
     Read[c, h]
@@ -879,14 +1158,28 @@ fn ray[c, o]
         return found
     if not lory.pointing[c]
         return Ray[[0.0, 0.0, 0.0], [0.0, 0.0, -1.0], false]
+    if not _in_box[c, lory.pointer_x[c], lory.pointer_y[c]]
+        return Ray[[0.0, 0.0, 0.0], [0.0, 0.0, -1.0], false]
     from = eye_of[o]
     z = _unit[_sub[from, o.target]]
-    x = _unit[_cross[[0.0, 1.0, 0.0], z]]
+    up = [0.0, 1.0, 0.0]
+    if abs[z[1]] gt 0.999
+        up = [0.0, 0.0, -1.0]
+    x = _unit[_cross[up, z]]
     y = _cross[z, x]
-    aspect = c.width / max[1.0, c.height]
+    aspect = _aspect[c]
     half = tan[0.4]
-    nx = (2.0 * lory.pointer_x[c] / c.width - 1.0) * half * aspect
-    ny = (1.0 - 2.0 * lory.pointer_y[c] / c.height) * half
+    bx = 0.0
+    by = 0.0
+    bw = c.width
+    bh = c.height
+    if c.box[2] gt 0.0
+        bx = c.box[0]
+        by = c.box[1]
+        bw = c.box[2]
+        bh = c.box[3]
+    nx = (2.0 * (lory.pointer_x[c] - bx) / bw - 1.0) * half * aspect
+    ny = (1.0 - 2.0 * (lory.pointer_y[c] - by) / bh) * half
     way = [x[0] * nx + y[0] * ny - z[0], x[1] * nx + y[1] * ny - z[1], x[2] * nx + y[2] * ny - z[2]]
     Ray[from, _unit[way], true]
 

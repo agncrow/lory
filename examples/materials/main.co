@@ -1,0 +1,89 @@
+--- Materials and shadows, drawn by Lory: two rows of balls in glTF's
+--- metallic-roughness material — the front row metal, the back row not,
+--- each rougher than the one to its left — a box in the standard
+--- material, and the sun's shadows of all of them on the ground. The
+--- ball on the far right is drawn at the level of detail its distance
+--- asks for: drag to turn, wheel to come nearer and see it made finer.
+use sys
+use math
+use lory
+use lory.space
+
+--- the light: Babylon's hemisphere and a sun from the upper left
+fn _light[]
+    l = space.light[lory.Color[0.55, 0.6, 0.7, 1.0], lory.Color[0.2, 0.18, 0.15, 1.0], lory.Color[1.0, 0.95, 0.85, 1.0], [0.5, -1.0, 0.35]]
+    l
+
+fn picture[c]
+    s = lory.px[c]
+    c = lory.clear[c, lory.hex['#202a36']]
+    if not space.made['ball']
+        c = space.mesh[c, 'ball', space.sphere[0.45, 24]]
+        c = space.mesh[c, 'ball near', space.sphere[0.45, 48]]
+        c = space.mesh[c, 'ball far', space.sphere[0.45, 6]]
+        c = space.mesh[c, 'ground', space.ground[12.0, 12.0]]
+        c = space.mesh[c, 'box', space.box[1.0, 1.0, 1.0]]
+    cam = space.orbit_from[c, 'view', [0.0, 0.5, 0.0], [0.0, 3.5, 6.5]]
+    c = space.walk[c, 'reader']
+    l = _light[]
+    c = space.scene[c, cam, l]
+    c = space.shadows[c, l, [0.0, 0.0, 0.0], 5.0]
+    c = space.draw[c, 'ground', lory.identity[], space.plain[lory.hex['#8a9a7a']]]
+    gold = lory.Color[1.0, 0.78, 0.34, 1.0]
+    clay = lory.Color[0.8, 0.25, 0.2, 1.0]
+    for i in range[5]
+        rough = 0.1 + 0.2 * i
+        x = -2.4 + 1.2 * i
+        c = space.draw[c, 'ball', lory.translation[x, 0.45, 0.9], space.surface[gold, 1.0, rough]]
+        c = space.draw[c, 'ball', lory.translation[x, 0.45, -0.4], space.surface[clay, 0.0, rough]]
+    c = space.draw[c, 'box', lory.mul[lory.translation[-1.0, 0.5, -2.0], space.turn_y[pi / 6.0]], space.plain[lory.hex['#3b82f6']]]
+    far = lory.translation[2.4, 0.45, -2.0]
+    seen = space.level[c, ['ball near', 'ball', 'ball far'], [4.0, 9.0], far]
+    c = space.draw[c, seen, far, space.glowing[space.surface[lory.white[], 0.0, 0.5], lory.Color[0.05, 0.1, 0.2, 1.0]]]
+    words = 'metal in front, not behind, each rougher to the right — the far ball is drawn as `seen`'
+    lory.text[c, 16.0 * s, 16.0 * s, words, 14.0 * s, lory.white[]]
+
+fn draw[frame]
+    lory.end[picture[lory.begin[frame]]]
+
+sys.frames[draw]
+
+fn _frame[]
+    json['{"t": 0, "width": 800, "height": 600, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 800, "height": 600, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+fn _count[calls, name]
+    n = 0
+    for call in calls
+        if call[0] eq name
+            n = n + 1
+    n
+
+test the_shadows_are_drawn_into_the_suns_depth_before_the_view[]
+    c = picture[lory.begin[_frame[]]]
+    calls = lory.batch[c]
+    text = str[calls]
+    'DEPTH_COMPONENT24' in text
+    'framebufferTexture2D' in text
+    --- (the depth pass draws every part once, as the view does: ground,
+    --- ten balls, the box and the far ball)
+    _count[calls, 'drawArrays'] eq 26
+    _count[calls, 'bindFramebuffer'] gte 3
+
+test a_surface_is_lit_physically_and_a_plain_one_is_not[]
+    s = space.surface[lory.white[], 2.0, -1.0]
+    s.metal eq 1.0
+    s.rough eq 0.0
+    s.physical
+    not space.plain[lory.white[]].physical
+
+test the_level_of_detail_follows_the_distance[]
+    c = picture[lory.begin[_frame[]]]
+    names = ['near', 'mid', 'far']
+    space.level[c, names, [4.0, 9.0], lory.translation[0.0, 0.5, 0.0]] eq 'mid'
+    space.level[c, names, [4.0, 9.0], lory.translation[0.0, 3.5, 5.0]] eq 'near'
+    space.level[c, names, [4.0, 9.0], lory.translation[0.0, 0.0, -40.0]] eq 'far'
+
+test a_view_straight_down_is_a_view[]
+    v = space.look_at[[0.0, 10.0, 0.0], [0.0, 0.0, 0.0]]
+    v[0] eq v[0]
+    abs[v[13]] lt 0.000000001

@@ -21,15 +21,15 @@ fn picture[c]
     c = space.walk[c, 'reader']
     c = space.scene[c, cam, space.daylight[]]
     turn = lory.time[c] / 2000.0
-    c = space.draw[c, 'ground', lory.translation[0.0, 0.0, -2.0], lory.hex['#4f6b3a']]
+    c = space.draw[c, 'ground', lory.translation[0.0, 0.0, -2.0], space.plain[lory.hex['#4f6b3a']]]
     --- (the ball lights where the pointer or a controller's ray meets it)
     ball = lory.translation[0.0, 1.0, -2.0]
     color = lory.hex['#3b82f6']
     if space.hit[space.ray[c, cam], 'ball', ball] gte 0.0
         color = lory.hex['#93c5fd']
-    c = space.draw[c, 'ball', ball, color]
-    c = space.draw[c, 'box', lory.mul[lory.translation[-2.0, 0.5, -2.0], space.turn_y[turn]], lory.hex['#e8590c']]
-    c = space.draw[c, 'column', lory.translation[2.0, 0.0, -2.0], lory.hex['#e9ecef']]
+    c = space.draw[c, 'ball', ball, space.plain[color]]
+    c = space.draw[c, 'box', lory.mul[lory.translation[-2.0, 0.5, -2.0], space.turn_y[turn]], space.plain[lory.hex['#e8590c']]]
+    c = space.draw[c, 'column', lory.translation[2.0, 0.0, -2.0], space.plain[lory.hex['#e9ecef']]]
     at = space.eye_of[cam]
     words = 'eye at `fmt[at[0], decimals = 1]`, `fmt[at[1], decimals = 1]`, `fmt[at[2], decimals = 1]` — drag to turn, wheel to come nearer'
     lory.text[c, 16.0 * s, 16.0 * s, words, 14.0 * s, lory.white[]]

@@ -24,9 +24,9 @@ fn picture[c]
     --- that; the sun's highlight is its own colour, as Babylon's is)
     light = space.shining[space.light[_grey[0.4], _grey[0.1], _grey[0.8], [-1.0, -2.0, 1.0]], _grey[0.8]]
     c = space.scene[c, cam, light]
-    c = space.draw[c, 'ground', lory.identity[], lory.Color[0.4, 0.7, 0.4, 1.0]]
-    c = space.draw[c, 'ball', lory.translation[-1.2, 1.0, 0.0], lory.Color[1.0, 0.3, 0.3, 1.0]]
-    c = space.draw[c, 'box', lory.mul[lory.translation[1.5, 0.7, -0.5], space.turn_y[pi / 4.0]], lory.Color[0.3, 0.5, 1.0, 1.0]]
+    c = space.draw[c, 'ground', lory.identity[], space.plain[lory.Color[0.4, 0.7, 0.4, 1.0]]]
+    c = space.draw[c, 'ball', lory.translation[-1.2, 1.0, 0.0], space.plain[lory.Color[1.0, 0.3, 0.3, 1.0]]]
+    c = space.draw[c, 'box', lory.mul[lory.translation[1.5, 0.7, -0.5], space.turn_y[pi / 4.0]], space.plain[lory.Color[0.3, 0.5, 1.0, 1.0]]]
     c
 
 fn draw[frame]
