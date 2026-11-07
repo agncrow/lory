@@ -87,3 +87,28 @@ test a_view_straight_down_is_a_view[]
     v = space.look_at[[0.0, 10.0, 0.0], [0.0, 0.0, 0.0]]
     v[0] eq v[0]
     abs[v[13]] lt 0.000000001
+
+--- a model of one triangle whose material is metallic-roughness: its
+--- factors are read into the part's look
+fn _triangle[]
+    '{"asset": {"version": "2.0"}, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}], "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "material": 0}]}], "materials": [{"pbrMetallicRoughness": {"baseColorFactor": [0.9, 0.5, 0.1, 1.0], "metallicFactor": 0.25, "roughnessFactor": 0.6}, "emissiveFactor": [0.1, 0.0, 0.0]}], "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]}], "bufferViews": [{"buffer": 0, "byteLength": 36}], "buffers": [{"uri": "triangle.bin", "byteLength": 36}]}'
+
+test a_gltf_models_material_is_its_parts_look[]
+    c = space.model[lory.begin[_frame[]], 'triangle', 'models/triangle.gltf']
+    --- (the request's id, as the page would answer it)
+    id = ''
+    for call in lory.batch[c]
+        if call[0] eq '@request'
+            id = slice[call[1], 1, len[call[1]]]
+    id ne ''
+    answered = json['{"t": 16, "width": 800, "height": 600, "ratio": 1, "xr": false, "views": [], "input": [], "pointers": [], "controllers": [], "said": [{"what": "answer", "id": "`id`", "status": 200, "body": `encode[_triangle[]]`}]}']
+    c = space.model[lory.begin[answered], 'triangle', 'models/triangle.gltf']
+    --- (its geometry is asked of the page, beside the file)
+    'models/triangle.bin' in str[lory.batch[c]]
+    seen = space.looks['triangle']
+    len[seen] eq 1
+    seen[0].metal eq 0.25
+    seen[0].rough eq 0.6
+    seen[0].color.g eq 0.5
+    seen[0].glow.r eq 0.1
+    seen[0].physical

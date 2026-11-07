@@ -812,12 +812,12 @@ fn model[c, name, url]
         return c
     for s in lory.said[c]
         m = h.meshes[name]
-        if s.what eq 'answer' and m.ask gt 0 and 0 + s.id eq m.ask
+        if s.what eq 'answer' and m.ask gt 0 and int[s.id] eq m.ask
             r = _read_gltf[c, h, m, '`s.body`']
             c = r.canvas
             h = r.held
         --- (each of the model's buffers in: it is ready with the last)
-        if s.what eq 'buffer' and (0 + s.id) in m.buffers
+        if s.what eq 'buffer' and (int[s.id]) in m.buffers
             h.meshes[name].waiting = m.waiting - 1
             if m.waiting eq 1
                 h.meshes[name].ready = true
@@ -825,6 +825,16 @@ fn model[c, name, url]
     c
 
 struct Read [canvas, held]
+
+--- the looks a held model's parts are drawn in, in order: a glTF part's
+--- base colour, metalness, roughness and glow (none until it is read)
+fn looks[name]
+    h = _held[]
+    found = []
+    if name in h.meshes
+        for part in h.meshes[name].parts
+            found = push[found, Look[part.color, part.metal, part.rough, part.glow, part.physical]]
+    found
 
 --- a box's eight corners
 fn _corners[lo, hi]
@@ -846,9 +856,10 @@ fn _base_of[url]
     '`joined`/'
 
 fn _list[j]
-    out = []
-    for x in j
-        out = push[out, x]
+    --- (a collecting loop keeps the parsed values: pushed onto an empty
+    --- list, they would be read as numbers)
+    out = for x in j
+        x
     out
 
 fn _floats[j]
@@ -883,10 +894,10 @@ fn _placed[nodes, at, parent]
     here = lory.mul[parent, _node_matrix[node]]
     out = []
     if node.mesh.ok
-        out = push[out, Placed[0 + node.mesh, here]]
+        out = push[out, Placed[int[node.mesh], here]]
     if node.children.ok
         for k in node.children
-            for p in _placed[nodes, 0 + k, here]
+            for p in _placed[nodes, int[k], here]
                 out = push[out, p]
     out
 
@@ -934,7 +945,7 @@ fn _read_gltf[c, h, m, body]
     if g.scenes.ok
         scenes = _list[g.scenes]
         for k in scenes[0].nodes
-            roots = push[roots, 0 + k]
+            roots = push[roots, int[k]]
     else
         for i in range[len[nodes]]
             roots = push[roots, i]
@@ -969,34 +980,38 @@ fn _read_gltf[c, h, m, body]
                     loc = 2
                 ai = prim.attributes[name]
                 if ai.ok
-                    a = accessors[0 + ai]
-                    vi = 0 + a.bufferView
+                    a = accessors[int[ai]]
+                    vi = int[a.bufferView]
                     key = str[vi]
                     if not (key in view_ids)
                         made_id = h.next
                         h.next = h.next + 1
                         view_ids[key] = made_id
                         v = views[vi]
-                        uri = '`buffers[0 + v.buffer].uri`'
+                        uri = '`buffers[int[v.buffer]].uri`'
                         if split[uri, ':'][0] ne 'data'
                             uri = '`base``uri`'
                         off = 0
                         if v.byteOffset.ok
-                            off = 0 + v.byteOffset
-                        asks = push[asks, ['#`made_id`', '@buffer', '=`uri`', 'ARRAY_BUFFER', str[off], str[0 + v.byteLength]]]
+                            off = int[v.byteOffset]
+                        size = 0
+                        size = int[v.byteLength]
+                        asks = push[asks, ['#`made_id`', '@buffer', '=`uri`', 'ARRAY_BUFFER', str[off], str[size]]]
                         waiting = waiting + 1
                         owned = push[owned, made_id]
                     stride = 0
                     if views[vi].byteStride.ok
-                        stride = 0 + views[vi].byteStride
+                        stride = int[views[vi].byteStride]
                     aoff = 0
                     if a.byteOffset.ok
-                        aoff = 0 + a.byteOffset
+                        aoff = int[a.byteOffset]
                     asks = push[asks, ['bindBuffer', 'ARRAY_BUFFER', '#`view_ids[key]`']]
                     asks = push[asks, ['enableVertexAttribArray', str[loc]]]
-                    asks = push[asks, ['vertexAttribPointer', str[loc], str[_size_of['`a.type`']], _component[0 + a.componentType], 'false', str[stride], str[aoff]]]
+                    kind = 0
+                    kind = int[a.componentType]
+                    asks = push[asks, ['vertexAttribPointer', str[loc], str[_size_of['`a.type`']], _component[kind], 'false', str[stride], str[aoff]]]
                     if loc eq 0
-                        count = 0 + a.count
+                        count = int[a.count]
                         if a.min.ok and a.max.ok
                             pmin = _floats[a.min]
                             pmax = _floats[a.max]
@@ -1015,33 +1030,36 @@ fn _read_gltf[c, h, m, body]
             itype = ''
             ioff = 0
             if prim.indices.ok
-                a = accessors[0 + prim.indices]
-                vi = 0 + a.bufferView
+                a = accessors[int[prim.indices]]
+                vi = int[a.bufferView]
                 key = 'i`vi`'
                 if not (key in view_ids)
                     made_id = h.next
                     h.next = h.next + 1
                     view_ids[key] = made_id
                     v = views[vi]
-                    uri = '`buffers[0 + v.buffer].uri`'
+                    uri = '`buffers[int[v.buffer]].uri`'
                     if split[uri, ':'][0] ne 'data'
                         uri = '`base``uri`'
                     off = 0
                     if v.byteOffset.ok
-                        off = 0 + v.byteOffset
-                    asks = push[asks, ['#`made_id`', '@buffer', '=`uri`', 'ELEMENT_ARRAY_BUFFER', str[off], str[0 + v.byteLength]]]
+                        off = int[v.byteOffset]
+                    size = 0
+                    size = int[v.byteLength]
+                    asks = push[asks, ['#`made_id`', '@buffer', '=`uri`', 'ELEMENT_ARRAY_BUFFER', str[off], str[size]]]
                     waiting = waiting + 1
                     owned = push[owned, made_id]
                 asks = push[asks, ['bindBuffer', 'ELEMENT_ARRAY_BUFFER', '#`view_ids[key]`']]
                 indexed = true
-                count = 0 + a.count
-                itype = _component[0 + a.componentType]
+                count = int[a.count]
+                itype = _component[int[a.componentType]]
                 if a.byteOffset.ok
-                    ioff = 0 + a.byteOffset
+                    ioff = int[a.byteOffset]
             asks = push[asks, ['bindVertexArray', 'null']]
             mode = 'TRIANGLES'
             if prim.mode.ok
-                mode = _modes[0 + prim.mode]
+                modes = _modes[]
+                mode = modes[int[prim.mode]]
             color = lory.white[]
             image = 0
             --- (glTF's defaults: fully metallic, fully rough, no glow)
@@ -1049,7 +1067,7 @@ fn _read_gltf[c, h, m, body]
             rough = 1.0
             glow = _black[]
             if prim.material.ok
-                mat = materials[0 + prim.material]
+                mat = materials[int[prim.material]]
                 if mat.emissiveFactor.ok
                     e = _floats[mat.emissiveFactor]
                     glow = lory.Color[e[0], e[1], e[2], 1.0]
@@ -1063,7 +1081,7 @@ fn _read_gltf[c, h, m, body]
                         f = _floats[pbr.baseColorFactor]
                         color = lory.Color[f[0], f[1], f[2], f[3]]
                     if pbr.baseColorTexture.ok
-                        src = 0 + textures[0 + pbr.baseColorTexture.index].source
+                        src = int[textures[int[pbr.baseColorTexture.index]].source]
                         ikey = str[src]
                         if not (ikey in image_ids)
                             made_id = h.next
