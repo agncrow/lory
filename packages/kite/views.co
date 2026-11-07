@@ -355,10 +355,19 @@ fn area[c, k, p]
 --- every pane's indicators' figures: lines, bars and circles
 fn figures[c, k]
     for p in k.panes
+        box_was = lory.clipped[c]
+        c = in_pane[c, k, p]
         for ind in k.inds
             if ind.pane eq p.id and ind.visible
                 c = indicator[c, k, p, ind]
+        c = lory.unclip[c, box_was]
     c
+
+--- what is drawn next clipped to a pane's plot, as each of klinecharts'
+--- panes is a canvas of its own (a line past the pane's range had run into
+--- the pane below)
+fn in_pane[c, k, p]
+    lory.clip[c, _sx[k, 0.0], _sy[k, p.top], k.main_w * k.s, p.h * k.s]
 
 --- one indicator's figures in its pane: a pane of its own shows the bars
 --- as OHLC sticks too where the indicator asks for them
@@ -911,8 +920,12 @@ fn everything[c, k]
     box_was = lory.clipped[c]
     c = lory.clip[c, _sx[k, 0.0], _sy[k, 0.0], k.main_w * k.s, (k.h - k.xaxis_h) * k.s]
     c = grid[c, k, xticks]
+    plot_box = lory.clipped[c]
+    c = in_pane[c, k, k.panes[0]]
     c = candles[c, k]
+    c = lory.unclip[c, plot_box]
     c = figures[c, k]
+    c = in_pane[c, k, k.panes[0]]
     c = marks[c, k]
     c = lory.unclip[c, box_was]
     c = y_axes[c, k]

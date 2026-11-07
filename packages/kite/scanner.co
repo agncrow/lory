@@ -12,6 +12,7 @@
 ---     c = kite.draw[c, k]
 ---     c = scanner.draw[c, k, previous_close]
 use math
+use memory
 use lory
 use store
 use views
@@ -289,17 +290,126 @@ fn _ladder[c, k, p, ref]
             c = views.seg[c, k, w + 8.0, at_y, w + 12.0, at_y, 1.0, tick, false, 0.0, 0.0]
     c
 
+--- ---- the price axis zoomed by buttons ----
+
+--- A zoom factor, not a fixed range: each frame the pane shows 1/factor of
+--- the range its bars in view need, centred on the last price, so the view
+--- follows the price as bars come at the magnification chosen; reset is 1.
+
+fn zoom_in[factor]
+    min[12.0, factor * 1.5]
+
+fn zoom_out[factor]
+    max[1.0, factor / 1.5]
+
+--- 1/factor of [lo, hi], centred on `center` where it is inside (the
+--- middle otherwise), never past either end: [from, to]
+fn zoomed[lo, hi, factor, center]
+    if not (factor gt 1.0) or not (hi gt lo)
+        return [lo, hi]
+    half = (hi - lo) / factor / 2.0
+    mid = (lo + hi) / 2.0
+    if center eq center and center gte lo and center lte hi
+        mid = center
+    from = mid - half
+    to = mid + half
+    if from lt lo
+        to = to + (lo - from)
+        from = lo
+    if to gt hi
+        from = from - (to - hi)
+        to = hi
+    [from, to]
+
+--- the range widened so [box_lo, box_hi] is in view (a sizing box)
+fn widened[lo, hi, box_lo, box_hi]
+    [min[lo, box_lo], max[hi, box_hi]]
+
+--- a chart's zoom, kept between frames
+struct Zoom [factor]
+
+fn _zoom_key[k]
+    'kite.scanner.zoom.`k.id`'
+
+--- the chart's zoom factor now
+fn zoom_of[k]
+    recall[_zoom_key[k], Zoom[1.0]].factor
+
+--- the candle pane shown at the chart's zoom factor: called after
+--- `kite.update`, each frame
+fn y_zoom[k]
+    factor = zoom_of[k]
+    i = store.pane_index[k, 'candle_pane']
+    if i lt 0 or factor lte 1.0 or store.count[k] eq 0
+        return k
+    p = k.panes[i]
+    if not p.auto
+        return k
+    r = p.rng
+    shown = zoomed[r.from, r.to, factor, k.bars.c[store.count[k] - 1]]
+    p.rng = store._range_of[k, p, shown[0], shown[1]]
+    p.ticks = store.y_ticks[k, p]
+    k.panes[i] = p
+    k
+
+--- the three buttons' centres: zoom out, zoom in, reset
+fn _button_xs[]
+    [12.0, 32.0, 52.0]
+
+fn _button_y[k]
+    p = store.pane[k, 'candle_pane']
+    p.top + 12.0
+
+--- a press on a button changes the zoom: what was pressed, `` for none
+fn take_zoom[c, k]
+    pressed = ''
+    words = ['out', 'in', 'reset']
+    y = _button_y[k]
+    for ev in lory.events[c]
+        if ev.on eq 'down' and ev.button eq 0
+            ex = ev.x / k.s - k.x
+            ey = ev.y / k.s - k.y
+            for j in range[3]
+                if abs[ex - _button_xs[][j]] lte 8.0 and abs[ey - y] lte 8.0
+                    pressed = words[j]
+    if pressed eq ''
+        return ''
+    factor = zoom_of[k]
+    if pressed eq 'out'
+        factor = zoom_out[factor]
+    if pressed eq 'in'
+        factor = zoom_in[factor]
+    if pressed eq 'reset'
+        factor = 1.0
+    remember[_zoom_key[k], Zoom[factor]]
+    pressed
+
+--- the buttons drawn: grey discs with −, + and ↺
+fn _buttons[c, k]
+    y = _button_y[k]
+    disc = format.color['rgba(156, 163, 175, 0.25)']
+    mark = format.color['rgba(229, 231, 235, 0.9)']
+    glyphs = ['−', '+', '↺']
+    for j in range[3]
+        x = _button_xs[][j]
+        c = lory.circle[c, views._sx[k, x], views._sy[k, y], 8.0 * k.s, disc]
+        g = glyphs[j]
+        w = store.text_w[c, k, g, 12.0]
+        c = views.words_at[c, k, x - w / 2.0, y - 7.0, g, 12.0, mark]
+    c
+
 --- ---- drawn over the chart ----
 
---- the scanner's drawings over a chart Kite has drawn: the VWAP band and
---- the percentage ladder (from `ref`, the previous close; 0 for the
+--- the scanner's drawings over a chart Kite has drawn: the VWAP band, the
+--- zoom buttons and the percentage ladder (from `ref`, the previous close; 0 for the
 --- plot's middle)
 fn draw[c, k, ref]
     if not store.has_pane[k, 'candle_pane']
         return c
     p = store.pane[k, 'candle_pane']
     c = _band[c, k, p]
-    _ladder[c, k, p, ref]
+    c = _ladder[c, k, p, ref]
+    _buttons[c, k]
 
 --- ---- held to the scanner's own answers ----
 
@@ -385,3 +495,27 @@ test the_band_is_six_percent_above_the_rolling_vwap[]
     indicators.is_none[stretch_band[0.0]]
     indicators.is_none[stretch_band[-1.0]]
     indicators.is_none[stretch_band[indicators.none[]]]
+
+test the_zoom_is_a_share_of_the_range_about_the_last_price[]
+    r = zoomed[10.0, 12.0, 2.0, 11.2]
+    abs[r[0] - 10.7] lt 0.000001 and abs[r[1] - 11.7] lt 0.000001
+    edge = zoomed[10.0, 12.0, 4.0, 11.95]
+    abs[edge[1] - 12.0] lt 0.000001 and abs[edge[0] - 11.5] lt 0.000001
+    middle = zoomed[10.0, 12.0, 2.0, indicators.none[]]
+    abs[middle[0] - 10.5] lt 0.000001 and abs[middle[1] - 11.5] lt 0.000001
+    outside = zoomed[10.0, 12.0, 2.0, 50.0]
+    abs[outside[0] - 10.5] lt 0.000001
+    zoomed[10.0, 12.0, 1.0, 11.0] eq [10.0, 12.0]
+    widened[10.0, 12.0, 10.5, 11.5] eq [10.0, 12.0]
+    widened[10.0, 12.0, 9.0, 11.0] eq [9.0, 12.0]
+
+test the_zoom_steps_by_half_again_up_to_twelve[]
+    abs[zoom_in[1.0] - 1.5] lt 0.000001
+    abs[zoom_out[1.5] - 1.0] lt 0.000001
+    zoom_out[1.0] eq 1.0
+    f = 1.0
+    n = 0
+    while n lt 20
+        f = zoom_in[f]
+        n = n + 1
+    f eq 12.0

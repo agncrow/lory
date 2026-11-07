@@ -2,7 +2,8 @@
 --- scanner's card draws them — the dark theme in teal and soft red, the
 --- cumulative VWAP (amber) and the 60-bar rolling one (blue) over the
 --- candles with its dashed band 6% above, the volume below, and the
---- percentage ladder down the left edge, 0% at the previous close.
+--- percentage ladder down the left edge, 0% at the previous close; the
+--- buttons at the top left zoom the price axis about the last price.
 use sys
 use math
 use lory
@@ -81,7 +82,9 @@ fn draw[frame]
     c = lory.begin[frame]
     c = lory.clear[c, lory.hex[scanner.background[]]]
     k = chart_of[]
+    pressed = scanner.take_zoom[c, k]
     k = kite.update[c, k, 0.0, 0.0, lory.width[c], lory.height[c]]
+    k = scanner.y_zoom[k]
     c = kite.draw[c, k]
     c = scanner.draw[c, k, 3.05]
     kite.keep[k]
