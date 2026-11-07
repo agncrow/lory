@@ -1,0 +1,90 @@
+--- Kite's scanner chart: a session of thirty-second bars drawn as a VWAP
+--- scanner's card draws them — the dark theme in teal and soft red, the
+--- cumulative VWAP (amber) and the 60-bar rolling one (blue) over the
+--- candles with its dashed band 6% above, the volume below, and the
+--- percentage ladder down the left edge, 0% at the previous close.
+use sys
+use math
+use lory
+use kite
+use kite.scanner
+
+fn made[n]
+    t0 = 1793971800000.0
+    ts = []
+    o = []
+    h = []
+    l = []
+    c = []
+    v = []
+    price = 3.10
+    for i in range[n]
+        x = 0.0 + i
+        step = sin[x * 12.9898] * 0.012 + sin[x * 0.045] * 0.006 + 0.0015
+        opened = price
+        closed = max[0.5, price + step]
+        ts = push[ts, t0 + x * 30000.0]
+        o = push[o, opened]
+        c = push[c, closed]
+        h = push[h, max[opened, closed] + abs[sin[x * 78.233]] * 0.01]
+        l = push[l, min[opened, closed] - abs[sin[x * 37.719]] * 0.01]
+        v = push[v, 20000.0 + abs[sin[x * 4.1414]] * 180000.0]
+        price = closed
+    kite.bars[ts, o, h, l, c, v]
+
+--- the cumulative VWAP from the first bar, and the VWAP of the last
+--- `window` bars (both of the bars' typical price, (high + low + close) / 3)
+fn vwaps[b, window]
+    cum = []
+    rolling = []
+    pv = 0.0
+    vol = 0.0
+    for i in range[len[b.c]]
+        typical = (b.h[i] + b.l[i] + b.c[i]) / 3.0
+        pv = pv + typical * b.v[i]
+        vol = vol + b.v[i]
+        cum = push[cum, pv / vol]
+        rpv = 0.0
+        rv = 0.0
+        j = max[0, i - window + 1]
+        while j lte i
+            rpv = rpv + (b.h[j] + b.l[j] + b.c[j]) / 3.0 * b.v[j]
+            rv = rv + b.v[j]
+            j = j + 1
+        rolling = push[rolling, rpv / rv]
+    [cum, rolling]
+
+fn chart_of[]
+    k = kite.chart['scanner']
+    if kite.count[k] gt 0
+        return k
+    k = kite.styled[k, scanner.theme[]]
+    k = kite.symbol[k, 'STAK', 2, 0]
+    k = kite.period[k, 'second', 30]
+    k = kite.zone[k, 'America/New_York']
+    k = kite.locale[k, 'en-abbr']
+    b = made[300]
+    k = kite.data[k, b]
+    lines = vwaps[b, 60]
+    k = scanner.vwap[k, lines[0], lines[1]]
+    k = kite.indicator[k, 'VOL', [], 'volume_pane']
+    k = scanner.volume_colors[k]
+    --- the previous day's high and low, as lines across the chart in the
+    --- grid's colour (overlays, so they stay where the grid does not)
+    for level in [3.22, 2.98]
+        k = kite.overlay[k, 'horizontalStraightLine', [kite.point[k, b.t[0], level]], 'candle_pane', '']
+        k = kite.overlay_style[k, kite.last_overlay[k], 'line.color', '#4b5563']
+        k = kite.lock_overlay[k, kite.last_overlay[k], true]
+    k
+
+fn draw[frame]
+    c = lory.begin[frame]
+    c = lory.clear[c, lory.hex[scanner.background[]]]
+    k = chart_of[]
+    k = kite.update[c, k, 0.0, 0.0, lory.width[c], lory.height[c]]
+    c = kite.draw[c, k]
+    c = scanner.draw[c, k, 3.05]
+    kite.keep[k]
+    lory.end[c]
+
+sys.frames[draw]

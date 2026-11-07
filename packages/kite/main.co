@@ -1,0 +1,391 @@
+--- Kite: candlestick charts drawn by Lory — klinecharts' behaviour,
+--- written in Crow. Candles of six kinds, klinecharts' twenty-seven
+--- indicators computed to its last digit, panes below the candles, axes
+--- that fit their labels (normal, percentage, logarithmic), a crosshair
+--- and tooltips, high and low marks and the last price, drawing tools
+--- (`overlays`), every style klinecharts names, and a drag to scroll, the
+--- wheel or a pinch to zoom, a drag of an axis to stretch it.
+---
+--- A chart is a record the program keeps between frames (in process
+--- memory, as Lory's widgets keep theirs):
+---
+---     use kite
+---
+---     fn draw[frame]
+---         c = lory.begin[frame]
+---         k = kite.chart['prices']
+---         if kite.count[k] eq 0
+---             k = kite.data[k, made_bars[]]
+---             k = kite.indicator[k, 'MA', [], 'candle_pane']
+---             k = kite.indicator[k, 'VOL', [], '']
+---         k = kite.update[c, k, 0.0, 0.0, lory.width[c], lory.height[c]]
+---         c = kite.draw[c, k]
+---         kite.keep[k]
+---         lory.end[c]
+---
+--- Places a program hands Kite (a chart's box) are the canvas's pixels,
+--- as Lory's are; everything inside a chart is in CSS pixels, as
+--- klinecharts' styles are.
+use memory
+use lory
+use store
+use views
+use indicators
+use styles
+use format
+use overlays
+
+--- ---- a chart, kept between frames ----
+
+--- the chart named `id`: the one kept, or a new one of no bars
+fn chart[id]
+    recall['kite.`id`', store.new[id]]
+
+--- the chart kept for the next frame
+fn keep[k]
+    remember['kite.`k.id`', k]
+
+--- the chart forgotten (its bars, panes and indicators)
+fn drop[id]
+    forget['kite.`id`']
+
+--- ---- one frame ----
+
+--- the chart laid out in its box (the canvas's pixels) and the frame's
+--- input taken: a drag scrolls, the wheel zooms, a drag of the y axis
+--- stretches it, and a drawing tool takes its points
+fn update[c, k, x, y, w, h]
+    k = store.prepare[c, k, x, y, w, h]
+    for ev in lory.events[c]
+        r = overlays.take[k, ev]
+        k = r.k
+        --- (the crosshair follows the pointer while a tool is drawn or
+        --- moved, as klinecharts' does)
+        if not r.taken or ev.on eq 'move'
+            k = store.take[k, ev]
+    store.settle[c, k]
+
+--- the chart drawn: everything klinecharts draws, and the overlays
+fn draw[c, k]
+    c = views.everything[c, k]
+    overlays.draw_all[c, k]
+
+--- what the frame did: `scroll`, `zoom` (klinecharts' actions)
+fn actions[k]
+    k.actions
+
+--- `older` where the view reached the first bar and the program said more
+--- bars come before it (`data`'s `more_older`), `newer` the same at the
+--- last; `` otherwise: the program loads them and `prepend`s or `append`s
+fn wants[k]
+    k.wants
+
+--- ---- the bars ----
+
+--- bars from columns: times (milliseconds since 1970), opens, highs, lows,
+--- closes, volumes
+fn bars[t, o, h, l, c, v]
+    indicators.bars[t, o, h, l, c, v]
+
+fn count[k]
+    store.count[k]
+
+--- the chart's bars, all of them: the view goes to the newest
+fn data[k, b]
+    store.set_bars[k, b, false, false]
+
+--- the bars, and whether more come before or after them
+fn data_more[k, b, more_older, more_newer]
+    store.set_bars[k, b, more_older, more_newer]
+
+--- older bars before the ones held
+fn prepend[k, b, more_older]
+    store.prepend[k, b, more_older]
+
+--- newer bars after the ones held
+fn append[k, b, more_newer]
+    store.append_bars[k, b, more_newer]
+
+--- a bar as it is now: the last one changed, or a new one after it
+fn tick[k, t, o, h, l, c, v]
+    store.update_bar[k, t, o, h, l, c, v]
+
+--- ---- what the bars are ----
+
+--- the ticker and the decimals its prices and volumes show
+fn symbol[k, ticker, price_precision, volume_precision]
+    k.symbol = store.Symbol[ticker, price_precision, volume_precision]
+    k
+
+--- what a bar spans: `second`, `minute`, `hour`, `day`, `week`, `month`,
+--- `year`, so many of them
+fn period[k, unit, span]
+    k.period = store.Period[unit, span]
+    k
+
+--- the time zone the times are written in (as the IANA database names
+--- it; `` is UTC)
+fn zone[k, name]
+    k.zone = name
+    k
+
+--- the words the chart says: `en-US`, `zh-CN`, `en-abbr`
+fn locale[k, name]
+    k.locale = name
+    k
+
+--- ---- the styles ----
+
+--- one style, by its path as klinecharts names it
+fn style[k, key, value]
+    k.styles[key] = value
+    k
+
+--- many styles at once (a theme: `styles.dark[]`)
+fn styled[k, m]
+    k.styles = styles.merged[k.styles, m]
+    k
+
+--- a style as it is now
+fn style_of[k, key]
+    store.st[k, key]
+
+--- ---- the view ----
+
+--- the space a bar takes, 1 to 50 pixels
+fn bar_space[k, space]
+    store.set_space[k, space]
+
+--- the distance from the newest bar to the plot's right edge
+fn offset_right[k, d]
+    store.set_offset_right[k, d]
+
+--- whether a drag scrolls and the wheel zooms
+fn scrolls[k, on]
+    k.scroll_on = on
+    k
+
+fn zooms[k, on]
+    k.zoom_on = on
+    k
+
+--- the view scrolled by `d` pixels (positive: toward older bars)
+fn scroll_by[k, d]
+    store.scroll_by[k, d]
+
+--- the view zoomed by `scale` (positive: nearer) about `x` (CSS pixels
+--- from the plot's left)
+fn zoom_at[k, scale, x]
+    store.zoom[k, scale, x]
+
+fn to_real_time[k]
+    store.scroll_to_real_time[k]
+
+fn to_time[k, t]
+    store.scroll_to_time[k, t]
+
+fn to_index[k, i]
+    store.scroll_to_index[k, i]
+
+--- ---- the panes and the indicators ----
+
+--- a pane below the candles, `height` CSS pixels tall
+fn pane[k, id, height]
+    store.add_pane[k, id, height]
+
+--- a pane's axis: `normal`, `percentage`, `logarithm`
+fn axis[k, id, kind_of]
+    i = store.pane_index[k, id]
+    if i lt 0
+        return k
+    p = k.panes[i]
+    p.axis = kind_of
+    k.panes[i] = p
+    k
+
+--- a pane's gaps above and below its values (a share of its height, or
+--- pixels where 1 or more)
+fn gaps[k, id, top, bottom]
+    i = store.pane_index[k, id]
+    if i lt 0
+        return k
+    p = k.panes[i]
+    p.gap_top = top
+    p.gap_bottom = bottom
+    k.panes[i] = p
+    k
+
+--- a pane's height
+fn height[k, id, h]
+    i = store.pane_index[k, id]
+    if i lt 0
+        return k
+    p = k.panes[i]
+    p.height = h
+    k.panes[i] = p
+    k
+
+--- a pane's y range fixed (a program's zoom), until `unfix` or a double
+--- click of its axis
+fn fix[k, id, lo, hi]
+    store.fix_range[k, id, lo, hi]
+
+fn unfix[k, id]
+    store.unfix[k, id]
+
+--- the value range a pane shows now: [from, to]
+fn range_of[k, id]
+    p = store.pane[k, id]
+    [p.rng.from, p.rng.to]
+
+--- a built-in indicator (`MA`, `VOL`, `MACD`, …; `[]` for its default
+--- parameters) in a pane: `candle_pane` over the candles, a new pane's id,
+--- or `` for a pane of its own named for it
+fn indicator[k, name, params, pane_id]
+    ind = indicators.made[name, params]
+    return add[k, ind, pane_id]
+
+--- an indicator of the program's own (`indicators.custom[…]`)
+fn add[k, ind, pane_id]
+    where = pane_id
+    if where eq ''
+        where = 'pane_`ind.name`'
+    if not store.has_pane[k, where]
+        k = store.add_pane[k, where, 100.0]
+    ind.pane = where
+    ind.id = '`where`/`ind.name`'
+    kept = []
+    for other in k.inds
+        if other.id ne ind.id
+            kept = push[kept, other]
+    k.inds = push[kept, ind]
+    k.dirty = true
+    k
+
+--- an indicator taken off (and its pane, where nothing else is in it)
+fn remove[k, name, pane_id]
+    kept = []
+    for other in k.inds
+        if not (other.name eq name and (pane_id eq '' or other.pane eq pane_id))
+            kept = push[kept, other]
+    k.inds = kept
+    for p in k.panes
+        if p.id ne 'candle_pane'
+            used = false
+            for ind in k.inds
+                used = used or ind.pane eq p.id
+            if not used
+                k = store.remove_pane[k, p.id]
+    k
+
+--- an indicator's parameters changed (its values worked out again)
+fn params[k, name, given]
+    out = []
+    for ind in k.inds
+        if ind.name eq name
+            ind.params = given
+            ind.figures = indicators.figures_of[name, given]
+        out = push[out, ind]
+    k.inds = out
+    k.dirty = true
+    k
+
+--- an indicator shown or hidden
+fn shown[k, name, on]
+    out = []
+    for ind in k.inds
+        if ind.name eq name
+            ind.visible = on
+        out = push[out, ind]
+    k.inds = out
+    k
+
+--- a custom indicator's values set again (its bars changed)
+fn set_values[k, name, given]
+    out = []
+    for ind in k.inds
+        if ind.name eq name
+            ind.values = given
+        out = push[out, ind]
+    k.inds = out
+    k
+
+--- ---- the drawing tools (klinecharts' overlays) ----
+
+--- the tools there are: `segment`, `priceLine`, `fibonacciLine`, …
+fn tools[]
+    overlays.tools[]
+
+--- a point an overlay is drawn through: a bar's time and a value
+fn point[k, t, value]
+    store.Point[store.index_at_time[k, t], t, value]
+
+--- an overlay drawn through the points given, in a pane (`candle_pane`,
+--- or an indicator's); its words for an annotation or a tag. Its id is
+--- `last_overlay`'s.
+fn overlay[k, name, points, pane_id, words]
+    overlays.create[k, name, points, pane_id, words]
+
+--- a tool the reader draws with clicks
+fn draw_tool[k, name]
+    overlays.start[k, name]
+
+--- the id of the overlay made last
+fn last_overlay[k]
+    overlays.last_id[k]
+
+fn remove_overlay[k, id]
+    overlays.remove[k, id]
+
+fn remove_overlays[k, group]
+    overlays.remove_group[k, group]
+
+fn clear_overlays[k]
+    overlays.clear[k]
+
+--- an overlay locked (it cannot be moved), shown or hidden, its magnet
+--- (`normal`, `weak_magnet`, `strong_magnet`), group or words
+fn lock_overlay[k, id, on]
+    overlays.lock[k, id, on]
+
+fn show_overlay[k, id, on]
+    overlays.show[k, id, on]
+
+fn overlay_mode[k, id, m]
+    overlays.mode[k, id, m]
+
+fn overlay_group[k, id, g]
+    overlays.group[k, id, g]
+
+fn overlay_words[k, id, w]
+    overlays.words[k, id, w]
+
+--- one of an overlay's styles (`line.color`, `line.style`, `text.size`, …)
+fn overlay_style[k, id, key, value]
+    overlays.style[k, id, key, value]
+
+--- ---- reading the chart ----
+
+--- the bar under the crosshair (the last where there is none)
+fn bar_at_cross[k]
+    store.cross_index[k]
+
+--- the value at a place in the chart (CSS pixels from its top) in a pane
+fn value_at[k, id, y]
+    store.value_at[k, id, y]
+
+--- a value's place in the chart, CSS pixels from its top
+fn y_of[k, id, v]
+    store.y_of[k, id, v]
+
+--- a bar's centre, CSS pixels from the plot's left
+fn x_of[k, i]
+    store.x_of[k, 0.0 + i]
+
+--- the bar at a place, CSS pixels from the plot's left
+fn index_at[k, x]
+    store.index_of[k, x]
+
+--- the time of a bar's position (past either end by the period)
+fn time_at[k, i]
+    store.time_of[k, i]

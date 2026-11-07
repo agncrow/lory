@@ -1,0 +1,694 @@
+--- Kite's overlays: lines and marks drawn over a chart through points a
+--- program gives or a reader clicks, as klinecharts' overlays are — its
+--- fifteen drawing tools, each drawn from its points' places as
+--- klinecharts draws it.
+---
+---     k = overlays.create[k, 'horizontalStraightLine', [p], 'candle_pane', '']
+---     k = overlays.start[k, 'segment']      --- the reader clicks two points
+---
+--- A point is a bar's time and a value (`store.Point[index, t, value]`;
+--- the time decides the bar, so bars loaded before the ones held move
+--- nothing). An overlay being drawn follows the pointer and takes a point
+--- at each click; a drawn one shows its points where the pointer is over
+--- it, a drag of a point moves the point, a drag of a line moves the
+--- whole overlay (unless it is locked), and a right click removes it. A
+--- point's value snaps to the bar's open, high, low or close in the
+--- `weak_magnet` mode where it is near one, and always in `strong_magnet`.
+use math
+use lory
+use format
+use store
+use views
+
+--- ---- the tools ----
+
+--- every tool klinecharts has built in
+fn tools[]
+    ['horizontalRayLine', 'horizontalSegment', 'horizontalStraightLine', 'verticalRayLine', 'verticalSegment', 'verticalStraightLine', 'rayLine', 'segment', 'straightLine', 'priceLine', 'priceChannelLine', 'parallelStraightLine', 'fibonacciLine', 'simpleAnnotation', 'simpleTag']
+
+--- the points a tool is drawn through (klinecharts' totalStep less one)
+fn needed_of[name]
+    if name eq 'horizontalStraightLine' or name eq 'verticalStraightLine' or name eq 'priceLine' or name eq 'simpleAnnotation' or name eq 'simpleTag'
+        return 1
+    if name eq 'priceChannelLine' or name eq 'parallelStraightLine'
+        return 3
+    2
+
+--- whether a tool's points are labelled on the axes while it is shown
+fn _labels_axes[name]
+    not (name eq 'simpleAnnotation' or name eq 'simpleTag' or name eq 'priceLine')
+
+--- ---- making and changing them ----
+
+fn _next_id[k]
+    'overlay_`len[k.overlays] + 1`_`int[store.count[k]]`'
+
+fn _overlay_of[k, name, points, pane_id, words]
+    id = _next_id[k]
+    taken = true
+    for o in k.overlays
+        taken = taken and o.id ne id
+    if not taken
+        id = '`id`_`len[k.overlays]`'
+    store.Overlay[id, name, '', pane_id, points, needed_of[name], map[], false, true, 'normal', true, 0, map[], words, false, false, '', points]
+
+--- an overlay drawn through the points given (in a pane: `candle_pane`
+--- or an indicator's); with words, an annotation's or a tag's
+fn create[k, name, points, pane_id, words]
+    o = _overlay_of[k, name, points, pane_id, words]
+    o.done = len[points] gte o.needed
+    k.overlays = push[k.overlays, o]
+    if not o.done
+        k.drawing = o.id
+    k
+
+--- a tool to be drawn by the reader's clicks, in the pane the first click
+--- falls in
+fn start[k, name]
+    k = cancel[k]
+    o = _overlay_of[k, name, [], '', '']
+    o.done = false
+    k.overlays = push[k.overlays, o]
+    k.drawing = o.id
+    k
+
+--- a tool being drawn given up
+fn cancel[k]
+    if k.drawing eq ''
+        return k
+    k = remove[k, k.drawing]
+    k.drawing = ''
+    k
+
+--- the id of the overlay made last
+fn last_id[k]
+    n = len[k.overlays]
+    if n eq 0
+        return ''
+    k.overlays[n - 1].id
+
+fn _index_of_id[k, id]
+    for i in range[len[k.overlays]]
+        if k.overlays[i].id eq id
+            return i
+    -1
+
+fn remove[k, id]
+    kept = []
+    for o in k.overlays
+        if o.id ne id
+            kept = push[kept, o]
+    k.overlays = kept
+    if k.drawing eq id
+        k.drawing = ''
+    k
+
+--- every overlay of a group taken off
+fn remove_group[k, group]
+    kept = []
+    for o in k.overlays
+        if o.group ne group
+            kept = push[kept, o]
+    k.overlays = kept
+    k
+
+fn clear[k]
+    k.overlays = []
+    k.drawing = ''
+    k
+
+--- an overlay changed by a function of it: `lock`, `shown`, `mode`, …
+fn _changed[k, id, what, on, words]
+    i = _index_of_id[k, id]
+    if i lt 0
+        return k
+    o = k.overlays[i]
+    if what eq 'lock'
+        o.lock = on
+    if what eq 'visible'
+        o.visible = on
+    if what eq 'mode'
+        o.mode = words
+    if what eq 'group'
+        o.group = words
+    if what eq 'words'
+        o.words = words
+    k.overlays[i] = o
+    k
+
+fn lock[k, id, on]
+    _changed[k, id, 'lock', on, '']
+
+fn show[k, id, on]
+    _changed[k, id, 'visible', on, '']
+
+--- `normal`, `weak_magnet`, `strong_magnet`
+fn mode[k, id, m]
+    _changed[k, id, 'mode', false, m]
+
+fn group[k, id, g]
+    _changed[k, id, 'group', false, g]
+
+fn words[k, id, w]
+    _changed[k, id, 'words', false, w]
+
+--- one of the overlay's styles (`line.color`, `line.style`, `text.size`,
+--- …), over the chart's `overlay.…`
+fn style[k, id, key, value]
+    i = _index_of_id[k, id]
+    if i lt 0
+        return k
+    o = k.overlays[i]
+    o.styles[key] = value
+    k.overlays[i] = o
+    k
+
+fn _st[k, o, key]
+    if key in o.styles
+        return o.styles[key]
+    if key eq 'line.style' and (o.name eq 'simpleAnnotation' or o.name eq 'simpleTag')
+        return 'dashed'
+    store.st[k, 'overlay.`key`']
+
+fn _num[k, o, key]
+    t = _st[k, o, key]
+    if t eq ''
+        return 0.0
+    format.number[t, 0.0]
+
+fn _col[k, o, key]
+    format.color[_st[k, o, key]]
+
+--- ---- where points are ----
+
+--- a point's place in its pane: x from the plot's left, y from the pane's
+--- top (CSS pixels)
+fn _x_of_point[k, pt]
+    i = pt.index
+    if store.count[k] gt 0 and pt.t gt 0.0
+        i = store.index_at_time[k, pt.t]
+    store.x_of[k, 0.0 + i]
+
+fn _y_of_point[k, p, pt]
+    0.0 + store.y_in_pane[k, p, pt.value]
+
+--- the point under the pointer (x from the plot's left, y from the
+--- pane's top), its value snapped to the bar in a magnet mode
+fn point_at[k, p, o, x, y]
+    i = store.index_of[k, x]
+    t = store.time_of[k, i]
+    v = store.value_in_pane[k, p, y]
+    if o.mode ne 'normal' and p.id eq 'candle_pane' and i gte 0 and i lt store.count[k]
+        v = _snapped[k, p, o, i, v]
+    store.Point[i, t, v]
+
+fn _snapped[k, p, o, i, v]
+    b = k.bars
+    high = b.h[i]
+    low = b.l[i]
+    if v gt high
+        if o.mode eq 'weak_magnet'
+            buff = store.value_in_pane[k, p, store.y_in_pane[k, p, high] - 10.0]
+            if v lt buff
+                return high
+            return v
+        return high
+    if v lt low
+        if o.mode eq 'weak_magnet'
+            buff = store.value_in_pane[k, p, store.y_in_pane[k, p, low] - 10.0]
+            if v gt buff
+                return low
+            return v
+        return low
+    top = max[b.o[i], b.c[i]]
+    bottom = min[b.o[i], b.c[i]]
+    if v gt top
+        if v - top lt high - v
+            return top
+        return high
+    if v lt bottom
+        if v - low lt bottom - v
+            return low
+        return bottom
+    if top - v lt v - bottom
+        return top
+    bottom
+
+--- ---- what a tool draws ----
+
+--- one thing an overlay draws: a line through points, a filled polygon,
+--- or words at a place; whether the pointer over it finds the overlay
+struct Fig [shape, xs, ys, words, align, baseline, hit]
+
+fn _line[xs, ys]
+    Fig['line', xs, ys, '', '', '', true]
+
+fn _slope_y[x0, y0, x1, y1, x]
+    if x0 eq x1
+        return y0
+    m = (y0 - y1) / (x0 - x1)
+    x * m + (y0 - m * x0)
+
+--- the figures of an overlay whose points stand at (xs, ys) in a pane
+--- `w` wide and `h` tall (klinecharts' createPointFigures)
+fn figures_of[k, p, o, xs, ys, w, h]
+    n = len[xs]
+    out = []
+    if n eq 0
+        return out
+    name = o.name
+    x0 = xs[0]
+    y0 = ys[0]
+    if name eq 'horizontalStraightLine'
+        return [_line[[0.0, w], [y0, y0]]]
+    if name eq 'verticalStraightLine'
+        return [_line[[x0, x0], [0.0, h]]]
+    if name eq 'horizontalRayLine'
+        end = 0.0
+        if n gt 1 and x0 lt xs[1]
+            end = w
+        return [_line[[x0, end], [y0, y0]]]
+    if name eq 'priceLine'
+        precision = store.precision_of[k, p]
+        words = format.fold[format.thousands[format.fixed[o.points[0].value, precision], ','], 3]
+        return [_line[[x0, w], [y0, y0]], Fig['text', [x0], [y0], words, 'left', 'bottom', false]]
+    if name eq 'simpleAnnotation'
+        sy = y0 - 6.0
+        line_end = sy - 50.0
+        arrow_end = line_end - 5.0
+        return [Fig['line', [x0, x0], [sy, line_end], '', '', '', false], Fig['polygon', [x0, x0 - 4.0, x0 + 4.0], [line_end, arrow_end, arrow_end], '', '', '', false], Fig['text', [x0], [arrow_end], o.words, 'center', 'bottom', false]]
+    if name eq 'simpleTag'
+        return [Fig['line', [0.0, w], [y0, y0], '', '', '', false]]
+    if n lt 2
+        return out
+    x1 = xs[1]
+    y1 = ys[1]
+    if name eq 'horizontalSegment' or name eq 'verticalSegment' or name eq 'segment'
+        return [_line[[x0, x1], [y0, y1]]]
+    if name eq 'verticalRayLine'
+        end = 0.0
+        if y0 lt y1
+            end = h
+        return [_line[[x0, x0], [y0, end]]]
+    if name eq 'rayLine'
+        if x0 eq x1 and y0 ne y1
+            end = 0.0
+            if y0 lt y1
+                end = h
+            return [_line[[x0, x0], [y0, end]]]
+        if x0 gt x1
+            return [_line[[x0, 0.0], [y0, _slope_y[x0, y0, x1, y1, 0.0]]]]
+        return [_line[[x0, w], [y0, _slope_y[x0, y0, x1, y1, w]]]]
+    if name eq 'straightLine'
+        if x0 eq x1
+            return [_line[[x0, x0], [0.0, h]]]
+        return [_line[[0.0, w], [_slope_y[x0, y0, x1, y1, 0.0], _slope_y[x0, y0, x1, y1, w]]]]
+    if name eq 'fibonacciLine'
+        precision = store.precision_of[k, p]
+        v0 = o.points[0].value
+        v1 = o.points[1].value
+        for pct in [1.0, 0.786, 0.618, 0.5, 0.382, 0.236, 0.0]
+            y = y1 + (y0 - y1) * pct
+            value = format.fold[format.thousands[format.fixed[v1 + (v0 - v1) * pct, precision], ','], 3]
+            out = push[out, _line[[0.0, w], [y, y]]]
+            out = push[out, Fig['text', [0.0], [y], '`value` (`format.fixed[pct * 100.0, 1]`%)', 'left', 'bottom', false]]
+        return out
+    if name eq 'parallelStraightLine' or name eq 'priceChannelLine'
+        extra = 0
+        if name eq 'priceChannelLine'
+            extra = 1
+        return _parallel[xs, ys, w, h, extra]
+    out
+
+--- klinecharts' parallel lines: the line through the first two points
+--- across the pane, one through the third parallel to it, and so many
+--- more at the same distance
+fn _parallel[xs, ys, w, h, extra]
+    out = []
+    n = len[xs]
+    if xs[0] eq xs[1]
+        out = push[out, _line[[xs[0], xs[0]], [0.0, h]]]
+        if n gt 2
+            out = push[out, _line[[xs[2], xs[2]], [0.0, h]]]
+            d = xs[0] - xs[2]
+            for i in range[extra]
+                x = xs[0] + d * (i + 1)
+                out = push[out, _line[[x, x], [0.0, h]]]
+        return out
+    m = (ys[0] - ys[1]) / (xs[0] - xs[1])
+    b = ys[0] - m * xs[0]
+    out = push[out, _line[[0.0, w], [b, w * m + b]]]
+    if n gt 2
+        b1 = ys[2] - m * xs[2]
+        out = push[out, _line[[0.0, w], [b1, w * m + b1]]]
+        d = b - b1
+        for i in range[extra]
+            b2 = b + d * (i + 1)
+            out = push[out, _line[[0.0, w], [b2, w * m + b2]]]
+    out
+
+--- an overlay's points' places in its pane
+fn _places[k, p, o]
+    xs = []
+    ys = []
+    for pt in o.points
+        xs = push[xs, _x_of_point[k, pt]]
+        ys = push[ys, _y_of_point[k, p, pt]]
+    [xs, ys]
+
+--- ---- drawing them ----
+
+fn draw_all[c, k]
+    box_was = lory.clipped[c]
+    for p in k.panes
+        c = lory.clip[c, (k.x) * k.s, (k.y + p.top) * k.s, k.main_w * k.s, p.h * k.s]
+        for o in k.overlays
+            if o.visible and o.pane eq p.id
+                c = _draw_one[c, k, p, o]
+        c = lory.unclip[c, box_was]
+        for o in k.overlays
+            if o.visible and o.pane eq p.id
+                c = _axis_labels[c, k, p, o]
+    c
+
+fn _draw_one[c, k, p, o]
+    at = _places[k, p, o]
+    xs = at[0]
+    ys = at[1]
+    color = _col[k, o, 'line.color']
+    size = _num[k, o, 'line.size']
+    dashed = _st[k, o, 'line.style'] eq 'dashed'
+    d = _dashes[k, o]
+    for f in figures_of[k, p, o, xs, ys, k.main_w, p.h]
+        if f.shape eq 'line'
+            fy = []
+            for y in f.ys
+                fy = push[fy, p.top + y]
+            c = views.polyline[c, k, f.xs, fy, size, color, dashed, d[0], d[1]]
+        if f.shape eq 'polygon'
+            px = []
+            py = []
+            for i in range[len[f.xs]]
+                px = push[px, (k.x + f.xs[i]) * k.s]
+                py = push[py, (k.y + p.top + f.ys[i]) * k.s]
+            c = lory.fill[c, px, py, _col[k, o, 'polygon.color']]
+        if f.shape eq 'text' and f.words ne ''
+            c = _text_box[c, k, o, f.xs[0], p.top + f.ys[0], f.words, f.align, f.baseline]
+    if o.hover or o.selected or not o.done
+        for i in range[len[xs]]
+            c = _point_mark[c, k, o, xs[i], p.top + ys[i], o.moving eq 'point:`i`']
+    c
+
+fn _dashes[k, o]
+    t = _st[k, o, 'line.dashedValue']
+    pieces = split[t, ',']
+    if len[pieces] lt 2
+        return [2.0, 2.0]
+    [format.number[pieces[0], 2.0], format.number[pieces[1], 2.0]]
+
+--- a point of an overlay shown: a disc with a ring about it (larger
+--- while it is dragged)
+fn _point_mark[c, k, o, x, y, active]
+    pre = 'point.'
+    if active
+        pre = 'point.active'
+    r = _num[k, o, '`pre`radius']
+    if active
+        r = _num[k, o, 'point.activeRadius']
+    border = _num[k, o, 'point.borderSize']
+    border_c = _col[k, o, 'point.borderColor']
+    fill_c = _col[k, o, 'point.color']
+    if active
+        border = _num[k, o, 'point.activeBorderSize']
+        border_c = _col[k, o, 'point.activeBorderColor']
+        fill_c = _col[k, o, 'point.activeColor']
+    sx = (k.x + x) * k.s
+    sy = (k.y + y) * k.s
+    c = lory.circle[c, sx, sy, (r + border) * k.s, border_c]
+    lory.circle[c, sx, sy, r * k.s, fill_c]
+
+--- words in the overlay's text box style
+fn _text_box[c, k, o, x, y, words, align, baseline]
+    size = _num[k, o, 'text.size']
+    pl = _num[k, o, 'text.paddingLeft']
+    pr = _num[k, o, 'text.paddingRight']
+    pt = _num[k, o, 'text.paddingTop']
+    pb = _num[k, o, 'text.paddingBottom']
+    w = pl + store.text_w[c, k, words, size] + pr
+    h = pt + size + pb
+    x0 = x
+    if align eq 'center'
+        x0 = x - w / 2.0
+    if align eq 'right'
+        x0 = x - w
+    y0 = y
+    if baseline eq 'bottom'
+        y0 = y - h
+    if baseline eq 'middle'
+        y0 = y - h / 2.0
+    c = views.rounded[c, k, x0, y0, w, h, _num[k, o, 'text.borderRadius'], _col[k, o, 'text.backgroundColor']]
+    views.words_at[c, k, x0 + pl, y0 + pt, words, size, _col[k, o, 'text.color']]
+
+--- the points' values on the y axis and their times on the x axis, while
+--- the overlay is shown with its points (a tag's value always)
+fn _axis_labels[c, k, p, o]
+    if o.name eq 'simpleTag' and len[o.points] gt 0
+        words = o.words
+        if words eq ''
+            words = format.fixed[o.points[0].value, store.precision_of[k, p]]
+        y = p.top + _y_of_point[k, p, o.points[0]]
+        return _text_box[c, k, o, k.w, y, words, 'right', 'middle']
+    if not (o.hover or o.selected or not o.done) or not _labels_axes[o.name]
+        return c
+    precision = store.precision_of[k, p]
+    for pt in o.points
+        y = p.top + _y_of_point[k, p, pt]
+        if y gte p.top and y lte p.top + p.h
+            c = _text_box[c, k, o, k.w, y, format.fixed[pt.value, precision], 'right', 'middle']
+        x = _x_of_point[k, pt]
+        if x gte 0.0 and x lte k.main_w and store.count[k] gt 0
+            words = format.date[k.zone, pt.t, store.cross_template[k.period.unit]]
+            c = _text_box[c, k, o, x, k.h - k.xaxis_h, words, 'center', 'top']
+    c
+
+--- ---- the pointer ----
+
+--- what an event did to the overlays: the chart, and whether the event was
+--- theirs (the chart does not scroll for it)
+struct Taken [k, taken]
+
+--- whether the pointer at (x, y) — y from the pane's top — is on a figure
+--- of the overlay, or on one of its points (`point:N`)
+fn hit_of[k, p, o, x, y]
+    at = _places[k, p, o]
+    xs = at[0]
+    ys = at[1]
+    if o.hover or o.selected
+        r = _num[k, o, 'point.radius'] + _num[k, o, 'point.borderSize']
+        for i in range[len[xs]]
+            dx = xs[i] - x
+            dy = ys[i] - y
+            if dx * dx + dy * dy lte r * r
+                return 'point:`i`'
+    for f in figures_of[k, p, o, xs, ys, k.main_w, p.h]
+        if f.hit and f.shape eq 'line' and _on_line[f.xs, f.ys, x, y]
+            return 'line'
+    ''
+
+--- klinecharts' checkCoordinateOnLine: within two pixels of a piece
+fn _on_line[xs, ys, x, y]
+    dev = 2.0
+    for i in range[len[xs] - 1]
+        ax = xs[i]
+        ay = ys[i]
+        bx = xs[i + 1]
+        by = ys[i + 1]
+        if ax eq bx
+            if abs[ay - y] + abs[by - y] - abs[ay - by] lt dev + dev and abs[x - ax] lt dev
+                return true
+        else
+            m = (ay - by) / (ax - bx)
+            b = ay - m * ax
+            yd = abs[x * m + b - y]
+            if abs[ax - x] + abs[bx - x] - abs[ax - bx] lt dev + dev and yd * yd / (m * m + 1.0) lt dev * dev
+                return true
+    false
+
+--- the topmost overlay hit at (x, y) of the chart, and what of it: [id,
+--- what], or [``, ``]
+fn _hit[k, x, y]
+    pane_id = store.pane_at[k, y]
+    if pane_id eq ''
+        return ['', '']
+    p = store.pane[k, pane_id]
+    i = len[k.overlays] - 1
+    while i gte 0
+        o = k.overlays[i]
+        if o.visible and o.done and o.pane eq pane_id
+            what = hit_of[k, p, o, x, y - p.top]
+            if what ne ''
+                return [o.id, what]
+        i = i - 1
+    ['', '']
+
+--- an event offered to the overlays first (an event's place is in
+--- drawing pixels, from the canvas's top left)
+fn take[k, ev]
+    ex = ev.x / k.s - k.x
+    ey = ev.y / k.s - k.y
+    if ev.on eq 'key' and ev.code eq 'Escape' and k.drawing ne ''
+        return Taken[cancel[k], true]
+    if k.drawing ne ''
+        return _drawing[k, ev, ex, ey]
+    inside = ex gte 0.0 and ex lte k.main_w and ey gte 0.0 and ey lte k.h - k.xaxis_h
+    if ev.on eq 'down' and inside
+        hit = _hit[k, ex, ey]
+        if ev.button eq 2
+            if hit[0] ne ''
+                return Taken[remove[k, hit[0]], true]
+            return Taken[k, false]
+        k = _select[k, hit[0]]
+        if hit[0] eq ''
+            return Taken[k, false]
+        i = _index_of_id[k, hit[0]]
+        o = k.overlays[i]
+        if o.lock
+            return Taken[k, true]
+        o.moving = hit[1]
+        if hit[1] eq 'line'
+            o.moving = 'all'
+        o.from = o.points
+        k.overlays[i] = o
+        k.drag = store.Drag['overlay', ex, ey, 0.0, o.id, 0.0, 0.0, store._empty_range[], 1.0]
+        return Taken[k, true]
+    if ev.on eq 'move'
+        if k.drag.what eq 'overlay'
+            return Taken[_moved[k, ex, ey], true]
+        k = _hover[k, ex, ey]
+        return Taken[k, false]
+    if ev.on eq 'up' and k.drag.what eq 'overlay'
+        i = _index_of_id[k, k.drag.pane]
+        if i gte 0
+            o = k.overlays[i]
+            o.moving = ''
+            k.overlays[i] = o
+        k.drag = store._no_drag[]
+        return Taken[k, true]
+    Taken[k, false]
+
+fn _select[k, id]
+    out = []
+    for o in k.overlays
+        o.selected = o.id eq id
+        out = push[out, o]
+    k.overlays = out
+    k
+
+fn _hover[k, x, y]
+    hit = _hit[k, x, y]
+    out = []
+    for o in k.overlays
+        o.hover = o.id eq hit[0]
+        out = push[out, o]
+    k.overlays = out
+    k
+
+--- a drag of an overlay: one point, or all of them by the pointer's move
+--- in bars and in value
+fn _moved[k, ex, ey]
+    i = _index_of_id[k, k.drag.pane]
+    if i lt 0
+        return k
+    o = k.overlays[i]
+    p = store.pane[k, o.pane]
+    if starts[o.moving, 'point:']
+        at = format.whole[slice[o.moving, 6, len[o.moving]], 0]
+        pt = point_at[k, p, o, ex, ey - p.top]
+        pts = o.points
+        pts[at] = pt
+        o.points = _kept_level[o.name, pts, pt]
+    else
+        di = store.index_of[k, ex] - store.index_of[k, k.drag.x0]
+        dv = store.value_in_pane[k, p, ey - p.top] - store.value_in_pane[k, p, k.drag.y0 - p.top]
+        moved = []
+        for pt in o.from
+            idx = pt.index
+            if store.count[k] gt 0 and pt.t gt 0.0
+                idx = store.index_at_time[k, pt.t]
+            ni = idx + di
+            moved = push[moved, store.Point[ni, store.time_of[k, ni], pt.value + dv]]
+        o.points = moved
+    k.overlays[i] = o
+    k
+
+--- a horizontal tool's points share their value, an upright one's their
+--- bar (klinecharts' performEventPressedMove)
+fn _kept_level[name, pts, pt]
+    out = []
+    for q in pts
+        if name eq 'horizontalRayLine' or name eq 'horizontalSegment'
+            q.value = pt.value
+        if name eq 'verticalRayLine' or name eq 'verticalSegment'
+            q.index = pt.index
+            q.t = pt.t
+        out = push[out, q]
+    out
+
+--- a tool being drawn: the pointer moves its next point, a click puts
+--- the point down, and the tool is drawn once it has its points
+fn _drawing[k, ev, ex, ey]
+    i = _index_of_id[k, k.drawing]
+    if i lt 0
+        k.drawing = ''
+        return Taken[k, false]
+    o = k.overlays[i]
+    inside = ex gte 0.0 and ex lte k.main_w and ey gte 0.0 and ey lte k.h - k.xaxis_h
+    if o.pane eq ''
+        if not inside
+            return Taken[k, false]
+        o.pane = store.pane_at[k, ey]
+    p = store.pane[k, o.pane]
+    if ev.on eq 'down' and ev.button eq 2
+        return Taken[cancel[k], true]
+    if ev.on eq 'move' and len[o.points] gt 0
+        pt = point_at[k, p, o, ex, ey - p.top]
+        o.points = _for_drawing[o.name, o.points, pt]
+        k.overlays[i] = o
+        return Taken[k, true]
+    if ev.on eq 'down' and inside
+        pt = point_at[k, p, o, ex, ey - p.top]
+        pts = o.points
+        if len[pts] eq 0
+            pts = [pt]
+        else
+            pts = _for_drawing[o.name, pts, pt]
+        if len[pts] gte o.needed
+            o.points = pts
+            o.done = true
+            o.selected = true
+            k.overlays[i] = o
+            k.drawing = ''
+            return Taken[k, true]
+        o.points = push[pts, pts[len[pts] - 1]]
+        k.overlays[i] = o
+        return Taken[k, true]
+    if ev.on eq 'up' or ev.on eq 'move'
+        return Taken[k, inside]
+    Taken[k, false]
+
+--- the points of a tool being drawn with its next point at the pointer:
+--- a level tool's first point follows the pointer's value, an upright
+--- one's its bar (klinecharts' performEventMoveForDrawing)
+fn _for_drawing[name, pts, pt]
+    out = pts
+    out[len[out] - 1] = pt
+    if len[out] eq 2 and (name eq 'horizontalRayLine' or name eq 'horizontalSegment')
+        first = out[0]
+        first.value = pt.value
+        out[0] = first
+    if len[out] eq 2 and (name eq 'verticalRayLine' or name eq 'verticalSegment')
+        first = out[0]
+        first.index = pt.index
+        first.t = pt.t
+        out[0] = first
+    out

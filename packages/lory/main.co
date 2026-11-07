@@ -178,7 +178,7 @@ fn _no_event[]
 fn _event[j]
     e = _no_event[]
     e.on = '`j.type`'
-    if e.on eq 'down' or e.on eq 'up' or e.on eq 'move' or e.on eq 'leave' or e.on eq 'squeeze' or e.on eq 'unsqueeze'
+    if e.on eq 'down' or e.on eq 'up' or e.on eq 'move' or e.on eq 'leave' or e.on eq 'double' or e.on eq 'squeeze' or e.on eq 'unsqueeze'
         e.device = '`j.device`'
         e.id = '`j.id`'
         if e.device ne 'ray'
@@ -476,6 +476,68 @@ fn path[c, xs, ys, w, color]
         c = line[c, xs[i - 1], ys[i - 1], xs[i], ys[i], w, color]
         i = i + 1
     c
+
+--- a dashed line from (x0, y0) to (x1, y1): `on` pixels drawn, `off`
+--- left, from `phase` pixels into the pattern; the phase the next line
+--- starts from is `dash_phase[…]` of the same numbers, so a dashed path
+--- keeps its rhythm round its corners
+fn dashed[c, x0, y0, x1, y1, w, color, on, off, phase]
+    dx = x1 - x0
+    dy = y1 - y0
+    long = sqrt[dx * dx + dy * dy]
+    if long lt 0.0001 or on lte 0.0
+        return c
+    period = on + max[0.0, off]
+    ux = dx / long
+    uy = dy / long
+    --- (where in the pattern the line starts, and so the first dash's end)
+    at = 0.0 - _mod[phase, period]
+    while at lt long
+        a = max[0.0, at]
+        b = min[long, at + on]
+        if b gt a
+            c = line[c, x0 + ux * a, y0 + uy * a, x0 + ux * b, y0 + uy * b, w, color]
+        at = at + period
+    c
+
+--- where in its pattern a dash is after a line `long` pixels from `phase`
+fn dash_phase[phase, long, on, off]
+    _mod[phase + long, on + max[0.0, off]]
+
+fn _mod[a, b]
+    if b lte 0.0
+        return 0.0
+    a - floor[a / b] * b
+
+--- dashed lines through the points, the pattern kept round the corners
+fn dashed_path[c, xs, ys, w, color, on, off]
+    n = min[len[xs], len[ys]]
+    phase = 0.0
+    i = 1
+    while i lt n
+        c = dashed[c, xs[i - 1], ys[i - 1], xs[i], ys[i], w, color, on, off, phase]
+        dx = xs[i] - xs[i - 1]
+        dy = ys[i] - ys[i - 1]
+        phase = dash_phase[phase, sqrt[dx * dx + dy * dy], on, off]
+        i = i + 1
+    c
+
+--- a triangle whose corners have colours of their own, blended between
+--- (a gradient: an area's fill fading to its floor)
+fn shaded[c, x0, y0, c0, x1, y1, c1, x2, y2, c2]
+    vs = c.verts
+    vs = _vertex[vs, x0, y0, 0.0, 0.0, c0, 0.0, 0.0, 0.0, 0.0, c.clip]
+    vs = _vertex[vs, x1, y1, 0.0, 0.0, c1, 0.0, 0.0, 0.0, 0.0, c.clip]
+    vs = _vertex[vs, x2, y2, 0.0, 0.0, c2, 0.0, 0.0, 0.0, 0.0, c.clip]
+    c.verts = vs
+    c
+
+--- the box's edge, `w` pixels wide, inside the box
+fn outline[c, x, y, w, h, line_w, color]
+    c = rect[c, x, y, w, line_w, color]
+    c = rect[c, x, y + h - line_w, w, line_w, color]
+    c = rect[c, x, y + line_w, line_w, h - 2.0 * line_w, color]
+    rect[c, x + w - line_w, y + line_w, line_w, h - 2.0 * line_w, color]
 
 --- a triangle filled with a colour
 fn triangle[c, x0, y0, x1, y1, x2, y2, color]

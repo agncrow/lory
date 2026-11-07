@@ -1,0 +1,320 @@
+--- Kite's styles: every look a chart has, named by its path as klinecharts
+--- names it (`candle.bar.upColor`, `crosshair.horizontal.line.style`),
+--- each held as text in one map: a colour as CSS writes it, a number as
+--- its digits, a list (`dashedValue`) as numbers between commas. A chart
+--- starts from `defaults[]` (klinecharts' light theme), and setting a
+--- style is setting its key (`kite.style[k, 'candle.bar.upColor', '#26a69a']`),
+--- or merging a map of them (`kite.styles[k, styles.dark[]]`).
+---
+--- And the words a chart says (`locale`): its tooltip's names in English,
+--- in Chinese, or the short English names a dense chart wants.
+
+fn _grey[]
+    '#76808F'
+
+fn _green[]
+    '#2DC08E'
+
+fn _red[]
+    '#F92855'
+
+fn _blue[]
+    '#1677FF'
+
+--- the styles of a text box (a mark's label, the crosshair's)
+fn _box[m, at, color, background, border]
+    m['`at`.show'] = 'true'
+    m['`at`.style'] = 'fill'
+    m['`at`.color'] = color
+    m['`at`.size'] = '12'
+    m['`at`.family'] = 'Helvetica Neue'
+    m['`at`.weight'] = 'normal'
+    m['`at`.borderStyle'] = 'solid'
+    m['`at`.borderDashedValue'] = '2,2'
+    m['`at`.borderSize'] = '1'
+    m['`at`.borderColor'] = border
+    m['`at`.borderRadius'] = '2'
+    m['`at`.paddingLeft'] = '4'
+    m['`at`.paddingRight'] = '4'
+    m['`at`.paddingTop'] = '4'
+    m['`at`.paddingBottom'] = '4'
+    m['`at`.backgroundColor'] = background
+    m
+
+fn _axis[m, at]
+    m['`at`.show'] = 'true'
+    m['`at`.size'] = 'auto'
+    m['`at`.axisLine.show'] = 'true'
+    m['`at`.axisLine.color'] = '#DDDDDD'
+    m['`at`.axisLine.size'] = '1'
+    m['`at`.tickText.show'] = 'true'
+    m['`at`.tickText.color'] = _grey[]
+    m['`at`.tickText.size'] = '12'
+    m['`at`.tickText.family'] = 'Helvetica Neue'
+    m['`at`.tickText.weight'] = 'normal'
+    m['`at`.tickText.marginStart'] = '4'
+    m['`at`.tickText.marginEnd'] = '6'
+    m['`at`.tickLine.show'] = 'true'
+    m['`at`.tickLine.size'] = '1'
+    m['`at`.tickLine.length'] = '3'
+    m['`at`.tickLine.color'] = '#DDDDDD'
+    m
+
+fn _crosshair_line[m, at]
+    m['`at`.show'] = 'true'
+    m['`at`.line.show'] = 'true'
+    m['`at`.line.style'] = 'dashed'
+    m['`at`.line.dashedValue'] = '4,2'
+    m['`at`.line.size'] = '1'
+    m['`at`.line.color'] = _grey[]
+    _box[m, '`at`.text', '#FFFFFF', _grey[], _grey[]]
+
+fn _tooltip_text[m, at, size]
+    m['`at`.size'] = '`size`'
+    m['`at`.family'] = 'Helvetica Neue'
+    m['`at`.weight'] = 'normal'
+    m['`at`.color'] = _grey[]
+    m['`at`.marginLeft'] = '8'
+    m['`at`.marginTop'] = '4'
+    m['`at`.marginRight'] = '8'
+    m['`at`.marginBottom'] = '4'
+    m
+
+--- every style, as klinecharts' defaults have it (its light theme), and
+--- Kite's own: the page behind the chart
+fn defaults[]
+    m = map[background = '#FFFFFF']
+    for d in ['horizontal', 'vertical']
+        m['grid.`d`.show'] = 'true'
+        m['grid.`d`.size'] = '1'
+        m['grid.`d`.color'] = '#EDEDED'
+        m['grid.`d`.style'] = 'dashed'
+        m['grid.`d`.dashedValue'] = '2,2'
+    m['grid.show'] = 'true'
+    --- the candles
+    m['candle.type'] = 'candle_solid'
+    m['candle.bar.compareRule'] = 'current_open'
+    m['candle.bar.upColor'] = _green[]
+    m['candle.bar.downColor'] = _red[]
+    m['candle.bar.noChangeColor'] = _grey[]
+    m['candle.bar.upBorderColor'] = _green[]
+    m['candle.bar.downBorderColor'] = _red[]
+    m['candle.bar.noChangeBorderColor'] = _grey[]
+    m['candle.bar.upWickColor'] = _green[]
+    m['candle.bar.downWickColor'] = _red[]
+    m['candle.bar.noChangeWickColor'] = _grey[]
+    m['candle.area.lineSize'] = '2'
+    m['candle.area.lineColor'] = _blue[]
+    m['candle.area.smooth'] = 'false'
+    m['candle.area.value'] = 'close'
+    m['candle.area.backgroundColor.0'] = 'rgba(22, 119, 255, 0.01)'
+    m['candle.area.backgroundColor.1'] = 'rgba(22, 119, 255, 0.2)'
+    m['candle.area.point.show'] = 'true'
+    m['candle.area.point.color'] = _blue[]
+    m['candle.area.point.radius'] = '4'
+    m['candle.area.point.rippleColor'] = 'rgba(22, 119, 255, 0.3)'
+    m['candle.area.point.rippleRadius'] = '8'
+    m['candle.area.point.animation'] = 'true'
+    m['candle.area.point.animationDuration'] = '1000'
+    m['candle.priceMark.show'] = 'true'
+    for side in ['high', 'low']
+        m['candle.priceMark.`side`.show'] = 'true'
+        m['candle.priceMark.`side`.color'] = _grey[]
+        m['candle.priceMark.`side`.textOffset'] = '5'
+        m['candle.priceMark.`side`.textSize'] = '10'
+        m['candle.priceMark.`side`.textFamily'] = 'Helvetica Neue'
+        m['candle.priceMark.`side`.textWeight'] = 'normal'
+    m['candle.priceMark.last.show'] = 'true'
+    m['candle.priceMark.last.compareRule'] = 'current_open'
+    m['candle.priceMark.last.upColor'] = _green[]
+    m['candle.priceMark.last.downColor'] = _red[]
+    m['candle.priceMark.last.noChangeColor'] = _grey[]
+    m['candle.priceMark.last.line.show'] = 'true'
+    m['candle.priceMark.last.line.style'] = 'dashed'
+    m['candle.priceMark.last.line.dashedValue'] = '4,4'
+    m['candle.priceMark.last.line.size'] = '1'
+    m = _box[m, 'candle.priceMark.last.text', '#FFFFFF', '', 'transparent']
+    m['candle.priceMark.last.text.borderSize'] = '0'
+    --- the candle pane's tooltip
+    m['candle.tooltip.offsetLeft'] = '4'
+    m['candle.tooltip.offsetTop'] = '6'
+    m['candle.tooltip.offsetRight'] = '4'
+    m['candle.tooltip.offsetBottom'] = '6'
+    m['candle.tooltip.showRule'] = 'always'
+    m['candle.tooltip.showType'] = 'standard'
+    m['candle.tooltip.rect.position'] = 'fixed'
+    m['candle.tooltip.rect.paddingLeft'] = '4'
+    m['candle.tooltip.rect.paddingRight'] = '4'
+    m['candle.tooltip.rect.paddingTop'] = '4'
+    m['candle.tooltip.rect.paddingBottom'] = '4'
+    m['candle.tooltip.rect.offsetLeft'] = '4'
+    m['candle.tooltip.rect.offsetTop'] = '4'
+    m['candle.tooltip.rect.offsetRight'] = '4'
+    m['candle.tooltip.rect.offsetBottom'] = '4'
+    m['candle.tooltip.rect.borderRadius'] = '4'
+    m['candle.tooltip.rect.borderSize'] = '1'
+    m['candle.tooltip.rect.borderColor'] = '#F2F3F5'
+    m['candle.tooltip.rect.color'] = '#FEFEFE'
+    m['candle.tooltip.title.show'] = 'true'
+    m = _tooltip_text[m, 'candle.tooltip.title', 14]
+    m['candle.tooltip.title.template'] = '{ticker} · {period}'
+    m = _tooltip_text[m, 'candle.tooltip.legend', 12]
+    m['candle.tooltip.legend.defaultValue'] = 'n/a'
+    --- (the legend's items: a title and a value between `|`, one item per
+    --- `;`, the names in braces read from the bar and the locale)
+    m['candle.tooltip.legend.template'] = '{time}|{time_value};{open}|{open_value};{high}|{high_value};{low}|{low_value};{close}|{close_value};{volume}|{volume_value}'
+    --- the indicators
+    m['indicator.ohlc.compareRule'] = 'current_open'
+    m['indicator.ohlc.upColor'] = 'rgba(45, 192, 142, 0.7)'
+    m['indicator.ohlc.downColor'] = 'rgba(249, 40, 85, 0.7)'
+    m['indicator.ohlc.noChangeColor'] = _grey[]
+    m['indicator.bars.style'] = 'fill'
+    m['indicator.bars.borderStyle'] = 'solid'
+    m['indicator.bars.borderSize'] = '1'
+    m['indicator.bars.borderDashedValue'] = '2,2'
+    m['indicator.bars.upColor'] = 'rgba(45, 192, 142, 0.7)'
+    m['indicator.bars.downColor'] = 'rgba(249, 40, 85, 0.7)'
+    m['indicator.bars.noChangeColor'] = _grey[]
+    lines = ['#FF9600', '#935EBD', _blue[], '#E11D74', '#01C5C4']
+    m['indicator.lines.count'] = '5'
+    for i in range[5]
+        m['indicator.lines.`i`.style'] = 'solid'
+        m['indicator.lines.`i`.smooth'] = 'false'
+        m['indicator.lines.`i`.size'] = '1'
+        m['indicator.lines.`i`.dashedValue'] = '2,2'
+        m['indicator.lines.`i`.color'] = lines[i]
+    m['indicator.circles.style'] = 'fill'
+    m['indicator.circles.borderStyle'] = 'solid'
+    m['indicator.circles.borderSize'] = '1'
+    m['indicator.circles.upColor'] = 'rgba(45, 192, 142, 0.7)'
+    m['indicator.circles.downColor'] = 'rgba(249, 40, 85, 0.7)'
+    m['indicator.circles.noChangeColor'] = _grey[]
+    m['indicator.lastValueMark.show'] = 'false'
+    m = _box[m, 'indicator.lastValueMark.text', '#FFFFFF', '', 'transparent']
+    m['indicator.lastValueMark.text.show'] = 'false'
+    m['indicator.lastValueMark.text.borderSize'] = '0'
+    m['indicator.tooltip.offsetLeft'] = '4'
+    m['indicator.tooltip.offsetTop'] = '6'
+    m['indicator.tooltip.offsetRight'] = '4'
+    m['indicator.tooltip.offsetBottom'] = '6'
+    m['indicator.tooltip.showRule'] = 'always'
+    m['indicator.tooltip.showType'] = 'standard'
+    m['indicator.tooltip.title.show'] = 'true'
+    m['indicator.tooltip.title.showName'] = 'true'
+    m['indicator.tooltip.title.showParams'] = 'true'
+    m = _tooltip_text[m, 'indicator.tooltip.title', 12]
+    m = _tooltip_text[m, 'indicator.tooltip.legend', 12]
+    m['indicator.tooltip.legend.defaultValue'] = 'n/a'
+    --- the axes, the separators, the crosshair
+    m = _axis[m, 'xAxis']
+    m = _axis[m, 'yAxis']
+    m['separator.size'] = '1'
+    m['separator.color'] = '#DDDDDD'
+    m['separator.fill'] = 'true'
+    m['separator.activeBackgroundColor'] = 'rgba(22, 119, 255, 0.08)'
+    m['crosshair.show'] = 'true'
+    m = _crosshair_line[m, 'crosshair.horizontal']
+    m = _crosshair_line[m, 'crosshair.vertical']
+    --- the overlays (lines and marks drawn over the chart)
+    m['overlay.point.color'] = _blue[]
+    m['overlay.point.borderColor'] = 'rgba(22, 119, 255, 0.35)'
+    m['overlay.point.borderSize'] = '1'
+    m['overlay.point.radius'] = '5'
+    m['overlay.point.activeColor'] = _blue[]
+    m['overlay.point.activeBorderColor'] = 'rgba(22, 119, 255, 0.35)'
+    m['overlay.point.activeBorderSize'] = '3'
+    m['overlay.point.activeRadius'] = '5'
+    m['overlay.line.style'] = 'solid'
+    m['overlay.line.smooth'] = 'false'
+    m['overlay.line.color'] = _blue[]
+    m['overlay.line.size'] = '1'
+    m['overlay.line.dashedValue'] = '2,2'
+    for shape in ['rect', 'polygon', 'circle']
+        m['overlay.`shape`.style'] = 'fill'
+        m['overlay.`shape`.color'] = 'rgba(22, 119, 255, 0.25)'
+        m['overlay.`shape`.borderColor'] = _blue[]
+        m['overlay.`shape`.borderSize'] = '1'
+        m['overlay.`shape`.borderRadius'] = '0'
+        m['overlay.`shape`.borderStyle'] = 'solid'
+        m['overlay.`shape`.borderDashedValue'] = '2,2'
+    m['overlay.polygon.color'] = _blue[]
+    m['overlay.arc.style'] = 'solid'
+    m['overlay.arc.color'] = _blue[]
+    m['overlay.arc.size'] = '1'
+    m['overlay.arc.dashedValue'] = '2,2'
+    _box[m, 'overlay.text', '#FFFFFF', _blue[], _blue[]]
+
+--- the light theme's colours (what `defaults` starts from)
+fn light[]
+    m = map[background = '#FFFFFF']
+    m['grid.horizontal.color'] = '#EDEDED'
+    m['grid.vertical.color'] = '#EDEDED'
+    m['candle.priceMark.high.color'] = _grey[]
+    m['candle.priceMark.low.color'] = _grey[]
+    m['candle.tooltip.rect.color'] = '#FEFEFE'
+    m['candle.tooltip.rect.borderColor'] = '#F2F3F5'
+    m['candle.tooltip.title.color'] = _grey[]
+    m['candle.tooltip.legend.color'] = _grey[]
+    m['indicator.tooltip.title.color'] = _grey[]
+    m['indicator.tooltip.legend.color'] = _grey[]
+    for a in ['xAxis', 'yAxis']
+        m['`a`.axisLine.color'] = '#DDDDDD'
+        m['`a`.tickText.color'] = _grey[]
+        m['`a`.tickLine.color'] = '#DDDDDD'
+    m['separator.color'] = '#DDDDDD'
+    for d in ['horizontal', 'vertical']
+        m['crosshair.`d`.line.color'] = _grey[]
+        m['crosshair.`d`.text.borderColor'] = '#686D76'
+        m['crosshair.`d`.text.backgroundColor'] = '#686D76'
+    m
+
+--- the dark theme's colours, as klinecharts' `dark`
+fn dark[]
+    m = map[background = '#151517']
+    m['grid.horizontal.color'] = '#292929'
+    m['grid.vertical.color'] = '#292929'
+    m['candle.priceMark.high.color'] = '#929AA5'
+    m['candle.priceMark.low.color'] = '#929AA5'
+    m['candle.tooltip.rect.color'] = 'rgba(10, 10, 10, 0.6)'
+    m['candle.tooltip.rect.borderColor'] = 'rgba(10, 10, 10, 0.6)'
+    m['candle.tooltip.title.color'] = '#929AA5'
+    m['candle.tooltip.legend.color'] = '#929AA5'
+    m['indicator.tooltip.title.color'] = '#929AA5'
+    m['indicator.tooltip.legend.color'] = '#929AA5'
+    for a in ['xAxis', 'yAxis']
+        m['`a`.axisLine.color'] = '#333333'
+        m['`a`.tickText.color'] = '#929AA5'
+        m['`a`.tickLine.color'] = '#333333'
+    m['separator.color'] = '#333333'
+    for d in ['horizontal', 'vertical']
+        m['crosshair.`d`.line.color'] = '#929AA5'
+        m['crosshair.`d`.text.borderColor'] = '#373a40'
+        m['crosshair.`d`.text.backgroundColor'] = '#373a40'
+    m
+
+--- the styles with every key of `over` set to its value
+fn merged[m, over]
+    out = m
+    for key in keys[over]
+        out[key] = over[key]
+    out
+
+--- ---- the words a chart says ----
+
+--- a locale's words: the legend's names and the periods' letters
+fn words[locale]
+    if locale eq 'zh-CN'
+        return map[time = '时间：', open = '开：', high = '高：', low = '低：', close = '收：', volume = '成交量：', turnover = '成交额：', change = '涨幅：', second = '秒', minute = '', hour = '小时', day = '天', week = '周', month = '月', year = '年']
+    if locale eq 'en-abbr'
+        return map[time = 'Time', open = 'O', high = 'H', low = 'L', close = 'C', volume = 'Vol', turnover = 'Turn', change = 'Chg', second = 's', minute = 'm', hour = 'h', day = 'd', week = 'w', month = 'M', year = 'Y']
+    map[time = 'Time: ', open = 'Open: ', high = 'High: ', low = 'Low: ', close = 'Close: ', volume = 'Volume: ', turnover = 'Turnover: ', change = 'Change: ', second = 'S', minute = '', hour = 'H', day = 'D', week = 'W', month = 'M', year = 'Y']
+
+test the_defaults_hold_every_style_the_themes_set[]
+    d = defaults[]
+    for key in keys[dark[]]
+        assert[key in d, 'dark sets `key`, which the defaults lack']
+    for key in keys[light[]]
+        assert[key in d, 'light sets `key`, which the defaults lack']
+    d['candle.bar.upColor'] eq '#2DC08E'
+    merged[d, dark[]]['grid.horizontal.color'] eq '#292929'
+    words['en-abbr']['open'] eq 'O'

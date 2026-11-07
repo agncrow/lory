@@ -1,0 +1,928 @@
+--- Kite's views: a chart drawn on a Lory canvas as klinecharts draws it
+--- — each pane's grid, its candles or its indicators' figures, the price
+--- marks, the axes and their labels, the separators, the crosshair and
+--- the tooltips, in klinecharts' order and by its styles.
+---
+--- `everything` draws it all; each part is its own function too, so a
+--- program draws its own things between them (an indicator of its own
+--- after `figures`, a zone behind the candles before `candles`).
+---
+--- Every place here is in CSS pixels from the chart's top left (a pane's
+--- things from the pane's top); the helpers multiply by the canvas's
+--- pixels per CSS pixel where they hand Lory a place.
+use math
+use lory
+use format
+use styles
+use indicators
+use store
+
+--- ---- the canvas, in CSS pixels ----
+
+fn _sx[k, x]
+    (k.x + x) * k.s
+
+fn _sy[k, y]
+    (k.y + y) * k.s
+
+--- a box filled, its place in the chart's CSS pixels
+fn box[c, k, x, y, w, h, color]
+    if w lte 0.0 or h lte 0.0 or color.a lte 0.0
+        return c
+    lory.rect[c, _sx[k, x], _sy[k, y], w * k.s, h * k.s, color]
+
+--- a box's edge, `size` pixels wide, inside the box
+fn edge[c, k, x, y, w, h, size, color]
+    if w lte 0.0 or h lte 0.0 or color.a lte 0.0
+        return c
+    lory.outline[c, _sx[k, x], _sy[k, y], w * k.s, h * k.s, size * k.s, color]
+
+--- a rounded box filled (square where the radius is 0)
+fn rounded[c, k, x, y, w, h, r, color]
+    if r lte 0.0
+        return box[c, k, x, y, w, h, color]
+    if w lte 0.0 or h lte 0.0 or color.a lte 0.0
+        return c
+    lory.round_rect[c, _sx[k, x], _sy[k, y], w * k.s, h * k.s, r * k.s, color]
+
+fn rounded_edge[c, k, x, y, w, h, r, size, color]
+    if r lte 0.0
+        return edge[c, k, x, y, w, h, size, color]
+    if w lte 0.0 or h lte 0.0 or color.a lte 0.0
+        return c
+    lory.round_outline[c, _sx[k, x], _sy[k, y], w * k.s, h * k.s, r * k.s, size * k.s, color]
+
+--- a straight line as klinecharts strokes one: a level or upright line
+--- of an odd width lies on the pixel below or right of its place, a
+--- dashed one in `on`, `off` pieces from its start
+fn seg[c, k, x0, y0, x1, y1, size, color, dashed, on, off]
+    if color.a lte 0.0 or size lte 0.0
+        return c
+    if y0 eq y1
+        lo = min[x0, x1]
+        hi = max[x0, x1]
+        top = y0
+        if int[size] % 2 eq 1
+            top = y0 + 0.5
+        top = top - size / 2.0
+        if not dashed
+            return box[c, k, lo, top, hi - lo, size, color]
+        at = lo
+        while at lt hi
+            c = box[c, k, at, top, min[on, hi - at], size, color]
+            at = at + on + off
+        return c
+    if x0 eq x1
+        lo = min[y0, y1]
+        hi = max[y0, y1]
+        left = x0
+        if int[size] % 2 eq 1
+            left = x0 + 0.5
+        left = left - size / 2.0
+        if not dashed
+            return box[c, k, left, lo, size, hi - lo, color]
+        at = lo
+        while at lt hi
+            c = box[c, k, left, at, size, min[on, hi - at], color]
+            at = at + on + off
+        return c
+    shift = 0.0
+    if int[size] % 2 eq 1
+        shift = 0.5
+    if dashed
+        return lory.dashed[c, _sx[k, x0 + shift], _sy[k, y0 + shift], _sx[k, x1 + shift], _sy[k, y1 + shift], size * k.s, color, on * k.s, off * k.s, 0.0]
+    lory.line[c, _sx[k, x0 + shift], _sy[k, y0 + shift], _sx[k, x1 + shift], _sy[k, y1 + shift], size * k.s, color]
+
+--- a line through points, as klinecharts strokes a path (moved half a
+--- pixel where its width is odd)
+fn polyline[c, k, xs, ys, size, color, dashed, on, off]
+    if len[xs] lt 2 or color.a lte 0.0
+        return c
+    if len[xs] eq 2
+        return seg[c, k, xs[0], ys[0], xs[1], ys[1], size, color, dashed, on, off]
+    shift = 0.0
+    if int[size] % 2 eq 1
+        shift = 0.5
+    px = []
+    py = []
+    for i in range[len[xs]]
+        px = push[px, _sx[k, xs[i] + shift]]
+        py = push[py, _sy[k, ys[i] + shift]]
+    if dashed
+        return lory.dashed_path[c, px, py, size * k.s, color, on * k.s, off * k.s]
+    lory.path[c, px, py, size * k.s, color]
+
+--- a line in a style's terms: `<at>.style` (`solid`, `dashed`),
+--- `<at>.size`, `<at>.color`, `<at>.dashedValue`
+fn styled_seg[c, k, at, x0, y0, x1, y1, color]
+    d = store.dashes[k, '`at`.dashedValue']
+    seg[c, k, x0, y0, x1, y1, store.num[k, '`at`.size'], color, store.st[k, '`at`.style'] eq 'dashed', d[0], d[1]]
+
+--- words drawn with their top left at (x, y)
+fn words_at[c, k, x, y, words, size, color]
+    if words eq '' or color.a lte 0.0
+        return c
+    lory.text[c, _sx[k, x], _sy[k, y], words, size * k.s, color]
+
+--- where words of `w` by `h` start, aligned (`left`, `center`, `right`)
+--- and on their baseline (`top`, `middle`, `bottom`) as klinecharts
+--- places a text's box
+fn _start_x[x, w, align]
+    if align eq 'right' or align eq 'end'
+        return x - w
+    if align eq 'center'
+        return x - w / 2.0
+    x
+
+fn _start_y[y, h, baseline]
+    if baseline eq 'bottom' or baseline eq 'alphabetic'
+        return y - h
+    if baseline eq 'middle'
+        return y - h / 2.0
+    y
+
+--- a text box in the style at `at` (its size, colour, paddings,
+--- background, border): klinecharts' text figure; `bg` other than ``
+--- overrides the style's background, `width` other than 0 its width. It
+--- answers the box's width.
+fn label[c, k, x, y, words, at, align, baseline, bg, width]
+    size = store.num[k, '`at`.size']
+    pl = store.num[k, '`at`.paddingLeft']
+    pr = store.num[k, '`at`.paddingRight']
+    pt = store.num[k, '`at`.paddingTop']
+    pb = store.num[k, '`at`.paddingBottom']
+    w = width
+    if w eq 0.0
+        w = pl + store.text_w[c, k, words, size] + pr
+    h = pt + size + pb
+    x0 = _start_x[x, w, align]
+    y0 = _start_y[y, h, baseline]
+    back = bg
+    if back eq ''
+        back = store.st[k, '`at`.backgroundColor']
+    r = store.num[k, '`at`.borderRadius']
+    c = rounded[c, k, x0, y0, w, h, r, format.color[back]]
+    bs = store.num[k, '`at`.borderSize']
+    if bs gt 0.0 and w gt bs * 2.0 and h gt bs * 2.0
+        c = rounded_edge[c, k, x0, y0, w, h, r, bs, store.col[k, '`at`.borderColor']]
+    words_at[c, k, x0 + pl, y0 + pt, words, size, store.col[k, '`at`.color']]
+
+--- ---- colours by a rule ----
+
+--- up, down or level: a close against what the rule compares it with
+fn trend[close, compare]
+    if close gt compare
+        return 'up'
+    if close lt compare
+        return 'down'
+    'noChange'
+
+fn _bar_trend[k, i, rule]
+    b = k.bars
+    compare = b.o[i]
+    if rule eq 'previous_close'
+        compare = b.c[i]
+        if i gt 0
+            compare = b.c[i - 1]
+    trend[b.c[i], compare]
+
+--- ---- the background and the grid ----
+
+fn background[c, k]
+    box[c, k, 0.0, 0.0, k.w, k.h, store.col[k, 'background']]
+
+fn grid[c, k, xticks]
+    if not store.yes[k, 'grid.show']
+        return c
+    for p in k.panes
+        if store.yes[k, 'grid.horizontal.show']
+            color = store.col[k, 'grid.horizontal.color']
+            for t in p.ticks
+                c = styled_seg[c, k, 'grid.horizontal', 0.0, p.top + t.coord, k.main_w, p.top + t.coord, color]
+        if store.yes[k, 'grid.vertical.show']
+            color = store.col[k, 'grid.vertical.color']
+            for t in xticks
+                c = styled_seg[c, k, 'grid.vertical', t.coord, p.top, t.coord, p.top + p.h, color]
+    c
+
+--- ---- the candles ----
+
+--- the bars a frame draws: the visible ones the chart holds
+fn _first[k]
+    max[0, k.real_from]
+
+fn _last[k]
+    min[store.count[k], k.real_to]
+
+--- the candle pane's candles, of the style's type: `candle_solid`,
+--- `candle_stroke`, `candle_up_stroke`, `candle_down_stroke`, `ohlc` or
+--- `area`
+fn candles[c, k]
+    p = k.panes[0]
+    kind_of = store.st[k, 'candle.type']
+    if kind_of eq 'area'
+        return area[c, k, p]
+    bar_styles = _bar_styles[k, 'candle.bar']
+    bars_of[c, k, p, kind_of, bar_styles, store.st[k, 'candle.bar.compareRule']]
+
+--- a pane's candles from the bars, of a type, in colours [up, up border,
+--- up wick, down …, level …] by a compare rule
+fn bars_of[c, k, p, kind_of, colors, rule]
+    b = k.bars
+    gap = k.gap
+    half = store.half_gap[k]
+    correction = 0.0
+    if int[gap] % 2 eq 0
+        correction = 1.0
+    ohlc_size = 0.0
+    half_ohlc = 0.0
+    if kind_of eq 'ohlc'
+        ohlc_size = min[max[round[gap * 0.2] + 0.0, 1.0], 8.0]
+        if ohlc_size gt 2.0 and int[ohlc_size] % 2 eq 1
+            ohlc_size = ohlc_size - 1.0
+        half_ohlc = floor[ohlc_size / 2.0]
+    i = _first[k]
+    stop = _last[k]
+    while i lt stop
+        x = store.x_of[k, 0.0 + i]
+        t = _bar_trend[k, i, rule]
+        at = 0
+        if t eq 'down'
+            at = 3
+        if t eq 'noChange'
+            at = 6
+        fill_c = colors[at]
+        border_c = colors[at + 1]
+        wick_c = colors[at + 2]
+        open_y = store.y_in_pane[k, p, b.o[i]]
+        close_y = store.y_in_pane[k, p, b.c[i]]
+        ys = sort[[open_y, close_y, store.y_in_pane[k, p, b.h[i]], store.y_in_pane[k, p, b.l[i]]]]
+        top = p.top
+        if kind_of eq 'ohlc'
+            c = box[c, k, x - half_ohlc, top + ys[0], ohlc_size, ys[3] - ys[0], fill_c]
+            oy = open_y
+            if open_y + ohlc_size gt ys[3]
+                oy = ys[3] - ohlc_size
+            cy = close_y
+            if close_y + ohlc_size gt ys[3]
+                cy = ys[3] - ohlc_size
+            c = box[c, k, x - half, top + oy, half - half_ohlc, ohlc_size, fill_c]
+            c = box[c, k, x + half_ohlc, top + cy, half - half_ohlc, ohlc_size, fill_c]
+        else
+            hollow = kind_of eq 'candle_stroke'
+            if kind_of eq 'candle_up_stroke'
+                hollow = b.c[i] gt b.o[i]
+            if kind_of eq 'candle_down_stroke'
+                hollow = b.o[i] gt b.c[i]
+            body_w = gap + correction
+            body_h = max[1.0, ys[2] - ys[1]]
+            if hollow
+                c = box[c, k, x, top + ys[0], 1.0, ys[1] - ys[0], wick_c]
+                c = box[c, k, x, top + ys[2], 1.0, ys[3] - ys[2], wick_c]
+                c = _stroked[c, k, x - half, top + ys[1], body_w, body_h, border_c]
+            else
+                c = box[c, k, x, top + ys[0], 1.0, ys[3] - ys[0], wick_c]
+                c = box[c, k, x - half, top + ys[1], body_w, body_h, fill_c]
+                c = _stroked[c, k, x - half, top + ys[1], body_w, body_h, border_c]
+        i = i + 1
+    c
+
+--- a box's edge of one pixel, as klinecharts strokes it: the box filled
+--- where it is too small for an edge
+fn _stroked[c, k, x, y, w, h, color]
+    if w gt 2.0 and h gt 2.0
+        return edge[c, k, x, y, w, h, 1.0, color]
+    box[c, k, x, y, w, h, color]
+
+--- the nine colours of a bar style at `at`
+fn _bar_styles[k, at]
+    out = []
+    for t in ['up', 'down', 'noChange']
+        out = push[out, store.col[k, '`at`.`t`Color']]
+        out = push[out, store.col[k, '`at`.`t`BorderColor']]
+        out = push[out, store.col[k, '`at`.`t`WickColor']]
+    out
+
+--- the closes (or the style's value) as a line, filled below to the
+--- pane's floor in a gradient, and its last point marked
+fn area[c, k, p]
+    i = _first[k]
+    stop = _last[k]
+    xs = []
+    ys = []
+    while i lt stop
+        xs = push[xs, store.x_of[k, 0.0 + i]]
+        ys = push[ys, p.top + store.y_in_pane[k, p, store._area_value[k, i]]]
+        i = i + 1
+    n = len[xs]
+    if n eq 0
+        return c
+    floor_y = p.top + p.h
+    top_y = floor_y
+    for y in ys
+        top_y = min[top_y, y]
+    bottom_c = store.col[k, 'candle.area.backgroundColor.0']
+    top_c = store.col[k, 'candle.area.backgroundColor.1']
+    span = max[1.0, floor_y - top_y]
+    j = 1
+    while j lt n
+        a = lory.mix[bottom_c, top_c, (floor_y - ys[j - 1]) / span]
+        bb = lory.mix[bottom_c, top_c, (floor_y - ys[j]) / span]
+        x0 = _sx[k, xs[j - 1]]
+        x1 = _sx[k, xs[j]]
+        y0 = _sy[k, ys[j - 1]]
+        y1 = _sy[k, ys[j]]
+        yf = _sy[k, floor_y]
+        c = lory.shaded[c, x0, y0, a, x1, y1, bb, x1, yf, bottom_c]
+        c = lory.shaded[c, x0, y0, a, x1, yf, bottom_c, x0, yf, bottom_c]
+        j = j + 1
+    c = polyline[c, k, xs, ys, store.num[k, 'candle.area.lineSize'], store.col[k, 'candle.area.lineColor'], false, 0.0, 0.0]
+    if store.yes[k, 'candle.area.point.show'] and _last[k] eq store.count[k]
+        lx = xs[n - 1]
+        ly = ys[n - 1]
+        r = store.num[k, 'candle.area.point.radius']
+        if store.yes[k, 'candle.area.point.animation']
+            period = max[1.0, store.num[k, 'candle.area.point.animationDuration']]
+            now_ms = lory.time[c]
+            turn = (now_ms - floor[now_ms / period] * period) / period
+            rr = r + (store.num[k, 'candle.area.point.rippleRadius'] - r) * turn
+            c = lory.circle[c, _sx[k, lx], _sy[k, ly], rr * k.s, store.col[k, 'candle.area.point.rippleColor']]
+        c = lory.circle[c, _sx[k, lx], _sy[k, ly], r * k.s, store.col[k, 'candle.area.point.color']]
+    c
+
+--- ---- the indicators ----
+
+--- every pane's indicators' figures: lines, bars and circles
+fn figures[c, k]
+    for p in k.panes
+        for ind in k.inds
+            if ind.pane eq p.id and ind.visible
+                c = indicator[c, k, p, ind]
+    c
+
+--- one indicator's figures in its pane: a pane of its own shows the bars
+--- as OHLC sticks too where the indicator asks for them
+fn indicator[c, k, p, ind]
+    if ind.ohlc and p.id ne 'candle_pane'
+        colors = []
+        for t in ['up', 'down', 'noChange']
+            col = _ind_color[k, ind, 'ohlc.`t`Color']
+            colors = push[push[push[colors, col], col], col]
+        c = bars_of[c, k, p, 'ohlc', colors, _ind_style[k, ind, 'ohlc.compareRule']]
+    line_i = 0
+    bar_i = 0
+    circle_i = 0
+    half = store.half_gap[k]
+    for f in ind.figures
+        if f.key in ind.values
+            vals = ind.values[f.key]
+            if f.shape eq 'line'
+                c = _figure_line[c, k, p, ind, f, vals, line_i]
+                line_i = line_i + 1
+            else
+                i = _first[k]
+                stop = min[_last[k], len[vals]]
+                while i lt stop
+                    v = vals[i]
+                    if v eq v
+                        x = store.x_of[k, 0.0 + i]
+                        y = store.y_in_pane[k, p, v]
+                        look = figure_look[k, ind, f, vals, i, bar_i, circle_i]
+                        color = format.color[look[0]]
+                        if f.shape eq 'circle'
+                            r = max[1.0, half]
+                            if look[1] eq 'stroke'
+                                c = lory.ring[c, _sx[k, x], _sy[k, p.top + y], r * k.s, k.s, color]
+                            else
+                                c = lory.circle[c, _sx[k, x], _sy[k, p.top + y], r * k.s, color]
+                        else
+                            base = f.base
+                            if base ne base
+                                base = p.rng.from
+                            base_y = store.y_in_pane[k, p, base]
+                            h = abs[base_y - y]
+                            if base ne v
+                                h = max[1.0, h]
+                            top = min[y, base_y]
+                            w = max[1.0, half * 2.0]
+                            if look[1] eq 'stroke'
+                                c = _stroked[c, k, x - half, p.top + top, w, h, color]
+                            else
+                                c = box[c, k, x - half, p.top + top, w, h, color]
+                    i = i + 1
+                if f.shape eq 'circle'
+                    circle_i = circle_i + 1
+                else
+                    bar_i = bar_i + 1
+    c
+
+--- a style of an indicator: its own where it sets one, else the chart's
+fn _ind_style[k, ind, key]
+    if key in ind.styles
+        return ind.styles[key]
+    store.st[k, 'indicator.`key`']
+
+fn _ind_color[k, ind, key]
+    format.color[_ind_style[k, ind, key]]
+
+--- the colour (as CSS writes it) and the fill (`fill`, `stroke`) of a
+--- bar or circle figure at bar i, by its rule (klinecharts' figure styles)
+fn figure_look[k, ind, f, vals, i, bar_i, circle_i]
+    group = 'bars'
+    if f.shape eq 'circle'
+        group = 'circles'
+    up = _ind_style[k, ind, '`group`.upColor']
+    down = _ind_style[k, ind, '`group`.downColor']
+    level = _ind_style[k, ind, '`group`.noChangeColor']
+    style_of = _ind_style[k, ind, '`group`.style']
+    v = vals[i]
+    prev = -9007199254740991.0
+    if i gt 0 and vals[i - 1] eq vals[i - 1]
+        prev = vals[i - 1]
+    if f.rule eq 'volume'
+        t = trend[k.bars.c[i], k.bars.o[i]]
+        if t eq 'up'
+            return [up, style_of]
+        if t eq 'down'
+            return [down, style_of]
+        return [level, style_of]
+    if f.rule eq 'macd'
+        fill = 'fill'
+        if prev lt v
+            fill = 'stroke'
+        if v gt 0.0
+            return [up, fill]
+        if v lt 0.0
+            return [down, fill]
+        return [level, fill]
+    if f.rule eq 'ao'
+        if v gt prev
+            return [up, 'stroke']
+        return [down, 'fill']
+    if f.rule eq 'sar'
+        half_hl = (k.bars.h[i] + k.bars.l[i]) / 2.0
+        if v lt half_hl
+            return [up, style_of]
+        return [down, style_of]
+    [level, style_of]
+
+--- a line figure: the values joined bar to bar where both are there, in
+--- the indicator's line style of its place among the lines
+fn _figure_line[c, k, p, ind, f, vals, line_i]
+    n = int[store.num[k, 'indicator.lines.count']]
+    at = 'lines.`line_i % max[1, n]`'
+    color = _ind_color[k, ind, '`at`.color']
+    size = format.number[_ind_style[k, ind, '`at`.size'], 1.0]
+    dashed = _ind_style[k, ind, '`at`.style'] eq 'dashed'
+    d = store.dashes[k, 'indicator.`at`.dashedValue']
+    xs = []
+    ys = []
+    i = _first[k]
+    stop = min[_last[k], len[vals]]
+    while i lt stop
+        v = vals[i]
+        if v eq v
+            xs = push[xs, store.x_of[k, 0.0 + i]]
+            ys = push[ys, p.top + store.y_in_pane[k, p, v]]
+            --- (the line goes on to the next bar, drawn or not, as
+            --- klinecharts joins a bar to the next)
+            if i + 1 eq stop and i + 1 lt len[vals] and vals[i + 1] eq vals[i + 1]
+                xs = push[xs, store.x_of[k, 0.0 + i + 1]]
+                ys = push[ys, p.top + store.y_in_pane[k, p, vals[i + 1]]]
+        else
+            c = polyline[c, k, xs, ys, size, color, dashed, d[0], d[1]]
+            xs = []
+            ys = []
+        i = i + 1
+    polyline[c, k, xs, ys, size, color, dashed, d[0], d[1]]
+
+--- ---- the price marks ----
+
+--- the highest high and the lowest low in view, each marked with its
+--- price; the last price as a line across the candle pane
+fn marks[c, k]
+    if not store.yes[k, 'candle.priceMark.show'] or store.count[k] eq 0
+        return c
+    p = k.panes[0]
+    precision = k.symbol.price_precision
+    hy = store.y_in_pane[k, p, k.hi]
+    ly = store.y_in_pane[k, p, k.lo]
+    if store.yes[k, 'candle.priceMark.high.show'] and k.hi gt -9007199254740991.0
+        off = [2.0, 5.0]
+        if hy lt ly
+            off = [-2.0, -5.0]
+        c = _mark[c, k, p, _price_words[k.hi, precision], k.hi_x, hy, off, 'candle.priceMark.high']
+    if store.yes[k, 'candle.priceMark.low.show'] and k.lo lt 9007199254740991.0
+        off = [-2.0, -5.0]
+        if hy lt ly
+            off = [2.0, 5.0]
+        c = _mark[c, k, p, _price_words[k.lo, precision], k.lo_x, ly, off, 'candle.priceMark.low']
+    if store.yes[k, 'candle.priceMark.last.show'] and store.yes[k, 'candle.priceMark.last.line.show']
+        y = last_y[k, p]
+        c = styled_seg[c, k, 'candle.priceMark.last.line', 0.0, p.top + y, k.main_w, p.top + y, format.color[_last_color[k]]]
+    c
+
+fn _price_words[v, precision]
+    format.fold[format.thousands[format.fixed[v, precision], ','], 3]
+
+--- the last price's place, kept inside the pane (klinecharts'
+--- convertToNicePixel)
+fn last_y[k, p]
+    n = store.count[k]
+    y = store.y_in_pane[k, p, k.bars.c[n - 1]]
+    round[max[p.h * 0.05, min[y, p.h * 0.98]]] + 0.0
+
+--- the last price's colour, as CSS writes it
+fn _last_color[k]
+    n = store.count[k]
+    b = k.bars
+    compare = b.o[n - 1]
+    if store.st[k, 'candle.priceMark.last.compareRule'] ne 'current_open'
+        compare = b.c[n - 1]
+        if n gt 1
+            compare = b.c[n - 2]
+    t = trend[b.c[n - 1], compare]
+    store.st[k, 'candle.priceMark.last.`t`Color']
+
+fn _mark[c, k, p, words, x, y, off, at]
+    color = store.col[k, '`at`.color']
+    top = p.top
+    sy = y + off[0]
+    c = polyline[c, k, [x - 2.0, x, x + 2.0], [top + sy + off[0], top + sy, top + sy + off[0]], 1.0, color, false, 0.0, 0.0]
+    end_x = x + 5.0
+    text_x = end_x + store.num[k, '`at`.textOffset']
+    align = 'left'
+    if x gt k.main_w / 2.0
+        end_x = x - 5.0
+        text_x = end_x - store.num[k, '`at`.textOffset']
+        align = 'right'
+    ey = sy + off[1]
+    c = polyline[c, k, [x, x, end_x], [top + sy, top + ey, top + ey], 1.0, color, false, 0.0, 0.0]
+    size = store.num[k, '`at`.textSize']
+    w = store.text_w[c, k, words, size]
+    words_at[c, k, _start_x[text_x, w, align], top + _start_y[ey, size, 'middle'], words, size, color]
+
+--- ---- the axes ----
+
+--- each pane's y axis: its line, its ticks and their labels
+fn y_axes[c, k]
+    if not store.yes[k, 'yAxis.show']
+        return c
+    line_size = store.num[k, 'yAxis.axisLine.size']
+    tick_len = store.num[k, 'yAxis.tickLine.length']
+    for p in k.panes
+        x0 = k.main_w
+        if store.yes[k, 'yAxis.axisLine.show']
+            c = seg[c, k, x0, p.top, x0, p.top + p.h, line_size, store.col[k, 'yAxis.axisLine.color'], false, 0.0, 0.0]
+        start = x0
+        if store.yes[k, 'yAxis.axisLine.show']
+            start = start + line_size
+        if store.yes[k, 'yAxis.tickLine.show']
+            color = store.col[k, 'yAxis.tickLine.color']
+            for t in p.ticks
+                c = seg[c, k, start, p.top + t.coord, start + tick_len, p.top + t.coord, store.num[k, 'yAxis.tickLine.size'], color, false, 0.0, 0.0]
+        if store.yes[k, 'yAxis.tickText.show']
+            tx = start + store.num[k, 'yAxis.tickText.marginStart']
+            if store.yes[k, 'yAxis.tickLine.show']
+                tx = tx + tick_len
+            size = store.num[k, 'yAxis.tickText.size']
+            color = store.col[k, 'yAxis.tickText.color']
+            for t in p.ticks
+                c = words_at[c, k, tx, p.top + t.coord - size / 2.0, t.text, size, color]
+    c
+
+--- the time axis below the panes
+fn x_axis[c, k, xticks]
+    if not store.yes[k, 'xAxis.show']
+        return c
+    top = k.h - k.xaxis_h
+    line_size = store.num[k, 'xAxis.axisLine.size']
+    if store.yes[k, 'xAxis.axisLine.show']
+        c = seg[c, k, 0.0, top, k.main_w, top, line_size, store.col[k, 'xAxis.axisLine.color'], false, 0.0, 0.0]
+    tick_len = store.num[k, 'xAxis.tickLine.length']
+    if store.yes[k, 'xAxis.tickLine.show']
+        color = store.col[k, 'xAxis.tickLine.color']
+        for t in xticks
+            c = seg[c, k, t.coord, top, t.coord, top + line_size + tick_len, store.num[k, 'xAxis.tickLine.size'], color, false, 0.0, 0.0]
+    if store.yes[k, 'xAxis.tickText.show']
+        size = store.num[k, 'xAxis.tickText.size']
+        color = store.col[k, 'xAxis.tickText.color']
+        y = top + line_size + tick_len + store.num[k, 'xAxis.tickText.marginStart']
+        for t in xticks
+            w = store.text_w[c, k, t.text, size]
+            c = words_at[c, k, t.coord - w / 2.0, y, t.text, size, color]
+    c
+
+--- the last price's label on the candle pane's axis
+fn last_label[c, k]
+    if not (store.yes[k, 'candle.priceMark.show'] and store.yes[k, 'candle.priceMark.last.show'] and store.yes[k, 'candle.priceMark.last.text.show']) or store.count[k] eq 0
+        return c
+    p = k.panes[0]
+    y = last_y[k, p]
+    v = k.bars.c[store.count[k] - 1]
+    words = _price_words[v, k.symbol.price_precision]
+    if p.axis eq 'percentage'
+        words = '`format.fixed[store.real_of[k, p, v], 2]`%'
+    label[c, k, k.w, p.top + y, words, 'candle.priceMark.last.text', 'right', 'middle', _last_color[k], 0.0]
+
+--- each indicator's last value on its pane's axis, where the style shows it
+fn last_values[c, k]
+    if not store.yes[k, 'indicator.lastValueMark.show'] or not store.yes[k, 'indicator.lastValueMark.text.show']
+        return c
+    for p in k.panes
+        for ind in k.inds
+            if ind.pane eq p.id and ind.visible
+                line_i = 0
+                for f in ind.figures
+                    if f.key in ind.values
+                        vals = ind.values[f.key]
+                        n = len[vals]
+                        if n gt 0 and vals[n - 1] eq vals[n - 1]
+                            v = vals[n - 1]
+                            bg = _ind_style[k, ind, 'lines.`line_i`.color']
+                            if f.shape ne 'line'
+                                bg = figure_look[k, ind, f, vals, n - 1, 0, 0][0]
+                            y = store.y_in_pane[k, p, v]
+                            words = format.thousands[format.fixed[v, ind.precision], ',']
+                            if ind.big
+                                words = format.big[v]
+                            c = label[c, k, k.w, p.top + y, words, 'indicator.lastValueMark.text', 'right', 'middle', bg, 0.0]
+                    if f.shape eq 'line'
+                        line_i = line_i + 1
+    c
+
+--- the lines between panes
+fn separators[c, k]
+    size = store.num[k, 'separator.size']
+    color = store.col[k, 'separator.color']
+    for i in range[len[k.panes]]
+        if i gt 0
+            p = k.panes[i]
+            c = box[c, k, 0.0, p.top - size, k.w, size, color]
+            if k.drag.what eq 'separator' and k.drag.pane eq p.id
+                c = box[c, k, 0.0, p.top - 4.0, k.w, 7.0, store.col[k, 'separator.activeBackgroundColor']]
+    c
+
+--- ---- the crosshair ----
+
+--- the crosshair's lines and labels: a level line in the pane the pointer
+--- is in, an upright one through the bar it is over in every pane
+fn crosshair[c, k]
+    if k.cross.pane eq '' or not store.yes[k, 'crosshair.show']
+        return c
+    ri = store.cross_real_index[k]
+    x = store.x_of[k, 0.0 + ri]
+    p = store.pane[k, k.cross.pane]
+    if store.yes[k, 'crosshair.horizontal.show'] and store.yes[k, 'crosshair.horizontal.line.show']
+        c = styled_seg[c, k, 'crosshair.horizontal.line', 0.0, k.cross.y, k.main_w, k.cross.y, store.col[k, 'crosshair.horizontal.line.color']]
+    if store.yes[k, 'crosshair.vertical.show'] and store.yes[k, 'crosshair.vertical.line.show']
+        for q in k.panes
+            c = styled_seg[c, k, 'crosshair.vertical.line', x, q.top, x, q.top + q.h, store.col[k, 'crosshair.vertical.line.color']]
+    if store.yes[k, 'crosshair.horizontal.show'] and store.yes[k, 'crosshair.horizontal.text.show']
+        c = label[c, k, k.w, k.cross.y, cross_value_words[k, p], 'crosshair.horizontal.text', 'right', 'middle', '', 0.0]
+    if store.yes[k, 'crosshair.vertical.show'] and store.yes[k, 'crosshair.vertical.text.show'] and store.count[k] gt 0
+        t = store.time_of[k, ri]
+        words = format.date[k.zone, t, store.cross_template[k.period.unit]]
+        at = 'crosshair.vertical.text'
+        w = store.text_w[c, k, words, store.num[k, '`at`.size']]
+        align = 'center'
+        lx = x
+        if x - w / 2.0 - store.num[k, '`at`.paddingLeft'] lt 0.0
+            align = 'left'
+            lx = 0.0
+        else
+            if x + w / 2.0 + store.num[k, '`at`.paddingRight'] gt k.main_w
+                align = 'right'
+                lx = k.main_w
+        c = label[c, k, lx, k.h - k.xaxis_h, words, at, align, 'top', '', 0.0]
+    c
+
+--- the value at the crosshair's height, written as its pane's axis writes
+--- values
+fn cross_value_words[k, p]
+    v = store.value_in_pane[k, p, k.cross.y - p.top]
+    precision = store.precision_of[k, p]
+    if p.axis eq 'percentage'
+        return '`format.fixed[store.real_of[k, p, v], 2]`%'
+    big = false
+    for ind in k.inds
+        if ind.pane eq p.id
+            big = big or ind.big
+    words = format.fixed[v, precision]
+    if big
+        words = format.big[v]
+    format.fold[format.thousands[words, ','], 3]
+
+--- ---- the tooltips ----
+
+--- an item of a tooltip: a title and a value, each in its colour
+struct Legend [title, value, title_color, value_color]
+
+--- the candle pane's tooltip (its title and the bar's legend) and every
+--- pane's indicators' tooltips, as klinecharts' standard tooltip
+fn tooltips[c, k]
+    if store.count[k] eq 0
+        return c
+    for p in k.panes
+        left = store.num[k, 'candle.tooltip.offsetLeft']
+        top = store.num[k, 'candle.tooltip.offsetTop']
+        max_w = k.main_w - store.num[k, 'candle.tooltip.offsetRight']
+        if p.id eq 'candle_pane' and _shows_tooltip[k, 'candle.tooltip']
+            r = _candle_tooltip[c, k, p, left, top, max_w]
+            c = r.c
+            top = r.y
+        if _shows_tooltip[k, 'indicator.tooltip']
+            for ind in k.inds
+                if ind.pane eq p.id
+                    r = _indicator_tooltip[c, k, p, ind, left, top, max_w]
+                    c = r.c
+                    top = r.y
+    c
+
+fn _shows_tooltip[k, at]
+    rule = store.st[k, '`at`.showRule']
+    rule eq 'always' or (rule eq 'follow_cross' and k.cross.pane ne '')
+
+--- where a row of a tooltip stands: the canvas drawn so far, the next
+--- item's place, and the row's height so far
+struct Row [c, x, y, h]
+
+--- items laid out left to right, a new row where one would pass max_w
+--- (klinecharts' drawStandardTooltipLegends)
+fn legends[r, k, p, items, left, max_w, at]
+    c = r.c
+    x = r.x
+    y = r.y
+    row_h = r.h
+    ml = store.num[k, '`at`.marginLeft']
+    mt = store.num[k, '`at`.marginTop']
+    mr = store.num[k, '`at`.marginRight']
+    mb = store.num[k, '`at`.marginBottom']
+    size = store.num[k, '`at`.size']
+    for item in items
+        tw = store.text_w[c, k, item.title, size]
+        vw = store.text_w[c, k, item.value, size]
+        h = mt + size + mb
+        if x + ml + tw + vw + mr gt max_w
+            x = left
+            y = y + row_h
+            row_h = h
+        else
+            row_h = max[row_h, h]
+        c = words_at[c, k, x + ml, p.top + y + mt, item.title, size, format.color[item.title_color]]
+        c = words_at[c, k, x + ml + tw, p.top + y + mt, item.value, size, format.color[item.value_color]]
+        x = x + ml + tw + vw + mr
+    Row[c, x, y, row_h]
+
+--- the bar the tooltips speak of: the crosshair's, or the last
+fn _tip_index[k]
+    store.cross_index[k]
+
+fn _candle_tooltip[c, k, p, left, top, max_w]
+    r = Row[c, left, top, 0.0]
+    if store.yes[k, 'candle.tooltip.title.show']
+        words = styles.words[k.locale]
+        unit = k.period.unit
+        unit_word = ''
+        if unit in words
+            unit_word = words[unit]
+        title = store.st[k, 'candle.tooltip.title.template']
+        title = replace[title, '{ticker}', k.symbol.ticker]
+        title = replace[title, '{period}', '`k.period.span``unit_word`']
+        color = store.st[k, 'candle.tooltip.title.color']
+        t = legends[r, k, p, [Legend['', title, color, color]], left, max_w, 'candle.tooltip.title']
+        r = Row[t.c, left, top + t.h, 0.0]
+    items = candle_legends[k, _tip_index[k]]
+    t = legends[r, k, p, items, left, max_w, 'candle.tooltip.legend']
+    Row[t.c, left, t.y + t.h, 0.0]
+
+--- the candle tooltip's items for bar i: the style's template, each item
+--- a title and a value between `|`, items between `;`, `{name}` in a
+--- title the locale's word, `{name_value}` in a value the bar's
+fn candle_legends[k, i]
+    b = k.bars
+    words = styles.words[k.locale]
+    color = store.st[k, 'candle.tooltip.legend.color']
+    pp = k.symbol.price_precision
+    prev_close = b.c[i]
+    if i gt 0
+        prev_close = b.c[i - 1]
+    change = b.c[i] - prev_close
+    shown = map[]
+    shown['time'] = format.date[k.zone, b.t[i], store.cross_template[k.period.unit]]
+    shown['open'] = _price_words[b.o[i], pp]
+    shown['high'] = _price_words[b.h[i], pp]
+    shown['low'] = _price_words[b.l[i], pp]
+    shown['close'] = _price_words[b.c[i], pp]
+    shown['volume'] = format.fold[format.thousands[format.big[_rounded[b.v[i], k.symbol.volume_precision]], ','], 3]
+    shown['turnover'] = _price_words[b.turnover[i], pp]
+    shown['change'] = store.st[k, 'candle.tooltip.legend.defaultValue']
+    if prev_close ne 0.0
+        pct = format.thousands[format.fixed[change / prev_close * 100.0, 2], ',']
+        shown['change'] = '`pct`%'
+    out = []
+    for piece in split[store.st[k, 'candle.tooltip.legend.template'], ';']
+        halves = split[piece, '|']
+        if len[halves] eq 2
+            title = halves[0]
+            value = halves[1]
+            value_color = color
+            if '{change_value}' in split[value, ' '] or ends[value, '{change_value}']
+                value_color = store.st[k, 'candle.priceMark.last.noChangeColor']
+                if change gt 0.0
+                    value_color = store.st[k, 'candle.priceMark.last.upColor']
+                if change lt 0.0
+                    value_color = store.st[k, 'candle.priceMark.last.downColor']
+            for name in keys[shown]
+                if name in words
+                    title = replace[title, '{`name`}', words[name]]
+                value = replace[value, '{`name`_value}', shown[name]]
+            out = push[out, Legend[title, value, color, value_color]]
+    out
+
+fn _rounded[v, decimals]
+    p = 10.0 ^ max[0, decimals]
+    round[v * p] / p
+
+--- an indicator's tooltip: its name and parameters, then each figure's
+--- title and value at the bar, in the figure's colour
+fn _indicator_tooltip[c, k, p, ind, left, top, max_w]
+    r = Row[c, left, top, 0.0]
+    title_color = store.st[k, 'indicator.tooltip.title.color']
+    name = ''
+    if store.yes[k, 'indicator.tooltip.title.show']
+        if store.yes[k, 'indicator.tooltip.title.showName']
+            name = ind.short
+        if store.yes[k, 'indicator.tooltip.title.showParams'] and len[ind.params] gt 0
+            shown = []
+            for v in ind.params
+                shown = push[shown, format.plain[v]]
+            joined = join[shown, ',']
+            name = '`name`(`joined`)'
+    items = indicator_legends[k, ind, _tip_index[k]]
+    if name eq '' and len[items] eq 0
+        return Row[c, left, top, 0.0]
+    if name ne ''
+        r = legends[r, k, p, [Legend['', name, title_color, title_color]], left, max_w, 'indicator.tooltip.title']
+    if ind.visible and len[items] gt 0
+        r = legends[r, k, p, items, left, max_w, 'indicator.tooltip.legend']
+    Row[r.c, left, r.y + r.h, 0.0]
+
+--- an indicator's tooltip items at bar i
+fn indicator_legends[k, ind, i]
+    out = []
+    line_i = 0
+    bar_i = 0
+    fallback = store.st[k, 'indicator.tooltip.legend.defaultValue']
+    for f in ind.figures
+        if f.title ne ''
+            color = ''
+            value = fallback
+            if f.key in ind.values
+                vals = ind.values[f.key]
+                if f.shape eq 'line'
+                    lines_n = max[1, int[store.num[k, 'indicator.lines.count']]]
+                    color = _ind_style[k, ind, 'lines.`line_i % lines_n`.color']
+                else
+                    if i lt len[vals]
+                        color = figure_look[k, ind, f, vals, i, bar_i, 0][0]
+                if i lt len[vals] and vals[i] eq vals[i]
+                    value = format.fixed[vals[i], ind.precision]
+                    if ind.big
+                        value = format.big[_rounded[vals[i], ind.precision]]
+                    value = format.fold[format.thousands[value, ','], 3]
+            if color eq ''
+                color = store.st[k, 'indicator.tooltip.legend.color']
+            out = push[out, Legend[f.title, value, color, color]]
+        if f.shape eq 'line'
+            line_i = line_i + 1
+        else
+            bar_i = bar_i + 1
+    out
+
+--- ---- all of it ----
+
+--- the chart drawn whole, in klinecharts' order: behind, the grid; then
+--- each pane's candles and figures, the price marks; the axes, the
+--- separators; over all, the crosshair and the tooltips
+fn everything[c, k]
+    xticks = store.x_ticks[c, k]
+    c = background[c, k]
+    box_was = lory.clipped[c]
+    c = lory.clip[c, _sx[k, 0.0], _sy[k, 0.0], k.main_w * k.s, (k.h - k.xaxis_h) * k.s]
+    c = grid[c, k, xticks]
+    c = candles[c, k]
+    c = figures[c, k]
+    c = marks[c, k]
+    c = lory.unclip[c, box_was]
+    c = y_axes[c, k]
+    c = x_axis[c, k, xticks]
+    c = last_values[c, k]
+    c = last_label[c, k]
+    c = separators[c, k]
+    c = lory.clip[c, _sx[k, 0.0], _sy[k, 0.0], k.w * k.s, k.h * k.s]
+    c = crosshair[c, k]
+    c = lory.unclip[c, box_was]
+    c = lory.clip[c, _sx[k, 0.0], _sy[k, 0.0], k.main_w * k.s, (k.h - k.xaxis_h) * k.s]
+    c = tooltips[c, k]
+    lory.unclip[c, box_was]

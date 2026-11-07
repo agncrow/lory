@@ -1,0 +1,60 @@
+--- Kite's first chart: five hundred one-minute bars of a made-up walk,
+--- with a moving average over the candles, the volume and the MACD in
+--- panes of their own — drag to scroll, the wheel to zoom, a drag of the
+--- price axis to stretch it, a double click on it to fit it again.
+use sys
+use math
+use lory
+use kite
+
+fn made[n]
+    t0 = 1793975400000.0
+    ts = []
+    o = []
+    h = []
+    l = []
+    c = []
+    v = []
+    price = 100.0
+    for i in range[n]
+        x = 0.0 + i
+        step = sin[x * 12.9898] * 0.35 + sin[x * 0.031] * 0.12
+        opened = price
+        closed = price + step
+        ts = push[ts, t0 + x * 60000.0]
+        o = push[o, opened]
+        c = push[c, closed]
+        h = push[h, max[opened, closed] + abs[sin[x * 78.233]] * 0.2]
+        l = push[l, min[opened, closed] - abs[sin[x * 37.719]] * 0.2]
+        v = push[v, 1000.0 + abs[sin[x * 4.1414]] * 9000.0]
+        price = closed
+    kite.bars[ts, o, h, l, c, v]
+
+fn chart_of[]
+    k = kite.chart['first']
+    if kite.count[k] gt 0
+        return k
+    k = kite.symbol[k, 'KITE', 2, 0]
+    k = kite.period[k, 'minute', 1]
+    k = kite.zone[k, 'America/New_York']
+    k = kite.data[k, made[500]]
+    k = kite.indicator[k, 'MA', [], 'candle_pane']
+    k = kite.indicator[k, 'VOL', [], '']
+    k = kite.indicator[k, 'MACD', [], '']
+    t0 = 1793975400000.0
+    a = kite.point[k, t0 + 380.0 * 60000.0, 99.0]
+    b = kite.point[k, t0 + 470.0 * 60000.0, 101.5]
+    k = kite.overlay[k, 'segment', [a, b], 'candle_pane', '']
+    k = kite.overlay_style[k, kite.last_overlay[k], 'line.color', '#ff9800']
+    kite.overlay[k, 'priceLine', [kite.point[k, t0 + 430.0 * 60000.0, 100.0]], 'candle_pane', '']
+
+fn draw[frame]
+    c = lory.begin[frame]
+    c = lory.clear[c, lory.white[]]
+    k = chart_of[]
+    k = kite.update[c, k, 0.0, 0.0, lory.width[c], lory.height[c]]
+    c = kite.draw[c, k]
+    kite.keep[k]
+    lory.end[c]
+
+sys.frames[draw]

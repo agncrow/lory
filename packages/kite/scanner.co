@@ -1,0 +1,387 @@
+--- Kite's scanner charts: the look and the drawings of a VWAP scanner's
+--- cards, on top of klinecharts' behaviour — a dark theme in teal and soft
+--- red, no price grid, dimmed axes, a hover that names only the symbol and
+--- the bar's span; the cumulative and the rolling VWAP over the candles,
+--- with a dashed band 6% above the rolling one; and a percentage ladder
+--- down the plot's left edge, 0% at the plot's middle or at a reference
+--- price (the previous close), so a move reads straight off the chart.
+---
+---     k = kite.styled[k, scanner.theme[]]
+---     k = scanner.vwap[k, cum_vwaps, rolling_vwaps]
+---     …
+---     c = kite.draw[c, k]
+---     c = scanner.draw[c, k, previous_close]
+use math
+use lory
+use store
+use views
+use indicators
+use format
+use styles
+
+--- ---- the look ----
+
+--- the plot's background, darker than a page around it
+fn background[]
+    '#181b22'
+
+--- the up and down colours of the candles, the volume and the price tag
+fn up[]
+    '#26a69a'
+
+fn down[]
+    '#ef5350'
+
+--- the theme: Kite's dark styles, then the scanner's own over them
+fn theme[]
+    m = styles.dark[]
+    m['background'] = background[]
+    m['grid.show'] = 'false'
+    dim = 'rgba(156, 163, 175, 0.35)'
+    dim_text = 'rgba(156, 163, 175, 0.55)'
+    for axis in ['xAxis', 'yAxis']
+        m['`axis`.axisLine.show'] = 'true'
+        m['`axis`.axisLine.color'] = dim
+        m['`axis`.axisLine.size'] = '1'
+        m['`axis`.tickLine.show'] = 'true'
+        m['`axis`.tickLine.color'] = dim
+        m['`axis`.tickLine.size'] = '1'
+        m['`axis`.tickLine.length'] = '3'
+        m['`axis`.tickText.color'] = dim_text
+    m['separator.size'] = '1'
+    m['separator.color'] = dim
+    m['separator.fill'] = 'true'
+    m['separator.activeBackgroundColor'] = 'rgba(156, 163, 175, 0.15)'
+    for d in ['horizontal', 'vertical']
+        m['crosshair.`d`.line.style'] = 'dashed'
+        m['crosshair.`d`.line.size'] = '0.5'
+        m['crosshair.`d`.line.color'] = 'rgba(200, 200, 200, 0.35)'
+        m['crosshair.`d`.line.dashedValue'] = '3,3'
+    for side in ['up', 'down']
+        shade = up[]
+        if side eq 'down'
+            shade = down[]
+        m['candle.bar.`side`Color'] = shade
+        m['candle.bar.`side`BorderColor'] = shade
+        m['candle.bar.`side`WickColor'] = shade
+        m['candle.priceMark.last.`side`Color'] = shade
+    for what in ['Color', 'BorderColor', 'WickColor']
+        m['candle.bar.noChange`what`'] = '#e5e7eb'
+    m['candle.priceMark.last.noChangeColor'] = '#888888'
+    --- (the hover names the symbol and the bar's span alone: `KITE · 30s`)
+    m['candle.tooltip.showRule'] = 'follow_cross'
+    m['candle.tooltip.offsetLeft'] = '60'
+    m['candle.tooltip.offsetTop'] = '0'
+    m['candle.tooltip.legend.template'] = ''
+    m['candle.tooltip.legend.size'] = '10'
+    m['indicator.tooltip.showRule'] = 'none'
+    m
+
+--- the volume's colours: the candles' at 70%
+fn volume_colors[k]
+    k = indicator_style[k, 'VOL', 'bars.0.upColor', 'rgba(38, 166, 154, 0.7)']
+    indicator_style[k, 'VOL', 'bars.0.downColor', 'rgba(239, 83, 80, 0.7)']
+
+--- one style of the indicators of a name, over the chart's
+fn indicator_style[k, name, key, value]
+    out = []
+    for ind in k.inds
+        if ind.name eq name
+            ind.styles[key] = value
+        out = push[out, ind]
+    k.inds = out
+    k
+
+--- ---- the VWAP lines ----
+
+--- how far above the rolling VWAP its band runs, in percent
+fn stretch_pct[]
+    6.0
+
+--- the band at one bar: stretch_pct above its rolling VWAP, none (NaN)
+--- where the VWAP is none or not above zero
+fn stretch_band[rv]
+    if rv eq rv and rv gt 0.0
+        return rv * (1.0 + stretch_pct[] / 100.0)
+    indicators.none[]
+
+--- the cumulative VWAP (amber) and the rolling one (blue) over the
+--- candles, per bar (NaN where a bar has none)
+fn vwap[k, cum, rolling]
+    figures = [indicators.line['cum_vwap', 'cumVWAP: '], indicators.line['rvwap_60', 'rVWAP60: ']]
+    bands = []
+    for v in rolling
+        bands = push[bands, stretch_band[v]]
+    given = map[cum_vwap = cum, rvwap_60 = rolling, stretch = bands]
+    ind = indicators.custom['VWAP_LINES', figures, given]
+    ind.short = 'VWAP'
+    ind.styles['lines.0.color'] = '#fbbf24'
+    ind.styles['lines.0.size'] = '1.5'
+    ind.styles['lines.0.style'] = 'solid'
+    ind.styles['lines.1.color'] = '#60a5fa'
+    ind.styles['lines.1.size'] = '1.5'
+    ind.styles['lines.1.style'] = 'solid'
+    ind.pane = 'candle_pane'
+    ind.id = 'candle_pane/VWAP_LINES'
+    kept = []
+    for other in k.inds
+        if other.id ne ind.id
+            kept = push[kept, other]
+    k.inds = push[kept, ind]
+    k.dirty = true
+    k
+
+--- the band drawn dashed over the bars in view, broken where a bar has
+--- none, and named `+6%` at its right end while that end is in the pane
+--- (drawn, not a figure: it never widens the price axis)
+fn _band[c, k, p]
+    i = store.pane_index[k, 'candle_pane']
+    if i lt 0
+        return c
+    found = false
+    bands = []
+    for ind in k.inds
+        if ind.name eq 'VWAP_LINES' and ind.visible and 'stretch' in ind.values
+            bands = ind.values['stretch']
+            found = true
+    if not found
+        return c
+    color = format.color['rgba(148, 163, 184, 0.8)']
+    lo = max[0, k.real_from]
+    hi = min[len[bands], k.real_to]
+    xs = []
+    ys = []
+    last_x = -1.0
+    last_y = -1.0
+    at = lo
+    while at lt hi
+        v = bands[at]
+        if v eq v
+            xs = push[xs, 0.0 + store.x_of[k, 0.0 + at]]
+            ys = push[ys, p.top + store.y_in_pane[k, p, v]]
+            last_x = xs[len[xs] - 1]
+            last_y = ys[len[ys] - 1]
+        else
+            c = _run[c, k, xs, ys, color]
+            xs = []
+            ys = []
+        at = at + 1
+    c = _run[c, k, xs, ys, color]
+    if last_x gte 0.0 and last_y gt p.top + 8.0 and last_y lt p.top + p.h - 4.0
+        words = '+`int[stretch_pct[]]`%'
+        w = store.text_w[c, k, words, 10.0]
+        c = views.words_at[c, k, last_x - 2.0 - w, last_y - 2.0 - 10.0, words, 10.0, color]
+    c
+
+fn _run[c, k, xs, ys, color]
+    if len[xs] lt 2
+        return c
+    box_was = lory.clipped[c]
+    c = lory.clip[c, views._sx[k, 0.0], views._sy[k, 0.0], k.main_w * k.s, (k.h - k.xaxis_h) * k.s]
+    c = views.polyline[c, k, xs, ys, 1.0, color, true, 4.0, 3.0]
+    lory.unclip[c, box_was]
+
+--- ---- the percentage ladder ----
+
+--- one rung: its distance in percent, its price, its words
+struct Rung [pct, price, label]
+
+fn _steps[]
+    [0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 2.5, 5.0, 10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0]
+
+--- the smallest step that keeps the rungs from crowding: no more than
+--- three a side, fewer where the pane has room for fewer
+fn pick_step[most, room]
+    wanted = 0.0 + max[1, min[3, room]]
+    for s in _steps[]
+        if most / s lte wanted
+            return s
+    1000.0
+
+fn _rung_label[i, pct, decimals]
+    if i eq 0
+        return '0%'
+    sign_of = '+'
+    if pct lt 0.0
+        sign_of = '−'
+    amount = format.fixed[abs[pct], decimals]
+    '`sign_of``amount`%'
+
+fn _decimals_of_step[step]
+    if step lt 0.1
+        return 2
+    if step lt 1.0
+        return 1
+    0
+
+--- the rungs of a visible window as percentages of the price on its
+--- middle line: none where the pane is too short (70 pixels or less), the
+--- window empty or upside down, or its middle not above zero
+fn ladder[top, bottom, h]
+    out = []
+    if not (h gt 70.0) or not (top gt bottom)
+        return out
+    ref = (top + bottom) / 2.0
+    if not (ref gt 0.0)
+        return out
+    most = (top - ref) / ref * 100.0
+    if not (most gt 0.0)
+        return out
+    step = pick_step[most, int[floor[h / 2.0 / 16.0]]]
+    decimals = _decimals_of_step[step]
+    n = int[ceil[most / step]]
+    i = 0 - n
+    while i lte n
+        pct = i * step
+        price = ref * (1.0 + pct / 100.0)
+        if price lte top and price gte bottom
+            out = push[out, Rung[pct, price, _rung_label[i, pct, decimals]]]
+        i = i + 1
+    out
+
+--- the rungs measured from a reference price (0% there, wherever it is on
+--- the chart or off it): none where the reference is not above zero, the
+--- pane too short or the window empty or upside down
+fn ladder_from[ref, top, bottom, h]
+    out = []
+    if not (h gt 70.0) or not (ref gt 0.0) or not (top gt bottom)
+        return out
+    pct_top = (top - ref) / ref * 100.0
+    pct_bottom = (bottom - ref) / ref * 100.0
+    step = pick_step[(pct_top - pct_bottom) / 2.0, int[floor[h / 2.0 / 16.0]]]
+    decimals = _decimals_of_step[step]
+    i = int[ceil[pct_bottom / step]]
+    last = int[floor[pct_top / step]]
+    while i lte last
+        pct = i * step
+        price = ref * (1.0 + pct / 100.0)
+        if price gt 0.0 and price lte top and price gte bottom
+            out = push[out, Rung[pct, price, _rung_label[i, pct, decimals]]]
+        i = i + 1
+    out
+
+--- the ladder drawn down the candle pane's left edge: each rung's words
+--- with a dark halo about the letters (no box: what is drawn under them
+--- reads through) and a short tick after them
+fn _ladder[c, k, p, ref]
+    top = store.value_in_pane[k, p, 0.0]
+    bottom = store.value_in_pane[k, p, p.h]
+    rungs = ladder[top, bottom, p.h]
+    if ref gt 0.0
+        rungs = ladder_from[ref, top, bottom, p.h]
+    text = format.color['rgba(156, 163, 175, 0.9)']
+    zero = format.color['rgba(229, 231, 235, 0.98)']
+    halo = format.color['rgba(17, 24, 39, 0.85)']
+    tick = format.color['rgba(156, 163, 175, 0.55)']
+    size = 10.0
+    for r in rungs
+        y = store.y_in_pane[k, p, r.price]
+        if y gte 8.0 and y lte p.h - 8.0
+            at_y = p.top + y
+            w = store.text_w[c, k, r.label, size]
+            top_y = at_y - size / 2.0
+            for d in [[-1.0, -1.0], [0.0, -1.5], [1.0, -1.0], [-1.5, 0.0], [1.5, 0.0], [-1.0, 1.0], [0.0, 1.5], [1.0, 1.0]]
+                c = views.words_at[c, k, 3.0 + d[0], top_y + d[1], r.label, size, halo]
+            shade = text
+            if r.pct eq 0.0
+                shade = zero
+            c = views.words_at[c, k, 3.0, top_y, r.label, size, shade]
+            c = views.seg[c, k, w + 8.0, at_y, w + 12.0, at_y, 1.0, tick, false, 0.0, 0.0]
+    c
+
+--- ---- drawn over the chart ----
+
+--- the scanner's drawings over a chart Kite has drawn: the VWAP band and
+--- the percentage ladder (from `ref`, the previous close; 0 for the
+--- plot's middle)
+fn draw[c, k, ref]
+    if not store.has_pane[k, 'candle_pane']
+        return c
+    p = store.pane[k, 'candle_pane']
+    c = _band[c, k, p]
+    _ladder[c, k, p, ref]
+
+--- ---- held to the scanner's own answers ----
+
+fn _labels[rungs]
+    out = []
+    for r in rungs
+        out = push[out, r.label]
+    out
+
+fn _signed_above[r]
+    starts[r.label, '+']
+
+fn _signed_below[r]
+    starts[r.label, '−']
+
+fn _in_window_above[r]
+    starts[r.label, '+'] and r.price lte 3.2 and r.price gte 2.4
+
+fn _above_nothing[r]
+    r.price gt 0.0 and r.pct gt -100.0
+
+fn _mirrored[rungs]
+    every = true
+    for r in rungs
+        every = every and _has_pct[rungs, 0.0 - r.pct]
+    every
+
+fn _has_pct[rungs, pct]
+    found = false
+    for r in rungs
+        found = found or abs[r.pct - pct] lt 0.000000001
+    found
+
+test the_step_is_the_smallest_that_fits[]
+    pick_step[2.0, 3] eq 1.0
+    pick_step[1.5, 3] eq 0.5
+    pick_step[0.3, 3] eq 0.1
+    pick_step[30.0, 3] eq 10.0
+    pick_step[10000.0, 3] eq 1000.0
+    pick_step[300.0, 3] eq 100.0
+    pick_step[500.0, 3] eq 200.0
+
+test the_ladder_is_about_the_middle_line[]
+    rungs = ladder[3.855, 3.705, 390.0]
+    zeros = []
+    for r in rungs
+        if r.pct eq 0.0
+            zeros = push[zeros, r]
+    len[zeros] eq 1
+    abs[zeros[0].price - (3.855 + 3.705) / 2.0] lt 0.0000000001
+    zeros[0].label eq '0%'
+    _mirrored[rungs]
+    len[rungs] gt 0 and len[rungs] lte 9
+    any[rungs, _signed_above]
+    any[rungs, _signed_below]
+
+test the_ladder_draws_nothing_where_it_cannot[]
+    len[ladder[3.855, 3.705, 40.0]] eq 0
+    len[ladder[3.8, 3.8, 390.0]] eq 0
+    len[ladder[3.7, 3.9, 390.0]] eq 0
+    len[ladder[1.0, -1.0, 390.0]] eq 0
+    len[ladder[indicators.none[], 3.7, 390.0]] eq 0
+
+test the_ladder_from_the_previous_close[]
+    _labels[ladder_from[1.7, 7.0, 1.4, 318.0]] eq ['0%', '+100%', '+200%', '+300%']
+    above = ladder_from[1.0, 3.2, 2.4, 318.0]
+    len[above] gt 0
+    not _has_pct[above, 0.0]
+    all[above, _in_window_above]
+    below = ladder_from[4.0, 4.4, 0.2, 318.0]
+    any[below, _signed_below]
+    all[below, _above_nothing]
+    small = ladder_from[2.0, 2.06, 1.96, 318.0]
+    '0%' in _labels[small]
+    len[small] lte 9
+    len[ladder_from[0.0, 7.0, 1.4, 318.0]] eq 0
+    len[ladder_from[1.7, 7.0, 1.4, 40.0]] eq 0
+    len[ladder_from[1.7, 1.4, 7.0, 318.0]] eq 0
+
+test the_band_is_six_percent_above_the_rolling_vwap[]
+    abs[stretch_band[2.0] - 2.12] lt 0.0000000001
+    abs[stretch_band[5.094] - 5.39964] lt 0.0000000001
+    indicators.is_none[stretch_band[0.0]]
+    indicators.is_none[stretch_band[-1.0]]
+    indicators.is_none[stretch_band[indicators.none[]]]

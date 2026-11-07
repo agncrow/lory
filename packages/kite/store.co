@@ -1,0 +1,1303 @@
+--- Kite's store: what a chart holds between frames, and how a frame's
+--- input moves it — klinecharts' store, layout and event handling, in
+--- the same arithmetic.
+---
+--- Bars stand at positions, not times: bar i's centre is `space` pixels
+--- right of bar i - 1's, and the last bar stands `right_bars` bars left of
+--- the plot's right edge (negative: scrolled past it). A drag moves
+--- `right_bars`; a zoom changes `space` about the pointer. Every length
+--- here is in CSS pixels, from the chart's top left; `draw` multiplies by
+--- the screen's pixels per CSS pixel.
+use math
+use lory
+use format
+use styles
+use indicators
+
+--- a pane's y range: the values at its floor and its top (`from`, `to`),
+--- as the axis places them (`real_`: a percentage axis places percents, a
+--- logarithmic one logarithms) and as it labels them (`display_`)
+struct Range [from, to, span, real_from, real_to, real_span, display_from, display_to, display_span]
+
+--- a mark on an axis: its words, where it is (pixels from the pane's top,
+--- or the plot's left) and its value
+struct Tick [text, coord, value]
+
+--- a pane: its id, the height it asks for and the least it takes,
+--- whether a drag of its top edge resizes it, its axis (`normal`,
+--- `percentage`, `logarithm`), whether up is down, the gaps above and
+--- below its values (a share of its height, or pixels where 1 or more),
+--- where it lies now (`top`, `h`), its range, whether the range is
+--- computed (not dragged or set), its ticks, and whether the wheel and a
+--- drag of its axis move it
+struct Pane [id, height, min_height, drag, axis, reverse, gap_top, gap_bottom, top, h, rng, auto, ticks, scroll_zoom, state]
+
+--- the crosshair: where the pointer is, in which pane (`` none)
+struct Cross [x, y, pane]
+
+--- a drag under way: what it moves (`scroll`, `separator`, `yaxis`,
+--- `xaxis`, `overlay`), where it began, and what it began from
+struct Drag [what, x0, y0, start_right, pane, above_h, below_h, start, scale]
+
+--- a finger on the chart
+struct Touch [id, x, y]
+
+--- a point an overlay is drawn through: a bar's position (fractional
+--- where it lies between bars), its time, and a value
+struct Point [index, t, value]
+
+--- an overlay: a line, a mark or a shape drawn over the chart through
+--- points (overlays.co draws them and moves them)
+struct Overlay [id, name, group, pane, points, needed, styles, lock, visible, mode, done, z, extend, words, hover, selected, moving, from]
+
+--- the bars' symbol: its name and the decimals its prices and volumes show
+struct Symbol [ticker, price_precision, volume_precision]
+
+--- the bars' period: `second`, `minute`, `hour`, `day`, `week`, `month`
+--- or `year`, and how many of them a bar spans
+struct Period [unit, span]
+
+struct Chart [id, bars, symbol, period, styles, zone, locale, space, gap, offset_right, right_bars, scroll_on, zoom_on, anchor_main, anchor_x, panes, inds, overlays, x, y, w, h, main_w, axis_w, xaxis_h, cross, drag, touches, from, to, real_from, real_to, more_older, more_newer, wants, s, dirty, actions, hi, hi_x, lo, lo_x, extra, drawing, last_tap, tapped, fling, separators]
+
+fn _empty_range[]
+    Range[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+fn _no_drag[]
+    Drag['', 0.0, 0.0, 0.0, '', 0.0, 0.0, _empty_range[], 1.0]
+
+fn pane_of[id, height]
+    Pane[id, height, 30.0, true, 'normal', false, 0.2, 0.1, 0.0, 0.0, _empty_range[], true, [], true, 'normal']
+
+fn _empty_bars[]
+    indicators.Bars[[], [], [], [], [], [], []]
+
+--- a chart of no bars, named `id`, in klinecharts' light styles
+fn new[id]
+    candle = pane_of['candle_pane', 0.0]
+    Chart[id, _empty_bars[], Symbol['', 2, 0], Period['minute', 1], styles.defaults[], '', 'en-US', 10.0, 7.0, 80.0, 8.0, true, true, 'cursor', 'cursor', [candle], [], [], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Cross[-1.0, -1.0, ''], _no_drag[], [], 0, 0, 0, 0, false, false, '', 1.0, true, [], 0.0, 0.0, 0.0, 0.0, map[], '', -1.0, false, 0.0, []]
+
+--- ---- the styles ----
+
+--- a style's text
+fn st[k, key]
+    if key in k.styles
+        return k.styles[key]
+    ''
+
+--- a style as a number (0 where it is none or `auto`)
+fn num[k, key]
+    t = st[k, key]
+    if t eq '' or t eq 'auto'
+        return 0.0
+    format.number[t, 0.0]
+
+--- a style as a truth
+fn yes[k, key]
+    st[k, key] eq 'true'
+
+--- a style as a colour
+fn col[k, key]
+    format.color[st[k, key]]
+
+--- a dash style as its two lengths
+fn dashes[k, key]
+    t = st[k, key]
+    pieces = split[t, ',']
+    if len[pieces] lt 2
+        return [2.0, 2.0]
+    [format.number[pieces[0], 2.0], format.number[pieces[1], 2.0]]
+
+--- ---- the bars ----
+
+fn count[k]
+    len[k.bars.c]
+
+--- the bars a chart holds, from the start: the view goes to the newest bar
+--- with the initial right offset (klinecharts' `init`)
+fn set_bars[k, b, more_older, more_newer]
+    k.bars = b
+    k.more_older = more_older
+    k.more_newer = more_newer
+    k.right_bars = k.offset_right / k.space
+    k.dirty = true
+    k.wants = ''
+    k
+
+--- older bars put before the ones held (a load the view asked for as it
+--- reached the first bar)
+fn prepend[k, b, more_older]
+    n = len[b.c]
+    k.bars = _joined[b, k.bars]
+    k.more_older = more_older
+    k.dirty = true
+    k.wants = ''
+    k
+
+--- newer bars put after the ones held
+fn append_bars[k, b, more_newer]
+    n = len[b.c]
+    k.bars = _joined[k.bars, b]
+    k.more_newer = more_newer
+    k.right_bars = k.right_bars - n
+    k.dirty = true
+    k.wants = ''
+    k
+
+fn _joined[a, b]
+    indicators.Bars[concat[[a.t, b.t]], concat[[a.o, b.o]], concat[[a.h, b.h]], concat[[a.l, b.l]], concat[[a.c, b.c]], concat[[a.v, b.v]], concat[[a.turnover, b.turnover]]]
+
+--- a bar as it is now: a newer time adds a bar (the view follows it where
+--- the last bar was in view), the last bar's time changes the last bar
+--- (klinecharts' `update`), an older time is ignored
+fn update_bar[k, t, o, h, l, c, v]
+    n = count[k]
+    b = k.bars
+    if n gt 0 and t lt b.t[n - 1]
+        return k
+    if n gt 0 and t eq b.t[n - 1]
+        b.o[n - 1] = o
+        b.h[n - 1] = h
+        b.l[n - 1] = l
+        b.c[n - 1] = c
+        b.v[n - 1] = v
+        k.bars = b
+        k.dirty = true
+        return k
+    b.t = push[b.t, t]
+    b.o = push[b.o, o]
+    b.h = push[b.h, h]
+    b.l = push[b.l, l]
+    b.c = push[b.c, c]
+    b.v = push[b.v, v]
+    b.turnover = push[b.turnover, 0.0]
+    k.bars = b
+    if k.right_bars lt 0.0
+        k.right_bars = k.right_bars - 1.0
+    k.dirty = true
+    k
+
+--- a field of the bars of the program's own (a VWAP, a delta), one
+--- number per bar, for its own indicators to read
+fn set_extra[k, name, vals]
+    k.extra[name] = vals
+    k.dirty = true
+    k
+
+--- ---- the view ----
+
+--- the bar's width and the gap between bars, as klinecharts sizes them
+fn _gap_of[space]
+    special = 4.0
+    ratio = 1.0 - 0.2 * atan[max[special, space] - special] / (pi * 0.5)
+    gap = min[floor[space * ratio], floor[space]]
+    if int[gap] % 2 eq 0 and gap + 2.0 gte space
+        gap = gap - 1.0
+    max[1.0, gap]
+
+fn half_gap[k]
+    floor[k.gap / 2.0]
+
+--- the space a bar takes, between 1 and 50 pixels
+fn set_space[k, space]
+    if space lt 1.0 or space gt 50.0 or space eq k.space
+        return k
+    k.space = space
+    k.gap = _gap_of[space]
+    k
+
+--- the distance from the last bar to the plot's right edge, in pixels
+fn set_offset_right[k, d]
+    k.offset_right = d
+    k.right_bars = d / k.space
+    k
+
+fn offset_right[k]
+    max[0.0, k.right_bars * k.space]
+
+--- the view moved so the newest bar stands where it started (at the
+--- initial right offset)
+fn scroll_to_real_time[k]
+    k.right_bars = k.offset_right / k.space
+    adjust[k]
+
+--- the view moved so the bar at `t` stands where the newest one would
+fn scroll_to_time[k, t]
+    i = index_at_time[k, t]
+    n = count[k]
+    k.right_bars = k.offset_right / k.space - (n - 1 - i)
+    adjust[k]
+
+--- the view moved so bar `i` stands at the plot's right offset
+fn scroll_to_index[k, i]
+    n = count[k]
+    k.right_bars = k.offset_right / k.space - (n - 1 - i)
+    adjust[k]
+
+--- the position of a bar from the plot's left, in pixels (klinecharts'
+--- dataIndexToCoordinate)
+fn x_of[k, i]
+    n = 0.0 + count[k]
+    delta = n + k.right_bars - i
+    floor[k.main_w - (delta - 0.5) * k.space + 0.5]
+
+--- the fractional position of the bar at x
+fn float_index_of[k, x]
+    n = 0.0 + count[k]
+    delta = (k.main_w - x) / k.space
+    index = n + k.right_bars - delta
+    round[index * 1000000.0] / 1000000.0
+
+--- the bar at x
+fn index_of[k, x]
+    int[ceil[float_index_of[k, x]]] - 1
+
+--- the time of a bar's position, past either end by the period
+fn time_of[k, i]
+    n = count[k]
+    if n eq 0
+        return 0.0
+    if i gte 0 and i lt n
+        return k.bars.t[i]
+    last = n - 1
+    ref = k.bars.t[last]
+    diff = i - last
+    if i lt 0
+        ref = k.bars.t[0]
+        diff = i
+    step = period_ms[k.period]
+    if k.period.unit eq 'month' or k.period.unit eq 'year'
+        return _calendar_step[ref, k.period, diff]
+    ref + step * diff
+
+--- a period in milliseconds (a month or a year: none — they are
+--- counted on the calendar)
+fn period_ms[p]
+    s = 0.0 + p.span
+    if p.unit eq 'second'
+        return s * 1000.0
+    if p.unit eq 'minute'
+        return s * 60000.0
+    if p.unit eq 'hour'
+        return s * 3600000.0
+    if p.unit eq 'day'
+        return s * 86400000.0
+    if p.unit eq 'week'
+        return s * 604800000.0
+    0.0
+
+fn _calendar_step[ref, p, diff]
+    t = moment[floor[ref / 1000.0]]
+    if not t.ok
+        return ref
+    months = p.span * diff
+    if p.unit eq 'year'
+        months = months * 12
+    total = t.year * 12 + (t.month - 1) + months
+    y = int[floor[total / 12.0]]
+    m = total - y * 12 + 1
+    d = min[t.day, _month_days[y, m]]
+    after = moment[y, m, d, hour = t.hour, minute = t.minute, second = t.second]
+    if not after.ok
+        return ref
+    float[after] * 1000.0
+
+fn _month_days[y, m]
+    if m eq 2
+        if (y % 4 eq 0 and y % 100 ne 0) or y % 400 eq 0
+            return 29
+        return 28
+    if m eq 4 or m eq 6 or m eq 9 or m eq 11
+        return 30
+    31
+
+--- the bar at a time: the bar holding it, or the nearest by the period
+--- past either end
+fn index_at_time[k, t]
+    n = count[k]
+    if n eq 0
+        return 0
+    step = period_ms[k.period]
+    last = k.bars.t[n - 1]
+    first = k.bars.t[0]
+    if t gt last and step gt 0.0
+        return n - 1 + int[floor[(t - last) / step]]
+    if t lt first and step gt 0.0
+        return int[floor[(t - first) / step]]
+    --- (the nearest by a binary search, as klinecharts')
+    lo = 0
+    hi = n - 1
+    while lo lt hi
+        mid = (lo + hi) / 2
+        if k.bars.t[mid] lt t
+            lo = mid + 1
+        else
+            hi = mid
+    if lo gt 0 and abs[k.bars.t[lo - 1] - t] lt abs[k.bars.t[lo] - t]
+        return lo - 1
+    lo
+
+--- the visible bars worked out again (klinecharts' _adjustVisibleRange):
+--- the view kept from scrolling the bars out of sight, the range of bars
+--- drawn, and the highest high and lowest low in view
+fn adjust[k]
+    n = 0.0 + count[k]
+    visible = k.main_w / k.space
+    --- (at least two bars stay in view at each side, as klinecharts'
+    --- default minimum visible bars)
+    left_min = min[2.0, n]
+    right_min = min[2.0, n]
+    most_right = visible - left_min
+    if k.right_bars gt most_right
+        k.right_bars = most_right
+    least_right = 0.0 - n + right_min
+    if k.right_bars lt least_right
+        k.right_bars = least_right
+    to = round[k.right_bars + n + 0.5]
+    real_to = to
+    if to gt n
+        to = n
+    from = round[to - visible] - 1.0
+    if from lt 0.0
+        from = 0.0
+    real_from = from
+    if k.right_bars gt 0.0
+        real_from = round[n + k.right_bars - visible] - 1.0
+    k.from = int[from]
+    k.to = int[to]
+    k.real_from = int[real_from]
+    k.real_to = int[real_to]
+    hi = -9007199254740991.0
+    lo = 9007199254740991.0
+    hi_x = 0.0
+    lo_x = 0.0
+    i = max[0, k.real_from]
+    stop = min[count[k], k.real_to]
+    while i lt stop
+        if k.bars.h[i] gt hi
+            hi = k.bars.h[i]
+            hi_x = x_of[k, 0.0 + i]
+        if k.bars.l[i] lt lo
+            lo = k.bars.l[i]
+            lo_x = x_of[k, 0.0 + i]
+        i = i + 1
+    k.hi = hi
+    k.lo = lo
+    k.hi_x = hi_x
+    k.lo_x = lo_x
+    --- (at the first bar with older bars to come, or the last with newer,
+    --- the chart asks the program for them)
+    if k.from eq 0 and k.more_older and count[k] gt 0
+        k.wants = 'older'
+    else
+        if k.to eq count[k] and k.more_newer and count[k] gt 0
+            k.wants = 'newer'
+    k
+
+--- the view zoomed by `scale` (positive: nearer) about x (klinecharts'
+--- zoom: a step of a tenth of the bar's space per unit)
+fn zoom[k, scale, x]
+    if not k.zoom_on
+        return k
+    at = x
+    if k.anchor_main eq 'last_bar'
+        at = x_of[k, 0.0 + count[k] - 1.0]
+    before = float_index_of[k, at]
+    prev = k.space
+    space = k.space + scale * (k.space / 10.0)
+    k = set_space[k, space]
+    if k.space ne prev
+        k.right_bars = k.right_bars + (before - float_index_of[k, at])
+        k.actions = push[k.actions, 'zoom']
+    adjust[k]
+
+--- a scroll begins: what it moves from
+fn start_scroll[k]
+    k.drag.start_right = k.right_bars
+    k
+
+--- the view scrolled `d` pixels from where the scroll began (positive:
+--- toward older bars)
+fn scroll[k, d]
+    if not k.scroll_on
+        return k
+    k.right_bars = k.drag.start_right - d / k.space
+    k.actions = push[k.actions, 'scroll']
+    adjust[k]
+
+--- the view scrolled by `d` pixels at once
+fn scroll_by[k, d]
+    k = start_scroll[k]
+    scroll[k, d]
+
+--- ---- the panes ----
+
+fn pane_index[k, id]
+    for i in range[len[k.panes]]
+        if k.panes[i].id eq id
+            return i
+    -1
+
+fn has_pane[k, id]
+    pane_index[k, id] gte 0
+
+--- the pane named `id`
+fn pane[k, id]
+    i = pane_index[k, id]
+    if i lt 0
+        return k.panes[0]
+    k.panes[i]
+
+--- a pane added below the others (the candle pane is first)
+fn add_pane[k, id, height]
+    if has_pane[k, id]
+        return k
+    k.panes = push[k.panes, pane_of[id, height]]
+    k
+
+fn remove_pane[k, id]
+    kept = []
+    for p in k.panes
+        if p.id ne id or id eq 'candle_pane'
+            kept = push[kept, p]
+    k.panes = kept
+    k
+
+--- a pane changed by the program: its height and least height, its
+--- axis, whether a drag resizes it
+fn set_pane[k, p]
+    i = pane_index[k, p.id]
+    if i lt 0
+        return k
+    k.panes[i] = p
+    k
+
+--- the pane's y range fixed (a program's zoom of its axis), until the axis
+--- is double-clicked or `unfix`ed
+fn fix_range[k, id, lo, hi]
+    i = pane_index[k, id]
+    if i lt 0
+        return k
+    p = k.panes[i]
+    p.rng = _range_of[k, p, lo, hi]
+    p.auto = false
+    k.panes[i] = p
+    k
+
+fn unfix[k, id]
+    i = pane_index[k, id]
+    if i lt 0
+        return k
+    p = k.panes[i]
+    p.auto = true
+    k.panes[i] = p
+    k
+
+--- ---- layout ----
+
+fn _x_axis_h[k]
+    if st[k, 'xAxis.size'] ne 'auto' and st[k, 'xAxis.size'] ne ''
+        return num[k, 'xAxis.size']
+    h = 0.0
+    if yes[k, 'xAxis.show']
+        if yes[k, 'xAxis.axisLine.show']
+            h = h + num[k, 'xAxis.axisLine.size']
+        if yes[k, 'xAxis.tickLine.show']
+            h = h + num[k, 'xAxis.tickLine.length']
+        if yes[k, 'xAxis.tickText.show']
+            h = h + num[k, 'xAxis.tickText.marginStart'] + num[k, 'xAxis.tickText.marginEnd'] + num[k, 'xAxis.tickText.size']
+    cross = 0.0
+    if yes[k, 'crosshair.show'] and yes[k, 'crosshair.vertical.show'] and yes[k, 'crosshair.vertical.text.show']
+        cross = num[k, 'crosshair.vertical.text.paddingTop'] + num[k, 'crosshair.vertical.text.paddingBottom'] + num[k, 'crosshair.vertical.text.borderSize'] * 2.0 + num[k, 'crosshair.vertical.text.size']
+    max[h, cross]
+
+--- the panes laid out top to bottom: the candle pane takes what the others
+--- leave, each other its height (a minimised pane its least)
+fn layout[k]
+    k.xaxis_h = _x_axis_h[k]
+    sep = num[k, 'separator.size']
+    others = 0.0
+    for i in range[len[k.panes]]
+        if i gt 0
+            p = k.panes[i]
+            others = others + _pane_h[p] + sep
+    candle_h = max[k.panes[0].min_height, k.h - k.xaxis_h - others]
+    top = 0.0
+    for i in range[len[k.panes]]
+        p = k.panes[i]
+        if i eq 0
+            p.h = candle_h
+        else
+            top = top + sep
+            p.h = _pane_h[p]
+        p.top = top
+        top = top + p.h
+        k.panes[i] = p
+    k.main_w = max[0.0, k.w - k.axis_w]
+    k
+
+fn _pane_h[p]
+    if p.state eq 'minimize'
+        return p.min_height
+    max[p.min_height, p.height]
+
+--- the pane at y, or `` where none is
+fn pane_at[k, y]
+    for p in k.panes
+        if y gte p.top and y lte p.top + p.h
+            return p.id
+    ''
+
+--- ---- the y axis ----
+
+fn _log10[v]
+    if v eq 0.0
+        return 0.0
+    log10[v]
+
+fn _signed_log[v]
+    if v lt 0.0
+        return 0.0 - _log10[abs[v]]
+    _log10[v]
+
+fn _signed_pow[v]
+    if v lt 0.0
+        return 0.0 - 10.0 ^ abs[v]
+    10.0 ^ v
+
+--- a value's place on the pane's axis (klinecharts' valueToRealValue)
+fn real_of[k, p, v]
+    if p.axis eq 'logarithm'
+        return _signed_log[v]
+    if p.axis eq 'percentage'
+        r = p.rng
+        if r.span eq 0.0
+            return v
+        return (v - r.from) / r.span * r.real_span + r.real_from
+    v
+
+fn _value_of_real[k, p, rv]
+    if p.axis eq 'logarithm'
+        return _signed_pow[rv]
+    if p.axis eq 'percentage'
+        r = p.rng
+        if r.real_span eq 0.0
+            return rv
+        return (rv - r.real_from) / r.real_span * r.span + r.from
+    rv
+
+fn _display_of_real[p, rv]
+    if p.axis eq 'logarithm'
+        return _signed_pow[rv]
+    rv
+
+fn _real_of_display[p, v]
+    if p.axis eq 'logarithm'
+        return _signed_log[v]
+    v
+
+--- a value's place in the pane, in pixels from the pane's top (klinecharts'
+--- convertToPixel)
+fn y_in_pane[k, p, v]
+    r = p.rng
+    if r.real_span eq 0.0
+        return p.h / 2.0
+    rate = (real_of[k, p, v] - r.real_from) / r.real_span
+    if p.reverse
+        return round[rate * p.h]
+    round[(1.0 - rate) * p.h]
+
+--- a value's place in the chart, in pixels from its top
+fn y_of[k, id, v]
+    p = pane[k, id]
+    p.top + y_in_pane[k, p, v]
+
+--- the value at a place in the pane (pixels from the pane's top)
+fn value_in_pane[k, p, y]
+    r = p.rng
+    rate = 1.0 - y / max[1.0, p.h]
+    if p.reverse
+        rate = y / max[1.0, p.h]
+    _value_of_real[k, p, rate * r.real_span + r.real_from]
+
+fn value_at[k, id, y]
+    p = pane[k, id]
+    value_in_pane[k, p, y - p.top]
+
+--- the decimals a pane's values show
+fn precision_of[k, p]
+    if p.id eq 'candle_pane'
+        return k.symbol.price_precision
+    out = 0
+    for ind in k.inds
+        if ind.pane eq p.id
+            out = max[out, ind.precision]
+    out
+
+fn _range_of[k, p, lo, hi]
+    r = Range[lo, hi, hi - lo, lo, hi, hi - lo, lo, hi, hi - lo]
+    if p.axis eq 'logarithm'
+        rf = _signed_log[lo]
+        rt = _signed_log[hi]
+        r = Range[lo, hi, hi - lo, rf, rt, rt - rf, lo, hi, hi - lo]
+    if p.axis eq 'percentage' and count[k] gt 0
+        base = k.bars.c[max[0, min[count[k] - 1, k.from]]]
+        if base ne 0.0
+            rf = (lo - base) / base * 100.0
+            rt = (hi - base) / base * 100.0
+            r = Range[lo, hi, hi - lo, rf, rt, rt - rf, rf, rt, rt - rf]
+    r
+
+--- the pane's range from what it shows in view (klinecharts'
+--- createRangeImp): the bars' highs and lows in the candle pane, every
+--- figure's values of its indicators, the least and most they ask for,
+--- then the gaps above and below
+fn auto_range[k, p]
+    lo = 9007199254740991.0
+    hi = -9007199254740991.0
+    spec_lo = 9007199254740991.0
+    spec_hi = -9007199254740991.0
+    precision = 4
+    ind_precision = 9007199254740991
+    ohlc = false
+    for ind in k.inds
+        if ind.pane eq p.id and ind.visible
+            ohlc = ohlc or ind.ohlc
+            ind_precision = min[ind_precision, ind.precision]
+            if ind.min eq ind.min
+                spec_lo = min[spec_lo, ind.min]
+            if ind.max eq ind.max
+                spec_hi = max[spec_hi, ind.max]
+    in_candle = p.id eq 'candle_pane'
+    if in_candle
+        precision = k.symbol.price_precision
+        if ind_precision ne 9007199254740991
+            precision = min[ind_precision, precision]
+    else
+        if ind_precision ne 9007199254740991
+            precision = ind_precision
+    area = st[k, 'candle.type'] eq 'area'
+    highs_lows = (in_candle and not area) or (not in_candle and ohlc)
+    i = max[0, k.real_from]
+    stop = min[count[k], k.real_to]
+    b = k.bars
+    while i lt stop
+        if highs_lows
+            lo = min[lo, b.l[i]]
+            hi = max[hi, b.h[i]]
+        if in_candle and area
+            v = _area_value[k, i]
+            lo = min[lo, v]
+            hi = max[hi, v]
+        for ind in k.inds
+            if ind.pane eq p.id and ind.visible
+                for f in ind.figures
+                    if f.key in ind.values
+                        vals = ind.values[f.key]
+                        if i lt len[vals]
+                            v = vals[i]
+                            if v eq v
+                                lo = min[lo, v]
+                                hi = max[hi, v]
+        i = i + 1
+    if lo ne 9007199254740991.0 and hi ne -9007199254740991.0
+        lo = min[spec_lo, lo]
+        hi = max[spec_hi, hi]
+    else
+        lo = 0.0
+        hi = 10.0
+    r = _range_of[k, p, lo, hi]
+    real_from = r.real_from
+    real_to = r.real_to
+    min_span = 10.0 ^ (0.0 - precision)
+    if p.axis eq 'percentage'
+        min_span = 0.01
+    if p.axis eq 'logarithm'
+        min_span = 0.05 * 10.0 ^ (0.0 - precision)
+    if real_from eq real_to or r.real_span lt min_span
+        lo_fixed = spec_lo eq real_from
+        hi_fixed = spec_hi eq real_to
+        if not lo_fixed
+            if hi_fixed
+                real_from = real_from - 8.0 * min_span
+            else
+                real_from = real_from - 4.0 * min_span
+        if not hi_fixed
+            if lo_fixed
+                real_to = real_to + 8.0 * min_span
+            else
+                real_to = real_to + 4.0 * min_span
+    top_rate = p.gap_top
+    if top_rate gte 1.0
+        top_rate = top_rate / max[1.0, p.h]
+    bottom_rate = p.gap_bottom
+    if bottom_rate gte 1.0
+        bottom_rate = bottom_rate / max[1.0, p.h]
+    span = real_to - real_from
+    real_from = real_from - span * bottom_rate
+    real_to = real_to + span * top_rate
+    from = _value_of_real_in[r, p, real_from]
+    to = _value_of_real_in[r, p, real_to]
+    d_from = _display_of_real[p, real_from]
+    d_to = _display_of_real[p, real_to]
+    Range[from, to, to - from, real_from, real_to, real_to - real_from, d_from, d_to, d_to - d_from]
+
+fn _value_of_real_in[r, p, rv]
+    if p.axis eq 'logarithm'
+        return _signed_pow[rv]
+    if p.axis eq 'percentage'
+        if r.real_span eq 0.0
+            return rv
+        return (rv - r.real_from) / r.real_span * r.span + r.from
+    rv
+
+fn _area_value[k, i]
+    what = st[k, 'candle.area.value']
+    if what eq 'open'
+        return k.bars.o[i]
+    if what eq 'high'
+        return k.bars.h[i]
+    if what eq 'low'
+        return k.bars.l[i]
+    k.bars.c[i]
+
+--- klinecharts' nice number: a value rounded to 1, 2, 3, 4, 5, 6 or 8
+--- times a power of ten
+fn nice[v]
+    exponent = floor[_log10[v]]
+    exp10 = 10.0 ^ exponent
+    f = v / exp10
+    nf = 8.0
+    if f lt 1.5
+        nf = 1.0
+    else
+        if f lt 2.5
+            nf = 2.0
+        else
+            if f lt 3.5
+                nf = 3.0
+            else
+                if f lt 4.5
+                    nf = 4.0
+                else
+                    if f lt 5.5
+                        nf = 5.0
+                    else
+                        if f lt 6.5
+                            nf = 6.0
+    _round_to[nf * exp10, int[abs[exponent]]]
+
+fn _round_to[v, decimals]
+    p = 10.0 ^ max[0, decimals]
+    round[v * p] / p
+
+--- how many decimals a number written shortest has
+fn decimals_of[v]
+    t = '`v`'
+    pieces = split[t, 'e-']
+    if len[pieces] gt 1
+        return format.whole[pieces[1], 0]
+    halves = split[t, '.']
+    if len[halves] lt 2
+        return 0
+    len[halves[1]]
+
+--- a pane's ticks: round values about eight to the pane, each label kept
+--- at least two text heights from the last (klinecharts' createTicksImp)
+fn y_ticks[k, p]
+    r = p.rng
+    out = []
+    if r.display_span lt 0.0
+        return out
+    interval = nice[r.display_span / 8.0]
+    if interval eq 0.0 or interval ne interval
+        return out
+    dp = decimals_of[interval]
+    first = _round_to[ceil[r.display_from / interval] * interval, dp]
+    last = _round_to[floor[r.display_to / interval] * interval, dp]
+    precision = precision_of[k, p]
+    big = false
+    for ind in k.inds
+        if ind.pane eq p.id
+            big = big or ind.big
+    text_h = num[k, 'xAxis.tickText.size']
+    valid = -1.0
+    f = first
+    n = 0
+    while f lte last and n lt 200
+        --- (the value as klinecharts holds it: the tick's text read back,
+        --- so a sum a hair below zero is a zero, written `0.0000`)
+        label = format.fixed[f, dp]
+        value = format.number[label, 0.0]
+        shown = format.fixed[value, precision]
+        if p.axis eq 'percentage'
+            shown = '`format.fixed[value, 2]`%'
+        if big
+            shown = format.big[value]
+        shown = format.fold[format.thousands[shown, ','], 3]
+        rv = _real_of_display[p, value]
+        y = y_in_pane[k, p, _value_of_real[k, p, rv]]
+        if y gt text_h and y lt p.h - text_h
+            if valid lt 0.0 or abs[valid - y] gt text_h * 2.0
+                out = push[out, Tick[shown, y, value]]
+                valid = y
+        f = f + interval
+        n = n + 1
+    out
+
+--- the y axis's width: its line, its ticks' length, its widest label, and
+--- room for the last price's mark and the crosshair's label
+fn axis_width[c, k]
+    if st[k, 'yAxis.size'] ne 'auto' and st[k, 'yAxis.size'] ne ''
+        return num[k, 'yAxis.size']
+    if not yes[k, 'yAxis.show']
+        return 0.0
+    w = 0.0
+    if yes[k, 'yAxis.axisLine.show']
+        w = w + num[k, 'yAxis.axisLine.size']
+    if yes[k, 'yAxis.tickLine.show']
+        w = w + num[k, 'yAxis.tickLine.length']
+    size = num[k, 'yAxis.tickText.size']
+    if yes[k, 'yAxis.tickText.show']
+        widest = 0.0
+        for p in k.panes
+            for t in p.ticks
+                widest = max[widest, text_w[c, k, t.text, size]]
+        w = w + num[k, 'yAxis.tickText.marginStart'] + num[k, 'yAxis.tickText.marginEnd'] + widest
+    last_w = 0.0
+    if yes[k, 'candle.priceMark.show'] and yes[k, 'candle.priceMark.last.show'] and yes[k, 'candle.priceMark.last.text.show'] and count[k] gt 0
+        words = format.fixed[k.bars.c[count[k] - 1], k.symbol.price_precision]
+        last_w = num[k, 'candle.priceMark.last.text.paddingLeft'] + text_w[c, k, words, num[k, 'candle.priceMark.last.text.size']] + num[k, 'candle.priceMark.last.text.paddingRight']
+    cross_w = 0.0
+    if yes[k, 'crosshair.show'] and yes[k, 'crosshair.horizontal.show'] and yes[k, 'crosshair.horizontal.text.show']
+        top = k.panes[0].rng.display_to
+        words = format.fixed[top, k.symbol.price_precision]
+        cross_w = num[k, 'crosshair.horizontal.text.paddingLeft'] + num[k, 'crosshair.horizontal.text.paddingRight'] + num[k, 'crosshair.horizontal.text.borderSize'] * 2.0 + text_w[c, k, words, num[k, 'crosshair.horizontal.text.size']]
+    max[w, max[last_w, cross_w]]
+
+--- how wide text is, in CSS pixels
+fn text_w[c, k, words, size]
+    lory.measure[c, words, size * k.s] / k.s
+
+--- ---- the x axis ----
+
+--- the time axis's ticks: a tick each so many bars that a full date fits
+--- between (klinecharts' createTicksImp), each written by the period's
+--- template
+fn x_ticks[c, k]
+    out = []
+    size = num[k, 'xAxis.tickText.size']
+    widest = max[text_w[c, k, 'YYYY-MM-DD HH:mm:ss', size], k.main_w / 8.0]
+    between = int[ceil[widest / k.space]]
+    if between % 2 ne 0
+        between = between + 1
+    between = max[2, between]
+    start = max[0, (k.real_from / between) * between]
+    if k.real_from lt 0
+        start = 0
+    template = x_template[k.period.unit]
+    i = start
+    while i lt k.real_to
+        if i gte k.from
+            t = time_of[k, i]
+            if count[k] gt 0
+                out = push[out, Tick[format.date[k.zone, t, template], x_of[k, 0.0 + i], t]]
+        i = i + between
+    out
+
+fn x_template[unit]
+    if unit eq 'second'
+        return 'HH:mm:ss'
+    if unit eq 'minute'
+        return 'HH:mm'
+    if unit eq 'hour'
+        return 'MM-DD HH:mm'
+    if unit eq 'month'
+        return 'YYYY-MM'
+    if unit eq 'year'
+        return 'YYYY'
+    'YYYY-MM-DD'
+
+--- the crosshair's time label's template
+fn cross_template[unit]
+    if unit eq 'second'
+        return 'HH:mm:ss'
+    if unit eq 'month'
+        return 'YYYY-MM'
+    if unit eq 'year'
+        return 'YYYY'
+    if unit eq 'day' or unit eq 'week'
+        return 'YYYY-MM-DD'
+    'YYYY-MM-DD HH:mm'
+
+--- ---- the indicators ----
+
+--- every indicator's values worked out again where the bars changed
+fn calc_all[k]
+    if not k.dirty
+        return k
+    out = []
+    for ind in k.inds
+        if ind.name in indicators.supported[] and ind.series ne 'custom'
+            ind.values = indicators.calc[ind.name, ind.params, k.bars]
+        out = push[out, ind]
+    k.inds = out
+    k.dirty = false
+    k
+
+--- ---- one frame ----
+
+--- the chart placed in its box (drawing pixels, as Lory's), the frame's
+--- input taken, the panes laid out, the view and every pane's range
+--- worked out
+fn update[c, k, x, y, w, h]
+    k = prepare[c, k, x, y, w, h]
+    for ev in lory.events[c]
+        k = take[k, ev]
+    settle[c, k]
+
+--- the frame's first half: the chart placed, its indicators worked out,
+--- laid out and its view found, ready to take the frame's events
+fn prepare[c, k, x, y, w, h]
+    s = lory.px[c]
+    k.s = s
+    k.x = x / s
+    k.y = y / s
+    k.w = w / s
+    k.h = h / s
+    k.actions = []
+    k = calc_all[k]
+    k = layout[k]
+    if k.axis_w eq 0.0
+        k = _settle[c, k]
+    adjust[k]
+
+--- the frame's second half, once its events are taken: the view, the
+--- ranges, the ticks and the axis's width settled
+fn settle[c, k]
+    _settle[c, k]
+
+--- the view, the ranges and the ticks, and the axis's width from them; a
+--- second time where the width changed the plot's
+fn _settle[c, k]
+    k = layout[k]
+    k = adjust[k]
+    k = ranges[k]
+    w = axis_width[c, k]
+    if abs[w - k.axis_w] gte 0.5
+        k.axis_w = w
+        k = layout[k]
+        k = adjust[k]
+        k = ranges[k]
+    k
+
+--- every pane's range and ticks
+fn ranges[k]
+    for i in range[len[k.panes]]
+        p = k.panes[i]
+        if p.auto
+            p.rng = auto_range[k, p]
+        else
+            if p.axis eq 'percentage'
+                p.rng = _range_of[k, p, p.rng.from, p.rng.to]
+        p.ticks = y_ticks[k, p]
+        k.panes[i] = p
+    k
+
+--- ---- input ----
+
+fn _inside_plot[k, x, y]
+    x gte 0.0 and x lte k.main_w and y gte 0.0 and y lte k.h - k.xaxis_h
+
+fn _on_y_axis[k, x, y]
+    x gt k.main_w and x lte k.w and y gte 0.0 and y lte k.h - k.xaxis_h
+
+fn _on_x_axis[k, x, y]
+    x gte 0.0 and x lte k.main_w and y gt k.h - k.xaxis_h and y lte k.h
+
+--- the separator a point is on: the pane below it, `` where none (seven
+--- pixels tall, as klinecharts' REAL_SEPARATOR_HEIGHT)
+fn separator_at[k, x, y]
+    if x lt 0.0 or x gt k.w
+        return ''
+    for i in range[len[k.panes]]
+        if i gt 0
+            p = k.panes[i]
+            top = p.top - round[(7.0 - num[k, 'separator.size']) / 2.0]
+            if y gte top and y lte top + 7.0 and p.drag
+                return p.id
+    ''
+
+--- one event taken (an event's place is in drawing pixels, from the
+--- canvas's top left)
+fn take[k, ev]
+    ex = ev.x / k.s - k.x
+    ey = ev.y / k.s - k.y
+    if ev.on eq 'wheel'
+        if _inside_plot[k, ex, ey] or _on_x_axis[k, ex, ey]
+            if abs[ev.dx] gt abs[ev.dy]
+                k = scroll_by[k, 0.0 - ev.dx]
+            else
+                d = 0.0 - ev.dy / 100.0
+                if d ne 0.0
+                    scale = sign[d] * min[1.0, abs[d]]
+                    k = zoom[k, scale, ex]
+        return k
+    if ev.device eq 'touch'
+        return _touch[k, ev, ex, ey]
+    if ev.on eq 'down'
+        sep = separator_at[k, ex, ey]
+        if sep ne ''
+            i = pane_index[k, sep]
+            k.drag = Drag['separator', ex, ey, 0.0, sep, k.panes[i - 1].h, k.panes[i].h, _empty_range[], 1.0]
+            return k
+        if _inside_plot[k, ex, ey]
+            id = pane_at[k, ey]
+            k.drag = Drag['scroll', ex, ey, k.right_bars, id, 0.0, 0.0, pane[k, id].rng, 1.0]
+            return k
+        if _on_y_axis[k, ex, ey]
+            id = pane_at[k, ey]
+            k.drag = Drag['yaxis', ex, ey, 0.0, id, 0.0, 0.0, pane[k, id].rng, 1.0]
+            return k
+        if _on_x_axis[k, ex, ey]
+            k.drag = Drag['xaxis', ex, ey, 0.0, '', 0.0, 0.0, _empty_range[], 1.0]
+        return k
+    if ev.on eq 'move'
+        return _moved[k, ex, ey]
+    if ev.on eq 'up'
+        k.drag = _no_drag[]
+        return k
+    if ev.on eq 'leave'
+        k.drag = _no_drag[]
+        k.cross = Cross[-1.0, -1.0, '']
+        return k
+    if ev.on eq 'dblclick' or ev.on eq 'double'
+        if _on_y_axis[k, ex, ey]
+            k = unfix[k, pane_at[k, ey]]
+        return k
+    if ev.on eq 'key' and ev.shift
+        if ev.code eq 'Equal'
+            return zoom[k, 0.5, _cross_or_middle[k]]
+        if ev.code eq 'Minus'
+            return zoom[k, -0.5, _cross_or_middle[k]]
+        if ev.code eq 'ArrowLeft'
+            return scroll_by[k, -3.0 * k.space]
+        if ev.code eq 'ArrowRight'
+            return scroll_by[k, 3.0 * k.space]
+    k
+
+fn _cross_or_middle[k]
+    if k.cross.pane ne ''
+        return k.cross.x
+    k.main_w / 2.0
+
+fn _moved[k, ex, ey]
+    d = k.drag
+    if d.what eq 'separator'
+        i = pane_index[k, d.pane]
+        dy = ey - d.y0
+        above = k.panes[i - 1]
+        below = k.panes[i]
+        --- (the pane above grows by what the one below gives up, neither
+        --- below its least height)
+        new_below = max[below.min_height, d.below_h - dy]
+        give = d.below_h - new_below
+        new_above = d.above_h + give
+        if new_above lt above.min_height
+            new_above = above.min_height
+            new_below = d.below_h + (d.above_h - above.min_height)
+        if i - 1 gt 0
+            above.height = new_above
+            k.panes[i - 1] = above
+        below.height = new_below
+        k.panes[i] = below
+        return layout[k]
+    if d.what eq 'scroll'
+        k = _drag_y[k, d, ey]
+        k.right_bars = d.start_right - (ex - d.x0) / k.space
+        k.actions = push[k.actions, 'scroll']
+        k = adjust[k]
+        k.cross = Cross[ex, ey, pane_at[k, ey]]
+        return k
+    if d.what eq 'yaxis'
+        i = pane_index[k, d.pane]
+        if i lt 0
+            return k
+        p = k.panes[i]
+        if not p.scroll_zoom
+            return k
+        --- (klinecharts scales by the page's y now over at the press: the
+        --- chart's own y here, from the chart's top)
+        y0 = max[1.0, d.y0 + k.y]
+        scale = max[0.01, (ey + k.y) / y0]
+        r = d.start
+        span = r.span * scale
+        dif = (span - r.span) / 2.0
+        p.rng = _range_of[k, p, r.from - dif, r.to + dif]
+        p.auto = false
+        k.panes[i] = p
+        return k
+    if d.what eq 'xaxis'
+        x0 = max[1.0, d.x0 + k.x]
+        scale = x0 / max[1.0, ex + k.x]
+        z = (scale - d.scale) * 10.0
+        k.drag.scale = scale
+        return zoom[k, z, d.x0]
+    if _inside_plot[k, ex, ey]
+        k.cross = Cross[ex, ey, pane_at[k, ey]]
+    else
+        k.cross = Cross[-1.0, -1.0, '']
+    k
+
+--- a scroll's drag up or down moves a pane whose range is fixed
+fn _drag_y[k, d, ey]
+    i = pane_index[k, d.pane]
+    if i lt 0
+        return k
+    p = k.panes[i]
+    if p.auto or not p.scroll_zoom
+        return k
+    dist = ey - d.y0
+    if p.reverse
+        dist = d.y0 - ey
+    r = d.start
+    dif = r.span * (dist / max[1.0, p.h])
+    p.rng = _range_of[k, p, r.from + dif, r.to + dif]
+    k.panes[i] = p
+    k
+
+--- a finger: one drags the view (a tap first shows the crosshair, which a
+--- drag then moves), two pinch it
+fn _touch[k, ev, ex, ey]
+    if ev.on eq 'down'
+        k.touches = push[_without[k.touches, ev.id], Touch[ev.id, ex, ey]]
+        if len[k.touches] eq 2
+            a = k.touches[0]
+            b = k.touches[1]
+            k.drag = Drag['pinch', (a.x + b.x) / 2.0, (a.y + b.y) / 2.0, k.right_bars, '', _apart[a, b], 0.0, _empty_range[], 1.0]
+            return k
+        if _inside_plot[k, ex, ey]
+            if k.cross.pane ne '' and abs[k.cross.x - ex] lt 10.0 and abs[k.cross.y - ey] lt 10.0
+                k.drag = Drag['crosshair', ex, ey, k.right_bars, pane_at[k, ey], 0.0, 0.0, _empty_range[], 1.0]
+            else
+                k.cross = Cross[-1.0, -1.0, '']
+                k.drag = Drag['scroll', ex, ey, k.right_bars, pane_at[k, ey], 0.0, 0.0, pane[k, pane_at[k, ey]].rng, 1.0]
+            k.tapped = true
+            return k
+        return take[k, lory.Ev['down', ev.x, ev.y, 0, 0.0, 0.0, '', '', '', false, false, false, false, 'mouse', ev.id]]
+    if ev.on eq 'move'
+        moved = []
+        for t in k.touches
+            if t.id eq ev.id
+                moved = push[moved, Touch[t.id, ex, ey]]
+            else
+                moved = push[moved, t]
+        k.touches = moved
+        if k.drag.what eq 'pinch' and len[k.touches] gte 2
+            apart = _apart[k.touches[0], k.touches[1]]
+            scale = apart / max[1.0, k.drag.above_h]
+            z = (scale - k.drag.scale) * 5.0
+            k.drag.scale = scale
+            return zoom[k, z, k.drag.x0]
+        if k.drag.what eq 'crosshair'
+            k.cross = Cross[ex, ey, pane_at[k, ey]]
+            return k
+        if abs[ex - k.drag.x0] gt 4.0 or abs[ey - k.drag.y0] gt 4.0
+            k.tapped = false
+        return _moved[k, ex, ey]
+    if ev.on eq 'up' or ev.on eq 'leave'
+        k.touches = _without[k.touches, ev.id]
+        if k.tapped and k.drag.what eq 'scroll'
+            --- (a tap shows the crosshair where it fell)
+            k.cross = Cross[ex, ey, pane_at[k, ey]]
+        k.tapped = false
+        if len[k.touches] eq 0
+            k.drag = _no_drag[]
+        return k
+    k
+
+fn _without[ts, id]
+    out = []
+    for t in ts
+        if t.id ne id
+            out = push[out, t]
+    out
+
+fn _apart[a, b]
+    dx = a.x - b.x
+    dy = a.y - b.y
+    sqrt[dx * dx + dy * dy]
+
+--- the bar under the crosshair, -1 where there is none (klinecharts'
+--- crosshair dataIndex: past the bars, the nearest end)
+fn cross_index[k]
+    if k.cross.pane eq ''
+        return count[k] - 1
+    i = index_of[k, k.cross.x]
+    max[0, min[count[k] - 1, i]]
+
+--- the bar's position under the crosshair, whether there is a bar or not
+fn cross_real_index[k]
+    if k.cross.pane eq ''
+        return count[k] - 1
+    index_of[k, k.cross.x]
+
+fn _sample[n]
+    t = []
+    o = []
+    h = []
+    l = []
+    c = []
+    v = []
+    for i in range[n]
+        x = 0.0 + i
+        t = push[t, 1793975400000.0 + x * 60000.0]
+        o = push[o, 100.0 + x]
+        h = push[h, 101.0 + x]
+        l = push[l, 99.0 + x]
+        c = push[c, 100.5 + x]
+        v = push[v, 1000.0]
+    indicators.bars[t, o, h, l, c, v]
+
+test the_newest_bar_stands_at_the_right_offset[]
+    k = set_bars[new['k'], _sample[200], false, false]
+    k.w = 860.0
+    k.axis_w = 60.0
+    k.h = 400.0
+    k = layout[k]
+    k = adjust[k]
+    --- (the plot is 800 wide; the last bar's centre is 80 px from its edge)
+    k.main_w eq 800.0
+    x_of[k, 199.0] eq 715.0
+    index_of[k, 715.0] eq 199
+    k.to eq 200
+    k.from eq 119
+
+test a_zoom_keeps_the_bar_under_the_pointer[]
+    k = set_bars[new['k'], _sample[200], false, false]
+    k.w = 860.0
+    k.axis_w = 60.0
+    k.h = 400.0
+    k = layout[k]
+    k = adjust[k]
+    before = float_index_of[k, 400.0]
+    k = zoom[k, 1.0, 400.0]
+    k.space eq 11.0
+    abs[float_index_of[k, 400.0] - before] lt 0.000001
+
+test the_y_ticks_are_round_numbers[]
+    nice[3.7] eq 4.0
+    nice[0.23] eq 0.2
+    nice[12.0] eq 10.0
+    k = set_bars[new['k'], _sample[200], false, false]
+    k.w = 860.0
+    k.axis_w = 60.0
+    k.h = 400.0
+    k = layout[k]
+    k = adjust[k]
+    k = ranges[k]
+    p = k.panes[0]
+    len[p.ticks] gt 3
+    --- (bars 127 to 199 show: lows 226 to 298, highs to 300, and a tenth
+    --- of the span below)
+    abs[p.rng.from - 218.6] lt 0.0001
+    p.rng.to gt 300.0

@@ -1,0 +1,1137 @@
+--- Kite's indicators: what an indicator is (its figures, its values per
+--- bar, where it is drawn), and klinecharts' twenty-seven built in, each
+--- computed as klinecharts computes it — the same sums in the same order,
+--- so the same floats — and held to klinecharts' own answers by
+--- tests/kite/reference (klinecharts run in a browser on the same bars).
+---
+--- A value an indicator has none of at a bar (its warm-up) is NaN, as
+--- klinecharts leaves the key out.
+---
+---     ind = indicators.made['MACD', [12.0, 26.0, 9.0]]
+---     vals = indicators.calc[ind.name, ind.params, bars]
+---     vals['dif'][i], vals['macd'][i]
+use math
+
+--- the bars, column by column: their times (milliseconds since 1970),
+--- opens, highs, lows, closes, volumes and turnovers
+struct Bars [t, o, h, l, c, v, turnover]
+
+--- one thing an indicator draws: the key of its values, its title in the
+--- tooltip, its kind (`line`, `bar` or `circle`), the value a bar stands
+--- on (NaN: the pane's floor), and its colour rule (`` the style's own,
+--- `volume` by the bar's close against its open, `macd` by the sign and a
+--- rise, `ao` by a rise, `sar` against the bar's middle)
+struct Figure [key, title, shape, base, rule]
+
+--- an indicator on a chart: its id, its name and the name it shows, the
+--- pane it is drawn in, its parameters, its figures, its values per bar
+--- (by figure key), the decimals it shows, the least and most its pane
+--- must show (NaN: none), whether it shows, whether its pane's range
+--- holds the bars' highs and lows too, whether its numbers are made
+--- short, its order among the pane's indicators, its own styles, and the
+--- series it belongs to (`normal`, `price` or `volume`)
+struct Indicator [id, name, short, pane, params, figures, values, precision, min, max, visible, ohlc, big, z, styles, series]
+
+fn none[]
+    sqrt[-1.0]
+
+fn is_none[v]
+    v ne v
+
+--- n NaNs
+fn nans[n]
+    out = []
+    for i in range[n]
+        out = push[out, none[]]
+    out
+
+fn bars[t, o, h, l, c, v]
+    Bars[t, o, h, l, c, v, zeros_of[len[t]]]
+
+fn zeros_of[n]
+    out = []
+    for i in range[n]
+        out = push[out, 0.0]
+    out
+
+fn _line[key, title]
+    Figure[key, title, 'line', none[], '']
+
+fn _bar[key, title, base, rule]
+    Figure[key, title, 'bar', base, rule]
+
+--- ---- the built-in indicators' shapes ----
+
+--- every indicator klinecharts has built in
+fn supported[]
+    ['AVP', 'AO', 'BIAS', 'BOLL', 'BRAR', 'BBI', 'CCI', 'CR', 'DMA', 'DMI', 'EMV', 'EMA', 'MTM', 'MA', 'MACD', 'OBV', 'PVT', 'PSY', 'ROC', 'RSI', 'SMA', 'KDJ', 'SAR', 'TRIX', 'VOL', 'VR', 'WR']
+
+--- an indicator's parameters when none are given
+fn default_params[name]
+    if name eq 'AO'
+        return [5.0, 34.0]
+    if name eq 'BIAS'
+        return [6.0, 12.0, 24.0]
+    if name eq 'BOLL'
+        return [20.0, 2.0]
+    if name eq 'BRAR'
+        return [26.0]
+    if name eq 'BBI'
+        return [3.0, 6.0, 12.0, 24.0]
+    if name eq 'CCI'
+        return [20.0]
+    if name eq 'CR'
+        return [26.0, 10.0, 20.0, 40.0, 60.0]
+    if name eq 'DMA'
+        return [10.0, 50.0, 10.0]
+    if name eq 'DMI'
+        return [14.0, 6.0]
+    if name eq 'EMV'
+        return [14.0, 9.0]
+    if name eq 'EMA'
+        return [6.0, 12.0, 20.0]
+    if name eq 'MTM'
+        return [12.0, 6.0]
+    if name eq 'MA'
+        return [5.0, 10.0, 30.0, 60.0]
+    if name eq 'MACD'
+        return [12.0, 26.0, 9.0]
+    if name eq 'OBV'
+        return [30.0]
+    if name eq 'PSY'
+        return [12.0, 6.0]
+    if name eq 'ROC'
+        return [12.0, 6.0]
+    if name eq 'RSI'
+        return [6.0, 12.0, 24.0]
+    if name eq 'SMA'
+        return [12.0, 2.0]
+    if name eq 'KDJ'
+        return [9.0, 3.0, 3.0]
+    if name eq 'SAR'
+        return [2.0, 2.0, 20.0]
+    if name eq 'TRIX'
+        return [12.0, 9.0]
+    if name eq 'VOL'
+        return [5.0, 10.0, 20.0]
+    if name eq 'VR'
+        return [26.0, 6.0]
+    if name eq 'WR'
+        return [6.0, 10.0, 14.0]
+    []
+
+fn _n[p]
+    '`int[p]`'
+
+--- an indicator's figures for its parameters (the ones whose figures are
+--- one per parameter make them anew, as klinecharts' regenerateFigures)
+fn figures_of[name, params]
+    if name eq 'AVP'
+        return [_line['avp', 'AVP: ']]
+    if name eq 'AO'
+        return [_bar['ao', 'AO: ', 0.0, 'ao']]
+    if name eq 'BIAS'
+        out = []
+        for i in range[len[params]]
+            out = push[out, _line['bias`i + 1`', 'BIAS`_n[params[i]]`: ']]
+        return out
+    if name eq 'BOLL'
+        return [_line['up', 'UP: '], _line['mid', 'MID: '], _line['dn', 'DN: ']]
+    if name eq 'BRAR'
+        return [_line['br', 'BR: '], _line['ar', 'AR: ']]
+    if name eq 'BBI'
+        return [_line['bbi', 'BBI: ']]
+    if name eq 'CCI'
+        return [_line['cci', 'CCI: ']]
+    if name eq 'CR'
+        return [_line['cr', 'CR: '], _line['ma1', 'MA1: '], _line['ma2', 'MA2: '], _line['ma3', 'MA3: '], _line['ma4', 'MA4: ']]
+    if name eq 'DMA'
+        return [_line['dma', 'DMA: '], _line['ama', 'AMA: ']]
+    if name eq 'DMI'
+        return [_line['pdi', 'PDI: '], _line['mdi', 'MDI: '], _line['adx', 'ADX: '], _line['adxr', 'ADXR: ']]
+    if name eq 'EMV'
+        return [_line['emv', 'EMV: '], _line['maEmv', 'MAEMV: ']]
+    if name eq 'EMA'
+        out = []
+        for i in range[len[params]]
+            out = push[out, _line['ema`i + 1`', 'EMA`_n[params[i]]`: ']]
+        return out
+    if name eq 'MTM'
+        return [_line['mtm', 'MTM: '], _line['maMtm', 'MAMTM: ']]
+    if name eq 'MA'
+        out = []
+        for i in range[len[params]]
+            out = push[out, _line['ma`i + 1`', 'MA`_n[params[i]]`: ']]
+        return out
+    if name eq 'MACD'
+        return [_line['dif', 'DIF: '], _line['dea', 'DEA: '], _bar['macd', 'MACD: ', 0.0, 'macd']]
+    if name eq 'OBV'
+        return [_line['obv', 'OBV: '], _line['maObv', 'MAOBV: ']]
+    if name eq 'PVT'
+        return [_line['pvt', 'PVT: ']]
+    if name eq 'PSY'
+        return [_line['psy', 'PSY: '], _line['maPsy', 'MAPSY: ']]
+    if name eq 'ROC'
+        return [_line['roc', 'ROC: '], _line['maRoc', 'MAROC: ']]
+    if name eq 'RSI'
+        out = []
+        for i in range[len[params]]
+            out = push[out, _line['rsi`i + 1`', 'RSI`i + 1`: ']]
+        return out
+    if name eq 'SMA'
+        return [_line['sma', 'SMA: ']]
+    if name eq 'KDJ'
+        return [_line['k', 'K: '], _line['d', 'D: '], _line['j', 'J: ']]
+    if name eq 'SAR'
+        return [Figure['sar', 'SAR: ', 'circle', none[], 'sar']]
+    if name eq 'TRIX'
+        return [_line['trix', 'TRIX: '], _line['maTrix', 'MATRIX: ']]
+    if name eq 'VOL'
+        out = []
+        for i in range[len[params]]
+            out = push[out, _line['ma`i + 1`', 'MA`_n[params[i]]`: ']]
+        return push[out, _bar['volume', 'VOLUME: ', 0.0, 'volume']]
+    if name eq 'VR'
+        return [_line['vr', 'VR: '], _line['maVr', 'MAVR: ']]
+    if name eq 'WR'
+        out = []
+        for i in range[len[params]]
+            out = push[out, _line['wr`i + 1`', 'WR`i + 1`: ']]
+        return out
+    []
+
+--- an indicator made as klinecharts makes it, with its parameters (`[]`
+--- for its defaults), in no pane yet
+fn made[name, params]
+    p = params
+    if len[p] eq 0
+        p = default_params[name]
+    precision = 4
+    series = 'normal'
+    ohlc = false
+    big = false
+    lo = none[]
+    if name eq 'AVP' or name eq 'BOLL' or name eq 'BBI' or name eq 'EMA' or name eq 'MA' or name eq 'SMA' or name eq 'SAR'
+        precision = 2
+        series = 'price'
+        ohlc = name ne 'AVP'
+    if name eq 'VOL'
+        precision = 0
+        series = 'volume'
+        big = true
+        lo = 0.0
+    Indicator[name, name, name, '', p, figures_of[name, p], map[], precision, lo, none[], true, ohlc, big, 0, map[], series]
+
+--- an indicator of the program's own: its name, its figures, and its
+--- values by figure key (`kite.custom['VWAP', [kite.line['vwap', 'VWAP: ']], map[vwap = vwaps]]`)
+fn custom[name, figures, given]
+    Indicator[name, name, name, '', [], figures, given, 4, none[], none[], true, false, false, 0, map[], 'normal']
+
+--- a figure of the program's own: a line, a bar, a circle
+fn line[key, title]
+    _line[key, title]
+
+fn bar[key, title, base]
+    Figure[key, title, 'bar', base, '']
+
+fn circle[key, title]
+    Figure[key, title, 'circle', none[], '']
+
+--- ---- computing them ----
+
+--- an indicator's values over the bars, by figure key
+fn calc[name, params, b]
+    if name eq 'AVP'
+        return _avp[b]
+    if name eq 'AO'
+        return _ao[b, params]
+    if name eq 'BIAS'
+        return _bias[b, params]
+    if name eq 'BOLL'
+        return _boll[b, params]
+    if name eq 'BRAR'
+        return _brar[b, params]
+    if name eq 'BBI'
+        return _bbi[b, params]
+    if name eq 'CCI'
+        return _cci[b, params]
+    if name eq 'CR'
+        return _cr[b, params]
+    if name eq 'DMA'
+        return _dma[b, params]
+    if name eq 'DMI'
+        return _dmi[b, params]
+    if name eq 'EMV'
+        return _emv[b, params]
+    if name eq 'EMA'
+        return _ema[b, params]
+    if name eq 'MTM'
+        return _mtm[b, params]
+    if name eq 'MA'
+        return _ma[b, params]
+    if name eq 'MACD'
+        return _macd[b, params]
+    if name eq 'OBV'
+        return _obv[b, params]
+    if name eq 'PVT'
+        return _pvt[b]
+    if name eq 'PSY'
+        return _psy[b, params]
+    if name eq 'ROC'
+        return _roc[b, params]
+    if name eq 'RSI'
+        return _rsi[b, params]
+    if name eq 'SMA'
+        return _sma[b, params]
+    if name eq 'KDJ'
+        return _kdj[b, params]
+    if name eq 'SAR'
+        return _sar[b, params]
+    if name eq 'TRIX'
+        return _trix[b, params]
+    if name eq 'VOL'
+        return _vol[b, params]
+    if name eq 'VR'
+        return _vr[b, params]
+    if name eq 'WR'
+        return _wr[b, params]
+    map[]
+
+--- a value read, 0 where it is NaN (klinecharts' `?? 0` of a key left out)
+fn _or0[v]
+    if v ne v
+        return 0.0
+    v
+
+fn _avp[b]
+    n = len[b.c]
+    avp = nans[n]
+    turn = 0.0
+    vol = 0.0
+    for i in range[n]
+        turn = turn + b.turnover[i]
+        vol = vol + b.v[i]
+        if vol ne 0.0
+            avp[i] = turn / vol
+    map[avp = avp]
+
+fn _ao[b, params]
+    n = len[b.c]
+    ao = nans[n]
+    p0 = int[params[0]]
+    p1 = int[params[1]]
+    most = max[p0, p1]
+    short_sum = 0.0
+    long_sum = 0.0
+    short = 0.0
+    long = 0.0
+    for i in range[n]
+        middle = (b.l[i] + b.h[i]) / 2.0
+        short_sum = short_sum + middle
+        long_sum = long_sum + middle
+        if i gte p0 - 1
+            short = short_sum / params[0]
+            k = i - (p0 - 1)
+            short_sum = short_sum - (b.l[k] + b.h[k]) / 2.0
+        if i gte p1 - 1
+            long = long_sum / params[1]
+            k = i - (p1 - 1)
+            long_sum = long_sum - (b.l[k] + b.h[k]) / 2.0
+        if i gte most - 1
+            ao[i] = short - long
+    map[ao = ao]
+
+fn _bias[b, params]
+    n = len[b.c]
+    out = map[]
+    for j in range[len[params]]
+        p = int[params[j]]
+        vals = nans[n]
+        total = 0.0
+        for i in range[n]
+            close = b.c[i]
+            total = total + close
+            if i gte p - 1
+                avg = total / params[j]
+                vals[i] = (close - avg) / avg * 100.0
+                total = total - b.c[i - (p - 1)]
+        out['bias`j + 1`'] = vals
+    out
+
+fn _boll[b, params]
+    n = len[b.c]
+    up = nans[n]
+    mid = nans[n]
+    dn = nans[n]
+    p = int[params[0]] - 1
+    total = 0.0
+    for i in range[n]
+        close = b.c[i]
+        total = total + close
+        if i gte p
+            m = total / params[0]
+            mid[i] = m
+            sq = 0.0
+            k = i - p
+            while k lte i
+                d = b.c[k] - m
+                sq = sq + d * d
+                k = k + 1
+            md = sqrt[abs[sq] / (p + 1)]
+            up[i] = m + params[1] * md
+            dn[i] = m - params[1] * md
+            total = total - b.c[i - p]
+    map[up = up, mid = mid, dn = dn]
+
+fn _brar[b, params]
+    n = len[b.c]
+    br = nans[n]
+    ar = nans[n]
+    p = int[params[0]]
+    hcy = 0.0
+    cyl = 0.0
+    ho = 0.0
+    ol = 0.0
+    for i in range[n]
+        high = b.h[i]
+        low = b.l[i]
+        open = b.o[i]
+        prev_close = b.c[max[0, i - 1]]
+        ho = ho + (high - open)
+        ol = ol + (open - low)
+        hcy = hcy + (high - prev_close)
+        cyl = cyl + (prev_close - low)
+        if i gte p - 1
+            if ol ne 0.0
+                ar[i] = ho / ol * 100.0
+            else
+                ar[i] = 0.0
+            if cyl ne 0.0
+                br[i] = hcy / cyl * 100.0
+            else
+                br[i] = 0.0
+            ago = i - (p - 1)
+            ago_pre = ago
+            if i - p gte 0
+                ago_pre = i - p
+            ago_pre_close = b.c[ago_pre]
+            hcy = hcy - (b.h[ago] - ago_pre_close)
+            cyl = cyl - (ago_pre_close - b.l[ago])
+            ho = ho - (b.h[ago] - b.o[ago])
+            ol = ol - (b.o[ago] - b.l[ago])
+    map[br = br, ar = ar]
+
+fn _bbi[b, params]
+    n = len[b.c]
+    bbi = nans[n]
+    most = 0
+    for p in params
+        most = max[most, int[p]]
+    sums = zeros_of[len[params]]
+    mas = zeros_of[len[params]]
+    for i in range[n]
+        close = b.c[i]
+        for j in range[len[params]]
+            p = int[params[j]]
+            sums[j] = sums[j] + close
+            if i gte p - 1
+                mas[j] = sums[j] / params[j]
+                sums[j] = sums[j] - b.c[i - (p - 1)]
+        if i gte most - 1
+            total = 0.0
+            for m in mas
+                total = total + m
+            bbi[i] = total / 4.0
+    map[bbi = bbi]
+
+fn _cci[b, params]
+    n = len[b.c]
+    cci = nans[n]
+    p = int[params[0]] - 1
+    total = 0.0
+    tps = []
+    for i in range[n]
+        tp = (b.h[i] + b.l[i] + b.c[i]) / 3.0
+        total = total + tp
+        tps = push[tps, tp]
+        if i gte p
+            ma = total / params[0]
+            dev = 0.0
+            k = i - p
+            while k lte i
+                dev = dev + abs[tps[k] - ma]
+                k = k + 1
+            md = dev / params[0]
+            if md ne 0.0
+                cci[i] = (tp - ma) / md / 0.015
+            else
+                cci[i] = 0.0
+            total = total - (b.h[i - p] + b.l[i - p] + b.c[i - p]) / 3.0
+    map[cci = cci]
+
+fn _cr[b, params]
+    n = len[b.c]
+    cr = nans[n]
+    out = map[]
+    p0 = int[params[0]]
+    for j in range[4]
+        out['ma`j + 1`'] = nans[n]
+    sums = [0.0, 0.0, 0.0, 0.0]
+    lists = [[], [], [], []]
+    forward = []
+    for j in range[4]
+        forward = push[forward, int[ceil[params[j + 1] / 2.5 + 1.0]]]
+    for i in range[n]
+        prev = max[0, i - 1]
+        prev_mid = (b.h[prev] + b.c[prev] + b.l[prev] + b.o[prev]) / 4.0
+        high_sub = max[0.0, b.h[i] - prev_mid]
+        mid_sub = max[0.0, prev_mid - b.l[i]]
+        if i gte p0 - 1
+            value = 0.0
+            if mid_sub ne 0.0
+                value = high_sub / mid_sub * 100.0
+            cr[i] = value
+            for j in range[4]
+                sums[j] = sums[j] + value
+            for j in range[4]
+                pj = int[params[j + 1]]
+                if i gte p0 + pj - 2
+                    held = lists[j]
+                    held = push[held, sums[j] / params[j + 1]]
+                    lists[j] = held
+                    --- (klinecharts reads its list at `length - 1 - forward`,
+                    --- which is -1 at the first such bar: undefined there)
+                    at = len[held] - 1 - forward[j]
+                    if i gte p0 + pj + forward[j] - 3 and at gte 0
+                        col = out['ma`j + 1`']
+                        col[i] = held[at]
+                        out['ma`j + 1`'] = col
+                    sums[j] = sums[j] - _or0[cr[i - (pj - 1)]]
+    out['cr'] = cr
+    out
+
+fn _dma[b, params]
+    n = len[b.c]
+    dma = nans[n]
+    ama = nans[n]
+    p0 = int[params[0]]
+    p1 = int[params[1]]
+    p2 = int[params[2]]
+    most = max[p0, p1]
+    sum1 = 0.0
+    sum2 = 0.0
+    dma_sum = 0.0
+    for i in range[n]
+        close = b.c[i]
+        sum1 = sum1 + close
+        sum2 = sum2 + close
+        ma1 = 0.0
+        ma2 = 0.0
+        if i gte p0 - 1
+            ma1 = sum1 / params[0]
+            sum1 = sum1 - b.c[i - (p0 - 1)]
+        if i gte p1 - 1
+            ma2 = sum2 / params[1]
+            sum2 = sum2 - b.c[i - (p1 - 1)]
+        if i gte most - 1
+            dif = ma1 - ma2
+            dma[i] = dif
+            dma_sum = dma_sum + dif
+            if i gte most + p2 - 2
+                ama[i] = dma_sum / params[2]
+                dma_sum = dma_sum - _or0[dma[i - (p2 - 1)]]
+    map[dma = dma, ama = ama]
+
+fn _dmi[b, params]
+    n = len[b.c]
+    pdi_v = nans[n]
+    mdi_v = nans[n]
+    adx_v = nans[n]
+    adxr_v = nans[n]
+    p0 = int[params[0]]
+    p1 = int[params[1]]
+    tr_sum = 0.0
+    h_sum = 0.0
+    l_sum = 0.0
+    mtr = 0.0
+    dmp = 0.0
+    dmm = 0.0
+    dx_sum = 0.0
+    adx = 0.0
+    for i in range[n]
+        prev = max[0, i - 1]
+        pre_close = b.c[prev]
+        high = b.h[i]
+        low = b.l[i]
+        hl = high - low
+        hcy = abs[high - pre_close]
+        lcy = abs[pre_close - low]
+        hhy = high - b.h[prev]
+        lyl = b.l[prev] - low
+        tr = max[max[hl, hcy], lcy]
+        h = 0.0
+        if hhy gt 0.0 and hhy gt lyl
+            h = hhy
+        l = 0.0
+        if lyl gt 0.0 and lyl gt hhy
+            l = lyl
+        tr_sum = tr_sum + tr
+        h_sum = h_sum + h
+        l_sum = l_sum + l
+        if i gte p0 - 1
+            if i gt p0 - 1
+                mtr = mtr - mtr / params[0] + tr
+                dmp = dmp - dmp / params[0] + h
+                dmm = dmm - dmm / params[0] + l
+            else
+                mtr = tr_sum
+                dmp = h_sum
+                dmm = l_sum
+            pdi = 0.0
+            mdi = 0.0
+            if mtr ne 0.0
+                pdi = dmp * 100.0 / mtr
+                mdi = dmm * 100.0 / mtr
+            pdi_v[i] = pdi
+            mdi_v[i] = mdi
+            dx = 0.0
+            if mdi + pdi ne 0.0
+                dx = abs[mdi - pdi] / (mdi + pdi) * 100.0
+            dx_sum = dx_sum + dx
+            if i gte p0 * 2 - 2
+                if i gt p0 * 2 - 2
+                    adx = (adx * (params[0] - 1.0) + dx) / params[0]
+                else
+                    adx = dx_sum / params[0]
+                adx_v[i] = adx
+                if i gte p0 * 2 + p1 - 3
+                    adxr_v[i] = (_or0[adx_v[i - (p1 - 1)]] + adx) / 2.0
+    map[pdi = pdi_v, mdi = mdi_v, adx = adx_v, adxr = adxr_v]
+
+fn _emv[b, params]
+    n = len[b.c]
+    emv = nans[n]
+    ma = nans[n]
+    p = int[params[0]]
+    total = 0.0
+    vals = []
+    for i in range[n]
+        if i gt 0
+            high = b.h[i]
+            low = b.l[i]
+            volume = b.v[i]
+            moved = (high + low) / 2.0 - (b.h[i - 1] + b.l[i - 1]) / 2.0
+            value = 0.0
+            if volume ne 0.0 and high - low ne 0.0
+                ratio = volume / 100000000.0 / (high - low)
+                value = moved / ratio
+            emv[i] = value
+            total = total + value
+            vals = push[vals, value]
+            if i gte p
+                ma[i] = total / params[0]
+                total = total - vals[i - p]
+    map[emv = emv, maEmv = ma]
+
+fn _ema[b, params]
+    n = len[b.c]
+    out = map[]
+    cols = []
+    for j in range[len[params]]
+        cols = push[cols, nans[n]]
+    emas = zeros_of[len[params]]
+    total = 0.0
+    for i in range[n]
+        close = b.c[i]
+        total = total + close
+        for j in range[len[params]]
+            p = int[params[j]]
+            if i gte p - 1
+                if i gt p - 1
+                    emas[j] = (2.0 * close + (params[j] - 1.0) * emas[j]) / (params[j] + 1.0)
+                else
+                    emas[j] = total / params[j]
+                col = cols[j]
+                col[i] = emas[j]
+                cols[j] = col
+    for j in range[len[params]]
+        out['ema`j + 1`'] = cols[j]
+    out
+
+fn _mtm[b, params]
+    n = len[b.c]
+    mtm = nans[n]
+    ma = nans[n]
+    p0 = int[params[0]]
+    p1 = int[params[1]]
+    total = 0.0
+    for i in range[n]
+        if i gte p0
+            mtm[i] = b.c[i] - b.c[i - p0]
+            total = total + mtm[i]
+            if i gte p0 + p1 - 1
+                ma[i] = total / params[1]
+                total = total - _or0[mtm[i - (p1 - 1)]]
+    map[mtm = mtm, maMtm = ma]
+
+fn _ma[b, params]
+    n = len[b.c]
+    out = map[]
+    for j in range[len[params]]
+        p = int[params[j]]
+        vals = nans[n]
+        total = 0.0
+        for i in range[n]
+            total = total + b.c[i]
+            if i gte p - 1
+                vals[i] = total / params[j]
+                total = total - b.c[i - (p - 1)]
+        out['ma`j + 1`'] = vals
+    out
+
+fn _macd[b, params]
+    n = len[b.c]
+    dif_v = nans[n]
+    dea_v = nans[n]
+    macd_v = nans[n]
+    p0 = int[params[0]]
+    p1 = int[params[1]]
+    p2 = int[params[2]]
+    total = 0.0
+    short = 0.0
+    long = 0.0
+    dif = 0.0
+    dif_sum = 0.0
+    dea = 0.0
+    most = max[p0, p1]
+    for i in range[n]
+        close = b.c[i]
+        total = total + close
+        if i gte p0 - 1
+            if i gt p0 - 1
+                short = (2.0 * close + (params[0] - 1.0) * short) / (params[0] + 1.0)
+            else
+                short = total / params[0]
+        if i gte p1 - 1
+            if i gt p1 - 1
+                long = (2.0 * close + (params[1] - 1.0) * long) / (params[1] + 1.0)
+            else
+                long = total / params[1]
+        if i gte most - 1
+            dif = short - long
+            dif_v[i] = dif
+            dif_sum = dif_sum + dif
+            if i gte most + p2 - 2
+                if i gt most + p2 - 2
+                    dea = (dif * 2.0 + dea * (params[2] - 1.0)) / (params[2] + 1.0)
+                else
+                    dea = dif_sum / params[2]
+                macd_v[i] = (dif - dea) * 2.0
+                dea_v[i] = dea
+    map[dif = dif_v, dea = dea_v, macd = macd_v]
+
+fn _obv[b, params]
+    n = len[b.c]
+    obv_v = nans[n]
+    ma = nans[n]
+    p = int[params[0]]
+    total = 0.0
+    old = 0.0
+    for i in range[n]
+        prev = max[0, i - 1]
+        if b.c[i] lt b.c[prev]
+            old = old - b.v[i]
+        else
+            if b.c[i] gt b.c[prev]
+                old = old + b.v[i]
+        obv_v[i] = old
+        total = total + old
+        if i gte p - 1
+            ma[i] = total / params[0]
+            total = total - _or0[obv_v[i - (p - 1)]]
+    map[obv = obv_v, maObv = ma]
+
+fn _pvt[b]
+    n = len[b.c]
+    pvt = nans[n]
+    acc = 0.0
+    for i in range[n]
+        close = b.c[i]
+        prev_close = b.c[max[0, i - 1]]
+        x = 0.0
+        total = prev_close * b.v[i]
+        if total ne 0.0
+            x = (close - prev_close) / total
+        acc = acc + x
+        pvt[i] = acc
+    map[pvt = pvt]
+
+fn _psy[b, params]
+    n = len[b.c]
+    psy = nans[n]
+    ma = nans[n]
+    p0 = int[params[0]]
+    p1 = int[params[1]]
+    ups = 0.0
+    total = 0.0
+    flags = []
+    for i in range[n]
+        prev_close = b.c[max[0, i - 1]]
+        up = 0.0
+        if b.c[i] - prev_close gt 0.0
+            up = 1.0
+        flags = push[flags, up]
+        ups = ups + up
+        if i gte p0 - 1
+            psy[i] = ups / params[0] * 100.0
+            total = total + psy[i]
+            if i gte p0 + p1 - 2
+                ma[i] = total / params[1]
+                total = total - _or0[psy[i - (p1 - 1)]]
+            ups = ups - flags[i - (p0 - 1)]
+    map[psy = psy, maPsy = ma]
+
+fn _roc[b, params]
+    n = len[b.c]
+    roc = nans[n]
+    ma = nans[n]
+    p0 = int[params[0]]
+    p1 = int[params[1]]
+    total = 0.0
+    for i in range[n]
+        if i gte p0 - 1
+            ago = i - (p0 - 1)
+            if i - p0 gte 0
+                ago = i - p0
+            ago_close = b.c[ago]
+            value = 0.0
+            if ago_close ne 0.0
+                value = (b.c[i] - ago_close) / ago_close * 100.0
+            roc[i] = value
+            total = total + value
+            if i gte p0 - 1 + p1 - 1
+                ma[i] = total / params[1]
+                total = total - _or0[roc[i - (p1 - 1)]]
+    map[roc = roc, maRoc = ma]
+
+--- (klinecharts' rises and falls start unset: a rise's total read before
+--- any rise was added is undefined, and so is the RSI made from it)
+fn _rsi[b, params]
+    n = len[b.c]
+    out = map[]
+    for j in range[len[params]]
+        p = int[params[j]]
+        vals = nans[n]
+        rises = 0.0
+        falls = 0.0
+        rose = false
+        fell = false
+        for i in range[n]
+            prev_close = b.c[max[0, i - 1]]
+            tmp = b.c[i] - prev_close
+            if tmp gt 0.0
+                rises = rises + tmp
+                rose = true
+            else
+                falls = falls + abs[tmp]
+                fell = true
+            if i gte p - 1
+                a = rises
+                if not rose
+                    a = none[]
+                d = falls
+                if not fell
+                    d = none[]
+                if d ne 0.0
+                    vals[i] = 100.0 - (100.0 / (1.0 + a / d))
+                else
+                    vals[i] = 0.0
+                ago = i - (p - 1)
+                ago_pre = ago
+                if i - p gte 0
+                    ago_pre = i - p
+                ago_tmp = b.c[ago] - b.c[ago_pre]
+                if ago_tmp gt 0.0
+                    rises = rises - ago_tmp
+                    if not rose
+                        rises = none[]
+                else
+                    falls = falls - abs[ago_tmp]
+                    if not fell
+                        falls = none[]
+        out['rsi`j + 1`'] = vals
+    out
+
+fn _sma[b, params]
+    n = len[b.c]
+    sma = nans[n]
+    p = int[params[0]]
+    total = 0.0
+    value = 0.0
+    for i in range[n]
+        close = b.c[i]
+        total = total + close
+        if i gte p - 1
+            if i gt p - 1
+                value = (close * params[1] + value * (params[0] - params[1] + 1.0)) / (params[0] + 1.0)
+            else
+                value = total / params[0]
+            sma[i] = value
+    map[sma = sma]
+
+fn _kdj[b, params]
+    n = len[b.c]
+    kv = nans[n]
+    dv = nans[n]
+    jv = nans[n]
+    p = int[params[0]]
+    for i in range[n]
+        close = b.c[i]
+        if i gte p - 1
+            hn = -9007199254740991.0
+            lo_n = 9007199254740991.0
+            k = i - (p - 1)
+            while k lte i
+                hn = max[b.h[k], hn]
+                lo_n = min[b.l[k], lo_n]
+                k = k + 1
+            span = hn - lo_n
+            if span eq 0.0
+                span = 1.0
+            rsv = (close - lo_n) / span * 100.0
+            prev_k = 50.0
+            prev_d = 50.0
+            if i gt 0
+                if kv[i - 1] eq kv[i - 1]
+                    prev_k = kv[i - 1]
+                if dv[i - 1] eq dv[i - 1]
+                    prev_d = dv[i - 1]
+            kk = ((params[1] - 1.0) * prev_k + rsv) / params[1]
+            dd = ((params[2] - 1.0) * prev_d + kk) / params[2]
+            kv[i] = kk
+            dv[i] = dd
+            jv[i] = 3.0 * kk - 2.0 * dd
+    map[k = kv, d = dv, j = jv]
+
+fn _sar[b, params]
+    n = len[b.c]
+    out = nans[n]
+    start_af = params[0] / 100.0
+    step = params[1] / 100.0
+    max_af = params[2] / 100.0
+    af = start_af
+    ep = -100.0
+    rising = false
+    sar = 0.0
+    for i in range[n]
+        pre = sar
+        high = b.h[i]
+        low = b.l[i]
+        if rising
+            if ep eq -100.0 or ep lt high
+                ep = high
+                af = min[af + step, max_af]
+            sar = pre + af * (ep - pre)
+            low_min = min[b.l[max[1, i] - 1], low]
+            if sar gt b.l[i]
+                sar = ep
+                af = start_af
+                ep = -100.0
+                rising = not rising
+            else
+                if sar gt low_min
+                    sar = low_min
+        else
+            if ep eq -100.0 or ep gt low
+                ep = low
+                af = min[af + step, max_af]
+            sar = pre + af * (ep - pre)
+            high_max = max[b.h[max[1, i] - 1], high]
+            if sar lt b.h[i]
+                sar = ep
+                af = 0.0
+                ep = -100.0
+                rising = not rising
+            else
+                if sar lt high_max
+                    sar = high_max
+        out[i] = sar
+    map[sar = out]
+
+fn _trix[b, params]
+    n = len[b.c]
+    trix_v = nans[n]
+    ma = nans[n]
+    p0 = int[params[0]]
+    p1 = int[params[1]]
+    total = 0.0
+    ema1 = 0.0
+    ema2 = 0.0
+    old_tr = 0.0
+    ema1_sum = 0.0
+    ema2_sum = 0.0
+    trix_sum = 0.0
+    for i in range[n]
+        close = b.c[i]
+        total = total + close
+        if i gte p0 - 1
+            if i gt p0 - 1
+                ema1 = (2.0 * close + (params[0] - 1.0) * ema1) / (params[0] + 1.0)
+            else
+                ema1 = total / params[0]
+            ema1_sum = ema1_sum + ema1
+            if i gte p0 * 2 - 2
+                if i gt p0 * 2 - 2
+                    ema2 = (2.0 * ema1 + (params[0] - 1.0) * ema2) / (params[0] + 1.0)
+                else
+                    ema2 = ema1_sum / params[0]
+                ema2_sum = ema2_sum + ema2
+                if i gte p0 * 3 - 3
+                    tr = 0.0
+                    value = 0.0
+                    if i gt p0 * 3 - 3
+                        tr = (2.0 * ema2 + (params[0] - 1.0) * old_tr) / (params[0] + 1.0)
+                        value = (tr - old_tr) / old_tr * 100.0
+                    else
+                        tr = ema2_sum / params[0]
+                    old_tr = tr
+                    trix_v[i] = value
+                    trix_sum = trix_sum + value
+                    if i gte p0 * 3 + p1 - 4
+                        ma[i] = trix_sum / params[1]
+                        trix_sum = trix_sum - _or0[trix_v[i - (p1 - 1)]]
+    map[trix = trix_v, maTrix = ma]
+
+fn _vol[b, params]
+    n = len[b.c]
+    out = map[volume = b.v]
+    for j in range[len[params]]
+        p = int[params[j]]
+        vals = nans[n]
+        total = 0.0
+        for i in range[n]
+            total = total + b.v[i]
+            if i gte p - 1
+                vals[i] = total / params[j]
+                total = total - b.v[i - (p - 1)]
+        out['ma`j + 1`'] = vals
+    out
+
+fn _vr[b, params]
+    n = len[b.c]
+    vr = nans[n]
+    ma = nans[n]
+    p0 = int[params[0]]
+    p1 = int[params[1]]
+    uvs = 0.0
+    dvs = 0.0
+    pvs = 0.0
+    total = 0.0
+    for i in range[n]
+        close = b.c[i]
+        pre_close = b.c[max[0, i - 1]]
+        volume = b.v[i]
+        if close gt pre_close
+            uvs = uvs + volume
+        else
+            if close lt pre_close
+                dvs = dvs + volume
+            else
+                pvs = pvs + volume
+        if i gte p0 - 1
+            half = pvs / 2.0
+            value = 0.0
+            if dvs + half ne 0.0
+                value = (uvs + half) / (dvs + half) * 100.0
+            vr[i] = value
+            total = total + value
+            if i gte p0 + p1 - 2
+                ma[i] = total / params[1]
+                total = total - _or0[vr[i - (p1 - 1)]]
+            ago = i - (p0 - 1)
+            ago_pre = ago
+            if i - p0 gte 0
+                ago_pre = i - p0
+            if b.c[ago] gt b.c[ago_pre]
+                uvs = uvs - b.v[ago]
+            else
+                if b.c[ago] lt b.c[ago_pre]
+                    dvs = dvs - b.v[ago]
+                else
+                    pvs = pvs - b.v[ago]
+    map[vr = vr, maVr = ma]
+
+fn _wr[b, params]
+    n = len[b.c]
+    out = map[]
+    for j in range[len[params]]
+        p = int[params[j]] - 1
+        vals = nans[n]
+        for i in range[n]
+            if i gte p
+                hn = -9007199254740991.0
+                lo_n = 9007199254740991.0
+                k = i - p
+                while k lte i
+                    hn = max[b.h[k], hn]
+                    lo_n = min[b.l[k], lo_n]
+                    k = k + 1
+                span = hn - lo_n
+                if span eq 0.0
+                    vals[i] = 0.0
+                else
+                    vals[i] = (b.c[i] - hn) / span * 100.0
+        out['wr`j + 1`'] = vals
+    out
+
+fn _walk[n]
+    t = []
+    o = []
+    h = []
+    l = []
+    c = []
+    v = []
+    price = 100.0
+    for i in range[n]
+        x = 0.0 + i
+        step = sin[x * 12.9898] * 0.8
+        opened = price
+        closed = price + step
+        t = push[t, 1700000000000.0 + x * 60000.0]
+        o = push[o, opened]
+        c = push[c, closed]
+        h = push[h, max[opened, closed] + abs[sin[x * 78.233]] * 0.5]
+        l = push[l, min[opened, closed] - abs[sin[x * 37.719]] * 0.5]
+        v = push[v, 1000.0 + abs[sin[x * 4.1414]] * 9000.0]
+        price = closed
+    bars[t, o, h, l, c, v]
+
+test every_built_in_has_its_figures_and_values[]
+    b = _walk[120]
+    for name in supported[]
+        ind = made[name, []]
+        vals = calc[name, ind.params, b]
+        for f in ind.figures
+            assert[f.key in vals, '`name` has no values for its figure `f.key`']
+            assert[len[vals[f.key]] eq 120, '`name`.`f.key` has a value per bar']
+
+test a_moving_average_is_the_mean_of_its_closes[]
+    b = bars[[1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0], [1.0, 1.0, 1.0, 1.0]]
+    m = calc['MA', [2.0], b]['ma1']
+    is_none[m[0]]
+    m[1] eq 1.5
+    m[3] eq 3.5
+
+test macd_warms_up_where_its_longest_average_does[]
+    b = _walk[60]
+    v = calc['MACD', [12.0, 26.0, 9.0], b]
+    is_none[v['dif'][24]]
+    not is_none[v['dif'][25]]
+    is_none[v['macd'][32]]
+    not is_none[v['macd'][33]]
+
+test figures_follow_their_parameters[]
+    ind = made['MA', [7.0, 21.0]]
+    len[ind.figures] eq 2
+    ind.figures[1].title eq 'MA21: '
+    made['VOL', []].figures[3].shape eq 'bar'

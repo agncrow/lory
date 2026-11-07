@@ -1,0 +1,237 @@
+--- Kite's words for numbers, times and colours: a price with its
+--- decimals, a volume made short (`1.2M`), a time in a time zone by a
+--- template (`YYYY-MM-DD HH:mm`), and a colour written as CSS writes it
+--- (`#26a69a`, `rgba(38, 166, 154, 0.7)`, `transparent`).
+---
+--- A time zone is named as the IANA database names it, and read by Crow's
+--- moments; the empty name is UTC.
+use math
+use lory
+
+--- ---- times ----
+
+--- a time's parts where the zone keeps it: [year, month, day, hour,
+--- minute, second] (`ms` since 1970; a zone Crow does not know is UTC)
+fn parts[zone, ms]
+    t = moment[floor[ms / 1000.0]]
+    if zone ne '' and zone ne 'UTC'
+        there = moment[t, tz = zone]
+        if there.ok
+            return [there.year, there.month, there.day, there.hour, there.minute, there.second]
+    [t.year, t.month, t.day, t.hour, t.minute, t.second]
+
+fn two[n]
+    if n lt 10
+        return '0`n`'
+    '`n`'
+
+--- a time written by a template: YYYY, MM, DD, HH, mm and ss are its
+--- parts in the zone, the rest is kept
+fn date[zone, ms, template]
+    p = parts[zone, ms]
+    out = template
+    out = replace[out, 'YYYY', '`p[0]`']
+    out = replace[out, 'MM', two[p[1]]]
+    out = replace[out, 'DD', two[p[2]]]
+    out = replace[out, 'HH', two[p[3]]]
+    out = replace[out, 'mm', two[p[4]]]
+    replace[out, 'ss', two[p[5]]]
+
+--- ---- numbers ----
+
+--- the number with `decimals` decimals, as JavaScript's toFixed writes it
+fn fixed[v, decimals]
+    if v ne v
+        return 'NaN'
+    d = max[0, decimals]
+    --- (`-0` written `0`, as JavaScript's toFixed writes it: `+ 0.0` makes
+    --- a negative zero a zero and leaves every other number as it is)
+    x = v + 0.0
+    --- (a number exactly halfway between two of `d` decimals is written
+    --- the one further from zero, as toFixed writes it — `fmt` writes the
+    --- even one, as Rust does: `12.5` is `13` there, `12` here. A tie is
+    --- exact in binary, so its digits past `d` are a 5 and then zeros, and
+    --- its scaled value is exact too)
+    past = split[fmt[abs[x], decimals = d + 30], '.']
+    if len[past] gt 1
+        tail = slice[past[1], d, len[past[1]]]
+        only_zeros = true
+        for ch in split[slice[tail, 1, len[tail]], '']
+            only_zeros = only_zeros and ch eq '0'
+        if starts[tail, '5'] and only_zeros
+            scale = 10.0 ^ d
+            away = floor[abs[x] * scale + 0.5] / scale
+            if x lt 0.0
+                away = 0.0 - away
+            return fmt[away, decimals = d]
+    fmt[x, decimals = d]
+
+--- the number with a separator between each three whole digits, as
+--- klinecharts' formatThousands puts it: only inside the run of digits
+--- that ends the whole part (`120K` stays as it is, `-1234` is `-1,234`)
+fn thousands[text, mark]
+    if mark eq ''
+        return text
+    halves = split[text, '.']
+    whole = halves[0]
+    rest = ''
+    if len[halves] gt 1
+        point = '.'
+        after = join[slice[halves, 1, len[halves]], point]
+        rest = '.`after`'
+    chars = split[whole, '']
+    n = len[chars]
+    run = 0
+    while run lt n and chars[n - 1 - run] in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+        run = run + 1
+    out = ''
+    i = 0
+    while i lt n
+        --- (a mark before a digit of the run with a multiple of three
+        --- digits after it, and a digit before it)
+        if i gt n - run and (n - i) % 3 eq 0
+            out = '`out``mark`'
+        out = '`out``chars[i]`'
+        i = i + 1
+    '`out``rest`'
+
+--- a big number made short: 1.234K, 5.6M, 7.89B (three decimals at most,
+--- trailing zeros dropped)
+fn big[v]
+    if v gt 1000000000.0
+        return '`_short[v / 1000000000.0]`B'
+    if v gt 1000000.0
+        return '`_short[v / 1000000.0]`M'
+    if v gt 1000.0
+        return '`_short[v / 1000.0]`K'
+    plain[v]
+
+fn _short[v]
+    _trimmed[fmt[v, decimals = 3]]
+
+--- a number as JavaScript writes it with no format: no trailing zeros
+fn plain[v]
+    if v eq floor[v] and abs[v] lt 1000000000000000.0
+        return '`int[v]`'
+    '`v`'
+
+fn _trimmed[text]
+    if not ('.' in split[text, ''])
+        return text
+    out = text
+    while ends[out, '0']
+        out = slice[out, 0, len[out] - 1]
+    if ends[out, '.']
+        out = slice[out, 0, len[out] - 1]
+    out
+
+--- a run of zeros after the point folded: 0.00000123 with a threshold of
+--- 3 is 0.0{5}123
+fn fold[text, threshold]
+    halves = split[text, '.']
+    if len[halves] lt 2
+        return text
+    frac = halves[1]
+    nz = 0
+    while nz lt len[frac] and slice[frac, nz, nz + 1] eq '0'
+        nz = nz + 1
+    if nz lt threshold or nz eq len[frac]
+        return text
+    rest = slice[frac, nz, len[frac]]
+    '`halves[0]`.0{`nz`}`rest`'
+
+--- ---- colours ----
+
+--- a colour as CSS writes it: #rgb, #rrggbb, #rrggbbaa, rgb(r, g, b),
+--- rgba(r, g, b, a) or transparent
+--- the number text writes, or `fallback` where it writes none (a style
+--- klinecharts would read as NaN, then its default)
+fn number[text, fallback]
+    v = float[trim[text]]
+    if not v.ok
+        return fallback
+    0.0 + v
+
+--- the whole number text writes, or `fallback`
+fn whole[text, fallback]
+    v = int[trim[text]]
+    if not v.ok
+        return fallback
+    0 + v
+
+fn _hex_or_black[t]
+    c = lory.hex[t]
+    if not c.ok
+        return lory.black[]
+    c
+
+fn color[text]
+    t = trim[lower[text]]
+    if t eq 'transparent' or t eq ''
+        return lory.Color[0.0, 0.0, 0.0, 0.0]
+    if starts[t, '#']
+        if len[t] eq 4
+            r = slice[t, 1, 2]
+            g = slice[t, 2, 3]
+            b = slice[t, 3, 4]
+            return _hex_or_black['`r``r``g``g``b``b`']
+        return _hex_or_black[t]
+    if starts[t, 'rgb']
+        inner = sub[sub[t, '^[a-z]+[(]', ''], '[)].*$', '']
+        pieces = split[inner, ',']
+        nums = []
+        for piece in pieces
+            nums = push[nums, number[piece, 0.0]]
+        if len[nums] lt 3
+            return lory.black[]
+        a = 1.0
+        if len[nums] gte 4
+            a = nums[3]
+        return lory.rgba[nums[0], nums[1], nums[2], a]
+    if t eq 'white'
+        return lory.white[]
+    lory.black[]
+
+--- the colour with its opacity set to `a`, written as CSS writes it
+fn alpha[text, a]
+    c = color[text]
+    'rgba(`int[round[c.r * 255.0]]`, `int[round[c.g * 255.0]]`, `int[round[c.b * 255.0]]`, `a`)'
+
+test a_time_is_written_by_its_template[]
+    --- (2026-11-06 14:30:05 UTC is 09:30:05 in New York)
+    ms = 1793975405000.0
+    date['America/New_York', ms, 'YYYY-MM-DD HH:mm:ss'] eq '2026-11-06 09:30:05'
+    date['', ms, 'HH:mm'] eq '14:30'
+    date['America/New_York', ms, 'MM-DD HH:mm'] eq '11-06 09:30'
+
+test numbers_are_written_as_klinecharts_writes_them[]
+    fixed[3.14159, 2] eq '3.14'
+    fixed[2.0, 2] eq '2.00'
+    fixed[-0.0, 4] eq '0.0000'
+    fixed[12.5, 0] eq '13'
+    fixed[17.5, 0] eq '18'
+    fixed[-12.5, 0] eq '-13'
+    fixed[0.25, 1] eq '0.3'
+    fixed[1.005, 2] eq '1.00'
+    fixed[2.5, 0] eq '3'
+    thousands['120K', ','] eq '120K'
+    thousands['1.234K', ','] eq '1.234K'
+    fixed[0.0 - 0.0, 2] eq '0.00'
+    thousands['1234567.89', ','] eq '1,234,567.89'
+    thousands['-1234', ','] eq '-1,234'
+    thousands['123', ','] eq '123'
+    big[1234567.0] eq '1.235M'
+    big[2500.0] eq '2.5K'
+    big[999.0] eq '999'
+    big[3000000000.0] eq '3B'
+    fold['0.00000123', 3] eq '0.0{5}123'
+    fold['0.0012', 3] eq '0.0012'
+
+test colours_are_read_as_css_writes_them[]
+    c = color['rgba(38, 166, 154, 0.5)']
+    abs[c.r - 38.0 / 255.0] lt 0.0001
+    c.a eq 0.5
+    color['transparent'].a eq 0.0
+    color['#fff'].g eq 1.0
+    color['#26a69a'].b gt 0.6
+    alpha['#ff0000', 0.25] eq 'rgba(255, 0, 0, 0.25)'
