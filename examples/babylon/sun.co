@@ -1,0 +1,35 @@
+--- Babylon.js's standard material in colour, drawn by Lory: a red sphere,
+--- a blue box turned an eighth of a turn and a green ground, under a
+--- hemispheric light (0.4, its ground a dark grey, no highlight) and a
+--- directional light (0.8) — reference/sun.html draws Babylon's. Babylon's
+--- world is left-handed and Lory's right-handed, so every z (the eye's,
+--- the sun's way, the box's place) is Babylon's turned around; the box,
+--- turned an eighth of a turn, is its own mirror image.
+use sys
+use math
+use lory
+use lory.space
+
+fn _grey[v]
+    lory.Color[v, v, v, 1.0]
+
+fn picture[c]
+    c = lory.clear[c, lory.Color[0.2, 0.2, 0.3, 1.0]]
+    if not space.made['ball']
+        c = space.mesh[c, 'ball', space.sphere[1.0, 34]]
+        c = space.mesh[c, 'box', space.box[1.4, 1.4, 1.4]]
+        c = space.mesh[c, 'ground', space.ground[8.0, 8.0]]
+    cam = space.orbit_from[c, 'sun', [0.0, 0.5, 0.0], [3.0, 4.0, 8.0]]
+    --- (the hemisphere's light is the sky's 0.4 and its ground's 0.25 of
+    --- that; the sun's highlight is its own colour, as Babylon's is)
+    light = space.shining[space.light[_grey[0.4], _grey[0.1], _grey[0.8], [-1.0, -2.0, 1.0]], _grey[0.8]]
+    c = space.scene[c, cam, light]
+    c = space.draw[c, 'ground', lory.identity[], lory.Color[0.4, 0.7, 0.4, 1.0]]
+    c = space.draw[c, 'ball', lory.translation[-1.2, 1.0, 0.0], lory.Color[1.0, 0.3, 0.3, 1.0]]
+    c = space.draw[c, 'box', lory.mul[lory.translation[1.5, 0.7, -0.5], space.turn_y[pi / 4.0]], lory.Color[0.3, 0.5, 1.0, 1.0]]
+    c
+
+fn draw[frame]
+    lory.end[picture[lory.begin[frame]]]
+
+sys.frames[draw]

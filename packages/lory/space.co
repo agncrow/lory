@@ -1,0 +1,921 @@
+--- Lory in three dimensions (docs/lory-design.md, phase 4): meshes held
+--- on the page, drawn lit — a sky and a ground light and a sun, with a
+--- highlight — through a camera that orbits what it looks at on a screen,
+--- and through the headset's own eyes in one; and models read from glTF
+--- files, their geometry fetched by the page straight into its buffers.
+---
+---     c = lory.begin[frame]
+---     if not space.made['ball']
+---         c = space.mesh[c, 'ball', space.sphere[1.0, 32]]
+---     cam = space.orbit[c, 'view', [0.0, 1.0, 0.0], 6.0]
+---     c = space.scene[c, cam, space.daylight[]]
+---     c = space.draw[c, 'ball', lory.translation[0.0, 1.0, 0.0], lory.hex['#3b82f6']]
+---     lory.end[c]
+---
+--- A scene is drawn before the flat drawing, so the flat drawing — a
+--- chart's labels, a panel of controls — is over it. Distances are metres:
+--- in a headset the floor is at 0 and the reader stands at the origin.
+
+use sys
+use memory
+use math
+use lory
+
+--- a shape's vertices, three numbers each for where it is and which way
+--- it faces, two for where on an image it is
+struct Shape [at, facing, uv]
+
+--- a part of a model: its vertex array, how many it draws and how (by
+--- index: of which type, from where), its matrix, colour and image
+struct Part [vao, count, indexed, itype, ioffset, mode, matrix, color, image, normals, uvs]
+
+--- a mesh or a model held on the page: its parts, whether every byte of
+--- it is in, how many buffers are still on their way, its bounds, the
+--- request its file was asked by (0 once read), and its buffers' ids
+struct Mesh [name, parts, ready, waiting, lo, hi, ask, url, buffers]
+
+--- what the scene holds between frames: whether its program is made, its
+--- meshes, and the next object id
+struct Held [made, meshes, next]
+
+--- a camera that orbits a point: its turn about the vertical, its tilt,
+--- its distance, the point, and a drag under way
+struct Orbit [yaw, pitch, distance, target, dragging, from_x, from_y, from_yaw, from_pitch]
+
+--- the scene's light: the sky's colour from above, the ground's from
+--- below, the sun's, the way the sun's light travels, and the colour of
+--- the highlight it makes on a surface (a light's sum on a surface is held
+--- to 1 once the surface's colour has taken it, then its picture's colour
+--- taken and the highlight added, as Babylon.js's standard material does)
+struct Light [sky, ground, sun, way, shine]
+
+fn _program_id[]
+    10
+
+fn _vertex_id[]
+    11
+
+fn _fragment_id[]
+    12
+
+fn _uniform_base[]
+    20
+
+fn _uniforms[]
+    ['eye', 'model', 'eyepos', 'tint', 'sky', 'ground', 'sun', 'way', 'picture', 'textured', 'shine']
+
+fn _uniform[name]
+    names = _uniforms[]
+    at = 0
+    for i in range[len[names]]
+        if names[i] eq name
+            at = i
+    '#`_uniform_base[] + at`'
+
+fn _fresh[]
+    Held[false, map[], 100]
+
+fn _held[]
+    recall['lory.space', _fresh[]]
+
+--- whether a mesh or a model of that name is held on the page
+fn made[name]
+    name in _held[].meshes
+
+--- whether every byte of a mesh or a model is in
+fn ready[name]
+    h = _held[]
+    if not (name in h.meshes)
+        return false
+    h.meshes[name].ready
+
+--- its bounds, lowest corner then highest
+fn bounds[name]
+    h = _held[]
+    if not (name in h.meshes)
+        return [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    m = h.meshes[name]
+    [m.lo, m.hi]
+
+fn _shaders[]
+    vs = '#version 300 es
+layout(location = 0) in vec3 at;
+layout(location = 1) in vec3 facing;
+layout(location = 2) in vec2 uv;
+uniform mat4 eye;
+uniform mat4 model;
+out vec3 v_at;
+out vec3 v_facing;
+out vec2 v_uv;
+void main() {
+  vec4 w = model * vec4(at, 1.0);
+  v_at = w.xyz;
+  v_facing = mat3(model) * facing;
+  v_uv = uv;
+  gl_Position = eye * w;
+}'
+    fs = '#version 300 es
+precision highp float;
+in vec3 v_at;
+in vec3 v_facing;
+in vec2 v_uv;
+uniform vec3 eyepos;
+uniform vec4 tint;
+uniform vec3 sky;
+uniform vec3 ground;
+uniform vec3 sun;
+uniform vec3 way;
+uniform vec3 shine;
+uniform sampler2D picture;
+uniform float textured;
+out vec4 out_color;
+void main() {
+  vec3 n = normalize(v_facing);
+  if (!gl_FrontFacing) n = -n;
+  vec4 texel = textured > 0.5 ? texture(picture, v_uv) : vec4(1.0);
+  vec3 to_sun = normalize(-way);
+  vec3 hemi = mix(ground, sky, 0.5 + 0.5 * n.y);
+  float d = max(dot(n, to_sun), 0.0);
+  vec3 v = normalize(eyepos - v_at);
+  vec3 h = normalize(to_sun + v);
+  float s = pow(max(dot(n, h), 0.0), 64.0);
+  vec3 lit = clamp(tint.rgb * (hemi + sun * d), 0.0, 1.0) * texel.rgb;
+  out_color = vec4(lit + shine * s, tint.a * texel.a);
+}'
+    [vs, fs]
+
+--- the program's calls, once
+fn _setup[c]
+    shaders = _shaders[]
+    vs = shaders[0]
+    fs = shaders[1]
+    v = '#`_vertex_id[]`'
+    f = '#`_fragment_id[]`'
+    p = '#`_program_id[]`'
+    asks = c.asks
+    asks = push[asks, [v, 'createShader', 'VERTEX_SHADER']]
+    asks = push[asks, ['shaderSource', v, '=`vs`']]
+    asks = push[asks, ['compileShader', v]]
+    asks = push[asks, [f, 'createShader', 'FRAGMENT_SHADER']]
+    asks = push[asks, ['shaderSource', f, '=`fs`']]
+    asks = push[asks, ['compileShader', f]]
+    asks = push[asks, [p, 'createProgram']]
+    asks = push[asks, ['attachShader', p, v]]
+    asks = push[asks, ['attachShader', p, f]]
+    asks = push[asks, ['linkProgram', p]]
+    for u in _uniforms[]
+        asks = push[asks, [_uniform[u], 'getUniformLocation', p, '=`u`']]
+    c.asks = asks
+    c
+
+fn _ensure[c, h]
+    if not h.made
+        c = _setup[c]
+    c
+
+--- ---- matrices (16 numbers, column by column) ----
+
+fn turn_x[a]
+    co = cos[a]
+    si = sin[a]
+    [1.0, 0.0, 0.0, 0.0, 0.0, co, si, 0.0, 0.0, 0.0 - si, co, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+fn turn_y[a]
+    co = cos[a]
+    si = sin[a]
+    [co, 0.0, 0.0 - si, 0.0, 0.0, 1.0, 0.0, 0.0, si, 0.0, co, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+fn turn_z[a]
+    co = cos[a]
+    si = sin[a]
+    [co, si, 0.0, 0.0, 0.0 - si, co, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+--- a quaternion's turn (x, y, z, w), as glTF writes one
+fn turn_of[q]
+    x = q[0]
+    y = q[1]
+    z = q[2]
+    w = q[3]
+    [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w), 0.0, 2.0 * (x * y - z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + x * w), 0.0, 2.0 * (x * z + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (x * x + y * y), 0.0, 0.0, 0.0, 0.0, 1.0]
+
+--- a perspective: the vertical field of view (radians), the width over
+--- the height, and the nearest and farthest distances drawn
+fn perspective[fov, aspect, near, far]
+    f = 1.0 / tan[fov / 2.0]
+    [f / aspect, 0.0, 0.0, 0.0, 0.0, f, 0.0, 0.0, 0.0, 0.0, (far + near) / (near - far), -1.0, 0.0, 0.0, 2.0 * far * near / (near - far), 0.0]
+
+fn _sub[a, b]
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+
+fn _cross[a, b]
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+fn _dot[a, b]
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+fn _unit[a]
+    n = sqrt[_dot[a, a]]
+    if n eq 0.0
+        return [0.0, 1.0, 0.0]
+    [a[0] / n, a[1] / n, a[2] / n]
+
+--- a view from an eye at `from` looking at `to`, up being up
+fn look_at[from, to]
+    z = _unit[_sub[from, to]]
+    x = _unit[_cross[[0.0, 1.0, 0.0], z]]
+    y = _cross[z, x]
+    [x[0], y[0], z[0], 0.0, x[1], y[1], z[1], 0.0, x[2], y[2], z[2], 0.0, 0.0 - _dot[x, from], 0.0 - _dot[y, from], 0.0 - _dot[z, from], 1.0]
+
+--- ---- shapes ----
+
+--- a box `w` wide, `h` high and `d` deep, about the origin
+fn box[w, h, d]
+    x = w / 2.0
+    y = h / 2.0
+    z = d / 2.0
+    --- each face: its corners in turn, and the way it faces
+    faces = [[x, 0.0 - y, z, x, 0.0 - y, 0.0 - z, x, y, 0.0 - z, x, y, z, 1.0, 0.0, 0.0], [0.0 - x, 0.0 - y, 0.0 - z, 0.0 - x, 0.0 - y, z, 0.0 - x, y, z, 0.0 - x, y, 0.0 - z, -1.0, 0.0, 0.0], [0.0 - x, y, z, x, y, z, x, y, 0.0 - z, 0.0 - x, y, 0.0 - z, 0.0, 1.0, 0.0], [0.0 - x, 0.0 - y, 0.0 - z, x, 0.0 - y, 0.0 - z, x, 0.0 - y, z, 0.0 - x, 0.0 - y, z, 0.0, -1.0, 0.0], [0.0 - x, 0.0 - y, z, x, 0.0 - y, z, x, y, z, 0.0 - x, y, z, 0.0, 0.0, 1.0], [x, 0.0 - y, 0.0 - z, 0.0 - x, 0.0 - y, 0.0 - z, 0.0 - x, y, 0.0 - z, x, y, 0.0 - z, 0.0, 0.0, -1.0]]
+    at = []
+    facing = []
+    uv = []
+    corners = [0, 1, 2, 0, 2, 3]
+    us = [0.0, 1.0, 1.0, 0.0]
+    vs = [1.0, 1.0, 0.0, 0.0]
+    for f in faces
+        for k in corners
+            at = push[at, f[k * 3]]
+            at = push[at, f[k * 3 + 1]]
+            at = push[at, f[k * 3 + 2]]
+            facing = push[facing, f[12]]
+            facing = push[facing, f[13]]
+            facing = push[facing, f[14]]
+            uv = push[uv, us[k]]
+            uv = push[uv, vs[k]]
+    Shape[at, facing, uv]
+
+--- a sphere of radius `r`, `n` bands from pole to pole and twice as many
+--- around
+fn sphere[r, n]
+    at = []
+    facing = []
+    uv = []
+    around = n * 2
+    for i in range[n]
+        for j in range[around]
+            --- the band's quad: two triangles of its four corners
+            for k in [[0, 0], [1, 0], [1, 1], [0, 0], [1, 1], [0, 1]]
+                a = (0.0 + i + k[0]) / n * pi
+                b = (0.0 + j + k[1]) / around * 2.0 * pi
+                nx = sin[a] * cos[b]
+                ny = cos[a]
+                nz = 0.0 - sin[a] * sin[b]
+                at = push[at, nx * r]
+                at = push[at, ny * r]
+                at = push[at, nz * r]
+                facing = push[facing, nx]
+                facing = push[facing, ny]
+                facing = push[facing, nz]
+                uv = push[uv, (0.0 + j + k[1]) / around]
+                uv = push[uv, (0.0 + i + k[0]) / n]
+    Shape[at, facing, uv]
+
+--- a flat ground `w` wide and `d` deep, facing up, at height 0
+fn ground[w, d]
+    x = w / 2.0
+    z = d / 2.0
+    at = [0.0 - x, 0.0, z, x, 0.0, z, x, 0.0, 0.0 - z, 0.0 - x, 0.0, z, x, 0.0, 0.0 - z, 0.0 - x, 0.0, 0.0 - z]
+    facing = []
+    for i in range[6]
+        facing = push[facing, 0.0]
+        facing = push[facing, 1.0]
+        facing = push[facing, 0.0]
+    Shape[at, facing, [0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0]]
+
+--- a cylinder of radius `r` and height `h`, standing on the origin, `n`
+--- sides, its ends closed
+fn cylinder[r, h, n]
+    at = []
+    facing = []
+    uv = []
+    for j in range[n]
+        b0 = (0.0 + j) / n * 2.0 * pi
+        b1 = (0.0 + j + 1) / n * 2.0 * pi
+        --- (the side: two triangles; each end: one, to its centre)
+        for k in [[0, 0], [1, 0], [1, 1], [0, 0], [1, 1], [0, 1]]
+            b = b0
+            if k[0] eq 1
+                b = b1
+            y = 0.0
+            if k[1] eq 1
+                y = h
+            at = push[at, r * cos[b]]
+            at = push[at, y]
+            at = push[at, 0.0 - r * sin[b]]
+            facing = push[facing, cos[b]]
+            facing = push[facing, 0.0]
+            facing = push[facing, 0.0 - sin[b]]
+            uv = push[uv, (0.0 + j + k[0]) / n]
+            uv = push[uv, 1.0 - k[1]]
+        for e in [[h, 1.0], [0.0, -1.0]]
+            ys = e[0]
+            ups = e[1]
+            corners = [[0.0, 0.0], [cos[b0], sin[b0]], [cos[b1], sin[b1]]]
+            if ups lt 0.0
+                corners = [[0.0, 0.0], [cos[b1], sin[b1]], [cos[b0], sin[b0]]]
+            for q in corners
+                at = push[at, r * q[0]]
+                at = push[at, ys]
+                at = push[at, 0.0 - r * q[1]]
+                facing = push[facing, 0.0]
+                facing = push[facing, ups]
+                facing = push[facing, 0.0]
+                uv = push[uv, 0.5 + q[0] / 2.0]
+                uv = push[uv, 0.5 + q[1] / 2.0]
+    Shape[at, facing, uv]
+
+fn _bounds_of[at]
+    lo = [_huge[], _huge[], _huge[]]
+    hi = [0.0 - _huge[], 0.0 - _huge[], 0.0 - _huge[]]
+    n = len[at] / 3
+    for i in range[n]
+        for k in range[3]
+            v = at[i * 3 + k]
+            if v lt lo[k]
+                lo[k] = v
+            if v gt hi[k]
+                hi[k] = v
+    [lo, hi]
+
+fn _huge[]
+    10.0 ^ 300
+
+--- a shape held on the page under a name, its vertices handed over once
+fn mesh[c, name, s]
+    h = _held[]
+    c = _ensure[c, h]
+    h.made = true
+    vao = h.next
+    buf = h.next + 1
+    h.next = h.next + 2
+    n = len[s.at] / 3
+    packed = []
+    for i in range[n]
+        packed = push[packed, s.at[i * 3]]
+        packed = push[packed, s.at[i * 3 + 1]]
+        packed = push[packed, s.at[i * 3 + 2]]
+        packed = push[packed, s.facing[i * 3]]
+        packed = push[packed, s.facing[i * 3 + 1]]
+        packed = push[packed, s.facing[i * 3 + 2]]
+        packed = push[packed, s.uv[i * 2]]
+        packed = push[packed, s.uv[i * 2 + 1]]
+    bytes = sys.base64[sys.float_bytes[packed, 4, true]]
+    asks = c.asks
+    asks = push[asks, ['#`vao`', 'createVertexArray']]
+    asks = push[asks, ['bindVertexArray', '#`vao`']]
+    asks = push[asks, ['#`buf`', 'createBuffer']]
+    asks = push[asks, ['bindBuffer', 'ARRAY_BUFFER', '#`buf`']]
+    asks = push[asks, ['bufferData', 'ARRAY_BUFFER', 'base64f32:`bytes`', 'STATIC_DRAW']]
+    asks = push[asks, ['enableVertexAttribArray', '0']]
+    asks = push[asks, ['vertexAttribPointer', '0', '3', 'FLOAT', 'false', '32', '0']]
+    asks = push[asks, ['enableVertexAttribArray', '1']]
+    asks = push[asks, ['vertexAttribPointer', '1', '3', 'FLOAT', 'false', '32', '12']]
+    asks = push[asks, ['enableVertexAttribArray', '2']]
+    asks = push[asks, ['vertexAttribPointer', '2', '2', 'FLOAT', 'false', '32', '24']]
+    asks = push[asks, ['bindVertexArray', 'null']]
+    c.asks = asks
+    b = _bounds_of[s.at]
+    part = Part[vao, n, false, '', 0, 'TRIANGLES', lory.identity[], lory.white[], 0, true, true]
+    h.meshes[name] = Mesh[name, [part], true, 0, b[0], b[1], 0, '', [buf]]
+    remember['lory.space', h]
+    c
+
+--- ---- the camera and the light ----
+
+fn _numbers3[xs]
+    [0.0 + xs[0], 0.0 + xs[1], 0.0 + xs[2]]
+
+--- a camera orbiting `target` from `distance` away, turned by a drag,
+--- brought nearer or farther by the wheel; it keeps its place between
+--- frames under `id`
+fn orbit[c, id, target, distance]
+    _orbiting[c, id, Orbit[0.6, 0.35, distance, target, false, 0.0, 0.0, 0.0, 0.0]]
+
+fn _orbiting[c, id, first]
+    key = 'lory.space.orbit.`id`'
+    o = recall[key, first]
+    for e in lory.events[c]
+        if e.on eq 'down' and e.device ne 'ray'
+            o.dragging = true
+            o.from_x = e.x
+            o.from_y = e.y
+            o.from_yaw = o.yaw
+            o.from_pitch = o.pitch
+        if e.on eq 'move' and o.dragging
+            o.yaw = o.from_yaw - (e.x - o.from_x) * 0.008 / lory.px[c]
+            o.pitch = max[-1.5, min[1.5, o.from_pitch + (e.y - o.from_y) * 0.008 / lory.px[c]]]
+        if e.on eq 'up' or e.on eq 'leave'
+            o.dragging = false
+        if e.on eq 'wheel'
+            o.distance = max[0.05, min[10000.0, o.distance * exp[e.dy / 600.0]]]
+    remember[key, o]
+    o
+
+--- an orbit that begins with its eye at `from`
+fn orbit_from[c, id, target, from]
+    d = _sub[from, target]
+    far = sqrt[_dot[d, d]]
+    _orbiting[c, id, Orbit[atan2[d[0], d[2]], asin[d[1] / far], far, target, false, 0.0, 0.0, 0.0, 0.0]]
+
+--- where an orbit's eye is
+fn eye_of[o]
+    t = o.target
+    [t[0] + o.distance * cos[o.pitch] * sin[o.yaw], t[1] + o.distance * sin[o.pitch], t[2] + o.distance * cos[o.pitch] * cos[o.yaw]]
+
+--- daylight: a pale sky, a dark ground, a warm sun from high on the left
+fn daylight[]
+    sun = lory.Color[0.75, 0.72, 0.66, 1.0]
+    Light[lory.Color[0.55, 0.6, 0.7, 1.0], lory.Color[0.18, 0.16, 0.14, 1.0], sun, _unit[[-0.4, -1.0, -0.3]], _scaled[sun, 0.3]]
+
+--- a light of the caller's colours, `way` the way the sun's light goes; its
+--- highlight is the sun's, a third as bright
+fn light[sky, under, sun, way]
+    Light[sky, under, sun, _unit[way], _scaled[sun, 0.3]]
+
+--- the light with a highlight of another colour (black for none)
+fn shining[l, color]
+    l.shine = color
+    l
+
+fn _scaled[col, k]
+    lory.Color[col.r * k, col.g * k, col.b * k, col.a]
+
+fn _three[col]
+    'f32:`col.r` `col.g` `col.b`'
+
+fn _four[col]
+    'f32:`col.r` `col.g` `col.b` `col.a`'
+
+--- the scene begun: seen through the orbit on a screen (in a headset,
+--- through the reader's eyes), lit by the light
+fn scene[c, o, l]
+    h = _held[]
+    c = _ensure[c, h]
+    if not h.made
+        h.made = true
+        remember['lory.space', h]
+    from = eye_of[o]
+    aspect = c.width / max[1.0, c.height]
+    near = max[0.01, o.distance / 1000.0]
+    c.eye = lory.mul[perspective[0.8, aspect, near, o.distance * 100.0 + 100.0], look_at[from, o.target]]
+    c.eyepos = from
+    p = '#`_program_id[]`'
+    w = l.way
+    deep = c.deep
+    deep = push[deep, ['useProgram', p]]
+    deep = push[deep, ['uniformMatrix4fv', _uniform['eye'], 'false', '@eye']]
+    deep = push[deep, ['uniform3fv', _uniform['eyepos'], '@eyepos']]
+    deep = push[deep, ['uniform3fv', _uniform['sky'], _three[l.sky]]]
+    deep = push[deep, ['uniform3fv', _uniform['ground'], _three[l.ground]]]
+    deep = push[deep, ['uniform3fv', _uniform['sun'], _three[l.sun]]]
+    deep = push[deep, ['uniform3fv', _uniform['way'], 'f32:`w[0]` `w[1]` `w[2]`']]
+    deep = push[deep, ['uniform3fv', _uniform['shine'], _three[l.shine]]]
+    deep = push[deep, ['uniform1i', _uniform['picture'], '2']]
+    c.deep = deep
+    c
+
+--- a held mesh or model drawn where `matrix` puts it, in a colour (a
+--- model's own colours are multiplied by it: white keeps them)
+fn draw[c, name, matrix, color]
+    h = _held[]
+    if not (name in h.meshes)
+        return c
+    m = h.meshes[name]
+    if not m.ready
+        return c
+    deep = c.deep
+    for part in m.parts
+        deep = push[deep, ['uniformMatrix4fv', _uniform['model'], 'false', _matrix[lory.mul[matrix, part.matrix]]]]
+        k = part.color
+        deep = push[deep, ['uniform4fv', _uniform['tint'], _four[lory.Color[k.r * color.r, k.g * color.g, k.b * color.b, k.a * color.a]]]]
+        if part.image gt 0
+            deep = push[deep, ['activeTexture', 'TEXTURE2']]
+            deep = push[deep, ['bindTexture', 'TEXTURE_2D', '#`part.image`']]
+            deep = push[deep, ['uniform1f', _uniform['textured'], '1']]
+        else
+            deep = push[deep, ['uniform1f', _uniform['textured'], '0']]
+        deep = push[deep, ['bindVertexArray', '#`part.vao`']]
+        if not part.normals
+            deep = push[deep, ['vertexAttrib3f', '1', '0', '1', '0']]
+        if not part.uvs
+            deep = push[deep, ['vertexAttrib2f', '2', '0', '0']]
+        if part.indexed
+            deep = push[deep, ['drawElements', part.mode, str[part.count], part.itype, str[part.ioffset]]]
+        else
+            deep = push[deep, ['drawArrays', part.mode, '0', str[part.count]]]
+    deep = push[deep, ['bindVertexArray', 'null']]
+    c.deep = deep
+    c
+
+fn _matrix[m]
+    parts = []
+    for x in m
+        parts = push[parts, str[x]]
+    joined = join[parts, ' ']
+    'f32:`joined`'
+
+--- ---- glTF ----
+
+--- a model of a glTF file (its JSON, its buffers beside it or inside it as
+--- data, its images beside it): asked for the first time, read when the
+--- page answers, its buffers fetched by the page, and drawn by `draw`
+--- once every one is in
+fn model[c, name, url]
+    h = _held[]
+    c = _ensure[c, h]
+    h.made = true
+    if not (name in h.meshes)
+        ask_id = h.next
+        h.next = h.next + 1
+        h.meshes[name] = Mesh[name, [], false, 0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], ask_id, url, []]
+        c = lory.request[c, ask_id, 'GET', url, '']
+        remember['lory.space', h]
+        return c
+    if h.meshes[name].ready
+        return c
+    for s in lory.said[c]
+        m = h.meshes[name]
+        if s.what eq 'answer' and m.ask gt 0 and 0 + s.id eq m.ask
+            r = _read_gltf[c, h, m, '`s.body`']
+            c = r.canvas
+            h = r.held
+        --- (each of the model's buffers in: it is ready with the last)
+        if s.what eq 'buffer' and (0 + s.id) in m.buffers
+            h.meshes[name].waiting = m.waiting - 1
+            if m.waiting eq 1
+                h.meshes[name].ready = true
+    remember['lory.space', h]
+    c
+
+struct Read [canvas, held]
+
+--- a box's eight corners
+fn _corners[lo, hi]
+    out = []
+    for x in [lo[0], hi[0]]
+        for y in [lo[1], hi[1]]
+            for z in [lo[2], hi[2]]
+                out = push[out, [x, y, z]]
+    out
+
+fn _base_of[url]
+    pieces = split[url, '/']
+    if len[pieces] lte 1
+        return ''
+    kept = []
+    for i in range[len[pieces] - 1]
+        kept = push[kept, pieces[i]]
+    joined = join[kept, '/']
+    '`joined`/'
+
+fn _list[j]
+    out = []
+    for x in j
+        out = push[out, x]
+    out
+
+fn _floats[j]
+    out = []
+    for x in j
+        out = push[out, 0.0 + x]
+    out
+
+--- the matrix a node of the file puts its mesh at: its own, or its
+--- translation, turn and scale
+fn _node_matrix[node]
+    if node.matrix.ok
+        return _floats[node.matrix]
+    t = lory.identity[]
+    if node.translation.ok
+        v = _floats[node.translation]
+        t = lory.translation[v[0], v[1], v[2]]
+    r = lory.identity[]
+    if node.rotation.ok
+        r = turn_of[_floats[node.rotation]]
+    s = lory.identity[]
+    if node.scale.ok
+        v = _floats[node.scale]
+        s = lory.scaling[v[0], v[1], v[2]]
+    lory.mul[t, lory.mul[r, s]]
+
+--- each mesh a scene's nodes place, with the matrix that places it
+struct Placed [mesh, matrix]
+
+fn _placed[nodes, at, parent]
+    node = nodes[at]
+    here = lory.mul[parent, _node_matrix[node]]
+    out = []
+    if node.mesh.ok
+        out = push[out, Placed[0 + node.mesh, here]]
+    if node.children.ok
+        for k in node.children
+            for p in _placed[nodes, 0 + k, here]
+                out = push[out, p]
+    out
+
+fn _size_of[kind]
+    sizes = map['SCALAR' = 1, 'VEC2' = 2, 'VEC3' = 3, 'VEC4' = 4, 'MAT4' = 16]
+    if kind in sizes
+        return sizes[kind]
+    1
+
+fn _component[t]
+    if t eq 5121
+        return 'UNSIGNED_BYTE'
+    if t eq 5123
+        return 'UNSIGNED_SHORT'
+    if t eq 5125
+        return 'UNSIGNED_INT'
+    if t eq 5120
+        return 'BYTE'
+    if t eq 5122
+        return 'SHORT'
+    'FLOAT'
+
+fn _modes[]
+    ['POINTS', 'LINES', 'LINE_LOOP', 'LINE_STRIP', 'TRIANGLES', 'TRIANGLE_STRIP', 'TRIANGLE_FAN']
+
+fn _read_gltf[c, h, m, body]
+    g = json[body]
+    base = _base_of[m.url]
+    nodes = _list[g.nodes]
+    accessors = _list[g.accessors]
+    views = _list[g.bufferViews]
+    buffers = _list[g.buffers]
+    meshes = _list[g.meshes]
+    materials = []
+    if g.materials.ok
+        materials = _list[g.materials]
+    textures = []
+    if g.textures.ok
+        textures = _list[g.textures]
+    images = []
+    if g.images.ok
+        images = _list[g.images]
+    --- (the scene's roots: the first scene's, or every node no node holds)
+    roots = []
+    if g.scenes.ok
+        scenes = _list[g.scenes]
+        for k in scenes[0].nodes
+            roots = push[roots, 0 + k]
+    else
+        for i in range[len[nodes]]
+            roots = push[roots, i]
+    placed = []
+    for r in roots
+        for p in _placed[nodes, r, lory.identity[]]
+            placed = push[placed, p]
+    --- (a buffer object per view of the file's buffers a part reads, and
+    --- a texture per image)
+    view_ids = map[]
+    image_ids = map[]
+    owned = []
+    asks = c.asks
+    parts = []
+    waiting = 0
+    lo = [_huge[], _huge[], _huge[]]
+    hi = [0.0 - _huge[], 0.0 - _huge[], 0.0 - _huge[]]
+    for pl in placed
+        for prim in meshes[pl.mesh].primitives
+            vao = h.next
+            h.next = h.next + 1
+            asks = push[asks, ['#`vao`', 'createVertexArray']]
+            asks = push[asks, ['bindVertexArray', '#`vao`']]
+            normals = false
+            uvs = false
+            count = 0
+            for name in ['POSITION', 'NORMAL', 'TEXCOORD_0']
+                loc = 0
+                if name eq 'NORMAL'
+                    loc = 1
+                if name eq 'TEXCOORD_0'
+                    loc = 2
+                ai = prim.attributes[name]
+                if ai.ok
+                    a = accessors[0 + ai]
+                    vi = 0 + a.bufferView
+                    key = str[vi]
+                    if not (key in view_ids)
+                        made_id = h.next
+                        h.next = h.next + 1
+                        view_ids[key] = made_id
+                        v = views[vi]
+                        uri = '`buffers[0 + v.buffer].uri`'
+                        if split[uri, ':'][0] ne 'data'
+                            uri = '`base``uri`'
+                        off = 0
+                        if v.byteOffset.ok
+                            off = 0 + v.byteOffset
+                        asks = push[asks, ['#`made_id`', '@buffer', '=`uri`', 'ARRAY_BUFFER', str[off], str[0 + v.byteLength]]]
+                        waiting = waiting + 1
+                        owned = push[owned, made_id]
+                    stride = 0
+                    if views[vi].byteStride.ok
+                        stride = 0 + views[vi].byteStride
+                    aoff = 0
+                    if a.byteOffset.ok
+                        aoff = 0 + a.byteOffset
+                    asks = push[asks, ['bindBuffer', 'ARRAY_BUFFER', '#`view_ids[key]`']]
+                    asks = push[asks, ['enableVertexAttribArray', str[loc]]]
+                    asks = push[asks, ['vertexAttribPointer', str[loc], str[_size_of['`a.type`']], _component[0 + a.componentType], 'false', str[stride], str[aoff]]]
+                    if loc eq 0
+                        count = 0 + a.count
+                        if a.min.ok and a.max.ok
+                            pmin = _floats[a.min]
+                            pmax = _floats[a.max]
+                            --- (the part's corners, where its node puts them)
+                            for q in _corners[pmin, pmax]
+                                mm = pl.matrix
+                                for k in range[3]
+                                    w = mm[k] * q[0] + mm[4 + k] * q[1] + mm[8 + k] * q[2] + mm[12 + k]
+                                    lo[k] = min[lo[k], w]
+                                    hi[k] = max[hi[k], w]
+                    if loc eq 1
+                        normals = true
+                    if loc eq 2
+                        uvs = true
+            indexed = false
+            itype = ''
+            ioff = 0
+            if prim.indices.ok
+                a = accessors[0 + prim.indices]
+                vi = 0 + a.bufferView
+                key = 'i`vi`'
+                if not (key in view_ids)
+                    made_id = h.next
+                    h.next = h.next + 1
+                    view_ids[key] = made_id
+                    v = views[vi]
+                    uri = '`buffers[0 + v.buffer].uri`'
+                    if split[uri, ':'][0] ne 'data'
+                        uri = '`base``uri`'
+                    off = 0
+                    if v.byteOffset.ok
+                        off = 0 + v.byteOffset
+                    asks = push[asks, ['#`made_id`', '@buffer', '=`uri`', 'ELEMENT_ARRAY_BUFFER', str[off], str[0 + v.byteLength]]]
+                    waiting = waiting + 1
+                    owned = push[owned, made_id]
+                asks = push[asks, ['bindBuffer', 'ELEMENT_ARRAY_BUFFER', '#`view_ids[key]`']]
+                indexed = true
+                count = 0 + a.count
+                itype = _component[0 + a.componentType]
+                if a.byteOffset.ok
+                    ioff = 0 + a.byteOffset
+            asks = push[asks, ['bindVertexArray', 'null']]
+            mode = 'TRIANGLES'
+            if prim.mode.ok
+                mode = _modes[0 + prim.mode]
+            color = lory.white[]
+            image = 0
+            if prim.material.ok
+                mat = materials[0 + prim.material]
+                if mat.pbrMetallicRoughness.ok
+                    pbr = mat.pbrMetallicRoughness
+                    if pbr.baseColorFactor.ok
+                        f = _floats[pbr.baseColorFactor]
+                        color = lory.Color[f[0], f[1], f[2], f[3]]
+                    if pbr.baseColorTexture.ok
+                        src = 0 + textures[0 + pbr.baseColorTexture.index].source
+                        ikey = str[src]
+                        if not (ikey in image_ids)
+                            made_id = h.next
+                            h.next = h.next + 1
+                            image_ids[ikey] = made_id
+                            uri = '`images[src].uri`'
+                            if split[uri, ':'][0] ne 'data'
+                                uri = '`base``uri`'
+                            asks = push[asks, ['#`made_id`', '@image', '=`uri`']]
+                        image = image_ids[ikey]
+            parts = push[parts, Part[vao, count, indexed, itype, ioff, mode, pl.matrix, color, image, normals, uvs]]
+    c.asks = asks
+    h.meshes[m.name] = Mesh[m.name, parts, waiting eq 0, waiting, lo, hi, 0, m.url, owned]
+    Read[c, h]
+
+--- ---- in a headset: standing, moving and pointing ----
+
+--- where the reader stands in the scene and which way they face (a turn
+--- about the vertical), and whether the turning stick is back at rest
+struct Stand [x, z, yaw, rested]
+
+--- the reader moved by the left stick (where the head faces is forward)
+--- and turned by the right one in steps of 30 degrees — a smooth turn
+--- sickens many readers, a step does not — kept under `id`; the canvas's
+--- scene is seen from there
+fn walk[c, id]
+    key = 'lory.space.stand.`id`'
+    st = recall[key, Stand[0.0, 0.0, 0.0, true]]
+    if not lory.in_headset[c]
+        return c
+    move = lory.stick[c, 'left']
+    turn = lory.stick[c, 'right']
+    --- (forward: where the head faces, flat on the floor, in the scene)
+    fx = 0.0
+    fz = -1.0
+    for v in c.frame.views
+        m = _floats[v.camera]
+        if len[m] eq 16
+            fx = 0.0 - m[2]
+            fz = 0.0 - m[10]
+    n = sqrt[fx * fx + fz * fz]
+    if n gt 0.0001
+        fx = fx / n
+        fz = fz / n
+    co = cos[st.yaw]
+    si = sin[st.yaw]
+    wx = co * fx + si * fz
+    wz = 0.0 - si * fx + co * fz
+    speed = 1.5 * lory.dt[c]
+    --- (the stick's forward push is negative)
+    st.x = st.x + (wx * (0.0 - move[1]) - wz * move[0]) * speed
+    st.z = st.z + (wz * (0.0 - move[1]) + wx * move[0]) * speed
+    if st.rested and abs[turn[0]] gt 0.6
+        step = pi / 6.0
+        if turn[0] gt 0.0
+            st.yaw = st.yaw - step
+        else
+            st.yaw = st.yaw + step
+        st.rested = false
+    if abs[turn[0]] lt 0.3
+        st.rested = true
+    remember[key, st]
+    c.rig = lory.mul[turn_y[0.0 - st.yaw], lory.translation[0.0 - st.x, 0.0, 0.0 - st.z]]
+    c
+
+--- a ray in the scene: where it starts and the way it goes, and whether
+--- there is one (a pointer over the canvas, a controller in a headset)
+struct Ray [from, way, there]
+
+--- the ray the reader points with: in a headset the right controller's
+--- (or the first's), on a screen the pointer's, through the orbit's eye
+fn ray[c, o]
+    if lory.in_headset[c]
+        --- (the rig undone — a controller's place is in the reader's
+        --- space: the rig turns by -yaw then moves by -p, so the reader
+        --- stands at p turned by yaw)
+        r = c.rig
+        co = r[0]
+        si = 0.0 - r[8]
+        tx = r[12]
+        tz = r[14]
+        sx = 0.0 - (co * tx + si * tz)
+        sz = si * tx - co * tz
+        found = Ray[[0.0, 0.0, 0.0], [0.0, 0.0, -1.0], false]
+        for ctl in c.frame.controllers
+            if not found.there or '`ctl.hand`' eq 'right'
+                og = _floats[ctl.origin]
+                dg = _floats[ctl.direction]
+                from = [co * og[0] + si * og[2] + sx, og[1], 0.0 - si * og[0] + co * og[2] + sz]
+                way = [co * dg[0] + si * dg[2], dg[1], 0.0 - si * dg[0] + co * dg[2]]
+                found = Ray[from, _unit[way], true]
+        return found
+    if not lory.pointing[c]
+        return Ray[[0.0, 0.0, 0.0], [0.0, 0.0, -1.0], false]
+    from = eye_of[o]
+    z = _unit[_sub[from, o.target]]
+    x = _unit[_cross[[0.0, 1.0, 0.0], z]]
+    y = _cross[z, x]
+    aspect = c.width / max[1.0, c.height]
+    half = tan[0.4]
+    nx = (2.0 * lory.pointer_x[c] / c.width - 1.0) * half * aspect
+    ny = (1.0 - 2.0 * lory.pointer_y[c] / c.height) * half
+    way = [x[0] * nx + y[0] * ny - z[0], x[1] * nx + y[1] * ny - z[1], x[2] * nx + y[2] * ny - z[2]]
+    Ray[from, _unit[way], true]
+
+--- how far along the ray a held mesh, where `matrix` puts it, is met (its
+--- box, the eight corners put there), or -1 where it is missed
+fn hit[r, name, matrix]
+    if not r.there
+        return -1.0
+    b = bounds[name]
+    lo = [_huge[], _huge[], _huge[]]
+    hi = [0.0 - _huge[], 0.0 - _huge[], 0.0 - _huge[]]
+    for q in _corners[b[0], b[1]]
+        for k in range[3]
+            w = matrix[k] * q[0] + matrix[4 + k] * q[1] + matrix[8 + k] * q[2] + matrix[12 + k]
+            lo[k] = min[lo[k], w]
+            hi[k] = max[hi[k], w]
+    near = 0.0
+    far = _huge[]
+    for k in range[3]
+        o = r.from[k]
+        d = r.way[k]
+        if abs[d] lt 0.000000001
+            if o lt lo[k] or o gt hi[k]
+                return -1.0
+        else
+            t1 = (lo[k] - o) / d
+            t2 = (hi[k] - o) / d
+            near = max[near, min[t1, t2]]
+            far = min[far, max[t1, t2]]
+    if near gt far
+        return -1.0
+    near

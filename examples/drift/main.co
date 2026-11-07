@@ -1,0 +1,212 @@
+--- Lantern Drift, a game drawn by Lory: a lantern drifts at the foot of a
+--- night sky; catch the falling motes of light, dodge the embers. Steer
+--- with the arrow keys or A and D, by dragging (a finger on a phone), or
+--- with a headset's stick or its ray. Three embers end the night; a press
+--- begins the next. The sky quickens as the score grows.
+use sys
+use math
+use memory
+use lory
+use lory.game
+
+--- something falling: where, how fast, its size, and whether it is an
+--- ember (else a mote)
+struct Falling [x, y, speed, r, ember]
+
+--- the game: the lantern's place, what falls, the sparks, the score and
+--- the best, the embers left to take, the time until the next drop, the
+--- seconds played, and whether the night is over
+struct Play [x, y, falling, sparks, score, best, lives, next, played, over, started, stars]
+
+fn _w[]
+    400.0
+
+fn _h[]
+    700.0
+
+fn _stars[]
+    out = []
+    for i in range[60]
+        out = push[out, [rand[] * _w[], rand[] * _h[] * 0.8, 0.5 + rand[] * 1.5]]
+    out
+
+fn fresh[best]
+    Play[_w[] / 2.0, _h[] - 80.0, [], [], 0, best, 3, 0.6, 0.0, false, false, _stars[]]
+
+--- how fast the sky falls, with the score
+fn pace[p]
+    1.0 + min[2.0, p.score / 40.0]
+
+--- the game a step of `dt` seconds later, steered toward `aim` (-1 to 1,
+--- or the x a pointer holds when `to` is not -1)
+fn step[p, dt, aim, to]
+    if p.over
+        p.sparks = game.moved[p.sparks, dt, 300.0]
+        return p
+    p.played = p.played + dt
+    if to gte 0.0
+        p.x = game.toward[p.x, to, 12.0, dt]
+    else
+        p.x = p.x + aim * 320.0 * dt
+    p.x = game.clamp[p.x, 24.0, _w[] - 24.0]
+    p.next = p.next - dt
+    if p.next lte 0.0
+        ember = rand[] lt 0.35 + min[0.25, p.score / 200.0]
+        r = 9.0
+        if ember
+            r = 11.0
+        p.falling = push[p.falling, Falling[20.0 + rand[] * (_w[] - 40.0), -20.0, (120.0 + rand[] * 90.0) * pace[p], r, ember]]
+        p.next = (0.35 + rand[] * 0.5) / pace[p]
+    kept = []
+    for f in p.falling
+        f.y = f.y + f.speed * dt
+        if game.circles_meet[f.x, f.y, f.r, p.x, p.y, 18.0]
+            if f.ember
+                p.lives = p.lives - 1
+                p.sparks = game.burst[p.sparks, f.x, f.y, 30, 260.0, lory.hex['#ff6b3d']]
+            else
+                p.score = p.score + 1
+                p.sparks = game.burst[p.sparks, f.x, f.y, 14, 140.0, lory.hex['#ffe08a']]
+        else
+            if f.y lt _h[] + 30.0
+                kept = push[kept, f]
+    p.falling = kept
+    p.sparks = game.moved[p.sparks, dt, 300.0]
+    if p.lives lte 0
+        p.over = true
+        p.best = max[p.best, p.score]
+        p.sparks = game.burst[p.sparks, p.x, p.y, 60, 320.0, lory.hex['#ffb347']]
+    p
+
+--- the sky, what falls, the lantern and the score, in the game's units
+--- scaled to the frame (`k` pixels each, from `ox`, `oy`)
+fn picture[c, p, k, ox, oy]
+    c = lory.clear[c, lory.hex['#070b16']]
+    --- (the sky: bands darkening upward)
+    for i in range[10]
+        t = (0.0 + i) / 10.0
+        c = lory.rect[c, ox, oy + t * _h[] * k, _w[] * k, _h[] * k / 10.0 + 1.0, lory.mix[lory.hex['#070b16'], lory.hex['#1b2a4a'], t]]
+    for st in p.stars
+        twinkle = 0.55 + 0.45 * sin[lory.time[c] / 500.0 + st[0]]
+        c = lory.circle[c, ox + st[0] * k, oy + st[1] * k, st[2] * k, lory.fade[lory.white[], twinkle]]
+    c = lory.rect[c, ox, oy + (_h[] - 40.0) * k, _w[] * k, 40.0 * k, lory.hex['#0d1424']]
+    for f in p.falling
+        if f.ember
+            c = lory.circle[c, ox + f.x * k, oy + f.y * k, f.r * 2.2 * k, lory.fade[lory.hex['#ff4d1a'], 0.18]]
+            c = lory.circle[c, ox + f.x * k, oy + f.y * k, f.r * k, lory.hex['#ff6b3d']]
+        else
+            c = lory.circle[c, ox + f.x * k, oy + f.y * k, f.r * 2.4 * k, lory.fade[lory.hex['#ffe08a'], 0.2]]
+            c = lory.circle[c, ox + f.x * k, oy + f.y * k, f.r * k, lory.hex['#fff3c4']]
+    c = game.drawn[c, p.sparks, 3.0 * k]
+    if not p.over
+        glow = 0.25 + 0.06 * sin[lory.time[c] / 180.0]
+        c = lory.circle[c, ox + p.x * k, oy + p.y * k, 60.0 * k, lory.fade[lory.hex['#ffb347'], glow]]
+        c = lory.round_rect[c, ox + (p.x - 14.0) * k, oy + (p.y - 18.0) * k, 28.0 * k, 36.0 * k, 8.0 * k, lory.hex['#ffcf70']]
+        c = lory.round_rect[c, ox + (p.x - 8.0) * k, oy + (p.y - 10.0) * k, 16.0 * k, 20.0 * k, 5.0 * k, lory.hex['#fff6d8']]
+        c = lory.rect[c, ox + (p.x - 10.0) * k, oy + (p.y - 24.0) * k, 20.0 * k, 5.0 * k, lory.hex['#6b4a2b']]
+    size = 20.0 * k
+    c = lory.text[c, ox + 16.0 * k, oy + 14.0 * k, 'Motes `p.score`', size, lory.hex['#fff3c4']]
+    hearts = ''
+    for i in range[max[0, p.lives]]
+        hearts = '`hearts`●'
+    c = lory.text_right[c, ox + (_w[] - 16.0) * k, oy + 14.0 * k, hearts, size, lory.hex['#ff6b3d']]
+    if p.over
+        c = lory.round_rect[c, ox + 50.0 * k, oy + 250.0 * k, 300.0 * k, 170.0 * k, 16.0 * k, lory.fade[lory.hex['#0d1424'], 0.92]]
+        c = lory.text_centered[c, ox + _w[] / 2.0 * k, oy + 290.0 * k, 'The night is over', 26.0 * k, lory.white[]]
+        c = lory.text_centered[c, ox + _w[] / 2.0 * k, oy + 330.0 * k, '`p.score` motes — best `p.best`', 18.0 * k, lory.hex['#ffe08a']]
+        c = lory.text_centered[c, ox + _w[] / 2.0 * k, oy + 380.0 * k, 'Press to drift again', 16.0 * k, lory.hex['#9fb3c8']]
+    if not p.started
+        c = lory.text_centered[c, ox + _w[] / 2.0 * k, oy + 330.0 * k, 'Catch the motes, dodge the embers', 18.0 * k, lory.white[]]
+        c = lory.text_centered[c, ox + _w[] / 2.0 * k, oy + 362.0 * k, '← → or A D, or drag — press to begin', 15.0 * k, lory.hex['#9fb3c8']]
+    c
+
+--- the frame's input as the game reads it: a press, the keys' aim, and
+--- where a held pointer is in the game's units (-1: none)
+struct Aim [pressed, aim, to]
+
+fn aim_of[c, k, ox]
+    pressed = lory.pressed[c]
+    for ev in lory.events[c]
+        if ev.on eq 'key' and (ev.code eq 'Space' or ev.code eq 'Enter')
+            pressed = true
+    aim = 0.0
+    if lory.held_key[c, 'ArrowLeft'] or lory.held_key[c, 'KeyA']
+        aim = aim - 1.0
+    if lory.held_key[c, 'ArrowRight'] or lory.held_key[c, 'KeyD']
+        aim = aim + 1.0
+    stick = lory.stick[c, 'right']
+    if abs[stick[0]] gt 0.15
+        aim = stick[0]
+    to = -1.0
+    if lory.pointing[c] and c.down
+        to = (lory.pointer_x[c] - ox) / k
+    Aim[pressed, aim, to]
+
+fn draw[frame]
+    c = lory.begin[frame]
+    p = recall['drift', fresh[0]]
+    --- (the game's 400 by 700 units fit the frame, centred)
+    k = min[lory.width[c] / _w[], lory.height[c] / _h[]]
+    ox = (lory.width[c] - _w[] * k) / 2.0
+    oy = (lory.height[c] - _h[] * k) / 2.0
+    a = aim_of[c, k, ox]
+    if a.pressed and (p.over or not p.started)
+        best = p.best
+        p = fresh[best]
+        p.started = true
+        c = game.sound[c, 'start']
+    before_score = p.score
+    before_lives = p.lives
+    if p.started
+        for i in range[game.steps[c, 'drift', 120.0]]
+            p = step[p, 1.0 / 120.0, a.aim, a.to]
+    if p.score gt before_score
+        c = game.sound[c, 'pick']
+    if p.lives lt before_lives
+        c = game.sound[c, 'hit']
+        if p.over
+            c = game.sound[c, 'over']
+    remember['drift', p]
+    c = lory.title[c, 'Lantern Drift — `p.score`']
+    lory.end[picture[c, p, k, ox, oy]]
+
+sys.frames[draw]
+
+test a_mote_caught_is_a_point_and_an_ember_a_life[]
+    seed[7]
+    p = fresh[0]
+    p.started = true
+    p.next = 100.0
+    p.falling = [Falling[p.x, p.y - 30.0, 600.0, 9.0, false], Falling[p.x, p.y - 400.0, 600.0, 11.0, true]]
+    for i in range[12]
+        p = step[p, 1.0 / 120.0, 0.0, -1.0]
+    p.score eq 1
+    p.lives eq 3
+    for i in range[120]
+        p = step[p, 1.0 / 120.0, 0.0, -1.0]
+    p.lives eq 2
+    len[p.falling] eq 0
+
+test three_embers_end_the_night_and_keep_the_best[]
+    seed[3]
+    p = fresh[5]
+    p.score = 9
+    p.lives = 1
+    p.next = 100.0
+    p.falling = [Falling[p.x, p.y, 0.0, 11.0, true]]
+    p = step[p, 0.01, 0.0, -1.0]
+    p.over
+    p.best eq 9
+
+test the_lantern_keeps_to_the_sky[]
+    p = fresh[0]
+    p.next = 100.0
+    for i in range[400]
+        p = step[p, 1.0 / 120.0, 1.0, -1.0]
+    p.x eq _w[] - 24.0
+
+test a_frame_draws_the_sky_and_asks_for_no_more_than_it_needs[]
+    frame = json['{"t": 0, "width": 800, "height": 1400, "ratio": 2, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 800, "height": 1400, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+    c = lory.begin[frame]
+    c = picture[c, fresh[0], 2.0, 0.0, 0.0]
+    len[c.verts] / lory.floats[] gt 6 * 60

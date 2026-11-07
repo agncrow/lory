@@ -1,0 +1,113 @@
+--- A scene in three dimensions, drawn by Lory: a sphere above a ground,
+--- a box and a column beside it, lit by the sky and the sun, seen through
+--- a camera that orbits the sphere (drag to turn it, wheel to come nearer)
+--- — and in a headset, standing on the floor in front of the reader. A
+--- line of text over it says where the eye is.
+use sys
+use math
+use lory
+use lory.space
+
+fn picture[c]
+    s = lory.px[c]
+    c = lory.clear[c, lory.hex['#1d2733']]
+    if not space.made['ball']
+        c = space.mesh[c, 'ball', space.sphere[1.0, 24]]
+        c = space.mesh[c, 'ground', space.ground[6.0, 6.0]]
+        c = space.mesh[c, 'box', space.box[1.0, 1.0, 1.0]]
+        c = space.mesh[c, 'column', space.cylinder[0.35, 1.6, 24]]
+    cam = space.orbit[c, 'view', [0.0, 1.0, -2.0], 7.0]
+    --- (in a headset the sticks move and turn the reader)
+    c = space.walk[c, 'reader']
+    c = space.scene[c, cam, space.daylight[]]
+    turn = lory.time[c] / 2000.0
+    c = space.draw[c, 'ground', lory.translation[0.0, 0.0, -2.0], lory.hex['#4f6b3a']]
+    --- (the ball lights where the pointer or a controller's ray meets it)
+    ball = lory.translation[0.0, 1.0, -2.0]
+    color = lory.hex['#3b82f6']
+    if space.hit[space.ray[c, cam], 'ball', ball] gte 0.0
+        color = lory.hex['#93c5fd']
+    c = space.draw[c, 'ball', ball, color]
+    c = space.draw[c, 'box', lory.mul[lory.translation[-2.0, 0.5, -2.0], space.turn_y[turn]], lory.hex['#e8590c']]
+    c = space.draw[c, 'column', lory.translation[2.0, 0.0, -2.0], lory.hex['#e9ecef']]
+    at = space.eye_of[cam]
+    words = 'eye at `fmt[at[0], decimals = 1]`, `fmt[at[1], decimals = 1]`, `fmt[at[2], decimals = 1]` — drag to turn, wheel to come nearer'
+    lory.text[c, 16.0 * s, 16.0 * s, words, 14.0 * s, lory.white[]]
+
+fn draw[frame]
+    lory.end[picture[lory.begin[frame]]]
+
+sys.frames[draw]
+
+fn _frame[given]
+    json['{"t": 0, "width": 800, "height": 600, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 800, "height": 600, "projection": [], "camera": []}], "input": [`given`], "pointers": [], "controllers": [], "said": []}']
+
+fn _names[calls]
+    out = []
+    for call in calls
+        if '#' in call[0]
+            out = push[out, call[1]]
+        else
+            out = push[out, call[0]]
+    out
+
+test the_first_frame_makes_the_program_and_the_meshes_and_draws_them_with_depth[]
+    c = picture[lory.begin[_frame['']]]
+    names = _names[lory.batch[c]]
+    'linkProgram' in names
+    'createVertexArray' in names
+    'DEPTH_TEST' in str[lory.batch[c]]
+    --- (four meshes drawn: the flat drawing waits for its atlas)
+    draws = 0
+    for n in names
+        if n eq 'drawArrays'
+            draws = draws + 1
+    draws eq 4
+
+test a_sphere_is_closed_and_its_normals_are_of_one_length[]
+    s = space.sphere[2.0, 8]
+    len[s.at] eq 8 * 16 * 6 * 3
+    len[s.uv] eq 8 * 16 * 6 * 2
+    far = 0.0
+    for i in range[len[s.facing] / 3]
+        n = s.facing[i * 3] * s.facing[i * 3] + s.facing[i * 3 + 1] * s.facing[i * 3 + 1] + s.facing[i * 3 + 2] * s.facing[i * 3 + 2]
+        far = max[far, abs[n - 1.0]]
+    far lt 0.000000001
+
+test a_view_matrix_puts_its_eye_at_the_origin[]
+    v = space.look_at[[3.0, 4.0, 5.0], [0.0, 0.0, 0.0]]
+    --- (the eye, times the view, is where the view starts: 0, 0, 0)
+    x = v[0] * 3.0 + v[4] * 4.0 + v[8] * 5.0 + v[12]
+    y = v[1] * 3.0 + v[5] * 4.0 + v[9] * 5.0 + v[13]
+    z = v[2] * 3.0 + v[6] * 4.0 + v[10] * 5.0 + v[14]
+    abs[x] + abs[y] + abs[z] lt 0.000000001
+
+test a_quaternion_of_a_half_turn_about_y_turns_x_to_minus_x[]
+    m = space.turn_of[[0.0, 1.0, 0.0, 0.0]]
+    abs[m[0] + 1.0] lt 0.000000001
+    abs[m[10] + 1.0] lt 0.000000001
+
+test a_ray_through_the_middle_of_the_screen_meets_what_the_orbit_looks_at[]
+    c = picture[lory.begin[_frame['']]]
+    o = space.orbit[c, 'aimed', [0.0, 1.0, -2.0], 7.0]
+    pointed = json['{"t": 0, "width": 800, "height": 600, "ratio": 1, "xr": false, "views": [], "input": [], "pointers": [{"x": 400, "y": 300, "down": false}], "controllers": [], "said": []}']
+    r = space.ray[lory.begin[pointed], o]
+    space.hit[r, 'ball', lory.translation[0.0, 1.0, -2.0]] gt 0.0
+    space.hit[r, 'ball', lory.translation[30.0, 1.0, -2.0]] eq -1.0
+
+test a_headset_reader_turns_by_a_step_and_not_again_until_the_stick_rests[]
+    pushed = json['{"t": 0, "width": 800, "height": 600, "ratio": 1, "xr": true, "views": [], "input": [], "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.5, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [], "axes": [0, 0, 0.9, 0]}], "said": []}']
+    c = space.walk[lory.begin[pushed], 'turner']
+    c = space.walk[lory.begin[pushed], 'turner']
+    --- (two frames pushed: one step of 30 degrees, to the right)
+    abs[c.rig[0] - cos[pi / 6.0]] lt 0.000000001
+    r = space.ray[c, space.orbit[c, 'x', [0.0, 0.0, 0.0], 1.0]]
+    --- (the ray still points ahead of the reader, now turned: to the right of -z)
+    r.way[0] gt 0.4
+
+test a_drag_turns_the_orbit[]
+    down = '{"type": "down", "device": "mouse", "id": "1", "x": 100, "y": 100, "button": 0}'
+    first = space.orbit[lory.begin[_frame[down]], 'drag', [0.0, 0.0, 0.0], 5.0]
+    move = '{"type": "move", "device": "mouse", "id": "1", "x": 200, "y": 100}'
+    after = space.orbit[lory.begin[_frame[move]], 'drag', [0.0, 0.0, 0.0], 5.0]
+    after.yaw lt first.yaw

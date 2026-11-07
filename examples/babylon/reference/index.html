@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<!-- Babylon.js's Playground scene as Babylon draws it (7.54.3, its
+     StandardMaterial and hemispheric light), the picture Lory's
+     ../main.co is held to; compare.py measures the two. -->
+<html><head><title>waiting</title>
+<style>html,body{margin:0;background:#000}canvas{display:block;width:1280px;height:720px}</style>
+<script src="https://cdn.jsdelivr.net/npm/babylonjs@7.54.3/babylon.js"></script>
+</head><body><canvas id="c"></canvas><script>
+const canvas = document.getElementById('c');
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true });
+const scene = new BABYLON.Scene(engine);
+const camera = new BABYLON.FreeCamera('camera1', new BABYLON.Vector3(0, 5, -10), scene);
+camera.setTarget(BABYLON.Vector3.Zero());
+const light = new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), scene);
+light.intensity = 0.7;
+const sphere = BABYLON.MeshBuilder.CreateSphere('sphere', { diameter: 2, segments: 32 }, scene);
+sphere.position.y = 1;
+BABYLON.MeshBuilder.CreateGround('ground', { width: 6, height: 6 }, scene);
+scene.executeWhenReady(() => { scene.render(); scene.render(); document.title = 'drawn'; });
+</script></body></html>

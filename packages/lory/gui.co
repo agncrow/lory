@@ -39,7 +39,8 @@ struct Event [id, act, words, num]
 struct Look [page, panel, edge, ink, muted, accent, on_accent, field, hover, press, focus]
 
 --- what the controls hold between frames
-struct Held [hover, press, focus, texts, scrolls, drag, open, opened, keyboard]
+--- (and in a headset, whether its drawn keyboard's shift is on)
+struct Held [hover, press, focus, texts, scrolls, drag, open, opened, keyboard, caps]
 
 --- one drawing of the tree: the canvas, what is held, the events so far,
 --- the boxes of the controls with ids, the focusable ids in order, and the
@@ -742,7 +743,7 @@ fn _table[p, n, x, y, w, h]
     p
 
 fn _fresh[]
-    Held['', '', '', map['' = ''], map['' = 0.0], '', '', false, false]
+    Held['', '', '', map['' = ''], map['' = 0.0], '', '', false, false, false]
 
 --- Tab moves the focus to the next control (Shift-Tab to the one before)
 fn _tabbed[p]
@@ -768,9 +769,122 @@ fn _tabbed[p]
 
 --- the tree drawn on the canvas at (x, y), `w` CSS pixels wide, in the
 --- look given, and what the reader did to it this frame
+--- ---- a keyboard drawn in a headset ----
+---
+--- A headset's browser shows no keyboard over an immersive page, so a
+--- field given the focus there brings up one drawn on the panel, its keys
+--- pressed by the ray as any control is: each press is typed into the
+--- field as a phone's keyboard's would be.
+
+fn _key_rows[caps]
+    if caps
+        return [split['1234567890', ''], split['QWERTYUIOP', ''], split['ASDFGHJKL', ''], ['⇧', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '⌫'], [',', ' ', '.', '⏎']]
+    [split['1234567890', ''], split['qwertyuiop', ''], split['asdfghjkl', ''], ['⇧', 'z', 'x', 'c', 'v', 'b', 'n', 'm', '⌫'], [',', ' ', '.', '⏎']]
+
+--- a key and its box
+struct Key [face, x, y, w, h]
+
+--- the keys where they are drawn: ten to a row along the canvas's foot
+fn keys_of[c, caps]
+    s = lory.px[c]
+    kw = min[lory.width[c] - 16.0 * s, 720.0 * s]
+    unit = kw / 10.0
+    tall = unit * 0.8
+    x0 = (lory.width[c] - kw) / 2.0
+    y0 = lory.height[c] - 5.0 * tall - 12.0 * s
+    out = []
+    rows = _key_rows[caps]
+    for r in range[len[rows]]
+        faces = rows[r]
+        widths = []
+        for face in faces
+            wide = 1.0
+            if face eq ' '
+                wide = 5.0
+            if face eq '⏎' or face eq '⇧' or face eq '⌫'
+                wide = 1.5
+            widths = push[widths, wide]
+        total = sum[widths]
+        x = x0 + (10.0 - total) * unit / 2.0
+        for i in range[len[faces]]
+            out = push[out, Key[faces[i], x, y0 + r * tall, widths[i] * unit, tall]]
+            x = x + widths[i] * unit
+    out
+
+--- the frame's presses on the keys made the typing they stand for, and
+--- taken out of the frame (a press elsewhere is left to take the focus)
+fn _typed_keys[c, held]
+    if not (lory.in_headset[c] and held.focus in held.texts)
+        return c
+    board = keys_of[c, held.caps]
+    out = []
+    for e in c.events
+        hit = ''
+        if e.on eq 'down'
+            for k in board
+                if e.x gte k.x and e.y gte k.y and e.x lt k.x + k.w and e.y lt k.y + k.h
+                    hit = k.face
+        if hit eq ''
+            out = push[out, e]
+        else
+            typed = e
+            typed.on = 'text'
+            typed.words = hit
+            if hit eq '⌫' or hit eq '⏎'
+                typed.on = 'key'
+                typed.words = ''
+                typed.key = 'Backspace'
+                typed.code = 'Backspace'
+                if hit eq '⏎'
+                    typed.key = 'Enter'
+                    typed.code = 'Enter'
+            if hit ne '⇧'
+                out = push[out, typed]
+    c.events = out
+    c
+
+fn _shifted[c, held]
+    if not (lory.in_headset[c] and held.focus in held.texts)
+        return held
+    for e in c.events
+        if e.on eq 'down'
+            for k in keys_of[c, held.caps]
+                if k.face eq '⇧' and e.x gte k.x and e.y gte k.y and e.x lt k.x + k.w and e.y lt k.y + k.h
+                    held.caps = not held.caps
+    held
+
+fn _drawn_keys[p]
+    c = p.c
+    if not (lory.in_headset[c] and p.held.focus in p.held.texts)
+        return p
+    s = p.s
+    board = keys_of[c, p.held.caps]
+    look = p.look
+    lo = board[0]
+    last = board[len[board] - 1]
+    pad = 8.0 * s
+    c = lory.round_rect[c, lo.x - pad, lo.y - pad, (last.x + last.w) - lo.x + 2.0 * pad, (last.y + last.h) - lo.y + 2.0 * pad, 12.0 * s, lory.fade[look.panel, 0.97]]
+    for k in board
+        hot = lory.pointing[c] and lory.pointer_x[c] gte k.x and lory.pointer_y[c] gte k.y and lory.pointer_x[c] lt k.x + k.w and lory.pointer_y[c] lt k.y + k.h
+        fill = look.field
+        if hot
+            fill = look.hover
+        if k.face eq '⇧' and p.held.caps
+            fill = look.accent
+        c = lory.round_rect[c, k.x + 2.0 * s, k.y + 2.0 * s, k.w - 4.0 * s, k.h - 4.0 * s, 6.0 * s, fill]
+        face = k.face
+        if face eq ' '
+            face = 'space'
+        c = lory.text_centered[c, k.x + k.w / 2.0, k.y + k.h / 2.0, face, 18.0 * s, look.ink]
+    p.c = c
+    p
+
 fn show_at[c, tree, x, y, w, look]
     held = recall['lory.gui', _fresh[]]
     held.hover = ''
+    --- (a headset's drawn keyboard types into the field with the focus)
+    held = _shifted[c, held]
+    c = _typed_keys[c, held]
     was_focus = held.focus
     --- (a press anywhere takes the focus away; the control pressed takes it)
     for e in lory.events[c]
@@ -780,6 +894,7 @@ fn show_at[c, tree, x, y, w, look]
     p = _place[p, tree, x * p.s, y * p.s, w * p.s]
     p = _open_select[p]
     p = _tabbed[p]
+    p = _drawn_keys[p]
     held = p.held
     for e in lory.events[c]
         if e.on eq 'up'

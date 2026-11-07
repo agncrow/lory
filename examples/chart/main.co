@@ -1,0 +1,118 @@
+--- A chart drawn by Lory: a year of one-minute candles (half a million
+--- bars) with their volume, panned with a drag, zoomed with the wheel,
+--- with a crosshair, and a line of a moving average beside them. The
+--- bars are made once and held in process memory as a pyramid, so a
+--- frame draws a few hundred bins whatever the zoom.
+use sys
+use math
+use memory
+use lory
+use lory.plot
+
+struct Data [bars, avg, t0, t1]
+
+fn _minute[]
+    60000.0
+
+--- a walk of prices, made the same at every run (no random draws: the
+--- steps are sines of the minute's number)
+fn made[n]
+    t0 = 1735689600000.0
+    ts = []
+    o = []
+    h = []
+    l = []
+    c = []
+    v = []
+    av = []
+    price = 100.0
+    avg_now = 100.0
+    for i in range[n]
+        x = 0.0 + i
+        step = sin[x * 12.9898] * 0.35 + sin[x * 0.0031] * 0.05
+        opened = price
+        closed = price + step
+        ts = push[ts, t0 + x * _minute[]]
+        o = push[o, opened]
+        c = push[c, closed]
+        h = push[h, max[opened, closed] + abs[sin[x * 78.233]] * 0.2]
+        l = push[l, min[opened, closed] - abs[sin[x * 37.719]] * 0.2]
+        v = push[v, 100.0 + abs[sin[x * 4.1414]] * 900.0]
+        avg_now = avg_now + (closed - avg_now) / 240.0
+        av = push[av, avg_now]
+        price = closed
+    Data[plot.bars[ts, o, h, l, c, v], plot.lines[ts, av], t0, t0 + (n - 1) * _minute[]]
+
+fn data[n]
+    recall['chart.data', made[n]]
+
+fn picture[c, d]
+    s = lory.px[c]
+    c = lory.clear[c, lory.hex['#0f1317']]
+    k = plot.chart[c, 'prices', 24.0 * s, 48.0 * s, lory.width[c] - 100.0 * s, lory.height[c] - 90.0 * s, d.t1 - 3.0 * 3600000.0, d.t1]
+    k = plot.timed[k]
+    k = plot.fit_bars[k, d.bars]
+    --- (and the average's range with the bars')
+    k = plot.joined[k, plot.fit_line[k, d.avg]]
+    c = plot.grid[c, k]
+    c = plot.volume[c, k, d.bars, 0.2]
+    c = plot.candles[c, k, d.bars]
+    c = plot.line[c, k, d.avg, lory.hex['#f6c343'], 1.5]
+    c = plot.axes[c, k]
+    c = plot.crosshair[c, k]
+    c = plot.legend[c, k, ['price', 'average of 240'], [k.up, lory.hex['#f6c343']]]
+    plot.title[c, k, 'One year of one-minute bars — drag to pan, wheel to zoom, 0 for the last three hours']
+
+fn draw[frame]
+    c = lory.begin[frame]
+    d = data[525600]
+    remember['chart.data', d]
+    lory.end[picture[c, d]]
+
+sys.frames[draw]
+
+fn _frame[given]
+    json['{"t": 0, "width": 1200, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1200, "height": 700, "projection": [], "camera": []}], "input": [`given`], "pointers": [], "controllers": [], "said": []}']
+
+test the_pyramid_halves_each_level_and_keeps_the_extremes[]
+    d = made[1000]
+    len[d.bars] eq 10
+    len[d.bars[1].t] eq 500
+    top = d.bars[len[d.bars] - 1]
+    len[top.t] lte 2
+    most = max[d.bars[0].h]
+    max[top.h] eq most
+    min[top.l] eq min[d.bars[0].l]
+
+test ticks_are_round[]
+    plot.ticks[0.0, 1.0, 5.0] eq [0.0, 0.2, 0.4, 0.6000000000000001, 0.8, 1.0]
+    plot.nice_step[1234.0, 5.0] eq 200.0
+    plot.label_of[1500.0, 500.0] eq '1,500'
+    plot.label_of[0.25, 0.05] eq '0.25'
+
+test times_read_as_dates[]
+    plot.civil[0] eq [1970, 1, 1]
+    plot.civil[20089] eq [2025, 1, 1]
+    plot.civil[-1] eq [1969, 12, 31]
+    plot.time_label[1735689600000.0, 86400000.0] eq 'Jan 1'
+    plot.time_label[1735689600000.0 + 3600000.0 * 13.5, 3600000.0] eq '13:30'
+
+test a_chart_draws_few_bins_however_long_the_data[]
+    d = made[20000]
+    c = lory.begin[_frame['']]
+    c = picture[c, d]
+    --- (the last three hours: 180 candles of a body and a wick, a volume
+    --- column each, the grid, the line and the labels)
+    len[c.verts] / lory.floats[] lt 12000
+    k = plot.chart[c, 'whole', 0.0, 0.0, 1000.0, 500.0, d.t0, d.t1]
+    k = plot.fit_bars[k, d.bars]
+    c2 = plot.candles[lory.begin[_frame['']], k, d.bars]
+    len[c2.verts] / lory.floats[] lt 6 * 2 * 700
+
+test the_wheel_zooms_about_the_pointer[]
+    wheel = '{"type": "wheel", "x": 600, "y": 300, "dx": 0, "dy": -400}'
+    c = lory.begin[_frame[wheel]]
+    k = plot.chart[c, 'zoomed', 0.0, 0.0, 1200.0, 600.0, 0.0, 100.0]
+    k.x0 gt 0.0
+    k.x1 lt 100.0
+    abs[(k.x0 + k.x1) / 2.0 - 50.0] lt 0.000001

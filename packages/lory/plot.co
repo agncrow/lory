@@ -1,0 +1,634 @@
+--- Lory's charts (docs/lory-design.md, phase 3): lines, scatter, bars,
+--- candles and volume, heatmaps, axes and a legend, panned with a drag
+--- and zoomed with the wheel or a pinch, over data of any length.
+---
+--- A long series is held as a pyramid (`lines` and `bars`): its points,
+--- then the points taken two at a time, four at a time, and so on, each bin
+--- keeping its first, lowest, highest and last value (the M4 reduction). A
+--- frame draws from the level whose bins are about a pixel wide, so a year
+--- of one-minute candles costs a frame what a few thousand do, and what it
+--- shows is what the data's pixels would show. Every position is computed
+--- in 64-bit floats before it is a pixel, so a time in milliseconds keeps
+--- its seconds (the GPU's 32-bit floats never see it).
+---
+---     k = plot.chart[c, 'prices', x, y, w, h, first_t, last_t]
+---     k = plot.fit_bars[k, held_bars]
+---     c = plot.grid[c, k]
+---     c = plot.candles[c, k, held_bars]
+---     c = plot.axes[c, k]
+
+use memory
+use math
+use lory
+
+--- one level of a pyramid of bars: each bin's first time, its open, high,
+--- low and close, and the volume within it
+struct Bars [t, o, h, l, c, v]
+
+--- one level of a pyramid of a line: each bin's first x, and its first,
+--- lowest, highest and last y
+struct Line [x, first, lo, hi, last]
+
+--- a chart drawn this frame: its box (drawing pixels), the data it shows
+--- (x0 to x1, y0 to y1), whether x is a time in milliseconds, and its
+--- colours
+struct Plot [id, x, y, w, h, x0, x1, y0, y1, time, ink, muted, grid_ink, up, down, s]
+
+--- what a chart holds between frames: the x range shown (none yet: 0 to
+--- 0), and a drag under way
+struct Held [x0, x1, dragging, from_x, from_x0, from_x1, pinch]
+
+--- ---- pyramids ----
+
+--- a line's pyramid: the points, then each level half the last
+fn lines[xs, ys]
+    n = min[len[xs], len[ys]]
+    first = Line[slice[xs, 0, n], slice[ys, 0, n], slice[ys, 0, n], slice[ys, 0, n], slice[ys, 0, n]]
+    levels = [first]
+    now_level = first
+    while len[now_level.x] gt 2
+        m = len[now_level.x]
+        x = []
+        fy = []
+        lo = []
+        hi = []
+        ly = []
+        i = 0
+        while i lt m
+            j = min[i + 1, m - 1]
+            x = push[x, now_level.x[i]]
+            fy = push[fy, now_level.first[i]]
+            lo = push[lo, min[now_level.lo[i], now_level.lo[j]]]
+            hi = push[hi, max[now_level.hi[i], now_level.hi[j]]]
+            ly = push[ly, now_level.last[j]]
+            i = i + 2
+        now_level = Line[x, fy, lo, hi, ly]
+        levels = push[levels, now_level]
+    levels
+
+--- bars' pyramid: the bars, then each level half the last
+fn bars[ts, o, h, l, c, v]
+    n = len[ts]
+    first = Bars[ts, o, h, l, c, v]
+    levels = [first]
+    at = first
+    while len[at.t] gt 2
+        m = len[at.t]
+        t2 = []
+        o2 = []
+        h2 = []
+        l2 = []
+        c2 = []
+        v2 = []
+        i = 0
+        while i lt m
+            j = min[i + 1, m - 1]
+            t2 = push[t2, at.t[i]]
+            o2 = push[o2, at.o[i]]
+            h2 = push[h2, max[at.h[i], at.h[j]]]
+            l2 = push[l2, min[at.l[i], at.l[j]]]
+            c2 = push[c2, at.c[j]]
+            vol = at.v[i]
+            if j ne i
+                vol = vol + at.v[j]
+            v2 = push[v2, vol]
+            i = i + 2
+        at = Bars[t2, o2, h2, l2, c2, v2]
+        levels = push[levels, at]
+    levels
+
+--- the first position whose x is at least `x`, in xs in order
+fn _first_at[xs, x]
+    lo = 0
+    hi = len[xs]
+    while lo lt hi
+        mid = (lo + hi) / 2
+        if xs[mid] lt x
+            lo = mid + 1
+        else
+            hi = mid
+    lo
+
+--- the level of a pyramid to draw: the finest whose bins in view number
+--- no more than about one per `per` pixels
+fn _level_of[counts, k, per]
+    most = max[2.0, k.w / per]
+    at = 0
+    for i in range[len[counts]]
+        if counts[i] gt most and i + 1 lt len[counts]
+            at = i + 1
+    at
+
+--- ---- the chart ----
+
+fn _fresh[]
+    Held[0.0, 0.0, false, 0.0, 0.0, 0.0, 0.0]
+
+fn _inside[k, x, y]
+    x gte k.x and y gte k.y and x lt k.x + k.w and y lt k.y + k.h
+
+--- the chart drawn in the box (drawing pixels), its x range from x0 to
+--- x1 until the reader pans or zooms it; a double press shows it all again
+fn chart[c, id, x, y, w, h, x0, x1]
+    name = 'lory.plot.`id`'
+    held = recall[name, _fresh[]]
+    if held.x1 lte held.x0
+        held.x0 = x0
+        held.x1 = x1
+    k = Plot[id, x, y, w, h, held.x0, held.x1, 0.0, 1.0, false, lory.hex['#e8edf2'], lory.hex['#8a9bad'], lory.hex['#222b35'], lory.hex['#26a69a'], lory.hex['#ef5350'], lory.px[c]]
+    span = held.x1 - held.x0
+    for e in lory.events[c]
+        if e.on eq 'wheel' and _inside[k, e.x, e.y]
+            --- (the wheel zooms about the pointer; sideways it pans)
+            at = held.x0 + (e.x - x) / w * span
+            f = exp[e.dy / 400.0]
+            held.x0 = at - (at - held.x0) * f
+            held.x1 = at + (held.x1 - at) * f
+            held.x0 = held.x0 + e.dx / w * span
+            held.x1 = held.x1 + e.dx / w * span
+            span = held.x1 - held.x0
+        if e.on eq 'down' and _inside[k, e.x, e.y]
+            held.dragging = true
+            held.from_x = e.x
+            held.from_x0 = held.x0
+            held.from_x1 = held.x1
+        if e.on eq 'move' and held.dragging
+            dx = (e.x - held.from_x) / w * (held.from_x1 - held.from_x0)
+            held.x0 = held.from_x0 - dx
+            held.x1 = held.from_x1 - dx
+        if e.on eq 'up' or e.on eq 'leave'
+            held.dragging = false
+        if e.on eq 'key' and e.key eq '0'
+            held.x0 = x0
+            held.x1 = x1
+    --- (never so far in that the range is nothing, nor out past ten times
+    --- the data)
+    whole = x1 - x0
+    if whole gt 0.0
+        span = held.x1 - held.x0
+        if span lt whole / 1000000.0
+            mid = (held.x0 + held.x1) / 2.0
+            held.x0 = mid - whole / 2000000.0
+            held.x1 = mid + whole / 2000000.0
+        if span gt whole * 10.0
+            held.x0 = x0
+            held.x1 = x1
+    remember[name, held]
+    k.x0 = held.x0
+    k.x1 = held.x1
+    k
+
+--- the chart's x as a time in milliseconds (its axis says dates and times)
+fn timed[k]
+    k.time = true
+    k
+
+--- the y range shown
+fn y_range[k, y0, y1]
+    k.y0 = y0
+    k.y1 = y1
+    k
+
+--- the chart's colours, for a light page
+fn on_light[k]
+    k.ink = lory.hex['#16202a']
+    k.muted = lory.hex['#5b6b7c']
+    k.grid_ink = lory.hex['#e8ecf0']
+    k
+
+fn px_of_x[k, x]
+    k.x + (x - k.x0) / (k.x1 - k.x0) * k.w
+
+fn px_of_y[k, y]
+    k.y + k.h - (y - k.y0) / (k.y1 - k.y0) * k.h
+
+fn x_of_px[k, px]
+    k.x0 + (px - k.x) / k.w * (k.x1 - k.x0)
+
+fn y_of_px[k, py]
+    k.y0 + (k.y + k.h - py) / k.h * (k.y1 - k.y0)
+
+--- the y range made to hold what is in view of the bars, with a little
+--- room above and below
+fn fit_bars[k, levels]
+    b = levels[_bars_level[k, levels]]
+    from = max[0, _first_at[b.t, k.x0] - 1]
+    upto = min[len[b.t], _first_at[b.t, k.x1] + 1]
+    lo = _huge[]
+    hi = 0.0 - _huge[]
+    i = from
+    while i lt upto
+        lo = min[lo, b.l[i]]
+        hi = max[hi, b.h[i]]
+        i = i + 1
+    _fitted[k, lo, hi]
+
+fn fit_line[k, levels]
+    b = levels[_line_level[k, levels]]
+    from = max[0, _first_at[b.x, k.x0] - 1]
+    upto = min[len[b.x], _first_at[b.x, k.x1] + 1]
+    lo = _huge[]
+    hi = 0.0 - _huge[]
+    i = from
+    while i lt upto
+        lo = min[lo, b.lo[i]]
+        hi = max[hi, b.hi[i]]
+        i = i + 1
+    _fitted[k, lo, hi]
+
+fn _fitted[k, lo, hi]
+    if hi lt lo
+        return k
+    room = (hi - lo) * 0.06
+    if room eq 0.0
+        room = max[abs[hi] * 0.01, 1.0]
+    k.y0 = lo - room
+    k.y1 = hi + room
+    k
+
+--- the y range widened to hold another's (two series on one chart)
+fn joined[k, other]
+    k.y0 = min[k.y0, other.y0]
+    k.y1 = max[k.y1, other.y1]
+    k
+
+fn _bars_level[k, levels]
+    counts = []
+    for b in levels
+        counts = push[counts, 0.0 + _first_at[b.t, k.x1] - _first_at[b.t, k.x0]]
+    _level_of[counts, k, 3.0]
+
+fn _line_level[k, levels]
+    counts = []
+    for b in levels
+        counts = push[counts, 0.0 + _first_at[b.x, k.x1] - _first_at[b.x, k.x0]]
+    _level_of[counts, k, 1.0]
+
+--- ---- marks ----
+
+--- the line through the pyramid's points in view: each bin a stroke from
+--- its first to its lowest and highest to its last, so a bin of many
+--- points draws every pixel they would
+fn line[c, k, levels, color, w]
+    b = levels[_line_level[k, levels]]
+    from = max[0, _first_at[b.x, k.x0] - 1]
+    upto = min[len[b.x], _first_at[b.x, k.x1] + 1]
+    kept = lory.clipped[c]
+    c = lory.clip[c, k.x, k.y, k.w, k.h]
+    width = w * k.s
+    i = from
+    started = false
+    px0 = 0.0
+    py0 = 0.0
+    while i lt upto
+        px = px_of_x[k, b.x[i]]
+        if started
+            c = lory.line[c, px0, py0, px, px_of_y[k, b.first[i]], width, color]
+        if b.lo[i] ne b.hi[i]
+            c = lory.line[c, px, px_of_y[k, b.lo[i]], px, px_of_y[k, b.hi[i]], width, color]
+        px0 = px
+        py0 = px_of_y[k, b.last[i]]
+        started = true
+        i = i + 1
+    lory.unclip[c, kept]
+
+--- the area under the line, to the chart's floor, faded
+fn area[c, k, levels, color]
+    b = levels[_line_level[k, levels]]
+    from = max[0, _first_at[b.x, k.x0] - 1]
+    upto = min[len[b.x], _first_at[b.x, k.x1] + 1]
+    kept = lory.clipped[c]
+    c = lory.clip[c, k.x, k.y, k.w, k.h]
+    floor = k.y + k.h
+    i = from + 1
+    while i lt upto
+        xa = px_of_x[k, b.x[i - 1]]
+        xb = px_of_x[k, b.x[i]]
+        ya = px_of_y[k, b.last[i - 1]]
+        yb = px_of_y[k, b.first[i]]
+        c = lory.fill[c, [xa, xb, xb, xa], [ya, yb, floor, floor], color]
+        i = i + 1
+    lory.unclip[c, kept]
+
+--- a dot at each point in view (the finest level: every point is one)
+fn scatter[c, k, xs, ys, r, color]
+    kept = lory.clipped[c]
+    c = lory.clip[c, k.x, k.y, k.w, k.h]
+    n = min[len[xs], len[ys]]
+    for i in range[n]
+        px = px_of_x[k, xs[i]]
+        py = px_of_y[k, ys[i]]
+        if px gte k.x - r and px lte k.x + k.w + r
+            c = lory.circle[c, px, py, r * k.s, color]
+    lory.unclip[c, kept]
+
+--- a bar from zero to each value, `width` of the room between bars
+fn columns[c, k, xs, ys, width, color]
+    kept = lory.clipped[c]
+    c = lory.clip[c, k.x, k.y, k.w, k.h]
+    n = min[len[xs], len[ys]]
+    step = k.w
+    if n gt 1
+        step = abs[px_of_x[k, xs[1]] - px_of_x[k, xs[0]]]
+    bw = max[1.0, step * width]
+    zero = px_of_y[k, max[k.y0, min[k.y1, 0.0]]]
+    for i in range[n]
+        px = px_of_x[k, xs[i]]
+        py = px_of_y[k, ys[i]]
+        c = lory.rect[c, px - bw / 2.0, min[py, zero], bw, abs[zero - py], color]
+    lory.unclip[c, kept]
+
+--- candles: a body from open to close, a wick from low to high, rising
+--- in `up`'s colour and falling in `down`'s
+fn candles[c, k, levels]
+    lv = _bars_level[k, levels]
+    b = levels[lv]
+    from = max[0, _first_at[b.t, k.x0] - 1]
+    upto = min[len[b.t], _first_at[b.t, k.x1] + 1]
+    kept = lory.clipped[c]
+    c = lory.clip[c, k.x, k.y, k.w, k.h]
+    --- (a bin's width: the time to the next bin, or the bars' own step)
+    step = 0.0
+    if len[b.t] gt 1
+        step = b.t[1] - b.t[0]
+    cw = max[1.0, step / (k.x1 - k.x0) * k.w * 0.7]
+    i = from
+    while i lt upto
+        px = px_of_x[k, b.t[i]] + step / (k.x1 - k.x0) * k.w / 2.0
+        rising = b.c[i] gte b.o[i]
+        color = k.down
+        if rising
+            color = k.up
+        top = px_of_y[k, max[b.o[i], b.c[i]]]
+        bottom = px_of_y[k, min[b.o[i], b.c[i]]]
+        if cw gte 3.0
+            c = lory.rect[c, px - 0.5 * k.s, px_of_y[k, b.h[i]], 1.0 * k.s, px_of_y[k, b.l[i]] - px_of_y[k, b.h[i]], color]
+            c = lory.rect[c, px - cw / 2.0, top, cw, max[1.0, bottom - top], color]
+        else
+            c = lory.rect[c, px - cw / 2.0, px_of_y[k, b.h[i]], cw, max[1.0, px_of_y[k, b.l[i]] - px_of_y[k, b.h[i]]], color]
+        i = i + 1
+    lory.unclip[c, kept]
+
+--- the bars' volume, as columns along the chart's floor, `share` of its
+--- height at most
+fn volume[c, k, levels, share]
+    b = levels[_bars_level[k, levels]]
+    from = max[0, _first_at[b.t, k.x0] - 1]
+    upto = min[len[b.t], _first_at[b.t, k.x1] + 1]
+    most = 0.0
+    i = from
+    while i lt upto
+        most = max[most, b.v[i]]
+        i = i + 1
+    if most lte 0.0
+        return c
+    kept = lory.clipped[c]
+    c = lory.clip[c, k.x, k.y, k.w, k.h]
+    step = 0.0
+    if len[b.t] gt 1
+        step = b.t[1] - b.t[0]
+    cw = max[1.0, step / (k.x1 - k.x0) * k.w * 0.7]
+    tall = k.h * share
+    i = from
+    while i lt upto
+        px = px_of_x[k, b.t[i]] + step / (k.x1 - k.x0) * k.w / 2.0
+        vh = b.v[i] / most * tall
+        color = lory.fade[k.down, 0.35]
+        if b.c[i] gte b.o[i]
+            color = lory.fade[k.up, 0.35]
+        c = lory.rect[c, px - cw / 2.0, k.y + k.h - vh, cw, vh, color]
+        i = i + 1
+    lory.unclip[c, kept]
+
+--- a value's colour on a scale from dark blue through green to yellow
+--- (viridis's ends and middle), `t` from 0 to 1
+fn ramp[t]
+    u = max[0.0, min[1.0, t]]
+    a = lory.hex['#440154']
+    b = lory.hex['#21918c']
+    d = lory.hex['#fde725']
+    if u lt 0.5
+        return lory.mix[a, b, u * 2.0]
+    lory.mix[b, d, (u - 0.5) * 2.0]
+
+--- a heatmap: `rows` of values filling the chart's box, each cell's
+--- colour its value between `lo` and `hi`
+fn heatmap[c, k, rows, lo, hi]
+    nr = len[rows]
+    if nr eq 0
+        return c
+    nc = len[rows[0]]
+    cw = k.w / nc
+    ch = k.h / nr
+    for i in range[nr]
+        r = rows[i]
+        for j in range[min[nc, len[r]]]
+            t = 0.0
+            if hi gt lo
+                t = (r[j] - lo) / (hi - lo)
+            c = lory.rect[c, k.x + j * cw, k.y + i * ch, cw + 0.5, ch + 0.5, ramp[t]]
+    c
+
+--- ---- axes ----
+
+--- a round step for ticks about `target` apart over the span: 1, 2 or 5
+--- times a power of ten
+fn nice_step[span, target]
+    raw = span / max[1.0, target]
+    p = 10.0 ^ floor[log10[raw]]
+    f = raw / p
+    step = 10.0 * p
+    if f lt 1.5
+        step = p
+    else
+        if f lt 3.0
+            step = 2.0 * p
+        else
+            if f lt 7.0
+                step = 5.0 * p
+    step
+
+--- the ticks from lo to hi, a round step apart
+fn ticks[lo, hi, target]
+    if hi lte lo
+        return [lo]
+    step = nice_step[hi - lo, target]
+    first = ceil[lo / step] * step
+    out = []
+    v = first
+    while v lte hi + step * 0.001 and len[out] lt 200
+        out = push[out, v]
+        v = v + step
+    out
+
+--- a number for an axis, with as many decimals as its step needs
+fn label_of[v, step]
+    d = 0
+    if step lt 1.0
+        d = int[ceil[0.0 - log10[step] - 0.0001]]
+    if abs[v] lt step * 0.000001
+        return '0'
+    fmt[v, decimals = d, commas = true]
+
+--- ---- time ----
+
+--- a day's number since 1970 as [year, month, day] (Howard Hinnant's
+--- civil from days)
+fn civil[days]
+    z = days + 719468
+    era = z / 146097
+    if z lt 0
+        era = (z - 146096) / 146097
+    doe = z - era * 146097
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    y = yoe + era * 400
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    mp = (5 * doy + 2) / 153
+    d = doy - (153 * mp + 2) / 5 + 1
+    m = mp + 3
+    if m gt 12
+        m = m - 12
+    if m lte 2
+        y = y + 1
+    [y, m, d]
+
+fn _two[n]
+    if n lt 10
+        return '0`n`'
+    '`n`'
+
+fn _months[]
+    ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+--- the steps a time axis takes, in milliseconds
+fn _time_steps[]
+    [1000.0, 5000.0, 15000.0, 30000.0, 60000.0, 300000.0, 900000.0, 1800000.0, 3600000.0, 7200000.0, 14400000.0, 43200000.0, 86400000.0, 172800000.0, 604800000.0, 2592000000.0, 7776000000.0, 31536000000.0]
+
+fn time_step[span, target]
+    raw = span / max[1.0, target]
+    for s in _time_steps[]
+        if s gte raw
+            return s
+    31536000000.0 * ceil[raw / 31536000000.0]
+
+--- a time in milliseconds since 1970 (UTC), as an axis says it at a step
+fn time_label[ms, step]
+    days = int[floor[ms / 86400000.0]]
+    ymd = civil[days]
+    into = ms - days * 86400000.0
+    hour = int[into / 3600000.0]
+    minute = int[(into - hour * 3600000.0) / 60000.0]
+    second = int[(into - hour * 3600000.0 - minute * 60000.0) / 1000.0]
+    month = _months[][ymd[1] - 1]
+    if step gte 31536000000.0
+        return '`ymd[0]`'
+    if step gte 2592000000.0
+        return '`month` `ymd[0]`'
+    if step gte 86400000.0
+        return '`month` `ymd[2]`'
+    if hour eq 0 and minute eq 0 and second eq 0
+        return '`month` `ymd[2]`'
+    if step lt 60000.0
+        return '`_two[hour]`:`_two[minute]`:`_two[second]`'
+    '`_two[hour]`:`_two[minute]`'
+
+--- the x ticks: round numbers, or round times where x is a time
+fn x_ticks[k]
+    target = k.w / (110.0 * k.s)
+    if not k.time
+        return ticks[k.x0, k.x1, target]
+    step = time_step[k.x1 - k.x0, target]
+    first = ceil[k.x0 / step] * step
+    out = []
+    v = first
+    while v lte k.x1 and len[out] lt 200
+        out = push[out, v]
+        v = v + step
+    out
+
+fn _x_step[k]
+    target = k.w / (110.0 * k.s)
+    if k.time
+        return time_step[k.x1 - k.x0, target]
+    nice_step[k.x1 - k.x0, target]
+
+--- the lines behind the marks at each tick
+fn grid[c, k]
+    s = k.s
+    for v in ticks[k.y0, k.y1, k.h / (60.0 * s)]
+        py = px_of_y[k, v]
+        c = lory.rect[c, k.x, py, k.w, 1.0 * s, k.grid_ink]
+    for v in x_ticks[k]
+        px = px_of_x[k, v]
+        c = lory.rect[c, px, k.y, 1.0 * s, k.h, k.grid_ink]
+    c
+
+--- the axes' labels: values along the right, times or values along the
+--- bottom, and the frame around the plot
+fn axes[c, k]
+    s = k.s
+    size = 12.0 * s
+    ys = ticks[k.y0, k.y1, k.h / (60.0 * s)]
+    ystep = 1.0
+    if len[ys] gt 1
+        ystep = ys[1] - ys[0]
+    for v in ys
+        py = px_of_y[k, v]
+        if py gt k.y + 6.0 * s and py lt k.y + k.h - 6.0 * s
+            c = lory.text[c, k.x + k.w + 6.0 * s, py - lory.line_height[c, size] / 2.0, label_of[v, ystep], size, k.muted]
+    xstep = _x_step[k]
+    for v in x_ticks[k]
+        px = px_of_x[k, v]
+        words = label_of[v, xstep]
+        if k.time
+            words = time_label[v, xstep]
+        if px gt k.x + 20.0 * s and px lt k.x + k.w - 20.0 * s
+            c = lory.text_centered[c, px, k.y + k.h + 6.0 * s + lory.line_height[c, size] / 2.0, words, size, k.muted]
+    c = lory.rect[c, k.x, k.y + k.h, k.w, 1.0 * s, lory.fade[k.muted, 0.6]]
+    c
+
+--- where the pointer is over the chart: a cross, and its value at the
+--- right and its x at the bottom
+fn crosshair[c, k]
+    if not lory.pointing[c]
+        return c
+    x = lory.pointer_x[c]
+    y = lory.pointer_y[c]
+    if not _inside[k, x, y]
+        return c
+    s = k.s
+    ink = lory.fade[k.ink, 0.45]
+    c = lory.rect[c, x, k.y, 1.0 * s, k.h, ink]
+    c = lory.rect[c, k.x, y, k.w, 1.0 * s, ink]
+    size = 12.0 * s
+    value = label_of[y_of_px[k, y], nice_step[k.y1 - k.y0, 40.0]]
+    vw = lory.measure[c, value, size] + 10.0 * s
+    c = lory.round_rect[c, k.x + k.w + 2.0 * s, y - 10.0 * s, vw, 20.0 * s, 4.0 * s, lory.hex['#3b82f6']]
+    c = lory.text[c, k.x + k.w + 7.0 * s, y - lory.line_height[c, size] / 2.0, value, size, lory.white[]]
+    xs = _x_step[k] / 10.0
+    at = label_of[x_of_px[k, x], xs]
+    if k.time
+        at = time_label[x_of_px[k, x], 1000.0]
+    aw = lory.measure[c, at, size] + 12.0 * s
+    c = lory.round_rect[c, x - aw / 2.0, k.y + k.h + 2.0 * s, aw, 20.0 * s, 4.0 * s, lory.hex['#3b82f6']]
+    c = lory.text_centered[c, x, k.y + k.h + 12.0 * s, at, size, lory.white[]]
+    c
+
+--- names and their colours along the chart's top left
+fn legend[c, k, names, colors]
+    s = k.s
+    x = k.x + 10.0 * s
+    y = k.y + 8.0 * s
+    size = 13.0 * s
+    for i in range[min[len[names], len[colors]]]
+        c = lory.round_rect[c, x, y + 4.0 * s, 10.0 * s, 10.0 * s, 2.0 * s, colors[i]]
+        c = lory.text[c, x + 15.0 * s, y, names[i], size, k.ink]
+        x = x + lory.measure[c, names[i], size] + 32.0 * s
+    c
+
+--- a title above the chart's box
+fn title[c, k, words]
+    lory.text[c, k.x, k.y - 26.0 * k.s, words, 15.0 * k.s, k.ink]
+
+fn _huge[]
+    10.0 ^ 300

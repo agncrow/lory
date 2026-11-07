@@ -23,7 +23,8 @@ use math
 --- what Lory keeps between frames: whether the GL objects are made, the
 --- font atlas once the page has made it (each glyph's cell and advance),
 --- and the characters asked of it
-struct Held [made, asked, chars, glyphs, size, ascent, descent, pad, spread, aw, ah]
+--- (and for a game: the last frame's time, and the keys held down)
+struct Held [made, asked, chars, glyphs, size, ascent, descent, pad, spread, aw, ah, last, pressing]
 
 --- one frame being drawn: its size and views, its input, the vertices so
 --- far (FLOATS numbers each), the colour it clears to, the texts it drew
@@ -36,7 +37,12 @@ struct Held [made, asked, chars, glyphs, size, ascent, descent, pad, spread, aw,
 --- touch, pen, ray; `id`)
 struct Ev [on, x, y, button, dx, dy, key, code, words, shift, ctrl, alt, meta, device, id]
 
-struct Canvas [frame, width, height, ratio, t, xr, verts, clear, missing, held, panel, clip, seg_at, seg_image, asks, events, px, py, down, there, said]
+--- (`deep`: the calls of a scene in three dimensions, drawn in each view
+--- before the flat drawing, `@eye` in them the view's matrix — `eye`'s on a
+--- screen, the headset's in it — and `@eyepos` where the eye is)
+--- (`rig`: in a headset, where the reader stands and faces in the scene,
+--- as the matrix from the scene to the reader's own space)
+struct Canvas [frame, width, height, ratio, t, xr, verts, clear, missing, held, panel, clip, seg_at, seg_image, asks, events, px, py, down, there, said, deep, eye, eyepos, dt, rig]
 
 --- a colour: red, green, blue and opacity, each 0 to 1
 struct Color [r, g, b, a]
@@ -92,7 +98,7 @@ fn _first_chars[]
     ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_abcdefghijklmnopqrstuvwxyz{|}~·•–—…°×÷±≤≥←→↑↓✓✕▲▼€£¥'
 
 fn _fresh[]
-    Held[false, false, _first_chars[], map['?' = [0.0, 0.0, 0.0, 0.0, 0.0]], 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0]
+    Held[false, false, _first_chars[], map['?' = [0.0, 0.0, 0.0, 0.0, 0.0]], 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, -1.0, []]
 
 --- ---- colours ----
 
@@ -226,7 +232,7 @@ fn begin[frame]
         if s.what eq 'atlas'
             if s.id eq _atlas_id[]
                 held = _take_atlas[held, s]
-    c = Canvas[frame, 0.0 + frame.width, 0.0 + frame.height, 0.0 + frame.ratio, 0.0 + frame.t, frame.xr eq true, [], Color[0.0, 0.0, 0.0, 1.0], '', held, 1.6, _unclipped[], [0], [0], [], [], -1.0, -1.0, false, false, frame.said]
+    c = Canvas[frame, 0.0 + frame.width, 0.0 + frame.height, 0.0 + frame.ratio, 0.0 + frame.t, frame.xr eq true, [], Color[0.0, 0.0, 0.0, 1.0], '', held, 1.6, _unclipped[], [0], [0], [], [], -1.0, -1.0, false, false, frame.said, [], identity[], [0.0, 0.0, 0.0], 0.0, identity[]]
     for p in frame.pointers
         c.px = 0.0 + p.x
         c.py = 0.0 + p.y
@@ -254,6 +260,27 @@ fn begin[frame]
                 c.down = false
         evs = push[evs, e]
     c.events = evs
+    --- (the keys held down: a key's press adds its code, its release or
+    --- the page's losing the keyboard lets every one go)
+    down_now = held.pressing
+    for e in evs
+        if e.on eq 'key' and not (e.code in down_now)
+            down_now = push[down_now, e.code]
+        if e.on eq 'keyup'
+            kept = []
+            for k in down_now
+                if k ne e.code
+                    kept = push[kept, k]
+            down_now = kept
+        if e.on eq 'blur'
+            down_now = []
+    held.pressing = down_now
+    --- (the time since the last frame, in seconds: none on the first, and
+    --- never more than a tenth, so a frame after a pause steps no further)
+    if held.last gte 0.0
+        c.dt = max[0.0, min[0.1, (c.t - held.last) / 1000.0]]
+    held.last = c.t
+    c.held = held
     c
 
 --- what happened since the last frame (`Ev`s, in order)
@@ -299,6 +326,26 @@ fn px[c]
 
 fn time[c]
     c.t
+
+--- the seconds since the last frame (at most a tenth; none on the first)
+fn dt[c]
+    c.dt
+
+--- whether a key is held down, by its code (`KeyW`, `ArrowLeft`, `Space`)
+fn held_key[c, code]
+    code in c.held.pressing
+
+--- a headset controller's thumbstick, by hand (`left`, `right`): its
+--- sideways and forward push, each -1 to 1 (none: 0, 0)
+fn stick[c, hand]
+    for ctl in c.frame.controllers
+        if '`ctl.hand`' eq hand
+            axes = _numbers[ctl.axes]
+            if len[axes] gte 4
+                return [axes[2], axes[3]]
+            if len[axes] gte 2
+                return [axes[0], axes[1]]
+    [0.0, 0.0]
 
 --- whether the frame is drawn in a headset
 fn in_headset[c]
@@ -692,6 +739,48 @@ fn _matrix_text[m]
     joined = join[parts, ' ']
     'f32:`joined`'
 
+--- the scene's calls in a view: its matrix and where its eye is put where
+--- the calls say `@eye` and `@eyepos`, then the flat drawing's state back
+fn _deep[calls, c, v]
+    eye = c.eye
+    at = c.eyepos
+    if c.xr
+        cam = mul[_numbers[v.camera], c.rig]
+        eye = mul[_numbers[v.projection], cam]
+        at = _position_of[cam]
+    eye_text = _matrix_text[eye]
+    at_text = 'f32:`at[0]` `at[1]` `at[2]`'
+    calls = push[calls, ['enable', 'DEPTH_TEST']]
+    calls = push[calls, ['depthFunc', 'LEQUAL']]
+    calls = push[calls, ['disable', 'BLEND']]
+    --- (the scene's calls, then the flat drawing's state put back)
+    todo = push[c.deep, ['disable', 'DEPTH_TEST']]
+    for d in todo
+        out = []
+        for a in d
+            if a eq '@eye'
+                out = push[out, eye_text]
+            else
+                if a eq '@eyepos'
+                    out = push[out, at_text]
+                else
+                    out = push[out, a]
+        calls = push[calls, out]
+    calls = push[calls, ['enable', 'BLEND']]
+    calls = push[calls, ['useProgram', _id[_program_id[]]]]
+    calls = push[calls, ['bindVertexArray', _id[_array_id[]]]]
+    calls = push[calls, ['bindBuffer', 'ARRAY_BUFFER', _id[_buffer_id[]]]]
+    calls = push[calls, ['activeTexture', 'TEXTURE0']]
+    calls
+
+--- where an eye is, from its view matrix (the rotation's transpose times
+--- the translation, negated)
+fn _position_of[m]
+    t0 = m[12]
+    t1 = m[13]
+    t2 = m[14]
+    [0.0 - (m[0] * t0 + m[1] * t1 + m[2] * t2), 0.0 - (m[4] * t0 + m[5] * t1 + m[6] * t2), 0.0 - (m[8] * t0 + m[9] * t1 + m[10] * t2)]
+
 --- a draw per run of vertices sharing an image (unit 1)
 fn _draws[calls, firsts, images, n]
     k = len[firsts]
@@ -754,8 +843,11 @@ fn _made[c]
         calls = push[calls, ['viewport', str[0.0 + v.x], str[0.0 + v.y], str[0.0 + v.width], str[0.0 + v.height]]]
         if not cleared
             calls = push[calls, ['clearColor', str[k.r], str[k.g], str[k.b], str[k.a]]]
-            calls = push[calls, ['clear', 'COLOR_BUFFER_BIT']]
+            --- (COLOR_BUFFER_BIT and DEPTH_BUFFER_BIT)
+            calls = push[calls, ['clear', '16640']]
             cleared = true
+        if len[c.deep] gt 0
+            calls = _deep[calls, c, v]
         m = _pixels[c.width, c.height]
         if c.xr
             m = mul[mul[_numbers[v.projection], _numbers[v.camera]], _panel[c]]

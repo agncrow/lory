@@ -1,0 +1,49 @@
+--- Babylon.js's first scene, drawn by Lory: the scene its Playground opens
+--- with (a sphere two across, raised by one, over a ground six by six, lit
+--- by a hemispheric light from above at 0.7, seen from five up and ten
+--- back), stated in Lory's words so the two pictures can be held to each
+--- other pixel by pixel (reference/index.html draws Babylon's; compare.py
+--- measures the difference). Babylon's world is left-handed and Lory's
+--- right-handed, so the eye stands at +10 where Babylon's stands at -10:
+--- the scene is symmetric, and the pictures are the same.
+use sys
+use math
+use lory
+use lory.space
+
+fn picture[c]
+    c = lory.clear[c, lory.Color[0.2, 0.2, 0.3, 1.0]]
+    if not space.made['sphere']
+        --- (Babylon's 32 segments are 34 bands of latitude)
+        c = space.mesh[c, 'sphere', space.sphere[1.0, 34]]
+        c = space.mesh[c, 'ground', space.ground[6.0, 6.0]]
+    cam = space.orbit_from[c, 'babylon', [0.0, 0.0, 0.0], [0.0, 5.0, 10.0]]
+    black = lory.Color[0.0, 0.0, 0.0, 1.0]
+    dim = lory.Color[0.7, 0.7, 0.7, 1.0]
+    light = space.shining[space.light[dim, black, black, [0.0, -1.0, 0.0]], dim]
+    c = space.scene[c, cam, light]
+    white = lory.Color[1.0, 1.0, 1.0, 1.0]
+    c = space.draw[c, 'ground', lory.identity[], white]
+    c = space.draw[c, 'sphere', lory.translation[0.0, 1.0, 0.0], white]
+    c
+
+fn draw[frame]
+    lory.end[picture[lory.begin[frame]]]
+
+sys.frames[draw]
+
+fn _frame[]
+    json['{"t": 0, "width": 1280, "height": 720, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1280, "height": 720, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+test the_eye_stands_where_babylons_does[]
+    cam = space.orbit_from[lory.begin[_frame[]], 'babylon', [0.0, 0.0, 0.0], [0.0, 5.0, 10.0]]
+    at = space.eye_of[cam]
+    abs[at[0]] lt 0.000001
+    abs[at[1] - 5.0] lt 0.000001
+    abs[at[2] - 10.0] lt 0.000001
+
+test the_light_is_babylons_hemisphere_and_its_highlight[]
+    c = picture[lory.begin[_frame[]]]
+    calls = str[lory.batch[c]]
+    'f32:0.7 0.7 0.7' in calls
+    'clamp(tint.rgb * (hemi + sun * d), 0.0, 1.0)' in calls
