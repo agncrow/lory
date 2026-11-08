@@ -1,0 +1,341 @@
+--- Kite at work outside a browser, with the same output in both modes
+--- (`crow test --packages` runs this interpreted and compiled and compares
+--- the two): a chart of made-up bars and klinecharts' indicators, laid out
+--- in a frame and drawn; the words its tooltip and its axes show; a drag,
+--- a swipe, the wheel, a pinch, the keys, a double click and a glide moving
+--- it as TradingView's chart moves; a drawing tool put down by two clicks;
+--- and a VWAP scanner's card. Nothing here needs a page: what a frame would
+--- paint is counted, as a test counts it.
+use math
+use lory
+use kite
+use store
+use views
+use format
+use styles
+use scanner
+
+--- a frame as the page hands it, `t` milliseconds in, with the input given
+--- (a JSON list of events)
+fn screen[t, given]
+    json['{"t": `t`, "width": 1000, "height": 600, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 600, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+--- a pointer's event, as the page writes one
+fn pointer[on, x, y]
+    '{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+--- a wheel's event: a mouse's notch or a trackpad's swipe, a pinch with ctrl
+fn wheel[x, y, dx, dy, device, ctrl]
+    '{"type": "wheel", "x": `x`, "y": `y`, "dx": `dx`, "dy": `dy`, "device": "`device`", "ctrl": `ctrl`}'
+
+fn key[code]
+    '{"type": "key", "key": "`code`", "code": "`code`"}'
+
+--- a walk of prices, the same at every run (its steps are sines of the
+--- bar's number)
+fn made[count, t0, every, start_at, size]
+    ts = []
+    o = []
+    h = []
+    l = []
+    cl = []
+    v = []
+    price = start_at
+    for i in range[count]
+        x = 0.0 + i
+        step = (sin[x * 12.9898] * 0.35 + sin[x * 0.031] * 0.12) * size
+        opened = price
+        closed = price + step
+        ts = push[ts, t0 + x * every]
+        o = push[o, opened]
+        cl = push[cl, closed]
+        h = push[h, max[opened, closed] + abs[sin[x * 78.233]] * 0.2 * size]
+        l = push[l, min[opened, closed] - abs[sin[x * 37.719]] * 0.2 * size]
+        v = push[v, 1000.0 + abs[sin[x * 4.1414]] * 9000.0]
+        price = closed
+    kite.bars[ts, o, h, l, cl, v]
+
+fn two[v]
+    format.fixed[v, 2]
+
+--- a frame as a program's draw makes it: the chart laid out and its input
+--- taken, drawn, and the frame ended — its calls painted and what Lory
+--- keeps between frames kept (the frame's time, from which the next frame
+--- knows how long it has been: a glide moves by it). The frame's canvas,
+--- the chart, and the calls painted.
+struct Shown [c, k, calls]
+
+fn framed[k, t, given]
+    c = lory.begin[screen[t, given]]
+    k = kite.update[c, k, 0.0, 0.0, lory.width[c], lory.height[c]]
+    c = kite.draw[c, k]
+    Shown[c, k, lory.end[c]]
+
+--- the bars in view (from the first at the left edge to the newest
+--- drawn), how far the newest bar is from the right edge in bars (less
+--- than none: past it), the space a bar takes, and the candles' prices
+fn view_of[k]
+    r = kite.range_of[k, 'candle_pane']
+    'bars `k.real_from` to `k.to`, the newest `two[k.right_bars]` from the edge, `two[k.space]` pixels a bar, prices `two[r[0]]` to `two[r[1]]`'
+
+fn legends_of[items]
+    out = []
+    for it in items
+        out = push[out, '`it.title``it.value`']
+    join[out, '  ']
+
+fn ticks_of[ticks]
+    out = []
+    for t in ticks
+        out = push[out, t.text]
+    join[out, ' ']
+
+--- ---- a chart ----
+
+log['--- a chart']
+t0 = 1793975400000.0
+k = kite.chart['example']
+k = kite.symbol[k, 'KITE', 2, 0]
+k = kite.period[k, 'minute', 1]
+k = kite.zone[k, 'America/New_York']
+k = kite.data[k, made[300, t0, 60000.0, 100.0, 1.0]]
+k = kite.indicator[k, 'MA', [], 'candle_pane']
+k = kite.indicator[k, 'VOL', [], '']
+k = kite.indicator[k, 'MACD', [], '']
+log['`kite.count[k]` bars of KITE, a minute each, with `len[k.inds]` indicators']
+s = framed[k, 0, '[]']
+k = s.k
+log['the first frame: `view_of[k]`']
+for p in k.panes
+    log['  the pane `p.id`: `two[p.h]` pixels tall from `two[p.top]`, its axis `ticks_of[p.ticks]`']
+first_shown = format.date[k.zone, kite.time_at[k, k.from], 'YYYY-MM-DD HH:mm']
+log['  the time axis from `first_shown`']
+log['drawn as `len[s.c.verts] / lory.floats[]` vertices in `s.calls` calls']
+last = kite.count[k] - 1
+log['the tooltip at the last bar: `legends_of[views.candle_legends[k, last]]`']
+for ind in k.inds
+    log['  `ind.name`: `legends_of[views.indicator_legends[k, ind, last]]`']
+
+
+--- ---- moving it as TradingView's chart moves ----
+
+log['--- moving it']
+--- (a press, then moves across and down: the bars follow the pointer,
+--- and the prices once it has gone four pixels up or down, from there;
+--- let go a moment after it stopped, the drag does not glide)
+down = pointer['down', 500, 200]
+across = pointer['move', 520, 210]
+further = pointer['move', 550, 260]
+up = pointer['up', 550, 260]
+s = framed[k, 16, '[`down`]']
+s = framed[s.k, 32, '[`across`]']
+s = framed[s.k, 48, '[`further`]']
+s = framed[s.k, 200, '[`up`]']
+k = s.k
+fitted = k.panes[0].auto
+log['a drag 50 right and 60 down: `view_of[k]`, the prices fitted: `fitted`']
+--- (the A at the price axis's foot fits them again)
+b = store.auto_button[k, k.panes[0]]
+press = pointer['down', b[0], b[1]]
+s = framed[k, 216, '[`press`]']
+k = s.k
+fitted = k.panes[0].auto
+log['a press on A: `view_of[k]`, the prices fitted: `fitted`']
+--- (a mouse's wheel zooms about the pointer, a pinch the same)
+notch = wheel[400, 200, 0, -100, 'mouse', false]
+s = framed[k, 232, '[`notch`]']
+k = s.k
+log['a wheel notch up: `view_of[k]`']
+pinch = wheel[400, 200, 0, -25, 'trackpad', true]
+s = framed[k, 248, '[`pinch`]']
+k = s.k
+log['a pinch apart: `view_of[k]`']
+--- (two fingers across move the bars, up and down the prices)
+swipe = wheel[400, 200, 60, 0, 'trackpad', false]
+s = framed[k, 264, '[`swipe`]']
+k = s.k
+log['a swipe of 60 across: `view_of[k]`']
+lift = wheel[400, 200, 0, 30, 'trackpad', false]
+s = framed[k, 280, '[`lift`]']
+k = s.k
+fitted = k.panes[0].auto
+log['a swipe of 30 down: `view_of[k]`, the prices fitted: `fitted`']
+--- (a double click on the price axis fits it again; on the time axis,
+--- the view goes back to the newest bars at ten pixels each)
+axis_x = k.main_w + 10.0
+on_prices = pointer['double', axis_x, 200]
+s = framed[k, 296, '[`on_prices`]']
+k = s.k
+fitted = k.panes[0].auto
+log['a double click on the price axis: the prices fitted: `fitted`']
+--- (the wheel over the price axis stretches it)
+stretch = wheel[axis_x, 200, 0, -30, 'mouse', false]
+s = framed[k, 312, '[`stretch`]']
+k = s.k
+log['a wheel notch over the price axis: `view_of[k]`']
+--- (a drag of the time axis: the bars wider by the distances from the
+--- plot's right edge at the press and now)
+on_times = k.h - k.xaxis_h / 2.0
+grab = pointer['down', 500, on_times]
+pull = pointer['move', 300, on_times]
+let_go = pointer['up', 300, on_times]
+s = framed[k, 328, '[`grab`]']
+s = framed[s.k, 344, '[`pull`]']
+s = framed[s.k, 360, '[`let_go`]']
+k = s.k
+log['a drag of the time axis 200 to the left: `view_of[k]`']
+reset = pointer['double', 500, on_times]
+s = framed[k, 376, '[`reset`]']
+k = s.k
+log['a double click on the time axis: `view_of[k]`']
+--- (the keys: a bar back, a bar on, nearer)
+back = key['ArrowLeft']
+s = framed[k, 392, '[`back`]']
+k = s.k
+log['the left arrow: `view_of[k]`']
+nearer = key['ArrowUp']
+s = framed[k, 408, '[`nearer`]']
+k = s.k
+log['the up arrow: `view_of[k]`']
+--- (a fast drag let go glides on, slower each frame)
+fast_down = pointer['down', 500, 300]
+fast_1 = pointer['move', 520, 300]
+fast_2 = pointer['move', 540, 300]
+fast_up = pointer['up', 540, 300]
+s = framed[k, 1000, '[`fast_down`]']
+s = framed[s.k, 1016, '[`fast_1`]']
+s = framed[s.k, 1032, '[`fast_2`]']
+s = framed[s.k, 1048, '[`fast_up`]']
+k = s.k
+glided = []
+for i in range[4]
+    s = framed[k, 1064 + i * 16, '[]']
+    k = s.k
+    glided = push[glided, two[k.right_bars]]
+shown_glide = join[glided, ', ']
+log['a fast drag let go: the newest bar `shown_glide` bars from the right edge, frame by frame']
+--- (once the newest bar is out of view, » goes back to it; let go a
+--- moment after the pointer stopped, the drag does not glide)
+far = pointer['down', 300, 300]
+farther = pointer['move', 900, 300]
+far_up = pointer['up', 900, 300]
+s = framed[k, 2000, '[`far`]']
+s = framed[s.k, 2016, '[`farther`]']
+s = framed[s.k, 2200, '[`far_up`]']
+k = s.k
+newest = store.shows_newest[k]
+log['a drag 600 to the right: `view_of[k]`, » shown: `newest`']
+n = store.newest_button[k]
+go = pointer['down', n[0], n[1]]
+s = framed[k, 3000, '[`go`]']
+k = s.k
+log['a press on »: `view_of[k]`']
+--- (the crosshair follows the pointer, and the tooltip names its bar)
+hover = pointer['move', 300, 150]
+s = framed[k, 3016, '[`hover`]']
+k = s.k
+at = kite.bar_at_cross[k]
+log['the pointer over bar `at`: `legends_of[views.candle_legends[k, at]]`']
+
+--- ---- drawing tools ----
+
+log['--- drawing tools']
+log['`len[kite.tools[]]` tools, as klinecharts has them']
+a = kite.point[k, t0 + 250.0 * 60000.0, 101.0]
+z = kite.point[k, t0 + 290.0 * 60000.0, 103.0]
+k = kite.overlay[k, 'segment', [a, z], 'candle_pane', '']
+k = kite.overlay_style[k, kite.last_overlay[k], 'line.color', '#ff9800']
+k = kite.overlay[k, 'priceLine', [kite.point[k, t0 + 270.0 * 60000.0, 102.0]], 'candle_pane', '']
+--- (the reader draws a third with two clicks)
+k = kite.draw_tool[k, 'horizontalSegment']
+one = pointer['down', 400, 150]
+one_up = pointer['up', 400, 150]
+other = pointer['down', 600, 180]
+other_up = pointer['up', 600, 180]
+s = framed[k, 4000, '[`one`, `one_up`]']
+s = framed[s.k, 4016, '[`other`, `other_up`]']
+k = s.k
+for o in k.overlays
+    where = []
+    for pt in o.points
+        where = push[where, 'bar `pt.index` at `two[pt.value]`']
+    shown_points = join[where, ', ']
+    log['`o.name` through `shown_points`, drawn: `o.done`']
+log['the chart with its tools: `len[s.c.verts] / lory.floats[]` vertices']
+
+--- ---- the words ----
+
+log['--- the words']
+when = 1793975405000.0
+in_ny = format.date['America/New_York', when, 'YYYY-MM-DD HH:mm:ss']
+in_utc = format.date['', when, 'HH:mm']
+log['a moment in New York: `in_ny`, in UTC `in_utc`']
+priced = format.fixed[12.5, 0]
+grouped = format.thousands['1234567.89', ',']
+short = format.big[1234567.0]
+log['12.5 as JavaScript writes it with no decimals: `priced`; 1234567.89 grouped: `grouped`; made short: `short`']
+dark = styles.dark[]
+grid = dark['grid.horizontal.color']
+log['the dark theme sets `len[dark]` styles, its grid `grid`']
+
+--- ---- a scanner's card ----
+
+log['--- a scanner card']
+--- the cumulative VWAP from the first bar, and the VWAP of the last
+--- `window` bars (both of the bars' typical price)
+fn vwaps[b, window]
+    cum = []
+    rolling = []
+    pv = 0.0
+    vol = 0.0
+    for i in range[len[b.c]]
+        typical = (b.h[i] + b.l[i] + b.c[i]) / 3.0
+        pv = pv + typical * b.v[i]
+        vol = vol + b.v[i]
+        cum = push[cum, pv / vol]
+        rpv = 0.0
+        rv = 0.0
+        j = max[0, i - window + 1]
+        while j lte i
+            rpv = rpv + (b.h[j] + b.l[j] + b.c[j]) / 3.0 * b.v[j]
+            rv = rv + b.v[j]
+            j = j + 1
+        rolling = push[rolling, rpv / rv]
+    [cum, rolling]
+
+card = kite.chart['card']
+card = kite.styled[card, scanner.theme[]]
+card = kite.symbol[card, 'STAK', 2, 0]
+card = kite.period[card, 'second', 30]
+card = kite.zone[card, 'America/New_York']
+card = kite.locale[card, 'en-abbr']
+bars = made[300, 1793971800000.0, 30000.0, 3.10, 0.03]
+card = kite.data[card, bars]
+lines = vwaps[bars, 60]
+card = scanner.vwap[card, lines[0], lines[1]]
+card = kite.indicator[card, 'VOL', [], 'volume_pane']
+card = scanner.volume_colors[card]
+c = lory.begin[screen[0, '[]']]
+card = kite.update[c, card, 0.0, 0.0, 1000.0, 600.0]
+card = scanner.y_zoom[card]
+c = kite.draw[c, card]
+c = scanner.draw[c, card, 3.05]
+log['the card: `view_of[card]`, drawn as `len[c.verts] / lory.floats[]` vertices']
+r = kite.range_of[card, 'candle_pane']
+p = store.pane[card, 'candle_pane']
+rungs = []
+for rung in scanner.ladder_from[3.05, r[1], r[0], p.h]
+    rungs = push[rungs, rung.label]
+shown_rungs = join[rungs, ' ']
+log['the ladder from the previous close of 3.05: `shown_rungs`']
+last_bar = kite.count[card] - 1
+vw = card.inds[0]
+log['the VWAP lines at the last bar: `legends_of[views.indicator_legends[card, vw, last_bar]]`']
+--- (the + button zooms the prices about the last one)
+plus = pointer['down', 32, p.top + 12.0]
+c = lory.begin[screen[16, '[`plus`]']]
+pressed = scanner.take_zoom[c, card]
+card = kite.unfix[card, 'candle_pane']
+card = kite.update[c, card, 0.0, 0.0, 1000.0, 600.0]
+card = scanner.y_zoom[card]
+log['a press on +: `pressed`, the zoom `two[scanner.zoom_of[card]]`, `view_of[card]`']

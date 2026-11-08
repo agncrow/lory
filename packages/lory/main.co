@@ -125,8 +125,8 @@ fn _hex_pair[s, i]
     _hex_digit[slice[s, i, i + 1]] * 16 + _hex_digit[slice[s, i + 1, i + 2]]
 
 --- `#rrggbb` or `#rrggbbaa` (the `#` may be left out)
-fn hex[text]
-    s = text
+fn hex[code]
+    s = code
     if starts[s, '#']
         s = slice[s, 1, len[s]]
     if len[s] lt 6
@@ -177,42 +177,41 @@ fn _no_event[]
 --- one event the page described, by what it is: each kind of event
 --- carries its own fields, so each is read only where it is there
 fn _event[j]
-    e = _no_event[]
-    e.on = '`j.type`'
-    if e.on eq 'down' or e.on eq 'up' or e.on eq 'move' or e.on eq 'leave' or e.on eq 'double' or e.on eq 'squeeze' or e.on eq 'unsqueeze'
-        e.device = '`j.device`'
-        e.id = '`j.id`'
-        if e.device ne 'ray'
-            e.x = 0.0 + j.x
-            e.y = 0.0 + j.y
+    ev = _no_event[]
+    ev.on = '`j.type`'
+    if ev.on eq 'down' or ev.on eq 'up' or ev.on eq 'move' or ev.on eq 'leave' or ev.on eq 'double' or ev.on eq 'squeeze' or ev.on eq 'unsqueeze'
+        ev.device = '`j.device`'
+        ev.id = '`j.id`'
+        if ev.device ne 'ray'
+            ev.x = 0.0 + j.x
+            ev.y = 0.0 + j.y
             if j.button.ok
-                e.button = 0 + j.button
-            e.shift = _flag[j.shift]
-            e.ctrl = _flag[j.ctrl]
-            e.alt = _flag[j.alt]
-            e.meta = _flag[j.meta]
-    if e.on eq 'wheel'
-        e.x = 0.0 + j.x
-        e.y = 0.0 + j.y
-        e.dx = 0.0 + j.dx
-        e.dy = 0.0 + j.dy
-        e.shift = _flag[j.shift]
-        e.ctrl = _flag[j.ctrl]
+                ev.button = 0 + j.button
+            ev.shift = _flag[j.shift]
+            ev.ctrl = _flag[j.ctrl]
+            ev.alt = _flag[j.alt]
+            ev.meta = _flag[j.meta]
+    if ev.on eq 'wheel'
+        ev.x = 0.0 + j.x
+        ev.y = 0.0 + j.y
+        ev.dx = 0.0 + j.dx
+        ev.dy = 0.0 + j.dy
+        ev.shift = _flag[j.shift]
+        ev.ctrl = _flag[j.ctrl]
         --- (`trackpad` for a swipe, `mouse` for a wheel's notches)
-        e.device = 'mouse'
+        ev.device = 'mouse'
         if j.device.ok
-            e.device = '`j.device`'
-
-    if e.on eq 'key' or e.on eq 'keyup'
-        e.key = '`j.key`'
-        e.code = '`j.code`'
-        e.shift = _flag[j.shift]
-        e.ctrl = _flag[j.ctrl]
-        e.alt = _flag[j.alt]
-        e.meta = _flag[j.meta]
-    if e.on eq 'text'
-        e.words = '`j.text`'
-    e
+            ev.device = '`j.device`'
+    if ev.on eq 'key' or ev.on eq 'keyup'
+        ev.key = '`j.key`'
+        ev.code = '`j.code`'
+        ev.shift = _flag[j.shift]
+        ev.ctrl = _flag[j.ctrl]
+        ev.alt = _flag[j.alt]
+        ev.meta = _flag[j.meta]
+    if ev.on eq 'text'
+        ev.words = '`j.text`'
+    ev
 
 --- where a headset's controller points on the panel the drawing is shown
 --- on, in the drawing's pixels, or (-1, -1) where it misses it: the ray's
@@ -260,29 +259,29 @@ fn begin[frame]
                     c.there = true
     evs = []
     for j in frame.input
-        e = _event[j]
-        if e.device eq 'ray'
-            e.x = c.px
-            e.y = c.py
-            if e.on eq 'down'
+        ev = _event[j]
+        if ev.device eq 'ray'
+            ev.x = c.px
+            ev.y = c.py
+            if ev.on eq 'down'
                 c.down = true
-            if e.on eq 'up'
+            if ev.on eq 'up'
                 c.down = false
-        evs = push[evs, e]
+        evs = push[evs, ev]
     c.events = evs
     --- (the keys held down: a key's press adds its code, its release or
     --- the page's losing the keyboard lets every one go)
     down_now = held.pressing
-    for e in evs
-        if e.on eq 'key' and not (e.code in down_now)
-            down_now = push[down_now, e.code]
-        if e.on eq 'keyup'
+    for ev in evs
+        if ev.on eq 'key' and not (ev.code in down_now)
+            down_now = push[down_now, ev.code]
+        if ev.on eq 'keyup'
             kept = []
             for k in down_now
-                if k ne e.code
+                if k ne ev.code
                     kept = push[kept, k]
             down_now = kept
-        if e.on eq 'blur'
+        if ev.on eq 'blur'
             down_now = []
     held.pressing = down_now
     --- (the time since the last frame, in seconds: none on the first, and
@@ -484,10 +483,10 @@ fn path[c, xs, ys, w, color]
     c
 
 --- a dashed line from (x0, y0) to (x1, y1): `on` pixels drawn, `off`
---- left, from `phase` pixels into the pattern; the phase the next line
+--- left, from `into` pixels into the pattern; where the next line
 --- starts from is `dash_phase[…]` of the same numbers, so a dashed path
 --- keeps its rhythm round its corners
-fn dashed[c, x0, y0, x1, y1, w, color, on, off, phase]
+fn dashed[c, x0, y0, x1, y1, w, color, on, off, into]
     dx = x1 - x0
     dy = y1 - y0
     long = sqrt[dx * dx + dy * dy]
@@ -497,7 +496,7 @@ fn dashed[c, x0, y0, x1, y1, w, color, on, off, phase]
     ux = dx / long
     uy = dy / long
     --- (where in the pattern the line starts, and so the first dash's end)
-    at = 0.0 - _mod[phase, period]
+    at = 0.0 - _mod[into, period]
     while at lt long
         a = max[0.0, at]
         b = min[long, at + on]
@@ -506,9 +505,9 @@ fn dashed[c, x0, y0, x1, y1, w, color, on, off, phase]
         at = at + period
     c
 
---- where in its pattern a dash is after a line `long` pixels from `phase`
-fn dash_phase[phase, long, on, off]
-    _mod[phase + long, on + max[0.0, off]]
+--- where in its pattern a dash is after a line `long` pixels from `into`
+fn dash_phase[into, long, on, off]
+    _mod[into + long, on + max[0.0, off]]
 
 fn _mod[a, b]
     if b lte 0.0
@@ -518,13 +517,13 @@ fn _mod[a, b]
 --- dashed lines through the points, the pattern kept round the corners
 fn dashed_path[c, xs, ys, w, color, on, off]
     n = min[len[xs], len[ys]]
-    phase = 0.0
+    into = 0.0
     i = 1
     while i lt n
-        c = dashed[c, xs[i - 1], ys[i - 1], xs[i], ys[i], w, color, on, off, phase]
+        c = dashed[c, xs[i - 1], ys[i - 1], xs[i], ys[i], w, color, on, off, into]
         dx = xs[i] - xs[i - 1]
         dy = ys[i] - ys[i - 1]
-        phase = dash_phase[phase, sqrt[dx * dx + dy * dy], on, off]
+        into = dash_phase[into, sqrt[dx * dx + dy * dy], on, off]
         i = i + 1
     c
 
@@ -607,9 +606,9 @@ fn cursor[c, shape]
     ask[c, ['@cursor', '=`shape`']]
 
 --- the text field that brings up a phone's keyboard, opened or closed
-fn keyboard[c, open]
+fn keyboard[c, shown]
     how = 'close'
-    if open
+    if shown
         how = 'open'
     ask[c, ['@keyboard', '=`how`', '=']]
 
@@ -624,13 +623,13 @@ fn _glyph[held, ch]
     held.glyphs['?']
 
 --- how wide the text is at `size` pixels
-fn measure[c, text, size]
+fn measure[c, words, size]
     held = c.held
     if held.size eq 0.0
-        return len[text] * size * 0.55
+        return len[words] * size * 0.55
     scale = size / held.size
     w = 0.0
-    for ch in split[text, '']
+    for ch in split[words, '']
         g = _glyph[held, ch]
         w = w + g[4] * scale
     w
@@ -642,10 +641,10 @@ fn line_height[c, size]
         return size * 1.25
     (held.ascent + held.descent) * size / held.size
 
---- the characters of `text` the atlas lacks
-fn _lacking[held, text]
+--- the characters of `words` the atlas lacks
+fn _lacking[held, words]
     out = []
-    for ch in split[text, '']
+    for ch in split[words, '']
         if not (ch in held.glyphs)
             if not (ch in held.chars)
                 if not (ch in out)
@@ -814,13 +813,13 @@ fn _matrix_text[m]
 --- the scene's calls in a view: its matrix and where its eye is put where
 --- the calls say `@eye` and `@eyepos`, then the flat drawing's state back
 fn _deep[calls, c, v]
-    eye = c.eye
+    sight = c.eye
     at = c.eyepos
     if c.xr
         cam = mul[_numbers[v.camera], c.rig]
-        eye = mul[_numbers[v.projection], cam]
+        sight = mul[_numbers[v.projection], cam]
         at = _position_of[cam]
-    eye_text = _matrix_text[eye]
+    eye_text = _matrix_text[sight]
     at_text = 'f32:`at[0]` `at[1]` `at[2]`'
     calls = push[calls, ['enable', 'DEPTH_TEST']]
     calls = push[calls, ['depthFunc', 'LEQUAL']]

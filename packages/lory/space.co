@@ -413,9 +413,9 @@ fn cylinder[r, h, n]
             facing = push[facing, 0.0 - sin[b]]
             uv = push[uv, (0.0 + j + k[0]) / n]
             uv = push[uv, 1.0 - k[1]]
-        for e in [[h, 1.0], [0.0, -1.0]]
-            ys = e[0]
-            ups = e[1]
+        for cap in [[h, 1.0], [0.0, -1.0]]
+            ys = cap[0]
+            ups = cap[1]
             corners = [[0.0, 0.0], [cos[b0], sin[b0]], [cos[b1], sin[b1]]]
             if ups lt 0.0
                 corners = [[0.0, 0.0], [cos[b1], sin[b1]], [cos[b0], sin[b0]]]
@@ -465,13 +465,13 @@ fn mesh[c, name, s]
         packed = push[packed, s.facing[i * 3 + 2]]
         packed = push[packed, s.uv[i * 2]]
         packed = push[packed, s.uv[i * 2 + 1]]
-    bytes = sys.base64[sys.float_bytes[packed, 4, true]]
+    packed_text = sys.base64[sys.float_bytes[packed, 4, true]]
     asks = c.asks
     asks = push[asks, ['#`vao`', 'createVertexArray']]
     asks = push[asks, ['bindVertexArray', '#`vao`']]
     asks = push[asks, ['#`buf`', 'createBuffer']]
     asks = push[asks, ['bindBuffer', 'ARRAY_BUFFER', '#`buf`']]
-    asks = push[asks, ['bufferData', 'ARRAY_BUFFER', 'base64f32:`bytes`', 'STATIC_DRAW']]
+    asks = push[asks, ['bufferData', 'ARRAY_BUFFER', 'base64f32:`packed_text`', 'STATIC_DRAW']]
     asks = push[asks, ['enableVertexAttribArray', '0']]
     asks = push[asks, ['vertexAttribPointer', '0', '3', 'FLOAT', 'false', '32', '0']]
     asks = push[asks, ['enableVertexAttribArray', '1']]
@@ -500,20 +500,20 @@ fn orbit[c, id, target, distance]
 fn _orbiting[c, id, first]
     key = 'lory.space.orbit.`id`'
     o = recall[key, first]
-    for e in lory.events[c]
-        if e.on eq 'down' and e.device ne 'ray' and _in_box[c, e.x, e.y]
+    for ev in lory.events[c]
+        if ev.on eq 'down' and ev.device ne 'ray' and _in_box[c, ev.x, ev.y]
             o.dragging = true
-            o.from_x = e.x
-            o.from_y = e.y
+            o.from_x = ev.x
+            o.from_y = ev.y
             o.from_yaw = o.yaw
             o.from_pitch = o.pitch
-        if e.on eq 'move' and o.dragging
-            o.yaw = o.from_yaw - (e.x - o.from_x) * 0.008 / lory.px[c]
-            o.pitch = max[-1.5, min[1.5, o.from_pitch + (e.y - o.from_y) * 0.008 / lory.px[c]]]
-        if e.on eq 'up' or e.on eq 'leave'
+        if ev.on eq 'move' and o.dragging
+            o.yaw = o.from_yaw - (ev.x - o.from_x) * 0.008 / lory.px[c]
+            o.pitch = max[-1.5, min[1.5, o.from_pitch + (ev.y - o.from_y) * 0.008 / lory.px[c]]]
+        if ev.on eq 'up' or ev.on eq 'leave'
             o.dragging = false
-        if e.on eq 'wheel' and _in_box[c, e.x, e.y]
-            o.distance = max[0.05, min[10000.0, o.distance * exp[e.dy / 600.0]]]
+        if ev.on eq 'wheel' and _in_box[c, ev.x, ev.y]
+            o.distance = max[0.05, min[10000.0, o.distance * exp[ev.dy / 600.0]]]
     remember[key, o]
     o
 
@@ -569,8 +569,8 @@ fn glowing[look, color]
 --- the scene framed on a screen in a box (left, top, width, height in
 --- pixels: a `Shown`'s box): drawn there alone, seen in its proportions,
 --- turned and pointed into there only — in a headset the scene is the world
-fn within[c, box]
-    c.box = [0.0 + box[0], 0.0 + box[1], 0.0 + box[2], 0.0 + box[3]]
+fn within[c, place]
+    c.box = [0.0 + place[0], 0.0 + place[1], 0.0 + place[2], 0.0 + place[3]]
     c
 
 --- whether a point of the canvas is inside the scene's box (anywhere,
@@ -716,8 +716,8 @@ fn _eye_point[c]
 --- where `matrix` puts it: the first whose distance in `reach` (one fewer
 --- than the names) the eye is nearer than, else the last
 fn level[c, names, reach, matrix]
-    eye = _eye_point[c]
-    d = _sub[[matrix[12], matrix[13], matrix[14]], eye]
+    sight = _eye_point[c]
+    d = _sub[[matrix[12], matrix[13], matrix[14]], sight]
     far = sqrt[_dot[d, d]]
     for i in range[len[reach]]
         if far lt reach[i]
@@ -1069,8 +1069,8 @@ fn _read_gltf[c, h, m, body]
             if prim.material.ok
                 mat = materials[int[prim.material]]
                 if mat.emissiveFactor.ok
-                    e = _floats[mat.emissiveFactor]
-                    glow = lory.Color[e[0], e[1], e[2], 1.0]
+                    emitted = _floats[mat.emissiveFactor]
+                    glow = lory.Color[emitted[0], emitted[1], emitted[2], 1.0]
                 if mat.pbrMetallicRoughness.ok
                     pbr = mat.pbrMetallicRoughness
                     if pbr.metallicFactor.ok
@@ -1112,7 +1112,7 @@ fn walk[c, id]
     st = recall[key, Stand[0.0, 0.0, 0.0, true]]
     if not lory.in_headset[c]
         return c
-    move = lory.stick[c, 'left']
+    going = lory.stick[c, 'left']
     turn = lory.stick[c, 'right']
     --- (forward: where the head faces, flat on the floor, in the scene)
     fx = 0.0
@@ -1132,8 +1132,8 @@ fn walk[c, id]
     wz = 0.0 - si * fx + co * fz
     speed = 1.5 * lory.dt[c]
     --- (the stick's forward push is negative)
-    st.x = st.x + (wx * (0.0 - move[1]) - wz * move[0]) * speed
-    st.z = st.z + (wz * (0.0 - move[1]) + wx * move[0]) * speed
+    st.x = st.x + (wx * (0.0 - going[1]) - wz * going[0]) * speed
+    st.z = st.z + (wz * (0.0 - going[1]) + wx * going[0]) * speed
     if st.rested and abs[turn[0]] gt 0.6
         step = pi / 6.0
         if turn[0] gt 0.0

@@ -129,3 +129,38 @@ game view needs it yet); WebGPU (WebXR on the Quest's browser is WebGL's;
 Lory's batch is WebGL2's calls by name, so WebGPU would be a second
 renderer, worth it only when compute shaders are needed); shadows from
 lights other than the sun; image-based lighting from an environment map.
+
+## Kite — candlestick charts on Lory (2026-11-07)
+
+packages/kite is klinecharts' behaviour written in Crow, drawn by Lory,
+with finch's VWAP-scanner card as a part of it (scanner.co):
+
+- Six kinds of candle and klinecharts' twenty-seven indicators, computed
+  to its last digit. tests/kite/reference.co holds them to
+  reference.json, which reference.py writes from klinecharts' own code.
+- Panes below the candles, axes that fit their labels (normal,
+  percentage, logarithmic), a crosshair and tooltips, high and low marks
+  and the last price.
+- The drawing tools (overlays.co) and every style klinecharts names.
+- Navigation as TradingView's chart moves:
+  - a drag moves the bars, and the prices once it has gone four pixels
+    up or down;
+  - a fast drag glides on;
+  - a trackpad's swipe moves the view along its axis;
+  - the wheel or a pinch zooms about the pointer;
+  - an axis dragged or swiped stretches;
+  - double clicks fit the prices and reset the time axis;
+  - the arrows move a bar or zoom;
+  - the A and » buttons fit the prices and go back to the newest bar.
+- examples/kite and examples/scanner are the pages.
+- packages/kite/example.co drives a chart through all of it outside a
+  page, the same in both modes.
+
+Not done yet: finch's other indicators (density candles, flow volume,
+RSI/CVD, regime, the amber zone, flags and pennants, candle patterns, the
+order-book ladder, sizing zones), and live data. A browser program cannot
+make a request of its own, so live data needs a decision first.
+
+`./test.sh [crow]` runs the whole suite: every package's test blocks and
+example in both modes, Kite's reference, and every example built for the
+browser.

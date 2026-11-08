@@ -137,28 +137,28 @@ fn chart[c, id, x, y, w, h, x0, x1]
         held.x1 = x1
     k = Plot[id, x, y, w, h, held.x0, held.x1, 0.0, 1.0, false, lory.hex['#e8edf2'], lory.hex['#8a9bad'], lory.hex['#222b35'], lory.hex['#26a69a'], lory.hex['#ef5350'], lory.px[c]]
     span = held.x1 - held.x0
-    for e in lory.events[c]
-        if e.on eq 'wheel' and _inside[k, e.x, e.y]
+    for ev in lory.events[c]
+        if ev.on eq 'wheel' and _inside[k, ev.x, ev.y]
             --- (the wheel zooms about the pointer; sideways it pans)
-            at = held.x0 + (e.x - x) / w * span
-            f = exp[e.dy / 400.0]
+            at = held.x0 + (ev.x - x) / w * span
+            f = exp[ev.dy / 400.0]
             held.x0 = at - (at - held.x0) * f
             held.x1 = at + (held.x1 - at) * f
-            held.x0 = held.x0 + e.dx / w * span
-            held.x1 = held.x1 + e.dx / w * span
+            held.x0 = held.x0 + ev.dx / w * span
+            held.x1 = held.x1 + ev.dx / w * span
             span = held.x1 - held.x0
-        if e.on eq 'down' and _inside[k, e.x, e.y]
+        if ev.on eq 'down' and _inside[k, ev.x, ev.y]
             held.dragging = true
-            held.from_x = e.x
+            held.from_x = ev.x
             held.from_x0 = held.x0
             held.from_x1 = held.x1
-        if e.on eq 'move' and held.dragging
-            dx = (e.x - held.from_x) / w * (held.from_x1 - held.from_x0)
+        if ev.on eq 'move' and held.dragging
+            dx = (ev.x - held.from_x) / w * (held.from_x1 - held.from_x0)
             held.x0 = held.from_x0 - dx
             held.x1 = held.from_x1 - dx
-        if e.on eq 'up' or e.on eq 'leave'
+        if ev.on eq 'up' or ev.on eq 'leave'
             held.dragging = false
-        if e.on eq 'key' and e.key eq '0'
+        if ev.on eq 'key' and ev.key eq '0'
             held.x0 = x0
             held.x1 = x1
     --- (never so far in that the range is nothing, nor out past ten times
@@ -299,14 +299,14 @@ fn area[c, k, levels, color]
     upto = min[len[b.x], _first_at[b.x, k.x1] + 1]
     kept = lory.clipped[c]
     c = lory.clip[c, k.x, k.y, k.w, k.h]
-    floor = k.y + k.h
+    base = k.y + k.h
     i = from + 1
     while i lt upto
         xa = px_of_x[k, b.x[i - 1]]
         xb = px_of_x[k, b.x[i]]
         ya = px_of_y[k, b.last[i - 1]]
         yb = px_of_y[k, b.first[i]]
-        c = lory.fill[c, [xa, xb, xb, xa], [ya, yb, floor, floor], color]
+        c = lory.fill[c, [xa, xb, xb, xa], [ya, yb, base, base], color]
         i = i + 1
     lory.unclip[c, kept]
 

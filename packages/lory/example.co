@@ -1,0 +1,259 @@
+--- Lory at work outside a browser, with the same output in both modes
+--- (`crow test --packages` runs this interpreted and compiled and compares
+--- the two): a frame read as the page hands it, shapes and text drawn and
+--- the calls the page would be handed counted; a form whose controls
+--- answer a press and typing; a chart of bars with its ticks; a scene of
+--- meshes seen through a camera that orbits; a game's clock, collisions
+--- and sparks. Nothing here needs a page: what a frame would paint is read
+--- back with `lory.batch`, as a test reads it.
+use math
+use lory
+use gui
+use plot
+use space
+use game
+
+--- a frame as the page hands it, `t` milliseconds in: its size, its view
+--- and the input given (a JSON list of events)
+fn screen[t, given]
+    json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+--- a press and a release at a place
+fn press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+--- the vertices drawn so far
+fn drawn[c]
+    len[c.verts] / lory.floats[]
+
+--- the calls a frame hands the page, each by its name (an object's call by
+--- what it makes)
+fn names_of[calls]
+    out = []
+    for call in calls
+        if '#' in call[0]
+            out = push[out, call[1]]
+        else
+            out = push[out, call[0]]
+    out
+
+fn count_of[names, name]
+    n = 0
+    for x in names
+        if x eq name
+            n = n + 1
+    n
+
+fn two[v]
+    fmt[v, decimals = 2]
+
+--- ---- the canvas ----
+
+log['--- the canvas']
+c = lory.begin[screen[0, '[]']]
+log['a frame of `lory.width[c]` by `lory.height[c]` pixels, `lory.px[c]` a CSS pixel']
+c = lory.clear[c, lory.hex['#0f1317']]
+c = lory.rect[c, 48.0, 120.0, 80.0, 80.0, lory.hex['#e8590c']]
+log['a rectangle is `drawn[c]` vertices: two triangles']
+c = lory.round_rect[c, 24.0, 24.0, 360.0, 220.0, 16.0, lory.hex['#1c232b']]
+c = lory.circle[c, 188.0, 160.0, 40.0, lory.hex['#37b24d']]
+c = lory.ring[c, 288.0, 160.0, 40.0, 6.0, lory.hex['#4dabf7']]
+c = lory.line[c, 10.0, 10.0, 200.0, 40.0, 3.0, lory.white[]]
+c = lory.dashed[c, 10.0, 60.0, 400.0, 60.0, 1.0, lory.white[], 4.0, 4.0, 0.0]
+c = lory.path[c, [10.0, 60.0, 110.0, 160.0], [300.0, 260.0, 320.0, 280.0], 2.0, lory.hex['#ffd43b']]
+c = lory.triangle[c, 500.0, 100.0, 560.0, 200.0, 440.0, 200.0, lory.hex['#9775fa']]
+log['with a rounded panel, a circle, a ring, lines dashed and joined and a triangle: `drawn[c]` vertices']
+grey = lory.mix[lory.black[], lory.white[], 0.25]
+log['a quarter of the way from black to white: `two[grey.r]`, `two[grey.g]`, `two[grey.b]`']
+orange = lory.hex['#e8590c']
+log['#e8590c is `two[orange.r]`, `two[orange.g]`, `two[orange.b]`']
+before = drawn[c]
+c = lory.text[c, 600.0, 40.0, 'Lory λ', 20.0, lory.white[]]
+guess = lory.measure[c, 'Lory λ', 20.0]
+log['text before the page says what its atlas holds: `drawn[c] - before` vertices, `two[guess]` pixels wide by a guess, and `c.missing` asked for (the first atlas holds the rest)']
+names = names_of[lory.batch[c]]
+programs = count_of[names, 'createProgram']
+buffers = count_of[names, 'createBuffer']
+draws = count_of[names, 'drawArrays']
+log['the first frame hands the page `len[names]` calls: `programs` program, `buffers` buffer, `draws` draw']
+
+--- (the page answers with the atlas it drew: where each glyph lies)
+atlas = '{"what": "atlas", "id": 7, "width": 512, "height": 256, "size": 48, "ascent": 40, "descent": 10, "pad": 7, "spread": 6, "glyphs": [{"char": "H", "x": 0, "y": 0, "width": 40, "height": 64, "advance": 30}, {"char": "i", "x": 40, "y": 0, "width": 20, "height": 64, "advance": 12}]}'
+answered = json['{"t": 16, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": [`atlas`]}']
+c = lory.begin[answered]
+c = lory.text[c, 10.0, 10.0, 'Hi', 24.0, lory.white[]]
+wide = lory.measure[c, 'Hi', 48.0]
+log['once it has: "Hi" is `drawn[c]` vertices, `wide` pixels wide at 48 and `lory.line_height[c, 48.0]` tall']
+c = lory.clip[c, 0.0, 0.0, 100.0, 100.0]
+log['a clip of 100 by 100 shows (50, 50): `lory.shows[c, 50.0, 50.0, 1.0, 1.0]`, (150, 50): `lory.shows[c, 150.0, 50.0, 1.0, 1.0]`']
+
+--- the frame's input, read as events
+pressed = lory.begin[screen[32, press_at[120.0, 80.0]]]
+for ev in lory.events[pressed]
+    log['an event: `ev.on` at `ev.x`, `ev.y` by the `ev.device`']
+wheeled = lory.begin[screen[48, '[{"type": "wheel", "x": 10, "y": 20, "dx": 0, "dy": -120, "device": "mouse", "ctrl": true}]']]
+for ev in lory.events[wheeled]
+    log['a `ev.on` of `ev.dy` from a `ev.device`, ctrl `ev.ctrl`: a pinch']
+
+--- ---- the controls ----
+
+log['--- the controls']
+
+struct Form [name, presses, loud, volume]
+
+fn form_of[f]
+    gui.panel[[gui.heading['A form'], gui.label['Your name'], gui.field['name', f.name], gui.slider['volume', f.volume, 0.0, 1.0], gui.toggle['loud', 'Loud', f.loud], gui.row[[gui.button['press', 'Press me'], gui.label['pressed `f.presses` times']]]]]
+
+fn applied[f, ev]
+    if ev.id eq 'name' and ev.act eq 'edit'
+        f.name = ev.words
+    if ev.id eq 'volume'
+        f.volume = ev.num
+    if ev.id eq 'loud'
+        f.loud = ev.num gt 0.5
+    if ev.id eq 'press'
+        f.presses = f.presses + 1
+    f
+
+f = Form['Ada', 0, false, 0.4]
+first = gui.show[lory.begin[screen[0, press_at[1.0, 1.0]]], form_of[f]]
+b = first.boxes['press']
+log['the form is `drawn[first.canvas]` vertices; its button stands at `b[0]`, `b[1]`, `b[2]` wide']
+shown = gui.show[lory.begin[screen[16, press_at[b[0] + 5.0, b[1] + 5.0]]], form_of[f]]
+for happened in shown.events
+    f = applied[f, happened]
+log['a press and a release on the button: `f.presses` press']
+n = first.boxes['name']
+typed = gui.show[lory.begin[screen[32, '[{"type": "down", "device": "mouse", "id": 1, "x": `n[0] + 5.0`, "y": `n[1] + 5.0`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `n[0] + 5.0`, "y": `n[1] + 5.0`, "button": 0}, {"type": "text", "text": "!"}]']], form_of[f]]
+for happened in typed.events
+    f = applied[f, happened]
+log['a press on the field and a "!" typed: the name is `f.name`']
+t = first.boxes['loud']
+toggled = gui.show[lory.begin[screen[48, press_at[t[0] + 5.0, t[1] + 5.0]]], form_of[f]]
+for happened in toggled.events
+    f = applied[f, happened]
+log['a press on the toggle: loud is `f.loud`']
+
+--- ---- a chart ----
+
+log['--- a chart']
+
+struct Data [bars, avg, t0, t1]
+
+--- a walk of prices, the same at every run (its steps are sines of the
+--- minute's number)
+fn made[count]
+    t0 = 1735689600000.0
+    ts = []
+    o = []
+    h = []
+    l = []
+    cl = []
+    v = []
+    av = []
+    price = 100.0
+    avg_now = 100.0
+    for i in range[count]
+        x = 0.0 + i
+        step = sin[x * 12.9898] * 0.35 + sin[x * 0.0031] * 0.05
+        opened = price
+        closed = price + step
+        ts = push[ts, t0 + x * 60000.0]
+        o = push[o, opened]
+        cl = push[cl, closed]
+        h = push[h, max[opened, closed] + abs[sin[x * 78.233]] * 0.2]
+        l = push[l, min[opened, closed] - abs[sin[x * 37.719]] * 0.2]
+        v = push[v, 100.0 + abs[sin[x * 4.1414]] * 900.0]
+        avg_now = avg_now + (closed - avg_now) / 60.0
+        av = push[av, avg_now]
+        price = closed
+    Data[plot.bars[ts, o, h, l, cl, v], plot.lines[ts, av], t0, t0 + (count - 1) * 60000.0]
+
+d = made[600]
+log['600 bars held as a pyramid of `len[d.bars]` levels, the top of `len[d.bars[len[d.bars] - 1].t]`']
+c = lory.begin[screen[0, '[]']]
+k = plot.chart[c, 'prices', 24.0, 48.0, 800.0, 600.0, d.t0, d.t1]
+k = plot.timed[k]
+k = plot.fit_bars[k, d.bars]
+k = plot.joined[k, plot.fit_line[k, d.avg]]
+log['the prices fitted: `two[k.y0]` to `two[k.y1]`']
+c = plot.grid[c, k]
+c = plot.volume[c, k, d.bars, 0.2]
+c = plot.candles[c, k, d.bars]
+c = plot.line[c, k, d.avg, lory.hex['#f6c343'], 1.5]
+c = plot.axes[c, k]
+log['the grid, the volume, the candles, the line and the axes: `drawn[c]` vertices']
+ys = plot.ticks[k.y0, k.y1, 5.0]
+labels = []
+step = plot.nice_step[k.y1 - k.y0, 5.0]
+for y in ys
+    labels = push[labels, plot.label_of[y, step]]
+shown_ys = join[labels, ', ']
+log['the price ticks: `shown_ys`']
+xs = plot.x_ticks[k]
+times = []
+for x in xs
+    times = push[times, plot.time_label[x, plot.time_step[k.x1 - k.x0, k.w / 110.0]]]
+shown_xs = join[times, ', ']
+log['the time ticks: `shown_xs`']
+zoomed = plot.chart[lory.begin[screen[16, '[{"type": "wheel", "x": 424, "y": 300, "dx": 0, "dy": -400}]']], 'prices', 24.0, 48.0, 800.0, 600.0, d.t0, d.t1]
+log['the wheel zooms about the pointer: `two[(zoomed.x1 - zoomed.x0) / 60000.0]` minutes shown of `two[(d.t1 - d.t0) / 60000.0]`, the middle at minute `two[((zoomed.x0 + zoomed.x1) / 2.0 - d.t0) / 60000.0]`']
+
+--- ---- a scene ----
+
+log['--- a scene']
+c = lory.begin[screen[0, '[]']]
+c = space.mesh[c, 'ball', space.sphere[1.0, 16]]
+c = space.mesh[c, 'ground', space.ground[6.0, 6.0]]
+c = space.mesh[c, 'box', space.box[1.0, 1.0, 1.0]]
+ball = space.sphere[1.0, 16]
+made_ball = space.made['ball']
+made_cone = space.made['cone']
+log['a sphere of 16 rings is `len[ball.at] / 3` vertices; the ball is made: `made_ball`, and no cone: `made_cone`']
+cam = space.orbit[c, 'view', [0.0, 1.0, -2.0], 7.0]
+at = space.eye_of[cam]
+log['the camera orbits from `two[at[0]]`, `two[at[1]]`, `two[at[2]]`']
+c = space.scene[c, cam, space.daylight[]]
+c = space.draw[c, 'ground', lory.translation[0.0, 0.0, -2.0], space.plain[lory.hex['#4f6b3a']]]
+c = space.draw[c, 'ball', lory.translation[0.0, 1.0, -2.0], space.plain[lory.hex['#3b82f6']]]
+c = space.draw[c, 'box', lory.mul[lory.translation[-2.0, 0.5, -2.0], space.turn_y[0.5]], space.surface[lory.hex['#e8590c'], 0.2, 0.6]]
+names = names_of[lory.batch[c]]
+draws = count_of[names, 'drawArrays']
+deep = 'DEPTH_TEST' in str[lory.batch[c]]
+log['three meshes drawn: `draws` draws, depth tested: `deep`']
+pointed = json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [], "input": [], "pointers": [{"x": 450, "y": 350, "down": false}], "controllers": [], "said": []}']
+r = space.ray[lory.begin[pointed], cam]
+near = space.hit[r, 'ball', lory.translation[0.0, 1.0, -2.0]] gt 0.0
+far = space.hit[r, 'ball', lory.translation[30.0, 1.0, -2.0]]
+log['a ray from the middle of the screen meets the ball: `near`, and not one far to its side: `far`']
+v = space.look_at[[3.0, 4.0, 5.0], [0.0, 0.0, 0.0]]
+x = v[0] * 3.0 + v[4] * 4.0 + v[8] * 5.0 + v[12]
+log['a view looking from (3, 4, 5) puts its eye at the origin: `abs[x] lt 0.000000001`']
+dragged = space.orbit[lory.begin[screen[16, '[{"type": "down", "device": "mouse", "id": "1", "x": 100, "y": 100, "button": 0}]']], 'turned', [0.0, 0.0, 0.0], 5.0]
+moved = space.orbit[lory.begin[screen[32, '[{"type": "move", "device": "mouse", "id": "1", "x": 200, "y": 100}]']], 'turned', [0.0, 0.0, 0.0], 5.0]
+log['a drag to the right turns the orbit: its yaw from `two[dragged.yaw]` to `two[moved.yaw]`']
+
+--- ---- a game ----
+
+log['--- a game']
+c = lory.begin[screen[0, '[]']]
+calls = lory.end[c]
+log['a frame ended: `calls` calls handed to the page (outside a browser, to no one)']
+c = lory.begin[screen[40, '[]']]
+steps = game.steps[c, 'play', 120.0]
+calls = lory.end[c]
+c = lory.begin[screen[60, '[]']]
+again = game.steps[c, 'play', 120.0]
+log['a frame 40 ms after it steps a game at 120 a second `steps` times, one 20 ms later `again` times (what was left carried)']
+log['circles meet: `game.circles_meet[0.0, 0.0, 1.0, 1.5, 0.0, 1.0]`, `game.circles_meet[0.0, 0.0, 1.0, 2.5, 0.0, 1.0]`; boxes: `game.boxes_meet[0.0, 0.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0]`; a circle and a box: `game.circle_meets_box[3.0, 1.0, 0.5, 0.0, 0.0, 2.0, 2.0]`']
+log['10 moved toward 20 at a rate of 2 for a second: `two[game.toward[10.0, 20.0, 2.0, 1.0]]`; 7 clamped to 0..5: `game.clamp[7.0, 0.0, 5.0]`']
+seed[7]
+sparks = game.burst[[], 100.0, 100.0, 40, 200.0, lory.hex['#ffd43b']]
+log['a burst of `len[sparks]` sparks']
+for i in range[30]
+    sparks = game.moved[sparks, 1.0 / 60.0, 400.0]
+log['half a second later `len[sparks]` are left']
+c = game.drawn[c, sparks, 3.0]
+log['drawn as `drawn[c]` vertices']
+c = game.sound[c, 'pick']
+log['a sound asked of the page: `len[c.asks]` call']
