@@ -1,0 +1,1648 @@
+--- Lory's navigation components (docs/components/display.md): what takes
+--- the reader from place to place — app bars, system bars and footers
+--- (with Vuetify's scroll behaviours), bottom navigation, breadcrumbs that
+--- collapse as MUI's do, Semantic UI's menu bar and vertical menu,
+--- navigation buttons, pagination (Vuetify's windows of pages and TOAST
+--- UI's), steppers (Semantic UI's states, Vuetify's linear and editable
+--- steppers, and a vertical stepper) and Radix's toolbar.
+---
+--- Each is a function answering a `gui.Node`. A part the reader can press
+--- is a drawn control of its own id (a pagination's page 3 is `pages:p3`),
+--- which tells its events under its component's id (`pages`): what was
+--- done, the part's words and a number (the page, the step, the index).
+--- None changes what it shows by itself: the program holds the page, the
+--- step, the chosen place, and draws the component anew from them (TOAST
+--- UI's `beforeMove` is so the program's to refuse).
+use bits
+use math
+use memory
+use lory
+use gui
+use display
+
+--- how an app bar stands as the page scrolls (Vuetify's scroll behaviours):
+--- how far down the page is scrolled, whether it went up last, whether it is
+--- at the page's foot, whether it reached it scrolling down, whether the bar
+--- shows, the room it takes at the page's top, how far it is moved up off
+--- it, whether it is collapsed or flat, and its image's opacity
+struct Scrolled [scroll, up, bottom, reached, shown, room, lifted, collapsed, flat, opacity]
+
+--- the breadcrumbs that were opened out (an ellipsis pressed), and those
+--- whose first crumb shown anew is still to take the focus
+struct Crumbs [opened, moving]
+
+--- ---- what navigation's drawn controls share ----
+
+fn _none[]
+    one = [gui.space[0.0]]
+    slice[one, 0, 0]
+
+fn _sep[]
+    char[31]
+
+fn _packed[fields]
+    join[fields, _sep[]]
+
+fn _unpacked[words]
+    split[words, _sep[]]
+
+fn _field[fs, i]
+    if i lt len[fs]
+        return fs[i]
+    ''
+
+fn _flag[on, letter]
+    if on
+        return letter
+    ''
+
+fn _yes[flags, letter]
+    letter in flags
+
+--- a whole number written in words (a sign and digits), read without a
+--- failure, as a painter must answer
+fn _whole[words]
+    n = 0
+    minus = false
+    for ch in split[words, '']
+        if ch eq '-'
+            minus = true
+        else
+            k = 0
+            while k lt 10
+                if ch eq str[k]
+                    n = n * 10 + k
+                k = k + 1
+    if minus
+        return 0 - n
+    n
+
+fn _told[d, id, act, words, num]
+    own = d.id
+    d.id = id
+    d = gui.tell[d, act, words, num]
+    d.id = own
+    d
+
+fn _typed[d, key]
+    key in d.keys
+
+fn _struck[d]
+    d.pressed or _typed[d, 'Enter'] or _typed[d, ' ']
+
+fn _owner[id]
+    parts = split[id, ':']
+    if len[parts] lt 2
+        return id
+    join[slice[parts, 0, len[parts] - 1], ':']
+
+--- `count` whole numbers from `from` on
+fn _run[from, count]
+    out = []
+    i = 0
+    while i lt count
+        out = push[out, from + i]
+        i = i + 1
+    out
+
+fn _joined[a, b]
+    out = a
+    for one in b
+        out = push[out, one]
+    out
+
+--- words drawn with their line centred on `mid`, from `x`
+fn _line[c, x, mid, words, size, color]
+    lory.text[c, x, mid - lory.line_height[c, size] / 2.0, words, size, color]
+
+--- a part's ground as the pointer and the keys find it: lighter under the
+--- pointer, darker held down
+fn _hovered[c, d, r]
+    if d.id ne '' and d.hover
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, lory.fade[d.look.ink, 0.06]]
+    if d.id ne '' and d.down
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, lory.fade[d.look.ink, 0.1]]
+    c
+
+--- the row stood in the middle of a bar `tall` CSS pixels high (gui's
+--- rows take no height of their own): as far down as half the room its
+--- height left the frame before (at first, at the bar's top)
+fn _bar_row[key, row, tall]
+    was = display.ground_box[key][3]
+    top = 0.0
+    if was gt 0.0 and was lt tall
+        top = (tall - was) / 2.0
+    held = gui.column[[gui.space[top], display.grounded[key, row, 'none', 'none']], gap = 0.0]
+    held.tall = tall
+    held
+
+--- ---- app bars, system bars and footers ----
+
+--- an app bar before the page has scrolled
+fn unscrolled[]
+    Scrolled[0.0, false, false, false, true, 0.0, 0.0, false, false, 1.0]
+
+--- how an app bar stands with the page scrolled `top` CSS pixels down (of
+--- a page `page_h` high seen `view_h` at a time), from how it stood the
+--- frame before (`was`; `unscrolled[]` at first), as Vuetify's app bar
+--- does with its `scroll-behavior` (`behaviour`: any of `hide`,
+--- `fully-hide`, `inverted`, `collapse`, `elevate`, `fade-image`, apart by
+--- spaces) and `scroll-threshold` (`threshold`), its content `tall` high
+--- and its extension `extension`:
+---  - hide: scrolled down past the threshold it goes up by its content's
+---    height (its extension stays); scrolled up, or above the threshold, it
+---    shows; at the page's foot, reached going down, it stays hidden; on a
+---    page too short to scroll past the threshold and the bar, it stays
+---  - fully-hide: as hide, all of it, and flat while hidden
+---  - inverted: the other way about — hide: shown only past the threshold,
+---    taking no room; collapse: collapsed until scrolled; elevate: flat
+---    until scrolled; fade-image: its image fading in as it scrolls
+---  - collapse: collapsed once scrolled to the threshold
+---  - elevate: flat at the page's top, raised once scrolled
+---  - fade-image: its image fading out as the page scrolls to the threshold
+fn bar_scrolled[was, top, view_h, page_h, behaviour, threshold = 300.0, tall = 64.0, extension = 0.0]
+    named = split[behaviour, ' ']
+    hide = 'hide' in named
+    fully = 'fully-hide' in named
+    inverted = 'inverted' in named
+    collapse = 'collapse' in named
+    elevate = 'elevate' in named
+    fading = 'fade-image' in named
+    whole = tall + extension
+    s = was
+    enough = page_h - view_h gt threshold + whole
+    if behaviour ne '' and top ne was.scroll
+        prev = was.scroll
+        s.scroll = top
+        s.up = top lt prev
+        at_bottom = top + view_h gte page_h - 5.0
+        if not s.up and at_bottom and top gte threshold and enough
+            s.reached = true
+        jumped = abs[top - prev] gt 100.0
+        up_far = s.up and prev - top gt 1.0
+        if (up_far and not at_bottom) or (jumped and top lt threshold) or top lte 5.0
+            s.reached = false
+        s.bottom = at_bottom
+    current = s.scroll
+    can_hide = hide or fully
+    shown = true
+    if behaviour ne '' and can_hide
+        if inverted
+            shown = current gt threshold
+        else
+            if not enough
+                shown = true
+            else
+                if s.reached
+                    shown = false
+                else
+                    shown = (s.up and not s.bottom) or current lt threshold
+    s.shown = shown
+    ratio = 0.0
+    if threshold gt 0.0
+        ratio = max[0.0, min[1.0, (threshold - current) / threshold]]
+    s.collapsed = false
+    if collapse
+        if inverted
+            s.collapsed = ratio gt 0.0
+        else
+            s.collapsed = ratio eq 0.0
+    s.flat = (fully and not shown) or (elevate and ((inverted and current gt 0.0) or (not inverted and current eq 0.0)))
+    s.opacity = 1.0
+    if fading
+        s.opacity = ratio
+        if inverted
+            s.opacity = 1.0 - ratio
+    room = whole
+    if hide and inverted
+        room = 0.0
+    else
+        if can_hide and current gte threshold and not fully
+            room = tall
+    s.room = room
+    s.lifted = 0.0
+    if not shown
+        s.lifted = room
+        if room eq 0.0
+            s.lifted = whole
+    s
+
+--- a toolbar's height by its density (Vuetify's): 64, `comfortable` 56,
+--- `compact` 48; `prominent` 128
+fn bar_tall[density = '', prominent = false]
+    if prominent
+        return 128.0
+    if density eq 'comfortable'
+        return 56.0
+    if density eq 'compact'
+        return 48.0
+    64.0
+
+--- an app bar (Vuetify's): its navigation icon (`lead`, an icon's name,
+--- pressed: `press` with words `lead`), its title, its controls at its end
+--- (`kids`) and an `extension` row under them; standing as `scrolled`
+--- says (`bar_scrolled`): moved up while hidden, collapsed to its icon and
+--- title, flat or raised, its `image` (an address) under it at the opacity
+--- the page's scroll gives it
+fn app_bar[id, title, kids, scrolled, lead = '', tall = 64.0, image = '', extension = []]
+    start = _none[]
+    if lead ne ''
+        start = push[start, gui.drawn['`id`:lead', 0.0, 40.0, 40.0, _lead_painter, words = _packed[[lead, id]]]]
+    if title ne ''
+        shown_title = title
+        if scrolled.collapsed
+            shown_title = _cut_to[title, 20.0, 112.0 - 64.0]
+        start = push[start, display.big_words[shown_title, 20.0]]
+    top_row = gui.row[start, gap = 12.0, align = 'center']
+    if not scrolled.collapsed
+        top_row = gui.row[[gui.row[start, gap = 12.0, align = 'center'], gui.row[kids, gap = 4.0, align = 'center']], justify = 'between', align = 'center']
+    rows = _none[]
+    rows = push[rows, _bar_row['`id` row', top_row, tall - 16.0]]
+    if len[extension] gt 0 and not scrolled.collapsed
+        rows = push[rows, _bar_row['`id` extension', gui.row[extension, gap = 8.0, align = 'center'], 48.0]]
+    body = gui.column[rows, gap = 0.0, pad = 8.0]
+    if scrolled.collapsed
+        body = gui.row[[gui.sized[gui.column[rows, gap = 0.0, pad = 8.0], 112.0]], gap = 0.0]
+    ground = 'raised'
+    if scrolled.flat
+        ground = 'bar'
+    bar = display.grounded[id, body, ground, 'none']
+    if image ne ''
+        bar = display.grounded_image[id, body, image, scrolled.opacity]
+    if scrolled.lifted gt 0.0
+        bar = gui.moved[bar, 0.0, 0.0 - scrolled.lifted]
+    bar
+
+--- the words cut, an ellipsis after them, to fit `room` CSS pixels
+fn _cut_to[words, size, room]
+    if display.words_wide[words, size] lte room
+        return words
+    chars = split[words, '']
+    k = len[chars]
+    while k gt 0
+        kept = join[slice[chars, 0, k], '']
+        tried = '`kept`…'
+        if display.words_wide[tried, size] lte room
+            return tried
+        k = k - 1
+    '…'
+
+fn _lead_painter[d]
+    fs = _unpacked[d.words]
+    c = d.c
+    c = _hovered[c, d, d.w / 2.0]
+    c = display.draw_icon[c, _field[fs, 0], d.x + 8.0 * d.s, d.y + 8.0 * d.s, d.w - 16.0 * d.s, d.look.ink]
+    d.c = c
+    if _struck[d]
+        return _told[d, _field[fs, 1], 'press', 'lead', 0.0]
+    d
+
+--- a system bar (Vuetify's): a thin bar along the page's top, its
+--- controls (small words, icons) at its end; 24 high, 32 as a window's
+fn system_bar[kids, tall = 24.0, window = false]
+    high = tall
+    if window
+        high = max[tall, 32.0]
+    line = gui.row[kids, gap = 8.0, align = 'center', justify = 'end']
+    display.grounded['system bar', _bar_row['system bar row', line, high], 'bar', 'none']
+
+--- a footer (Vuetify's): a bar along the page's foot holding its controls
+fn footer[kids, key = 'footer']
+    display.grounded[key, gui.row[kids, gap = 12.0, align = 'center', pad = 12.0], 'foot', 'none']
+
+--- ---- bottom navigation ----
+
+--- the index of the place chosen: the place of those words, or the place
+--- at the index the words are (`2`); -1 where none is
+fn place_index[places, chosen]
+    i = 0
+    while i lt len[places]
+        if places[i] eq chosen
+            return i
+        i = i + 1
+    if chosen ne '' and _whole[chosen] gte 0 and _whole[chosen] lt len[places] and str[_whole[chosen]] eq chosen
+        return _whole[chosen]
+    -1
+
+--- how wide each place of a bottom navigation stands: its words and room
+--- for them, 80 to 168 CSS pixels (Vuetify's); `grow`n, an even share of
+--- the bar's width, at most 168
+fn place_wide[words, grow, wide, count]
+    if grow and count gt 0 and wide gt 0.0
+        return min[168.0, wide / count]
+    max[80.0, min[168.0, display.words_wide[words, 12.0] + 32.0]]
+
+--- bottom navigation (Vuetify's): its places along the page's foot, each
+--- an icon (`glyphs`) over its words, the one `chosen` (by its words, or
+--- its index as words) shown so; each is a stop of Tab, and pressing one
+--- (or Enter or space) tells `choose` with its words and index. `mode`
+--- `shift`: only the chosen place shows its words; `grow`: the places
+--- share the bar's width (`wide`, 0: the width it stood at the frame
+--- before), each at most 168; `shown` false: the bar is gone, its room
+--- with it
+fn bottom_nav[id, places, glyphs, chosen, mode = '', grow = false, shown = true, wide = 0.0, tall = 56.0]
+    if not shown
+        return gui.space[0.0]
+    at = place_index[places, chosen]
+    across = wide
+    if across lte 0.0
+        across = display.ground_box[id][2]
+    kids = _none[]
+    i = 0
+    while i lt len[places]
+        w = place_wide[places[i], grow, across, len[places]]
+        flags = join[[_flag[i eq at, 's'], _flag[mode eq 'shift', 'h']], '']
+        kids = push[kids, gui.drawn['`id`:`i`', 0.0, w, tall, _place_painter, words = _packed[[places[i], _field[glyphs, i], flags, str[i]]]]]
+        i = i + 1
+    held = gui.row[kids, gap = 0.0, justify = 'center']
+    display.grounded[id, held, 'foot', 'none']
+
+fn _place_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    glyph = _field[fs, 1]
+    chosen = _yes[_field[fs, 2], 's']
+    shifting = _yes[_field[fs, 2], 'h']
+    index = _whole[_field[fs, 3]]
+    c = d.c
+    display.learned[c]
+    s = d.s
+    c = _hovered[c, d, 8.0 * s]
+    tone = d.look.muted
+    if chosen
+        tone = display.readable[d.look.accent, d.look.panel]
+    mid = d.x + d.w / 2.0
+    size = 24.0 * s
+    icon_y = d.y + d.h / 2.0 - 20.0 * s
+    if shifting and not chosen
+        icon_y = d.y + (d.h - size) / 2.0
+    if chosen
+        c = lory.round_rect[c, mid - 32.0 * s, icon_y - 4.0 * s, 64.0 * s, size + 8.0 * s, (size + 8.0 * s) / 2.0, lory.fade[d.look.accent, 0.16]]
+    c = display.draw_icon[c, glyph, mid - size / 2.0, icon_y, size, tone]
+    if chosen or not shifting
+        c = lory.text_centered[c, mid, d.y + d.h / 2.0 + 14.0 * s, words, 12.0 * s, tone]
+    d.c = c
+    if _struck[d]
+        return _told[d, _owner[d.id], 'choose', words, 0.0 + index]
+    d
+
+--- ---- breadcrumbs ----
+
+fn _no_crumbs[]
+    Crumbs[map['' = false], map['' = false]]
+
+--- the crumbs a trail of `count` shows (MUI's): all of them while there
+--- are no more than `most` (0: no most), or it is `expanded`, or the
+--- first `before` and the last `after` would show them all; otherwise
+--- those, an ellipsis (-1) between them
+fn crumbs_shown[count, most = 8, before = 1, after = 1, expanded = false]
+    if expanded or (most gt 0 and count lte most) or before + after gte count
+        return _run[0, count]
+    out = _run[0, before]
+    out = push[out, -1]
+    _joined[out, _run[count - after, after]]
+
+--- whether the trail of that id was opened out (its ellipsis pressed)
+fn crumbs_open[id]
+    k = recall['lory.navigation.crumbs', _no_crumbs[]]
+    if id in k.opened
+        return k.opened[id]
+    false
+
+--- the trail of that id collapsed again
+fn crumbs_collapse[id]
+    k = recall['lory.navigation.crumbs', _no_crumbs[]]
+    k.opened[id] = false
+    k.moving[id] = false
+    remember['lory.navigation.crumbs', k]
+    id
+
+--- breadcrumbs (Vuetify's, collapsing as MUI's): the trail to the page,
+--- each crumb before the last a link (pressed: `press` with its words and
+--- index), the last the page itself, quiet, set apart (Semantic UI's active
+--- section); between them `divider` words or an icon (`glyph`, an icon's
+--- name). With more than `most`, the middle crumbs go into an ellipsis,
+--- whose press (or Enter) tells `expand` and shows them all, the first of
+--- them taking the focus (as MUI's does)
+fn breadcrumbs[id, crumbs, divider = '/', most = 8, before = 1, after = 1, glyph = '']
+    k = recall['lory.navigation.crumbs', _no_crumbs[]]
+    opened = crumbs_open[id]
+    count = len[crumbs]
+    moving = false
+    if id in k.moving
+        moving = k.moving[id]
+    if opened and moving
+        k.moving[id] = false
+        remember['lory.navigation.crumbs', k]
+        if before lt count
+            gui.focus['`id`:`before`', '']
+    shown = crumbs_shown[count, most, before, after, opened]
+    kids = _none[]
+    i = 0
+    while i lt len[shown]
+        if i gt 0
+            if glyph ne ''
+                kids = push[kids, display.icon[glyph, 16.0, 'muted']]
+            else
+                kids = push[kids, gui.text[divider, 14.0, 'muted']]
+        at = shown[i]
+        if at lt 0
+            kids = push[kids, gui.drawn['`id`:more', 0.0, 28.0, 22.0, _ellipsis_painter, words = id]]
+        else
+            if at eq count - 1
+                kids = push[kids, display.strong[crumbs[at], 14.0]]
+            else
+                kids = push[kids, gui.drawn['`id`:`at`', 0.0 + at, display.words_wide[crumbs[at], 14.0] + 4.0, 22.0, _crumb_painter, words = _packed[[crumbs[at], id]]]]
+        i = i + 1
+    gui.row[kids, gap = 8.0, align = 'center']
+
+fn _crumb_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    c = d.c
+    display.learned[c]
+    s = d.s
+    color = display.readable[d.look.accent, d.look.page]
+    if d.hover
+        color = lory.mix[color, d.look.ink, 0.25]
+    c = _line[c, d.x + 2.0 * s, d.y + d.h / 2.0, words, 14.0 * s, color]
+    if d.hover
+        c = lory.rect[c, d.x + 2.0 * s, d.y + d.h - 3.0 * s, d.w - 4.0 * s, 1.0 * s, color]
+    d.c = c
+    if d.pressed or _typed[d, 'Enter']
+        return _told[d, _field[fs, 1], 'press', words, d.num]
+    d
+
+fn _ellipsis_painter[d]
+    c = d.c
+    s = d.s
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 4.0 * s, d.look.hover]
+    if d.hover
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, 4.0 * s, lory.fade[d.look.ink, 0.08]]
+    k = 0
+    while k lt 3
+        c = lory.circle[c, d.x + d.w / 2.0 + (k - 1) * 6.0 * s, d.y + d.h / 2.0, 1.6 * s, d.look.ink]
+        k = k + 1
+    d.c = c
+    if d.pressed or _typed[d, 'Enter']
+        crumbs = recall['lory.navigation.crumbs', _no_crumbs[]]
+        crumbs.opened[d.words] = true
+        crumbs.moving[d.words] = true
+        remember['lory.navigation.crumbs', crumbs]
+        return _told[d, d.words, 'expand', '', 0.0]
+    d
+
+--- ---- menus (Semantic UI's) ----
+
+--- a menu bar (Semantic UI's menu): its entries along a bar (`vertical`:
+--- one under another), one stop of Tab whose arrows move through them
+--- (Left and Right, Up and Down for a vertical menu; Home and End), round
+--- from the last to the first unless `loop` is false. `stackable`: on a
+--- page narrower than 768 (`wide`) its entries stack as a vertical menu's.
+fn menu_bar[id, kids, vertical = false, loop = true, stackable = false, wide = 0.0]
+    stacked = vertical or (stackable and wide gt 0.0 and wide lt 768.0)
+    along = 'row'
+    entries = kids
+    if stacked
+        along = 'column'
+        entries = _none[]
+        for k in kids
+            one = k
+            if one.tag eq 'drawn'
+                one.wide = 0.0
+            entries = push[entries, one]
+    body = gui.roving[id, entries, along = along, loop = loop, gap = 0.0]
+    if not stacked
+        body = gui.column[[body], gap = 0.0]
+    display.grounded['`id` menu', body, 'field', 'none']
+
+--- an entry of a menu: its words (after an icon, `glyph`), lighter under
+--- the pointer, set apart where it is the `active` one (heavier, on a
+--- tint); pressed (or Enter or space) it tells `press` with its words
+fn menu_entry[id, words, active = false, glyph = '']
+    w = display.words_wide[words, 14.0] + 32.0
+    if glyph ne ''
+        w = w + 24.0
+    gui.drawn[id, 0.0, w, 40.0, _entry_painter, words = _packed[[words, _flag[active, 'a'], glyph]]]
+
+fn _entry_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    active = _yes[_field[fs, 1], 'a']
+    glyph = _field[fs, 2]
+    c = d.c
+    display.learned[c]
+    s = d.s
+    if active
+        c = lory.rect[c, d.x, d.y, d.w, d.h, lory.fade[d.look.ink, 0.1]]
+    c = _hovered[c, d, 0.0]
+    x = d.x + 16.0 * s
+    mid = d.y + d.h / 2.0
+    if glyph ne ''
+        c = display.draw_icon[c, glyph, x, mid - 9.0 * s, 18.0 * s, d.look.ink]
+        x = x + 24.0 * s
+    c = _line[c, x, mid, words, 14.0 * s, d.look.ink]
+    if active
+        c = _line[c, x + 0.6 * s, mid, words, 14.0 * s, d.look.ink]
+    c = lory.rect[c, d.x + d.w - 1.0 * s, d.y + 8.0 * s, 1.0 * s, d.h - 16.0 * s, lory.fade[d.look.edge, 0.6]]
+    d.c = c
+    if _struck[d]
+        return _told[d, d.id, 'press', words, 0.0]
+    d
+
+--- an entry that opens a list of entries under it (Semantic UI's simple
+--- dropdown): gui's dropdown, its list a menu of its own
+fn menu_drop[id, words, entries]
+    gui.dropdown[id, words, [gui.roving['`id`:list', entries, along = 'column', loop = true, gap = 0.0]]]
+
+--- ---- navigation buttons ----
+
+--- a navigation button (Vuetify's, as a rail's, a drawer's or a bottom
+--- navigation's destination): its icon and its words — which it must have,
+--- so where none are given it says its icon's name — the `active` one on
+--- an indicator, a `badge` at its icon's corner (`dot`: a dot; any other
+--- words: a count). `layout`: `stacked` (the icon over the words, a rail's
+--- or a bottom navigation's) or `inline` (beside them, a drawer's, as wide
+--- as its column). Pressed (or Enter or space) it tells `press`.
+fn nav_button[id, words, glyph, active = false, badge = '', layout = 'stacked']
+    said = words
+    if said eq ''
+        said = glyph
+    fields = _packed[[said, glyph, _flag[active, 'a'], badge, layout]]
+    if layout eq 'inline'
+        return gui.drawn[id, 0.0, 0.0, 56.0, _nav_button_painter, words = fields]
+    gui.drawn[id, 0.0, 80.0, 64.0, _nav_button_painter, words = fields]
+
+fn _nav_button_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    glyph = _field[fs, 1]
+    active = _yes[_field[fs, 2], 'a']
+    badge = _field[fs, 3]
+    inline = _field[fs, 4] eq 'inline'
+    c = d.c
+    display.learned[c]
+    s = d.s
+    tone = d.look.muted
+    if active
+        tone = display.readable[d.look.accent, d.look.panel]
+    size = 24.0 * s
+    icon_x = d.x + d.w / 2.0 - size / 2.0
+    icon_y = d.y + 8.0 * s
+    if inline
+        if active
+            c = lory.round_rect[c, d.x, d.y, d.w, d.h, d.h / 2.0, lory.fade[d.look.accent, 0.16]]
+        c = _hovered[c, d, d.h / 2.0]
+        icon_x = d.x + 16.0 * s
+        icon_y = d.y + (d.h - size) / 2.0
+        c = display.draw_icon[c, glyph, icon_x, icon_y, size, tone]
+        c = _line[c, d.x + 56.0 * s, d.y + d.h / 2.0, words, 14.0 * s, tone]
+    else
+        pill_x = d.x + d.w / 2.0 - 28.0 * s
+        if active
+            c = lory.round_rect[c, pill_x, d.y + 4.0 * s, 56.0 * s, 32.0 * s, 16.0 * s, lory.fade[d.look.accent, 0.16]]
+        if d.hover
+            c = lory.round_rect[c, pill_x, d.y + 4.0 * s, 56.0 * s, 32.0 * s, 16.0 * s, lory.fade[d.look.ink, 0.06]]
+        c = display.draw_icon[c, glyph, icon_x, icon_y, size, tone]
+        c = lory.text_centered[c, d.x + d.w / 2.0, d.y + 50.0 * s, words, 12.0 * s, tone]
+    if badge eq 'dot'
+        c = lory.circle[c, icon_x + size - 2.0 * s, icon_y + 2.0 * s, 3.5 * s, d.look.danger]
+    else
+        if badge ne ''
+            bw = max[16.0 * s, lory.measure[c, badge, 11.0 * s] + 8.0 * s]
+            c = lory.round_rect[c, icon_x + size - 8.0 * s, icon_y - 6.0 * s, bw, 16.0 * s, 8.0 * s, d.look.danger]
+            c = lory.text_centered[c, icon_x + size - 8.0 * s + bw / 2.0, icon_y + 2.0 * s, badge, 11.0 * s, display.readable[d.look.on_accent, d.look.danger]]
+    d.c = c
+    if _struck[d]
+        return _told[d, d.id, 'press', words, 0.0]
+    d
+
+--- ---- pagination (Vuetify's) ----
+
+--- the pages a pagination shows with `visible` of them at most (Vuetify's
+--- `total-visible`), 0 standing for an ellipsis: all where there is room,
+--- else the first, the last and those about the page shown
+fn pages_shown[length, page, visible]
+    out = []
+    if length lte 0 or visible lte 0
+        return out
+    if visible eq 1
+        return push[out, page]
+    if length lte visible
+        return _run[1, length]
+    even = visible % 2 eq 0
+    middle = visible / 2
+    left = middle
+    if not even
+        left = middle + 1
+    right = length - middle
+    lean = 0
+    if even
+        lean = 1
+    if left - page gte 0
+        out = _run[1, max[1, visible - 1]]
+        out = push[out, 0]
+        return push[out, length]
+    if page - right gte lean
+        k = visible - 1
+        out = push[push[out, 1], 0]
+        return _joined[out, _run[length - k + 1, k]]
+    k = max[1, visible - 2]
+    from = page - ceil[(0.0 + k) / 2.0] + 1
+    if k eq 1
+        from = page
+    out = push[push[out, 1], 0]
+    out = _joined[out, _run[from, k]]
+    out = push[out, 0]
+    push[out, length]
+
+--- the pages shown where as many show as fit `wide` CSS pixels (Vuetify's
+--- measure: 58 a button, the arrows' two, or four with `first_last`), an
+--- ellipsis that stands for one page shown as that page
+fn pages_fitted[length, page, wide, first_last = false]
+    out = []
+    if length lte 0
+        return out
+    if length lt 3
+        return _run[1, length]
+    controls = 2.0
+    if first_last
+        controls = 4.0
+    q = (wide - 58.0 * controls) / 58.0
+    slots = max[0, floor[round[q * 100.0] / 100.0]]
+    visible = slots
+    items = pages_shown[length, page, visible]
+    while len[items] gt slots
+        visible = visible - 1
+        items = pages_shown[length, page, visible]
+    i = 0
+    while i lt len[items]
+        one = items[i]
+        if one eq 0 and i gt 0 and i + 1 lt len[items]
+            if items[i + 1] eq items[i - 1] + 2
+                one = items[i - 1] + 1
+        out = push[out, one]
+        i = i + 1
+    out
+
+--- the page a pagination shows filled: the page, where it is among those
+--- shown (0 where it is not)
+fn page_current[items, page]
+    if page in items
+        return page
+    0
+
+--- whether a pagination's arrows are set aside, [the one before, the one
+--- after]: before the first page and after the last, both where disabled
+fn arrows_off[length, page, disabled = false]
+    [disabled or page lte 1, disabled or page gte length]
+
+--- pagination (Vuetify's): its arrows and the pages shown (`visible` of
+--- them, or with `visible` 0 as many as fit its width, `wide` or the width
+--- it stood at the frame before), the `page` shown filled; each is a stop
+--- of Tab, and pressing one (or Enter or space on it) tells `page` with
+--- the page it goes to, as Left and Right do on any of them; the arrows
+--- before the first page and after the last are set aside, and all of it
+--- where `disabled`. `first_last` adds arrows to the first and last page.
+fn pagination[id, length, page, visible = 0, wide = 0.0, first_last = false, disabled = false, size = 40.0]
+    items = pages_shown[length, page, visible]
+    if visible lte 0
+        across = wide
+        if across lte 0.0
+            across = display.ground_box[id][2]
+        if across gt 0.0
+            items = pages_fitted[length, page, across, first_last]
+        else
+            items = pages_shown[length, page, 7]
+    off = arrows_off[length, page, disabled]
+    kids = _none[]
+    if first_last
+        kids = push[kids, _page_part['`id`:first', 'first', 1, id, length, page, off[0], size]]
+    kids = push[kids, _page_part['`id`:prev', 'chevron_left', page - 1, id, length, page, off[0], size]]
+    for one in items
+        if one eq 0
+            kids = push[kids, gui.drawn['', 0.0, size, size, _page_painter, words = _packed[['…', '', '', '', '']]]]
+        else
+            kids = push[kids, _page_part['`id`:p`one`', '', one, id, length, page, disabled, size]]
+    kids = push[kids, _page_part['`id`:next', 'chevron_right', page + 1, id, length, page, off[1], size]]
+    if first_last
+        kids = push[kids, _page_part['`id`:last', 'last', length, id, length, page, off[1], size]]
+    row = gui.row[kids, gap = 4.0, align = 'center']
+    display.grounded[id, gui.column[[row], gap = 0.0, align = 'center'], 'none', 'none']
+
+fn _page_part[part, glyph, target, id, length, page, off, size]
+    words = str[target]
+    if glyph ne ''
+        words = ''
+    flags = _flag[glyph eq '' and target eq page, 's']
+    one = gui.drawn[part, 0.0 + target, size, size, _page_painter, lo = 0.0 + length, hi = 0.0 + page, words = _packed[[words, glyph, flags, id, 'page']]]
+    if off
+        return gui.disabled[one]
+    one
+
+fn _page_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    glyph = _field[fs, 1]
+    chosen = _yes[_field[fs, 2], 's']
+    owner = _field[fs, 3]
+    act = _field[fs, 4]
+    c = d.c
+    display.learned[c]
+    s = d.s
+    r = 6.0 * s
+    ink = d.look.ink
+    if chosen
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, d.look.accent]
+        ink = display.readable[d.look.on_accent, d.look.accent]
+    c = _hovered[c, d, r]
+    if glyph ne ''
+        c = display.draw_icon[c, glyph, d.x + d.w / 2.0 - 10.0 * s, d.y + d.h / 2.0 - 10.0 * s, 20.0 * s, ink]
+    else
+        c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, words, 14.0 * s, ink]
+    d.c = c
+    if d.id eq '' or owner eq ''
+        return d
+    if _struck[d]
+        return _told[d, owner, act, '', d.num]
+    length = d.lo
+    page = d.hi
+    if _typed[d, 'ArrowLeft'] and page gt 1.0
+        return _told[d, owner, act, '', page - 1.0]
+    if _typed[d, 'ArrowRight'] and page lt length
+        return _told[d, owner, act, '', page + 1.0]
+    d
+
+--- ---- pagination (TOAST UI's) ----
+
+--- the last page of `total` items `per` page (1 where there are none)
+fn last_page[total, per]
+    if per lte 0
+        return 1
+    k = ceil[(0.0 + total) / per]
+    if k lte 0
+        return 1
+    k
+
+--- the window of pages a page stands in (TOAST UI's): its index, or with
+--- `centered`, its first page
+fn _window_of[page, total, per, visible, centered]
+    if centered
+        at = max[page - visible / 2, 1]
+        return min[at, last_page[total, per] - visible + 1]
+    ceil[(0.0 + page) / visible]
+
+--- the first and last page shown about a page
+fn _edges_of[page, total, per, visible, centered]
+    last = last_page[total, per]
+    if centered
+        left = max[page - visible / 2, 1]
+        right = left + visible - 1
+        if right gt last
+            left = max[last - visible + 1, 1]
+            right = last
+        return [left, right]
+    at = _window_of[page, total, per, visible, centered]
+    [(at - 1) * visible + 1, min[at * visible, last]]
+
+--- TOAST UI's buttons in order, each in words: `first`, `prev`, `more_prev`
+--- (the window before), the pages (`[5]` the page shown), `more_next`,
+--- `next`, `last`, each moving arrow `_off` where it cannot be pressed
+fn page_buttons[total, per, page, visible = 10, centered = false]
+    last = last_page[total, per]
+    at = _window_of[page, total, per, visible, centered]
+    last_at = _window_of[last, total, per, visible, centered]
+    edges = _edges_of[page, total, per, visible, centered]
+    out = slice[[''], 0, 0]
+    out = push[out, _off_unless['first', page gt 1]]
+    out = push[out, _off_unless['prev', page gt 1]]
+    if at gt 1
+        out = push[out, 'more_prev']
+    i = edges[0]
+    while i lte edges[1]
+        if i eq page
+            out = push[out, '[`i`]']
+        else
+            out = push[out, str[i]]
+        i = i + 1
+    if at lt last_at
+        out = push[out, 'more_next']
+    out = push[out, _off_unless['next', page lt last]]
+    push[out, _off_unless['last', page lt last]]
+
+fn _off_unless[words, on]
+    if on
+        return words
+    '`words`_off'
+
+--- the page TOAST UI's "more" button on that `side` (`prev`, `next`) moves
+--- to: the window before or after (-1 where there is none)
+fn page_more[total, per, page, side, visible = 10, centered = false]
+    last = last_page[total, per]
+    at = _window_of[page, total, per, visible, centered]
+    if side eq 'prev'
+        if at lte 1
+            return -1
+        if centered
+            return min[max[at - 1, 1], last]
+        return min[max[(at - 1) * visible, 1], last]
+    if at gte _window_of[last, total, per, visible, centered]
+        return -1
+    if centered
+        return min[max[at + visible, 1], last]
+    min[max[at * visible + 1, 1], last]
+
+--- pagination as TOAST UI's: its first, previous, "more", page, next and
+--- last buttons (`page_buttons`), each a stop of Tab; pressing one (or
+--- Enter or space) tells `move` with the page it goes to, which the program
+--- takes or refuses (TOAST UI's `beforeMove`)
+fn toast_pages[id, total, per, page, visible = 10, centered = false]
+    last = last_page[total, per]
+    kids = _none[]
+    for one in page_buttons[total, per, page, visible, centered]
+        if one eq 'first' or one eq 'first_off'
+            kids = push[kids, _toast_part['`id`:first', 'first', 1, id, one eq 'first_off']]
+        if one eq 'prev' or one eq 'prev_off'
+            kids = push[kids, _toast_part['`id`:prev', 'chevron_left', page - 1, id, one eq 'prev_off']]
+        if one eq 'more_prev'
+            kids = push[kids, _toast_part['`id`:more_prev', 'dots-horizontal', page_more[total, per, page, 'prev', visible, centered], id, false]]
+        if one eq 'more_next'
+            kids = push[kids, _toast_part['`id`:more_next', 'dots-horizontal', page_more[total, per, page, 'next', visible, centered], id, false]]
+        if one eq 'next' or one eq 'next_off'
+            kids = push[kids, _toast_part['`id`:next', 'chevron_right', page + 1, id, one eq 'next_off']]
+        if one eq 'last' or one eq 'last_off'
+            kids = push[kids, _toast_part['`id`:last', 'last', last, id, one eq 'last_off']]
+        if starts[one, '[']
+            kids = push[kids, gui.drawn['`id`:p`page`', 0.0 + page, 32.0, 32.0, _page_painter, words = _packed[[str[page], '', 's', id, 'move']]]]
+        else
+            if _whole[one] gt 0
+                kids = push[kids, gui.drawn['`id`:p`one`', 0.0 + _whole[one], 32.0, 32.0, _page_painter, words = _packed[[one, '', '', id, 'move']]]]
+    gui.row[kids, gap = 2.0, align = 'center']
+
+fn _toast_part[part, glyph, target, id, off]
+    one = gui.drawn[part, 0.0 + target, 32.0, 32.0, _page_painter, words = _packed[['', glyph, '', id, 'move']]]
+    if off
+        return gui.disabled[one]
+    one
+
+--- ---- steppers ----
+
+--- whether step `i` is among `steps` (read by their words: a list of
+--- steps left out is an empty list whose kind the compiled program takes
+--- to be words)
+fn _among[i, steps]
+    for k in steps
+        if str[k] eq str[i]
+            return true
+    false
+
+--- how a step stands: `error` (among `errors`), `complete` (among
+--- `completed`), `active` (the step shown), `disabled` (among those set
+--- aside), or `idle`
+fn step_state[i, active, completed, errors = [], disabled = []]
+    if _among[i, errors]
+        return 'error'
+    if _among[i, completed]
+        return 'complete'
+    if i eq active
+        return 'active'
+    if _among[i, disabled]
+        return 'disabled'
+    'idle'
+
+--- whether a step may be pressed (Vuetify's: only an `editable` one, never
+--- one set aside); `linear`: only up to the first step not complete
+fn step_pressable[i, active, completed, editable = true, linear = true, disabled = []]
+    if _among[i, disabled] or not editable
+        return false
+    if not linear
+        return true
+    first_open = 0
+    while _among[first_open, completed]
+        first_open = first_open + 1
+    i lte max[first_open, active]
+
+--- a stepper (Semantic UI's steps, Vuetify's stepper): its steps along a
+--- line, each a numbered disc (a tick once complete, a pencil where it is
+--- the active and editable one, a mark where it has an error) and its
+--- title and subtitle; the `active` step set apart, `completed`, `errors`
+--- and `disabled` steps shown so. A step that may be pressed
+--- (`step_pressable`: `editable`, and with `linear` only up to the first
+--- not complete) is a stop of Tab, and pressing it (or Enter or space)
+--- tells `step` with its index. `mobile` hides the titles, as Vuetify's
+--- does; `vertical` lays the steps one under another.
+fn stepper[id, titles, active, completed = [], subtitles = [], errors = [], disabled = [], editable = true, linear = true, mobile = false, vertical = false]
+    kids = _none[]
+    i = 0
+    while i lt len[titles]
+        if i gt 0 and not vertical
+            kids = push[kids, gui.drawn['', 0.0, 32.0, 32.0, _step_line_painter]]
+        kids = push[kids, _step_part[id, i, titles[i], _subtitle_of[subtitles, i], step_state[i, active, completed, errors, disabled], step_pressable[i, active, completed, editable, linear, disabled], i eq active and editable, mobile]]
+        i = i + 1
+    if vertical
+        return gui.column[kids, gap = 4.0]
+    gui.row[kids, gap = 8.0, align = 'center']
+
+fn _subtitle_of[subtitles, i]
+    if i lt len[subtitles]
+        return subtitles[i]
+    ''
+
+fn _step_part[id, i, title, subtitle, state, pressable, editing, mobile]
+    shown_title = title
+    shown_sub = subtitle
+    if mobile
+        shown_title = ''
+        shown_sub = ''
+    w = 32.0
+    if shown_title ne ''
+        w = w + 12.0 + max[display.words_wide[shown_title, 14.0], display.words_wide[shown_sub, 12.0]]
+    part = ''
+    if pressable
+        part = '`id`:`i`'
+    fields = _packed[[shown_title, shown_sub, state, _flag[editing, 'e'], id, str[i + 1]]]
+    gui.drawn[part, 0.0 + i, w + 8.0, 44.0, _step_painter, words = fields]
+
+fn _step_painter[d]
+    fs = _unpacked[d.words]
+    title = _field[fs, 0]
+    subtitle = _field[fs, 1]
+    state = _field[fs, 2]
+    editing = _yes[_field[fs, 3], 'e']
+    owner = _field[fs, 4]
+    number = _field[fs, 5]
+    c = d.c
+    display.learned[c]
+    s = d.s
+    c = _hovered[c, d, 8.0 * s]
+    cx = d.x + 4.0 * s + 16.0 * s
+    cy = d.y + d.h / 2.0
+    disc = d.look.hover
+    ink = d.look.ink
+    if state eq 'active' or state eq 'complete'
+        disc = d.look.accent
+        ink = display.readable[d.look.on_accent, d.look.accent]
+    if state eq 'error'
+        disc = d.look.danger
+        ink = display.readable[d.look.on_accent, d.look.danger]
+    c = lory.circle[c, cx, cy, 12.0 * s, disc]
+    glyph = ''
+    if state eq 'complete'
+        glyph = 'check'
+    if editing and state eq 'active'
+        glyph = 'edit'
+    if state eq 'error'
+        glyph = 'error'
+    if glyph ne ''
+        c = display.draw_icon[c, glyph, cx - 8.0 * s, cy - 8.0 * s, 16.0 * s, ink]
+    else
+        c = lory.text_centered[c, cx, cy, number, 12.0 * s, ink]
+    words_ink = d.look.ink
+    if state eq 'disabled' or state eq 'idle'
+        words_ink = d.look.muted
+    if state eq 'error'
+        words_ink = display.readable[d.look.danger, d.look.page]
+    if title ne ''
+        x = cx + 20.0 * s
+        if subtitle ne ''
+            c = _line[c, x, cy - 7.0 * s, title, 14.0 * s, words_ink]
+            c = _line[c, x, cy + 9.0 * s, subtitle, 12.0 * s, d.look.muted]
+        else
+            c = _line[c, x, cy, title, 14.0 * s, words_ink]
+        if state eq 'active'
+            c = _line[c, x + 0.6 * s, cy - 7.0 * _flag_num[subtitle ne ''] * s, title, 14.0 * s, words_ink]
+    d.c = c
+    if d.id ne '' and _struck[d]
+        return _told[d, owner, 'step', title, d.num]
+    d
+
+fn _flag_num[on]
+    if on
+        return 1.0
+    0.0
+
+fn _step_line_painter[d]
+    c = d.c
+    c = lory.rect[c, d.x, d.y + d.h / 2.0, d.w, 1.0 * d.s, d.look.edge]
+    d.c = c
+    d
+
+--- the stepper's arrows (Vuetify's actions): back and on, telling `step`
+--- with the step before or after; back set aside at the first step, on at
+--- the last
+fn step_actions[id, active, count, back = 'Back', on = 'Continue']
+    kids = _none[]
+    kids = push[kids, _step_button['`id`:back', back, active - 1, id, active lte 0, false]]
+    kids = push[kids, _step_button['`id`:on', on, active + 1, id, active gte count - 1, true]]
+    gui.row[kids, gap = 8.0, justify = 'between']
+
+fn _step_button[part, words, target, id, off, filled]
+    one = gui.drawn[part, 0.0 + target, display.words_wide[words, 14.0] + 32.0, 36.0, _step_button_painter, words = _packed[[words, id, _flag[filled, 'f']]]]
+    if off
+        return gui.disabled[one]
+    one
+
+fn _step_button_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    owner = _field[fs, 1]
+    filled = _yes[_field[fs, 2], 'f']
+    c = d.c
+    display.learned[c]
+    s = d.s
+    ink = display.readable[d.look.accent, d.look.panel]
+    if filled
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, 6.0 * s, lory.mix[d.look.panel, d.look.accent, 0.2]]
+        ink = display.readable[lory.mix[d.look.accent, d.look.ink, 0.3], lory.mix[d.look.panel, d.look.accent, 0.2]]
+    c = _hovered[c, d, 6.0 * s]
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, words, 14.0 * s, ink]
+    d.c = c
+    if _struck[d]
+        return _told[d, owner, 'step', words, d.num]
+    d
+
+--- a vertical stepper (Vuetify's, on expansion panels): each step a panel
+--- whose header is its disc and title, the active one open on its
+--- controls (`bodies`, one a step) and its arrows (`step_actions`); a
+--- header that may be pressed tells `step` with its index
+fn stepper_vertical[id, titles, active, bodies, completed = [], errors = [], editable = true, linear = true]
+    panels = _none[]
+    i = 0
+    while i lt len[titles]
+        header = _step_part[id, i, titles[i], '', step_state[i, active, completed, errors], step_pressable[i, active, completed, editable, linear], i eq active and editable, false]
+        held = _none[]
+        held = push[held, header]
+        if i eq active
+            inside = _none[]
+            if i lt len[bodies]
+                inside = push[inside, bodies[i]]
+            inside = push[inside, step_actions[id, active, len[titles]]]
+            held = push[held, gui.column[inside, gap = 12.0, pad = 12.0]]
+        panels = push[panels, display.grounded['`id` panel `i`', gui.column[held, gap = 0.0, pad = 4.0], 'field', 'none']]
+        i = i + 1
+    gui.column[panels, gap = 8.0]
+
+--- ---- toolbars (Radix's) ----
+
+--- a toolbar (Radix's, at Vuetify's heights): its controls along it, one
+--- stop of Tab (it enters at the first, or the one last left), the arrows
+--- along it moving through them (Left and Right, or Up and Down where it
+--- is `vertical`; Home and End to the first and the last), round from the
+--- last to the first unless `loop` is false; Enter or space presses the
+--- one the focus is on. A `title` before them; `density` and `prominent`
+--- set its height (`bar_tall`); `collapsed`: only its first control, on a
+--- narrow bar; `flat`: no shadow; `extension`: a row under it.
+fn toolbar[id, items, title = '', density = '', prominent = false, collapsed = false, flat = false, loop = true, vertical = false, extension = []]
+    tall = bar_tall[density, prominent]
+    along = 'row'
+    if vertical
+        along = 'column'
+    held = items
+    if collapsed and len[items] gt 0
+        held = push[_none[], items[0]]
+    tools = gui.roving[id, held, along = along, loop = loop, gap = 4.0]
+    if vertical
+        return display.grounded['`id` bar', gui.column[[tools], gap = 0.0, pad = 4.0], 'field', 'none']
+    kids = _none[]
+    if title ne ''
+        kids = push[kids, display.big_words[title, 18.0]]
+    kids = push[kids, tools]
+    line = gui.row[kids, gap = 16.0, align = 'center', pad = 8.0]
+    rows = _none[]
+    rows = push[rows, _bar_row['`id` line', line, tall]]
+    if len[extension] gt 0 and not collapsed
+        rows = push[rows, _bar_row['`id` extension', gui.row[extension, gap = 8.0, align = 'center', pad = 8.0], 48.0]]
+    body = gui.column[rows, gap = 0.0]
+    ground = 'raised'
+    if flat
+        ground = 'bar'
+    if collapsed
+        return display.grounded['`id` bar', gui.row[[gui.sized[body, 112.0]], gap = 0.0], ground, 'none']
+    display.grounded['`id` bar', body, ground, 'none']
+
+--- a toolbar's button: its icon (`glyph`) or its words; pressed (or Enter
+--- or space) it tells `press` with its words
+fn tool_button[id, words = '', glyph = '']
+    w = 36.0
+    if glyph eq ''
+        w = display.words_wide[words, 14.0] + 24.0
+    gui.drawn[id, 0.0, w, 36.0, _tool_painter, words = _packed[[words, glyph, '', id, 'press']]]
+
+--- a toolbar's toggle (Radix's toggle item): pressed in or not (`on`),
+--- shown so; pressed it tells `toggle` with 1 for in, 0 for out
+fn tool_toggle[id, words, on, glyph = '']
+    w = 36.0
+    if glyph eq ''
+        w = display.words_wide[words, 14.0] + 24.0
+    gui.drawn[id, 0.0, w, 36.0, _tool_painter, words = _packed[[words, glyph, _flag[on, 's'], id, 'toggle']]]
+
+--- a toolbar's group of toggles (Radix's toggle group): one of them in at
+--- most, or many (`multiple`), those in `chosen` pressed in; each a stop
+--- of the toolbar's arrows; pressing one tells `choose` under the group's
+--- id with what is chosen then (a choice a line) and its index
+fn tool_toggles[id, choices, chosen, multiple = false, glyphs = []]
+    kids = _none[]
+    i = 0
+    while i lt len[choices]
+        one = choices[i]
+        after = join[display.chips_chosen[chosen, one, multiple], '\n']
+        glyph = ''
+        if i lt len[glyphs]
+            glyph = glyphs[i]
+        w = 36.0
+        if glyph eq ''
+            w = display.words_wide[one, 14.0] + 24.0
+        kids = push[kids, gui.drawn['`id`:`i`', 0.0 + i, w, 36.0, _tool_painter, words = _packed[[one, glyph, _flag[one in chosen, 's'], id, 'choose', after]]]]
+        i = i + 1
+    gui.row[kids, gap = 2.0, align = 'center']
+
+--- a toolbar's separator: a line across it
+fn tool_separator[vertical = false]
+    if vertical
+        return gui.drawn['', 0.0, 24.0, 9.0, _separator_painter, words = 'v']
+    gui.drawn['', 0.0, 9.0, 24.0, _separator_painter]
+
+fn _separator_painter[d]
+    c = d.c
+    s = d.s
+    if d.words eq 'v'
+        c = lory.rect[c, d.x, d.y + d.h / 2.0, d.w, 1.0 * s, d.look.edge]
+    else
+        c = lory.rect[c, d.x + d.w / 2.0, d.y, 1.0 * s, d.h, d.look.edge]
+    d.c = c
+    d
+
+--- a toolbar's link: words that tell `press`, underlined under the pointer
+fn tool_link[id, words]
+    display.link[id, words, 14.0, 'hover']
+
+fn _tool_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    glyph = _field[fs, 1]
+    on = _yes[_field[fs, 2], 's']
+    owner = _field[fs, 3]
+    act = _field[fs, 4]
+    after = _field[fs, 5]
+    c = d.c
+    display.learned[c]
+    s = d.s
+    r = 6.0 * s
+    ink = d.look.ink
+    if on
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, lory.mix[d.look.panel, d.look.accent, 0.24]]
+        ink = display.readable[lory.mix[d.look.accent, d.look.ink, 0.3], lory.mix[d.look.panel, d.look.accent, 0.24]]
+    c = _hovered[c, d, r]
+    if glyph ne ''
+        c = display.draw_icon[c, glyph, d.x + d.w / 2.0 - 10.0 * s, d.y + d.h / 2.0 - 10.0 * s, 20.0 * s, ink]
+    else
+        c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, words, 14.0 * s, ink]
+    d.c = c
+    if not _struck[d]
+        return d
+    if act eq 'toggle'
+        flipped = 1.0
+        if on
+            flipped = 0.0
+        return _told[d, owner, 'toggle', words, flipped]
+    if act eq 'choose'
+        return _told[d, owner, 'choose', after, d.num]
+    _told[d, owner, act, words, 0.0]
+
+--- ---- tests: frames as a page hands them ----
+
+fn _frame_t[t, given, pointers]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": `pointers`, "controllers": [], "said": []}']]
+
+fn _quiet[]
+    _frame_t[0, '[]', '[]']
+
+fn _away[]
+    _frame_t[0, _press[899.0, 699.0], '[]']
+
+fn _press[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+--- a press at the middle of the box of that id in the frame shown before
+fn _press_on[shown, id]
+    b = shown.boxes[id]
+    _frame_t[0, _press[b[0] + b[2] / 2.0, b[1] + b[3] / 2.0], '[]']
+
+fn _key[name, held_shift]
+    _frame_t[0, '[{"type": "key", "key": "`name`", "code": "`name`", "shift": `held_shift`}]', '[]']
+
+fn _in_headset[t, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": `t`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']]
+
+fn _ray_press[]
+    '[{"type": "down", "device": "ray", "id": "right", "hand": "right"}, {"type": "up", "device": "ray", "id": "right", "hand": "right"}]'
+
+fn _shown[c, tree]
+    gui.show_at[c, tree, 24.0, 24.0, 852.0, gui.dark[]]
+
+fn _fresh[]
+    for name in ['lory.navigation.crumbs', 'lory.display.letters', 'lory.display.lettered', 'lory.display.grounds', 'lory.gui']
+        forget[name]
+    true
+
+fn _event_of[shown, id, act]
+    for one in shown.events
+        if one.id eq id and one.act eq act
+            return one
+    gui.Event['', '', '', 0.0]
+
+fn _has_event[shown, id, act]
+    _event_of[shown, id, act].act eq act
+
+--- whether words of those letters were drawn (with no atlas, Lory keeps
+--- each letter it was asked to draw as missing)
+fn _drew[shown, letter]
+    letter in shown.canvas.missing
+
+--- Vuetify's windows of pages (4.3.1's own answers; tests/display holds
+--- them all)
+test pages_shown_and_fitted_are_vuetifys[]
+    pages_shown[7, 1, 5] eq [1, 2, 3, 4, 0, 7]
+    pages_shown[8, 3, 7] eq [1, 2, 3, 4, 5, 6, 0, 8]
+    pages_shown[13, 9, 4] eq [1, 0, 9, 10, 0, 13]
+    pages_shown[20, 18, 5] eq [1, 0, 17, 18, 19, 20]
+    pages_shown[20, 18, 10] eq [1, 0, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    pages_shown[50, 25, 7] eq [1, 0, 23, 24, 25, 26, 27, 0, 50]
+    pages_shown[4, 3, 8] eq [1, 2, 3, 4]
+    pages_shown[9, 4, 1] eq [4]
+    len[pages_shown[20, 18, 0]] eq 0
+    pages_fitted[5, 1, 290.0] eq [1, 0, 5]
+    pages_fitted[20, 1, 400.0] eq [1, 2, 0, 20]
+    pages_fitted[50, 1, 500.0] eq [1, 2, 3, 4, 0, 50]
+    len[pages_fitted[50, 1, 150.0]] eq 0
+    pages_fitted[2, 1, 150.0] eq [1, 2]
+    pages_fitted[10, 1, 800.0] eq [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+--- TOAST UI's buttons and where its "more" buttons go (3.4.1's own)
+test toast_uis_buttons_and_more_buttons[]
+    page_buttons[0, 10, 1, 1] eq ['first_off', 'prev_off', '[1]', 'next_off', 'last_off']
+    page_buttons[100, 7, 11, 2] eq ['first', 'prev', 'more_prev', '[11]', '12', 'more_next', 'next', 'last']
+    page_more[100, 7, 11, 'prev', 2] eq 10
+    page_more[100, 7, 11, 'next', 2] eq 13
+    page_buttons[101, 7, 6, 3, true] eq ['first', 'prev', 'more_prev', '5', '[6]', '7', 'more_next', 'next', 'last']
+    page_more[101, 7, 6, 'prev', 3, true] eq 4
+    page_more[101, 7, 6, 'next', 3, true] eq 8
+    page_more[95, 10, 1, 'prev', 10] eq -1
+    page_buttons[95, 7, 5, 10, true] eq ['first', 'prev', '1', '2', '3', '4', '[5]', '6', '7', '8', '9', '10', 'more_next', 'next', 'last']
+    last_page[0, 10] eq 1
+    last_page[95, 10] eq 10
+    last_page[101, 10] eq 11
+
+--- MUI's collapsing (9.5.0's own: tests/display holds them all)
+test crumbs_collapse_as_muis[]
+    crumbs_shown[6, 4, 3, 2] eq [0, 1, 2, -1, 4, 5]
+    crumbs_shown[9, 2, 2, 2] eq [0, 1, -1, 7, 8]
+    crumbs_shown[10, 5, 0, 0] eq [-1]
+    crumbs_shown[2, 4, 3, 0] eq [0, 1]
+    crumbs_shown[8, 0, 1, 0] eq [0, -1]
+    crumbs_shown[9] eq [0, -1, 8]
+    crumbs_shown[9, 8, 1, 1, true] eq [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    len[crumbs_shown[0, 0, 0, 0]] eq 0
+
+fn _trail[]
+    gui.column[[breadcrumbs['trail', ['Home', 'Docs', 'Guides', 'Lory', 'Display'], '/', 3]]]
+
+--- the crumbs before the last are links, the last is the page itself; the
+--- ellipsis opens the trail out and its first crumb shown anew takes the
+--- focus
+test a_trail_links_its_crumbs_and_opens_out_by_its_ellipsis[]
+    _fresh[]
+    laid = _shown[_away[], _trail[]]
+    'trail:0' in laid.boxes and 'trail:more' in laid.boxes
+    not ('trail:4' in laid.boxes)
+    not ('trail:1' in laid.boxes)
+    home = _event_of[_shown[_press_on[laid, 'trail:0'], _trail[]], 'trail', 'press']
+    home.words eq 'Home'
+    home.num eq 0.0
+    _has_event[_shown[_press_on[laid, 'trail:more'], _trail[]], 'trail', 'expand']
+    crumbs_open['trail']
+    opened = _shown[_quiet[], _trail[]]
+    'trail:1' in opened.boxes and 'trail:3' in opened.boxes
+    not ('trail:more' in opened.boxes)
+    docs = _event_of[_shown[_key['Enter', false], _trail[]], 'trail', 'press']
+    docs.words eq 'Docs'
+    docs.num eq 1.0
+    crumbs_collapse['trail']
+    not crumbs_open['trail']
+    not ('trail:1' in _shown[_quiet[], _trail[]].boxes)
+    --- (an icon between them is drawn where words would be)
+    'path:0' in _shown[_quiet[], gui.column[[breadcrumbs['path', ['A', 'B'], glyph = 'chevron_right']]]].boxes
+
+fn _tools[loop, vertical]
+    tools = [tool_button['cut', 'Cut'], tool_button['copy', '', 'file'], tool_separator[vertical], tool_toggle['bold', 'Bold', false, 'bold'], tool_link['help', 'Help']]
+    gui.column[[gui.button['before', 'Before'], toolbar['tools', tools, 'Edit', loop = loop, vertical = vertical], gui.button['after', 'After']]]
+
+--- Radix's toolbar: one stop of Tab that enters at its first control (and
+--- comes back to the one left), Left and Right moving round it (not past
+--- its ends where it does not loop), Home and End, and Enter or space
+--- pressing the one the focus is on
+test a_toolbars_keys_move_round_it_and_press_its_controls[]
+    _fresh[]
+    tree = _tools[true, false]
+    _shown[_away[], tree]
+    _shown[_key['Tab', false], tree]
+    entered = _shown[_key['Tab', false], tree]
+    len[entered.events] eq 0
+    _event_of[_shown[_key['ArrowRight', false], tree], 'tools', 'rove'].words eq 'copy'
+    _event_of[_shown[_key['ArrowRight', false], tree], 'tools', 'rove'].words eq 'bold'
+    _event_of[_shown[_key['ArrowRight', false], tree], 'tools', 'rove'].words eq 'help'
+    _event_of[_shown[_key['ArrowRight', false], tree], 'tools', 'rove'].words eq 'cut'
+    _event_of[_shown[_key['ArrowLeft', false], tree], 'tools', 'rove'].words eq 'help'
+    _event_of[_shown[_key['Enter', false], tree], 'help', 'press'].words eq 'Help'
+    _event_of[_shown[_key['Home', false], tree], 'tools', 'rove'].words eq 'cut'
+    _event_of[_shown[_key[' ', false], tree], 'cut', 'press'].words eq 'Cut'
+    len[_shown[_key['ArrowDown', false], tree].events] eq 0
+    _event_of[_shown[_key['End', false], tree], 'tools', 'rove'].words eq 'help'
+    _shown[_key['ArrowLeft', false], tree]
+    toggled = _event_of[_shown[_key[' ', false], tree], 'bold', 'toggle']
+    toggled.num eq 1.0
+    --- (Tab leaves it, Shift-Tab comes back to the control left)
+    len[_shown[_key['Tab', false], tree].events] eq 0
+    _shown[_key['Tab', true], tree]
+    _has_event[_shown[_key['Enter', false], tree], 'bold', 'toggle']
+    --- (one that does not loop stops at its ends)
+    _fresh[]
+    still = _tools[false, false]
+    _shown[_away[], still]
+    _shown[_key['Tab', false], still]
+    _shown[_key['Tab', false], still]
+    len[_shown[_key['ArrowLeft', false], still].events] eq 0
+    _shown[_key['End', false], still]
+    len[_shown[_key['ArrowRight', false], still].events] eq 0
+    --- (a vertical one moves by Up and Down)
+    _fresh[]
+    upright = _tools[true, true]
+    _shown[_away[], upright]
+    _shown[_key['Tab', false], upright]
+    _shown[_key['Tab', false], upright]
+    len[_shown[_key['ArrowRight', false], upright].events] eq 0
+    _event_of[_shown[_key['ArrowDown', false], upright], 'tools', 'rove'].words eq 'copy'
+    _event_of[_shown[_key['ArrowUp', false], upright], 'tools', 'rove'].words eq 'cut'
+    bar_tall[] eq 64.0
+    bar_tall['comfortable'] eq 56.0
+    bar_tall['compact'] eq 48.0
+    bar_tall['', true] eq 128.0
+
+--- a toolbar's toggle group: pressed, a toggle tells what is chosen then,
+--- one or many
+test a_toolbars_toggles_choose_one_or_many[]
+    _fresh[]
+    one = gui.column[[toolbar['fmt', [tool_toggles['align', ['left', 'center', 'right'], ['left']]]]]]
+    laid = _shown[_away[], one]
+    picked = _event_of[_shown[_press_on[laid, 'align:1'], one], 'align', 'choose']
+    picked.words eq 'center'
+    picked.num eq 1.0
+    _event_of[_shown[_press_on[laid, 'align:0'], one], 'align', 'choose'].words eq ''
+    many = gui.column[[toolbar['fmt', [tool_toggles['marks', ['b', 'i', 'u'], ['b'], true]]]]]
+    m = _shown[_away[], many]
+    _event_of[_shown[_press_on[m, 'marks:2'], many], 'marks', 'choose'].words eq 'b\nu'
+
+fn _places[chosen, mode, grow, shown]
+    gui.column[[bottom_nav['nav', ['Ωq', 'Жz', 'Ψj'], ['home', 'search', 'user'], chosen, mode, grow, shown]]]
+
+--- bottom navigation: each place a stop of Tab, Enter, space or a press
+--- choosing it; `shift` shows only the chosen place's words, `grow` shares
+--- the bar (each at most 168), and a bar not shown is gone
+test bottom_navigation_is_reached_by_tab_and_chosen_by_its_keys[]
+    _fresh[]
+    place_index[['Ωq', 'Жz', 'Ψj'], 'Жz'] eq 1
+    place_index[['Ωq', 'Жz', 'Ψj'], '2'] eq 2
+    place_index[['Ωq', 'Жz', 'Ψj'], '7'] eq -1
+    place_index[['Ωq', 'Жz', 'Ψj'], 'x'] eq -1
+    tree = _places['Жz', '', false, true]
+    laid = _shown[_away[], tree]
+    laid.boxes['nav:0'][2] eq 80.0
+    laid.boxes['nav:0'][3] eq 56.0
+    _shown[_key['Tab', false], tree]
+    _shown[_key['Tab', false], tree]
+    chose = _event_of[_shown[_key['Enter', false], tree], 'nav', 'choose']
+    chose.words eq 'Жz'
+    chose.num eq 1.0
+    _event_of[_shown[_key[' ', false], tree], 'nav', 'choose'].num eq 1.0
+    _event_of[_shown[_press_on[laid, 'nav:2'], tree], 'nav', 'choose'].words eq 'Ψj'
+    _drew[_shown[_quiet[], tree], 'Ω']
+    shifted = _shown[_quiet[], _places['Жz', 'shift', false, true]]
+    not _drew[shifted, 'Ω']
+    _drew[shifted, 'Ж']
+    grown = _places['1', '', true, true]
+    _shown[_quiet[], grown]
+    _shown[_quiet[], grown].boxes['nav:0'][2] eq 168.0
+    bottom_nav['nav', ['Ωq'], ['home'], 'Ωq', shown = false].tag eq 'space'
+    place_wide['Ωq', true, 300.0, 3] eq 100.0
+
+fn _menu[vertical, stackable, wide]
+    gui.column[[menu_bar['menu', [menu_entry['m:home', 'Home', true], menu_entry['m:news', 'News'], menu_entry['m:about', 'About', false, 'info']], vertical, true, stackable, wide], gui.button['after', 'After']]]
+
+--- Semantic UI's menu: one stop of Tab whose arrows move round its entries
+--- (along it, or down a vertical one), Home and End; Enter or space
+--- presses the entry the focus is on
+test a_menus_arrows_move_round_its_entries[]
+    _fresh[]
+    tree = _menu[false, false, 0.0]
+    laid = _shown[_away[], tree]
+    laid.boxes['m:news'][0] gt laid.boxes['m:home'][0]
+    laid.boxes['m:news'][1] eq laid.boxes['m:home'][1]
+    _shown[_key['Tab', false], tree]
+    _event_of[_shown[_key['ArrowRight', false], tree], 'menu', 'rove'].words eq 'm:news'
+    len[_shown[_key['ArrowDown', false], tree].events] eq 0
+    _event_of[_shown[_key['End', false], tree], 'menu', 'rove'].words eq 'm:about'
+    _event_of[_shown[_key['ArrowRight', false], tree], 'menu', 'rove'].words eq 'm:home'
+    _event_of[_shown[_key['Enter', false], tree], 'm:home', 'press'].words eq 'Home'
+    _event_of[_shown[_press_on[laid, 'm:about'], tree], 'm:about', 'press'].words eq 'About'
+    --- (a vertical menu: its entries one under another, as wide as it)
+    _fresh[]
+    upright = _menu[true, false, 0.0]
+    v = _shown[_away[], upright]
+    v.boxes['m:news'][1] gt v.boxes['m:home'][1]
+    v.boxes['m:home'][2] eq 852.0
+    _shown[_key['Tab', false], upright]
+    _event_of[_shown[_key['ArrowDown', false], upright], 'menu', 'rove'].words eq 'm:news'
+    --- (stackable, on a narrow page it stacks)
+    stacked = _shown[_away[], _menu[false, true, 600.0]]
+    stacked.boxes['m:news'][1] gt stacked.boxes['m:home'][1]
+    wide_page = _shown[_away[], _menu[false, true, 1200.0]]
+    wide_page.boxes['m:news'][1] eq wide_page.boxes['m:home'][1]
+    --- (a dropdown entry is one of its stops)
+    _fresh[]
+    dropping = gui.column[[menu_bar['dm', [menu_entry['d:a', 'A'], menu_drop['d:more', 'More', [menu_entry['d:x', 'X']]]]]]]
+    _shown[_away[], dropping]
+    _shown[_key['Tab', false], dropping]
+    _event_of[_shown[_key['ArrowRight', false], dropping], 'dm', 'rove'].words eq 'd:more'
+
+--- a stepper's states, and the steps that may be pressed: an editable
+--- one, and in a linear stepper only up to the first not complete
+test a_stepper_shows_its_states_and_is_stepped_where_it_may_be[]
+    _fresh[]
+    step_state[0, 1, [0]] eq 'complete'
+    step_state[1, 1, [0]] eq 'active'
+    step_state[2, 1, [0], [2]] eq 'error'
+    step_state[3, 1, [0], [], [3]] eq 'disabled'
+    step_state[4, 1, [0]] eq 'idle'
+    step_pressable[0, 1, [0]]
+    step_pressable[1, 1, [0]]
+    not step_pressable[2, 1, [0]]
+    step_pressable[2, 1, [0], true, false]
+    not step_pressable[0, 1, [0], false]
+    not step_pressable[1, 1, [0], true, false, [1]]
+    tree = gui.column[[stepper['steps', ['Ωart', 'Address', 'Pay'], 1, [0], ['Your things', 'Where to', 'How']]]]
+    laid = _shown[_away[], tree]
+    'steps:0' in laid.boxes and 'steps:1' in laid.boxes
+    not ('steps:2' in laid.boxes)
+    back = _event_of[_shown[_press_on[laid, 'steps:0'], tree], 'steps', 'step']
+    back.num eq 0.0
+    back.words eq 'Ωart'
+    _drew[_shown[_quiet[], tree], 'Ω']
+    --- (on a phone, Vuetify hides the titles)
+    small = gui.column[[stepper['steps', ['Ωart', 'Address', 'Pay'], 1, [0], mobile = true]]]
+    s = _shown[_away[], small]
+    s.boxes['steps:0'][2] eq 40.0
+    not _drew[s, 'Ω']
+    --- (the arrows: back set aside at the first step, on at the last)
+    acts = gui.column[[step_actions['steps', 0, 3]]]
+    a = _shown[_away[], acts]
+    len[_shown[_press_on[a, 'steps:back'], acts].events] eq 0
+    _event_of[_shown[_press_on[a, 'steps:on'], acts], 'steps', 'step'].num eq 1.0
+    last = gui.column[[step_actions['steps', 2, 3]]]
+    l = _shown[_away[], last]
+    len[_shown[_press_on[l, 'steps:on'], last].events] eq 0
+    --- (a vertical stepper opens the active step on its body and arrows)
+    panels = gui.column[[stepper_vertical['v', ['One', 'Two'], 1, [gui.text['first'], gui.text['second']], [0]]]]
+    p = _shown[_away[], panels]
+    'v:on' in p.boxes and 'v:0' in p.boxes
+    p.boxes['v:on'][1] gt p.boxes['v:1'][1]
+    _event_of[_shown[_press_on[p, 'v:back'], panels], 'v', 'step'].num eq 0.0
+
+--- Vuetify's app bar as the page scrolls past its threshold: hidden going
+--- down and shown going up (all of it, fully), never on a page too short;
+--- inverted the other way about; flat at the top (elevate), collapsed past
+--- the threshold, its image fading
+test an_app_bar_hides_collapses_and_elevates_as_the_page_scrolls[]
+    _fresh[]
+    s0 = unscrolled[]
+    s1 = bar_scrolled[s0, 100.0, 700.0, 3000.0, 'hide']
+    s1.shown and s1.room eq 64.0 and s1.lifted eq 0.0
+    s2 = bar_scrolled[s1, 500.0, 700.0, 3000.0, 'hide']
+    not s2.shown
+    s2.lifted eq 64.0
+    s3 = bar_scrolled[s2, 450.0, 700.0, 3000.0, 'hide']
+    s3.shown
+    s4 = bar_scrolled[s3, 2300.0, 700.0, 3000.0, 'hide']
+    s4.reached and not s4.shown
+    s5 = bar_scrolled[s4, 2290.0, 700.0, 3000.0, 'hide']
+    s5.shown and not s5.reached
+    --- (the same frame again changes nothing)
+    bar_scrolled[s2, 500.0, 700.0, 3000.0, 'hide'].shown eq s2.shown
+    --- (a page too short to scroll past the threshold and the bar)
+    short = bar_scrolled[bar_scrolled[s0, 100.0, 700.0, 1000.0, 'hide'], 300.0, 700.0, 1000.0, 'hide']
+    short.shown
+    --- (hide keeps the extension, fully-hide hides it too, flat)
+    e = bar_scrolled[bar_scrolled[s0, 100.0, 700.0, 3000.0, 'hide', 300.0, 64.0, 48.0], 500.0, 700.0, 3000.0, 'hide', 300.0, 64.0, 48.0]
+    e.room eq 64.0 and e.lifted eq 64.0
+    f = bar_scrolled[bar_scrolled[s0, 100.0, 700.0, 3000.0, 'fully-hide', 300.0, 64.0, 48.0], 500.0, 700.0, 3000.0, 'fully-hide', 300.0, 64.0, 48.0]
+    f.room eq 112.0 and f.lifted eq 112.0 and f.flat
+    --- (inverted: shown only past the threshold, taking no room)
+    i1 = bar_scrolled[s0, 100.0, 700.0, 3000.0, 'hide inverted']
+    not i1.shown and i1.room eq 0.0 and i1.lifted eq 64.0
+    i2 = bar_scrolled[i1, 400.0, 700.0, 3000.0, 'hide inverted']
+    i2.shown and i2.lifted eq 0.0
+    --- (elevate, collapse, fade-image, and the other way about)
+    bar_scrolled[s0, 0.0, 700.0, 3000.0, 'elevate'].flat
+    not bar_scrolled[s0, 10.0, 700.0, 3000.0, 'elevate'].flat
+    bar_scrolled[s0, 10.0, 700.0, 3000.0, 'elevate inverted'].flat
+    not bar_scrolled[s0, 10.0, 700.0, 3000.0, 'collapse'].collapsed
+    bar_scrolled[s0, 300.0, 700.0, 3000.0, 'collapse'].collapsed
+    bar_scrolled[s0, 10.0, 700.0, 3000.0, 'collapse inverted'].collapsed
+    abs[bar_scrolled[s0, 150.0, 700.0, 3000.0, 'fade-image'].opacity - 0.5] lt 0.000001
+    abs[bar_scrolled[s0, 60.0, 700.0, 3000.0, 'fade-image inverted'].opacity - 0.2] lt 0.000001
+    plain = bar_scrolled[s0, 900.0, 700.0, 3000.0, '']
+    plain.shown and plain.lifted eq 0.0 and not plain.flat
+    --- (the bar: its icon pressed tells `press`, collapsed it is narrow)
+    bar = gui.column[[app_bar['top', 'Lory', [tool_button['find', '', 'search']], s0, 'menu']]]
+    laid = _shown[_away[], bar]
+    _event_of[_shown[_press_on[laid, 'top:lead'], bar], 'top', 'press'].words eq 'lead'
+    'find' in laid.boxes
+    narrow = gui.column[[app_bar['top', 'A long title', [tool_button['find', '', 'search']], bar_scrolled[s0, 300.0, 700.0, 3000.0, 'collapse'], 'menu']]]
+    n = _shown[_away[], narrow]
+    not ('find' in n.boxes)
+    _shown[_quiet[], narrow]
+    display.ground_box['top'][2] eq 112.0
+    hidden = gui.column[[app_bar['top', 'Lory', [], s2, 'menu'], gui.button['under', 'Under']]]
+    h = _shown[_away[], hidden]
+    h.boxes['top:lead'][1] lt 24.0
+    system = gui.column[[system_bar[[gui.text['12:30', 12.0]]]]]
+    _shown[_quiet[], system]
+    _shown[_quiet[], system]
+    display.ground_box['system bar'][3] eq 24.0
+
+--- Vuetify's pagination: a page, an arrow or a key tells the page it goes
+--- to; the arrows at the ends are set aside, and all of it where disabled
+test a_pagination_tells_the_page_pressed_and_its_keys_step[]
+    _fresh[]
+    tree = gui.column[[pagination['pages', 10, 3, 7]]]
+    laid = _shown[_away[], tree]
+    'pages:p6' in laid.boxes and 'pages:p10' in laid.boxes
+    not ('pages:p7' in laid.boxes)
+    _event_of[_shown[_press_on[laid, 'pages:p5'], tree], 'pages', 'page'].num eq 5.0
+    _event_of[_shown[_key['ArrowLeft', false], tree], 'pages', 'page'].num eq 2.0
+    _event_of[_shown[_key['ArrowRight', false], tree], 'pages', 'page'].num eq 4.0
+    _event_of[_shown[_press_on[laid, 'pages:prev'], tree], 'pages', 'page'].num eq 2.0
+    _event_of[_shown[_press_on[laid, 'pages:next'], tree], 'pages', 'page'].num eq 4.0
+    first = gui.column[[pagination['pages', 10, 1, 7, first_last = true]]]
+    f = _shown[_away[], first]
+    'pages:first' in f.boxes and 'pages:last' in f.boxes
+    len[_shown[_press_on[f, 'pages:prev'], first].events] eq 0
+    _event_of[_shown[_press_on[f, 'pages:last'], first], 'pages', 'page'].num eq 10.0
+    off = gui.column[[pagination['pages', 10, 3, 7, disabled = true]]]
+    o = _shown[_away[], off]
+    len[_shown[_press_on[o, 'pages:p5'], off].events] eq 0
+    fitting = gui.column[[pagination['fit', 20, 1, 0, 400.0]]]
+    fit = _shown[_away[], fitting]
+    'fit:p2' in fit.boxes and 'fit:p20' in fit.boxes
+    not ('fit:p3' in fit.boxes)
+
+--- TOAST UI's: each button tells the page it moves to, for the program to
+--- take (or refuse, as `beforeMove` may)
+test toast_pages_tell_the_move_of_each_button[]
+    _fresh[]
+    tree = gui.column[[toast_pages['tp', 100, 7, 11, 2]]]
+    laid = _shown[_away[], tree]
+    _event_of[_shown[_press_on[laid, 'tp:more_prev'], tree], 'tp', 'move'].num eq 10.0
+    _event_of[_shown[_press_on[laid, 'tp:more_next'], tree], 'tp', 'move'].num eq 13.0
+    _event_of[_shown[_press_on[laid, 'tp:p12'], tree], 'tp', 'move'].num eq 12.0
+    _event_of[_shown[_press_on[laid, 'tp:last'], tree], 'tp', 'move'].num eq 15.0
+    _event_of[_shown[_press_on[laid, 'tp:first'], tree], 'tp', 'move'].num eq 1.0
+    _event_of[_shown[_press_on[laid, 'tp:prev'], tree], 'tp', 'move'].num eq 10.0
+    start = gui.column[[toast_pages['tp', 100, 7, 1, 2]]]
+    s = _shown[_away[], start]
+    len[_shown[_press_on[s, 'tp:first'], start].events] eq 0
+
+--- a navigation button says its icon where it is given no words, and is
+--- pressed; stacked it is a rail's size, inline as wide as its column
+test a_navigation_button_has_words_and_is_pressed[]
+    _fresh[]
+    tree = gui.column[[nav_button['nb', '', 'home', true, '3'], nav_button['nd', 'Drafts', 'file', false, 'dot', 'inline']]]
+    laid = _shown[_away[], tree]
+    laid.boxes['nb'][2] eq 80.0
+    laid.boxes['nb'][3] eq 64.0
+    laid.boxes['nd'][2] eq 852.0
+    _event_of[_shown[_press_on[laid, 'nb'], tree], 'nb', 'press'].words eq 'home'
+    _event_of[_shown[_press_on[laid, 'nd'], tree], 'nd', 'press'].words eq 'Drafts'
+
+--- in a headset, a toolbar's button under the right hand's ray is pressed
+--- by its trigger, as a press presses it on a screen
+test in_a_headset_a_toolbar_button_under_the_ray_is_pressed_by_its_trigger[]
+    _fresh[]
+    frame = _in_headset[0, '[]']
+    abs[lory.pointer_x[frame] - 500.0] lt 1.0
+    tree = toolbar['tools', [tool_button['cut', 'Cut'], tool_button['copy', 'Copy']], flat = true]
+    laid = gui.show_at[frame, tree, 470.0, 240.0, 400.0, gui.dark[]]
+    b = laid.boxes['cut']
+    500.0 gte b[0] and 500.0 lt b[0] + b[2] and 275.0 gte b[1] and 275.0 lt b[1] + b[3]
+    pressed = gui.show_at[_in_headset[16, _ray_press[]], tree, 470.0, 240.0, 400.0, gui.dark[]]
+    _event_of[pressed, 'cut', 'press'].words eq 'Cut'

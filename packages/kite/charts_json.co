@@ -1,0 +1,850 @@
+--- A chart read from a Chart.js configuration (`{type, data, options}`,
+--- parsed JSON): its datasets with their values in each of the forms
+--- Chart.js takes (numbers, `{x, y, r}` points, `[start, end]` floating
+--- bars, labels for a category axis), its axes as Chart.js makes them
+--- (those the options name, then those its datasets need), and the options
+--- of its legend, titles, tooltip, interactions, layout, animation and
+--- decimation. What a configuration leaves out is Chart.js's default.
+---
+--- A parsed object keeps no order, so the axes the options name come in
+--- the order of their ids; Chart.js takes them in the order written. Where
+--- the order matters (two axes on one side), give them with
+--- `charts.with_axis` in the order wanted.
+use math
+use lory
+use charts_model
+
+--- the chart a Chart.js configuration describes, kept under `id` (a
+--- bar chart of nothing where it cannot be read)
+fn chart_from[id, config]
+    ch = _chart_read[id, config]
+    if not ch.ok
+        return charts_model.chart_of[id, 'bar', slice[[''], 0, 0]]
+    ch
+
+fn _chart_read[id, config]
+    kind = _text[config, 'type', 'bar']
+    data = _part[config, 'data']
+    options = _part[config, 'options']
+    labels = _labels_of[data]
+    ch = charts_model.chart_of[id, kind, labels]
+    ch.index_axis = _text[options, 'indexAxis', 'x']
+    ch.axes = _axes_from[kind, ch.index_axis, data, options, labels]
+    ch.sets = _sets_from[ch, data, options]
+    ch = _options_from[ch, options]
+    ch
+
+--- ---- reading JSON ----
+---
+--- A value that is not there (a missing key, a null) is an error, and an
+--- error handed to a function is that function's answer: so each reader
+--- here is given the object and the key, and looks inside itself.
+
+--- the part of an object under `name`, an empty object where it has none
+fn _part[j, name]
+    v = j[name]
+    if not v.ok
+        return _empty[j, '{}']
+    if type[v] ne 'map'
+        return _empty[j, '{}']
+    v
+
+--- an empty object (`{}`) or list (`[]`); `j` should reading one fail
+fn _empty[j, words]
+    made = json[words]
+    if not made.ok
+        return j
+    made
+
+fn _has[j, name]
+    v = j[name]
+    v.ok
+
+--- the kind of what is under `name` ('' where nothing is)
+fn _kind[j, name]
+    v = j[name]
+    if not v.ok
+        return ''
+    type[v]
+
+fn _num[j, name, default]
+    v = j[name]
+    if not v.ok
+        return default
+    if type[v] ne 'int' and type[v] ne 'float'
+        return default
+    0.0 + v
+
+fn _text[j, name, default]
+    v = j[name]
+    if not v.ok
+        return default
+    if type[v] ne 'str'
+        return default
+    '`v`'
+
+fn _flag[j, name, default]
+    v = j[name]
+    if not v.ok
+        return default
+    if type[v] ne 'bool'
+        return default
+    v eq true
+
+--- what is under `name` as text ('' for nothing; a number written as
+--- JavaScript writes it; true or false)
+fn _words[j, name]
+    v = j[name]
+    if not v.ok
+        return ''
+    if type[v] eq 'str'
+        return '`v`'
+    if type[v] eq 'int' or type[v] eq 'float'
+        return str[0.0 + v]
+    if type[v] eq 'bool'
+        if v eq true
+            return 'true'
+        return 'false'
+    ''
+
+--- the `i`th item of a list: as a number (nan for none), as text
+fn _number_item[list, i]
+    v = list[i]
+    if not v.ok
+        return nan
+    if type[v] ne 'int' and type[v] ne 'float'
+        return nan
+    0.0 + v
+
+fn _words_item[list, i]
+    v = list[i]
+    if not v.ok
+        return ''
+    if type[v] eq 'str'
+        return '`v`'
+    if type[v] eq 'int' or type[v] eq 'float'
+        return str[0.0 + v]
+    ''
+
+--- how many items the list under `name` holds (0 where it is none)
+fn _count[j, name]
+    v = j[name]
+    if not v.ok
+        return 0
+    if type[v] ne 'array'
+        return 0
+    len[v]
+
+--- the lines under `name`: a text, or a list of texts
+fn _lines[j, name]
+    out = slice[[''], 0, 0]
+    v = j[name]
+    if not v.ok
+        return out
+    if type[v] eq 'array'
+        i = 0
+        while i lt len[v]
+            out = push[out, _words_item[v, i]]
+            i = i + 1
+        return out
+    push[out, _words[j, name]]
+
+--- a text read as a number, nan where it is none
+fn _parsed[words]
+    n = float[words]
+    if not n.ok
+        return nan
+    0.0 + n
+
+--- a size given as a number or a share ('50%'): the number, and 1 where
+--- it is a share
+fn _dimension[j, name, default, default_share]
+    share = 0.0
+    if default_share
+        share = 1.0
+    k = _kind[j, name]
+    if k eq 'int' or k eq 'float'
+        return [_num[j, name, default], 0.0]
+    if k eq 'str'
+        words = _text[j, name, '']
+        if charts_model.ends_with[words, '%']
+            n = _parsed[slice[words, 0, len[words] - 1]]
+            if n eq n
+                return [n / 100.0, 1.0]
+        n = _parsed[words]
+        if n eq n
+            return [n, 0.0]
+    [default, share]
+
+--- the room about something (`padding`): one number for all sides, or
+--- left, top, right and bottom
+fn _room[j, name, default]
+    k = _kind[j, name]
+    if k eq 'int' or k eq 'float'
+        n = _num[j, name, 0.0]
+        return [n, n, n, n]
+    if k ne 'map'
+        return default
+    v = _part[j, name]
+    x = _num[v, 'x', nan]
+    y = _num[v, 'y', nan]
+    left = _num[v, 'left', default[0]]
+    top = _num[v, 'top', default[1]]
+    right = _num[v, 'right', default[2]]
+    bottom = _num[v, 'bottom', default[3]]
+    if x eq x
+        left = _num[v, 'left', x]
+        right = _num[v, 'right', x]
+    if y eq y
+        top = _num[v, 'top', y]
+        bottom = _num[v, 'bottom', y]
+    [left, top, right, bottom]
+
+--- a font's size and boldness
+fn _font_size[j, default]
+    _num[_part[j, 'font'], 'size', default]
+
+fn _font_bold[j, default]
+    f = _part[j, 'font']
+    if not _has[f, 'weight']
+        return default
+    words = _words[f, 'weight']
+    words eq 'bold' or words eq 'bolder' or words eq '600' or words eq '700' or words eq '800' or words eq '900'
+
+--- one colour, or one each, from CSS text
+fn _colours[j, name]
+    out = charts_model.no_colors[]
+    k = _kind[j, name]
+    if k eq 'array'
+        v = j[name]
+        n = _count[j, name]
+        i = 0
+        while i lt n
+            out = push[out, charts_model.css[_words_item[v, i]]]
+            i = i + 1
+        return out
+    if k eq 'str'
+        return push[out, charts_model.css[_text[j, name, '']]]
+    out
+
+fn _colour[j, name, default]
+    if _kind[j, name] ne 'str'
+        return default
+    charts_model.css[_text[j, name, '']]
+
+--- one number for all, or one each
+fn _numbers[j, name]
+    out = charts_model.no_numbers[]
+    k = _kind[j, name]
+    if k eq 'int' or k eq 'float'
+        return push[out, _num[j, name, 0.0]]
+    if k ne 'array'
+        return out
+    v = j[name]
+    n = _count[j, name]
+    i = 0
+    while i lt n
+        out = push[out, _number_item[v, i]]
+        i = i + 1
+    out
+
+--- ---- labels and datasets ----
+
+fn _labels_of[data]
+    out = slice[[''], 0, 0]
+    if _kind[data, 'labels'] ne 'array'
+        return out
+    v = data['labels']
+    n = _count[data, 'labels']
+    i = 0
+    while i lt n
+        out = push[out, _words_item[v, i]]
+        i = i + 1
+    out
+
+fn _sets_from[ch, data, options]
+    out = slice[[charts_model.dataset['bar', '', charts_model.no_numbers[]]], 0, 0]
+    if _kind[data, 'datasets'] ne 'array'
+        return out
+    v = data['datasets']
+    n = _count[data, 'datasets']
+    i = 0
+    while i lt n
+        out = push[out, _set_from[ch, _item_part[v, i], options]]
+        i = i + 1
+    out
+
+--- the `i`th item of a list where it is an object, an empty object where
+--- it is not
+fn _item_part[list, i]
+    v = list[i]
+    if not v.ok
+        return _empty[list, '{}']
+    if type[v] ne 'map'
+        return _empty[list, '{}']
+    v
+
+--- the labels a dataset's texts are found among on the axis `id`: that
+--- axis's own, or the chart's
+fn _labels_for[ch, id]
+    k = charts_model.axis_at[ch, id]
+    if k gte 0 and len[ch.axes[k].labels] gt 0
+        return ch.axes[k].labels
+    ch.labels
+
+--- where a text stands among labels: its place where it stands once, the
+--- place it is given (`at`) where it stands more than once, nan where it
+--- stands nowhere
+fn _label_place[labels, words, at]
+    first = -1
+    count = 0
+    i = 0
+    while i lt len[labels]
+        if labels[i] eq words
+            if first lt 0
+                first = i
+            count = count + 1
+        i = i + 1
+    if first lt 0
+        return nan
+    if count gt 1
+        return at
+    0.0 + first
+
+--- the value under `name` (or the list's `i`th): a number, or a text read
+--- among the labels of its axis; nan for none
+fn _value_at[j, name, labels, at]
+    k = _kind[j, name]
+    if k eq 'str'
+        return _label_place[labels, _text[j, name, ''], at]
+    _num[j, name, nan]
+
+fn _value_item[list, i, labels, at]
+    v = list[i]
+    if not v.ok
+        return nan
+    if type[v] eq 'str'
+        return _label_place[labels, '`v`', at]
+    if type[v] ne 'int' and type[v] ne 'float'
+        return nan
+    0.0 + v
+
+fn _set_from[ch, d, options]
+    kind = _text[d, 'type', '']
+    form = kind
+    if form eq ''
+        form = ch.form
+    s = charts_model.dataset[form, _words[d, 'label'], charts_model.no_numbers[]]
+    s.form = kind
+    s.x_axis = _text[d, 'xAxisID', '']
+    s.y_axis = _text[d, 'yAxisID', '']
+    index_axis = _text[d, 'indexAxis', ch.index_axis]
+    s = _values_from[ch, s, d, form, index_axis]
+    s.stack = _words[d, 'stack']
+    s.order = _num[d, 'order', 0.0]
+    s.hidden = _flag[d, 'hidden', false]
+    s.fills = _colours[d, 'backgroundColor']
+    s.edges = _colours[d, 'borderColor']
+    s.hover_fills = _colours[d, 'hoverBackgroundColor']
+    s.hover_edges = _colours[d, 'hoverBorderColor']
+    s.edge_width = _num[d, 'borderWidth', s.edge_width]
+    s.tension = _num[d, 'tension', s.tension]
+    s.monotone = _text[d, 'cubicInterpolationMode', ''] eq 'monotone'
+    s.stepped = _stepped[d]
+    s.fill = _fill_of[d, s.fill]
+    s.span_gaps = _span_of[d]
+    s.show_line = _flag[d, 'showLine', s.show_line]
+    s.point_style = _text[d, 'pointStyle', s.point_style]
+    s.point_radius = _num[d, 'pointRadius', _num[d, 'radius', s.point_radius]]
+    s.hover_radius = _num[d, 'pointHoverRadius', _num[d, 'hoverRadius', s.hover_radius]]
+    s.hit_radius = _num[d, 'pointHitRadius', _num[d, 'hitRadius', s.hit_radius]]
+    s.point_edge_width = _num[d, 'pointBorderWidth', s.point_edge_width]
+    s.bar_percentage = _num[d, 'barPercentage', s.bar_percentage]
+    s.category_percentage = _num[d, 'categoryPercentage', s.category_percentage]
+    s.bar_thickness = _thickness_of[d]
+    s.max_bar_thickness = _num[d, 'maxBarThickness', s.max_bar_thickness]
+    s.min_bar_length = _num[d, 'minBarLength', s.min_bar_length]
+    s.grouped = _flag[d, 'grouped', s.grouped]
+    s.skip_null = _flag[d, 'skipNull', s.skip_null]
+    s.base = _num[d, 'base', s.base]
+    s = _corners_from[s, d]
+    s.skipped = _skipped_of[d, s.skipped]
+    s.offsets = _numbers[d, 'offset']
+    s.hover_offset = _num[d, 'hoverOffset', s.hover_offset]
+    s.spacing = _num[d, 'spacing', s.spacing]
+    s.weight = _num[d, 'weight', s.weight]
+    s
+
+--- the dataset's values in whichever form they come: numbers (and none),
+--- points `{x, y, r}`, floating bars `[start, end]`, or labels of the axis
+--- they are read against
+fn _values_from[ch, s0, d, form, index_axis]
+    s = s0
+    ys = charts_model.no_numbers[]
+    xs = charts_model.no_numbers[]
+    rs = charts_model.no_numbers[]
+    froms = charts_model.no_numbers[]
+    if _kind[d, 'data'] ne 'array'
+        s.ys = ys
+        return s
+    v = d['data']
+    n = _count[d, 'data']
+    along = 'x'
+    across = 'y'
+    if index_axis eq 'y' and form ne 'scatter' and form ne 'bubble'
+        along = 'y'
+        across = 'x'
+    i_labels = _labels_for[ch, charts_model.axis_id_of[ch, s, along]]
+    v_labels = _labels_for[ch, charts_model.axis_id_of[ch, s, across]]
+    points = false
+    floating = false
+    i = 0
+    while i lt n
+        k = _item_kind[v, i]
+        if k eq 'map'
+            points = true
+        if k eq 'array'
+            floating = true
+        i = i + 1
+    i = 0
+    while i lt n
+        at = 0.0 + i
+        k = _item_kind[v, i]
+        if points
+            item = _item_part[v, i]
+            xs = push[xs, _value_at[item, along, i_labels, at]]
+            ys = push[ys, _value_at[item, across, v_labels, at]]
+            rs = push[rs, _num[item, 'r', nan]]
+        else if floating
+            a = nan
+            b = nan
+            if k eq 'array'
+                pair = _item_list[v, i]
+                if len[pair] gte 2
+                    a = _value_item[pair, 0, v_labels, at]
+                    b = _value_item[pair, 1, v_labels, at]
+            else
+                b = _value_item[v, i, v_labels, at]
+            froms = push[froms, a]
+            ys = push[ys, b]
+        else
+            ys = push[ys, _value_item[v, i, v_labels, at]]
+        i = i + 1
+    s.ys = ys
+    s.xs = xs
+    s.rs = rs
+    s.starts = froms
+    s
+
+fn _item_kind[list, i]
+    v = list[i]
+    if not v.ok
+        return ''
+    type[v]
+
+--- the `i`th item of a list where it is a list, an empty list where it is
+--- not
+fn _item_list[list, i]
+    v = list[i]
+    if not v.ok
+        return _empty[list, '[]']
+    if type[v] ne 'array'
+        return _empty[list, '[]']
+    v
+
+fn _stepped[d]
+    k = _kind[d, 'stepped']
+    if k eq 'bool'
+        if _flag[d, 'stepped', false]
+            return 'before'
+        return ''
+    _text[d, 'stepped', '']
+
+--- what a line is filled to, as Chart.js reads its `fill`
+fn _fill_of[d, default]
+    k = _kind[d, 'fill']
+    j = d
+    name = 'fill'
+    if k eq 'map'
+        j = _part[d, 'fill']
+        name = 'target'
+        k = _kind[j, name]
+    if k eq ''
+        return default
+    if k eq 'bool'
+        if _flag[j, name, false]
+            return 'origin'
+        return ''
+    _words[j, name]
+
+fn _span_of[d]
+    k = _kind[d, 'spanGaps']
+    if k eq 'bool'
+        if _flag[d, 'spanGaps', false]
+            return inf
+        return 0.0
+    _num[d, 'spanGaps', 0.0]
+
+fn _thickness_of[d]
+    if _text[d, 'barThickness', ''] eq 'flex'
+        return -1.0
+    _num[d, 'barThickness', nan]
+
+fn _corners_from[s0, d]
+    s = s0
+    k = _kind[d, 'borderRadius']
+    if k eq 'int' or k eq 'float'
+        n = _num[d, 'borderRadius', 0.0]
+        s.corners = [n, n, n, n]
+        return s
+    if k eq 'map'
+        v = _part[d, 'borderRadius']
+        s.corners = [_num[v, 'topLeft', 0.0], _num[v, 'topRight', 0.0], _num[v, 'bottomLeft', 0.0], _num[v, 'bottomRight', 0.0]]
+        s.corners_set = true
+    s
+
+fn _skipped_of[d, default]
+    k = _kind[d, 'borderSkipped']
+    if k eq ''
+        return default
+    if k eq 'bool'
+        if _flag[d, 'borderSkipped', false]
+            return 'all'
+        return 'none'
+    _words[d, 'borderSkipped']
+
+--- ---- axes ----
+
+--- the chart's axes: those its options name (in the order of their ids),
+--- then those its datasets need that are not named, as Chart.js makes
+--- each from its kind's defaults
+fn _axes_from[kind, index_axis, data, options, labels]
+    named = _part[options, 'scales']
+    out = slice[[charts_model.axis_of['x', 'linear', 'x', 'bottom']], 0, 0]
+    ids = keys[named]
+    i = 0
+    while i lt len[ids]
+        id = ids[i]
+        o = _part[named, id]
+        out = push[out, _axis_from[kind, index_axis, id, o, labels]]
+        i = i + 1
+    n = _count[data, 'datasets']
+    sets = data['datasets']
+    d = 0
+    while d lt n
+        ds = _item_part[sets, d]
+        form = _text[ds, 'type', kind]
+        along = _text[ds, 'indexAxis', index_axis]
+        wanted = _default_ids[form, along]
+        k = 0
+        while k lt len[wanted]
+            a = wanted[k]
+            id = a
+            if a eq 'x'
+                id = _text[ds, 'xAxisID', 'x']
+            if a eq 'y'
+                id = _text[ds, 'yAxisID', 'y']
+            if a eq 'r'
+                id = _text[ds, 'rAxisID', 'r']
+            if not _has_axis[out, id]
+                o = _part[named, id]
+                out = push[out, _axis_from[form, along, id, o, labels]]
+            k = k + 1
+        d = d + 1
+    out
+
+--- the axes a dataset of `form` needs, as they run: its index axis
+--- first
+fn _default_ids[form, along]
+    out = slice[[''], 0, 0]
+    if form eq 'pie' or form eq 'doughnut'
+        return out
+    if form eq 'radar' or form eq 'polarArea'
+        return push[out, 'r']
+    if form eq 'scatter' or form eq 'bubble'
+        out = push[out, 'x']
+        return push[out, 'y']
+    out = push[out, along]
+    push[out, charts_model.other_axis[along]]
+
+fn _has_axis[axes, id]
+    i = 0
+    while i lt len[axes]
+        if axes[i].id eq id
+            return true
+        i = i + 1
+    false
+
+--- the way an axis of that id runs: as its options say, as its side says,
+--- or as its id begins
+fn _axis_way[id, o]
+    a = _text[o, 'axis', '']
+    if a ne ''
+        return a
+    p = _text[o, 'position', '']
+    if p eq 'top' or p eq 'bottom'
+        return 'x'
+    if p eq 'left' or p eq 'right'
+        return 'y'
+    first = slice[id, 0, 1]
+    if first eq 'x' or first eq 'y' or first eq 'r'
+        return first
+    'x'
+
+fn _axis_from[kind, index_axis, id, o, labels]
+    way = _axis_way[id, o]
+    along = index_axis
+    if kind eq 'scatter' or kind eq 'bubble'
+        along = '-'
+    form = 'linear'
+    if way eq 'r'
+        form = 'radialLinear'
+    else if way eq along and kind ne 'scatter' and kind ne 'bubble'
+        form = 'category'
+    form = _text[o, 'type', form]
+    side = charts_model.side_of[way]
+    p = _text[o, 'position', side]
+    if way ne 'r' and _across[p] ne _across[side]
+        p = side
+    a = charts_model.axis_of[id, form, way, p]
+    if way eq along and (kind eq 'bar')
+        a.offset = true
+        a.grid_offset = true
+    if way ne along and way ne 'r' and kind eq 'bar'
+        a.from_zero = true
+    if kind eq 'polarArea'
+        a.from_zero = true
+        a.circular = true
+        a.angle_lines = false
+        a.point_labels_shown = false
+    _axis_options[a, o, labels]
+
+fn _across[p]
+    p eq 'top' or p eq 'bottom'
+
+--- an axis's options read over its defaults
+fn _axis_options[a0, o, labels]
+    a = a0
+    a.display = _flag[o, 'display', a.display]
+    a.labels = _lines[o, 'labels']
+    the_labels = labels
+    if len[a.labels] gt 0
+        the_labels = a.labels
+    a.min = _bound_of[a, o, 'min', the_labels]
+    a.max = _bound_of[a, o, 'max', the_labels]
+    a.soft_min = _bound_of[a, o, 'suggestedMin', the_labels]
+    a.soft_max = _bound_of[a, o, 'suggestedMax', the_labels]
+    a.from_zero = _flag[o, 'beginAtZero', a.from_zero]
+    g = _dimension[o, 'grace', 0.0, false]
+    a.grace = g[0]
+    a.grace_share = g[1] eq 1.0
+    a.bounds = _text[o, 'bounds', a.bounds]
+    a.offset = _flag[o, 'offset', a.offset]
+    a.reverse = _flag[o, 'reverse', a.reverse]
+    if _has[o, 'stacked']
+        a.stacked = _words[o, 'stacked']
+    a.stack = _words[o, 'stack']
+    a.stack_weight = _num[o, 'stackWeight', a.stack_weight]
+    a.weight = _num[o, 'weight', a.weight]
+    t = _part[o, 'ticks']
+    a.step = _num[t, 'stepSize', a.step]
+    a.count = _num[t, 'count', a.count]
+    a.most = _num[t, 'maxTicksLimit', a.most]
+    a.precision = _num[t, 'precision', a.precision]
+    a.include_bounds = _flag[t, 'includeBounds', a.include_bounds]
+    a.ticks_shown = _flag[t, 'display', a.ticks_shown]
+    a.tick_padding = _num[t, 'padding', a.tick_padding]
+    a.tick_size = _font_size[t, a.tick_size]
+    a.tick_bold = _font_bold[t, a.tick_bold]
+    a.min_rotation = _num[t, 'minRotation', a.min_rotation]
+    a.max_rotation = _num[t, 'maxRotation', a.max_rotation]
+    a.auto_skip = _flag[t, 'autoSkip', a.auto_skip]
+    a.skip_padding = _num[t, 'autoSkipPadding', a.skip_padding]
+    a.mirror = _flag[t, 'mirror', a.mirror]
+    a.major = _flag[_part[t, 'major'], 'enabled', a.major]
+    a.source = _text[t, 'source', a.source]
+    a.backdrop = _flag[t, 'showLabelBackdrop', a.backdrop]
+    a.backdrop_padding = _num[t, 'backdropPadding', a.backdrop_padding]
+    a.tick_ink = _colour[t, 'color', a.tick_ink]
+    gr = _part[o, 'grid']
+    a.grid_shown = _flag[gr, 'display', a.grid_shown]
+    a.grid_offset = _flag[gr, 'offset', a.grid_offset]
+    a.grid_on_area = _flag[gr, 'drawOnChartArea', a.grid_on_area]
+    a.grid_ticks = _flag[gr, 'drawTicks', a.grid_ticks]
+    a.tick_length = _num[gr, 'tickLength', a.tick_length]
+    a.grid_width = _num[gr, 'lineWidth', a.grid_width]
+    a.circular = _flag[gr, 'circular', a.circular]
+    a.grid_ink = _colour[gr, 'color', a.grid_ink]
+    b = _part[o, 'border']
+    a.border_shown = _flag[b, 'display', a.border_shown]
+    a.border_width = _num[b, 'width', a.border_width]
+    a.border_ink = _colour[b, 'color', a.border_ink]
+    ti = _part[o, 'title']
+    a.title_shown = _flag[ti, 'display', a.title_shown]
+    a.title = _words[ti, 'text']
+    a.title_size = _font_size[ti, a.title_size]
+    a.title_bold = _font_bold[ti, a.title_bold]
+    room = _room[ti, 'padding', [0.0, a.title_top, 0.0, a.title_bottom]]
+    a.title_top = room[1]
+    a.title_bottom = room[3]
+    a.title_ink = _colour[ti, 'color', a.title_ink]
+    tm = _part[o, 'time']
+    a.unit = _text[tm, 'unit', a.unit]
+    a.round = _text[tm, 'round', a.round]
+    a.min_unit = _text[tm, 'minUnit', a.min_unit]
+    a.tip_format = _text[tm, 'tooltipFormat', a.tip_format]
+    formats = _part[tm, 'displayFormats']
+    names = keys[formats]
+    i = 0
+    while i lt len[names]
+        a.formats[names[i]] = _text[formats, names[i], '']
+        i = i + 1
+    a.start_angle = _num[o, 'startAngle', a.start_angle]
+    pl = _part[o, 'pointLabels']
+    a.point_labels_shown = _flag[pl, 'display', a.point_labels_shown]
+    a.point_label_size = _font_size[pl, a.point_label_size]
+    a.point_label_padding = _num[pl, 'padding', a.point_label_padding]
+    a.center_point_labels = _flag[pl, 'centerPointLabels', a.center_point_labels]
+    a.angle_lines = _flag[_part[o, 'angleLines'], 'display', a.angle_lines]
+    a
+
+--- an end of an axis's range as given: a number, a time, or (on a
+--- category axis) a label's place; nan for none
+fn _bound_of[a, o, name, labels]
+    if a.form eq 'category' and _kind[o, name] eq 'str'
+        return _label_place[labels, _text[o, name, ''], nan]
+    _num[o, name, nan]
+
+--- ---- the chart's options ----
+
+fn _options_from[ch0, o]
+    ch = ch0
+    inter = _part[o, 'interaction']
+    ch.mode = _text[inter, 'mode', ch.mode]
+    ch.intersect = _flag[inter, 'intersect', ch.intersect]
+    ch.axis = _text[inter, 'axis', ch.axis]
+    lay = _part[o, 'layout']
+    ch.padding = _room[lay, 'padding', ch.padding]
+    ch.auto_padding = _flag[lay, 'autoPadding', ch.auto_padding]
+    c = _dimension[o, 'cutout', ch.cutout, ch.cutout_share]
+    ch.cutout = c[0]
+    ch.cutout_share = c[1] eq 1.0
+    ch.rotation = _num[o, 'rotation', ch.rotation]
+    ch.circumference = _num[o, 'circumference', ch.circumference]
+    r = _dimension[o, 'radius', ch.radius_share, true]
+    ch.radius_share = r[0]
+    k = _kind[o, 'animation']
+    if k eq 'bool'
+        ch.animated = _flag[o, 'animation', true]
+    if k eq 'map'
+        an = _part[o, 'animation']
+        ch.duration = _num[an, 'duration', ch.duration]
+        ch.easing = _text[an, 'easing', ch.easing]
+        ch.animate_rotate = _flag[an, 'animateRotate', ch.animate_rotate]
+        ch.animate_scale = _flag[an, 'animateScale', ch.animate_scale]
+    ch.size = _font_size[o, ch.size]
+    ch.ink = _colour[o, 'color', ch.ink]
+    p = _part[o, 'plugins']
+    ch.legend = _legend_from[ch.legend, _part[p, 'legend']]
+    ch.title = _heading_from[ch.title, _part[p, 'title']]
+    ch.subtitle = _heading_from[ch.subtitle, _part[p, 'subtitle']]
+    ch.tip = _tip_from[ch.tip, _part[p, 'tooltip']]
+    dec = _part[p, 'decimation']
+    ch.decimate = _flag[dec, 'enabled', ch.decimate]
+    ch.algorithm = _text[dec, 'algorithm', ch.algorithm]
+    ch.samples = _num[dec, 'samples', ch.samples]
+    ch.threshold = _num[dec, 'threshold', ch.threshold]
+    ch
+
+fn _legend_from[l0, o]
+    l = l0
+    l.shown = _flag[o, 'display', l.shown]
+    l.position = _text[o, 'position', l.position]
+    l.align = _text[o, 'align', l.align]
+    l.reverse = _flag[o, 'reverse', l.reverse]
+    l.max_width = _num[o, 'maxWidth', l.max_width]
+    l.max_height = _num[o, 'maxHeight', l.max_height]
+    l.full_size = _flag[o, 'fullSize', l.full_size]
+    l.weight = _num[o, 'weight', l.weight]
+    lb = _part[o, 'labels']
+    l.box_width = _num[lb, 'boxWidth', l.box_width]
+    l.box_height = _num[lb, 'boxHeight', l.box_height]
+    l.padding = _num[lb, 'padding', l.padding]
+    l.size = _font_size[lb, l.size]
+    l.point_style = _flag[lb, 'usePointStyle', l.point_style]
+    l.point_style_width = _num[lb, 'pointStyleWidth', l.point_style_width]
+    l.ink = _colour[lb, 'color', l.ink]
+    t = _part[o, 'title']
+    l.title_shown = _flag[t, 'display', l.title_shown]
+    l.title = _words[t, 'text']
+    l
+
+fn _heading_from[h0, o]
+    h = h0
+    h.shown = _flag[o, 'display', h.shown]
+    lines = _lines[o, 'text']
+    if len[lines] gt 0
+        h.lines = lines
+    h.position = _text[o, 'position', h.position]
+    h.align = _text[o, 'align', h.align]
+    h.size = _font_size[o, h.size]
+    h.bold = _font_bold[o, h.bold]
+    room = _room[o, 'padding', [0.0, h.padding_top, 0.0, h.padding_bottom]]
+    h.padding_top = room[1]
+    h.padding_bottom = room[3]
+    h.full_size = _flag[o, 'fullSize', h.full_size]
+    h.weight = _num[o, 'weight', h.weight]
+    h.ink = _colour[o, 'color', h.ink]
+    h
+
+fn _tip_from[t0, o]
+    t = t0
+    t.shown = _flag[o, 'enabled', t.shown]
+    t.mode = _text[o, 'mode', t.mode]
+    if _kind[o, 'intersect'] eq 'bool'
+        t.intersect = _words[o, 'intersect']
+    t.axis = _text[o, 'axis', t.axis]
+    t.position = _text[o, 'position', t.position]
+    t.padding = _num[o, 'padding', t.padding]
+    t.caret_size = _num[o, 'caretSize', t.caret_size]
+    t.caret_padding = _num[o, 'caretPadding', t.caret_padding]
+    t.corner = _num[o, 'cornerRadius', t.corner]
+    t.title_size = _font_size[_part[o, 'titleFont'], t.title_size]
+    t.body_size = _font_size[_part[o, 'bodyFont'], t.body_size]
+    t.footer_size = _font_size[_part[o, 'footerFont'], t.footer_size]
+    t.title_spacing = _num[o, 'titleSpacing', t.title_spacing]
+    t.title_margin = _num[o, 'titleMarginBottom', t.title_margin]
+    t.body_spacing = _num[o, 'bodySpacing', t.body_spacing]
+    t.display_colors = _flag[o, 'displayColors', t.display_colors]
+    t.box_width = _num[o, 'boxWidth', t.box_width]
+    t.box_height = _num[o, 'boxHeight', t.box_height]
+    t.box_padding = _num[o, 'boxPadding', t.box_padding]
+    t.x_align = _text[o, 'xAlign', t.x_align]
+    t.y_align = _text[o, 'yAlign', t.y_align]
+    t.fill = _colour[o, 'backgroundColor', t.fill]
+    t.ink = _colour[o, 'bodyColor', t.ink]
+    t
+
+--- ---- tests ----
+
+test configurations_are_read_as_chart_js_reads_them[]
+    ch = chart_from['c', json['{"type": "bar", "data": {"labels": ["a", "b"], "datasets": [{"label": "S", "data": [1, null], "stack": "one"}]}, "options": {"indexAxis": "y", "plugins": {"legend": {"position": "left"}}}}']]
+    len[ch.sets] eq 1
+    ch.sets[0].ys[0] eq 1.0
+    ch.sets[0].ys[1] ne ch.sets[0].ys[1]
+    ch.sets[0].stack eq 'one'
+    ch.axes[0].id eq 'y'
+    ch.axes[0].form eq 'category'
+    ch.axes[1].id eq 'x'
+    ch.axes[1].from_zero
+    ch.legend.position eq 'left'
+
+test values_come_in_every_form_chart_js_takes[]
+    ch = chart_from['c', json['{"type": "line", "data": {"labels": ["ON", "OFF"], "datasets": [{"data": [{"x": 1, "y": 2}, {"x": 3, "y": 4}]}, {"type": "bar", "data": [[1, 5], [2, 3]]}, {"data": ["OFF", "ON"]}]}, "options": {"scales": {"y": {"type": "category", "grace": "10%"}}}}']]
+    ch.sets[0].xs[1] eq 3.0
+    ch.sets[1].starts[0] eq 1.0
+    ch.sets[1].ys[0] eq 5.0
+    ch.sets[1].form eq 'bar'
+    ch.sets[2].ys[0] eq 1.0
+    ch.axes[0].grace eq 0.1
+    ch.axes[0].grace_share

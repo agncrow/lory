@@ -1,0 +1,545 @@
+--- Solid's CSS Animations (solid-site's cssanimations), the transitions
+--- of solid-transition-group shown five ways. A button hides and shows
+--- three blocks of words at once: the first slides in from 10 px to the
+--- right as it fades in (300 ms, CSS's `ease`) and slides out more slowly
+--- (800 ms on a steep bézier), the second grows past its size and settles
+--- (a keyframed animation, 500 ms) and shrinks away the same way back,
+--- and the third is faded by the program (600 ms, straight). Pressed while
+--- a block is still going, the new one comes in at once before the old
+--- (Solid's parallel mode). "Next" turns a switch of three words, the old
+--- fading out before the new fades in (out-in mode, 500 ms each). A group
+--- of numbers is added to, taken from and shuffled at random places: a
+--- number that comes rises 30 px as it fades in, one that goes sinks and
+--- fades where it stood while the rest close up, and every number whose
+--- place changed glides there (500 ms).
+---
+--- As solid-transition-group does, a transition's end state is put on two
+--- animation frames after the change, so a CSS transition starts then; a
+--- keyframed animation and the program's fade start at the change; and a
+--- thing that goes is taken away at the first frame after its motion
+--- ends. The random places come from a seeded source, the draws in the
+--- order the example makes them; the shuffle is the example's (a sort
+--- whose comparison is a draw less a half), sorted as Chrome sorts a list
+--- this short, by inserting each item where a halving search of those
+--- before it puts it. The numbers stand in a line as Chrome lays them
+--- (each digit 8 px, 10 px after each), which tells which of them moved.
+use lory
+use lory.gui
+use lory.motion
+
+--- a thing that comes and goes: what it shows (a block's 0, the switch's
+--- choice, a number); when it began to come (-1: there from the start)
+--- and to go (-1: it stays); when the end state of each was put on it (-1:
+--- not yet), with the frames counted toward it; and when it began to glide
+--- to a new place (-1: never) from how far away (CSS pixels), and where
+--- it stood as it began to go (it goes where it stood, out of the line)
+struct Piece [key, came, came_to, came_frames, went, went_to, went_frames, moved_at, moved_by, stood]
+
+--- whether the blocks are shown; each block's pieces, the newest first;
+--- the switch's choice, its pieces and the choice waiting for the old one
+--- to go (-1: none); the numbers in the order they stand; the next number
+--- to add; the random source's state; and the last frame's time
+struct State [shown, blocks, select, switch, waiting, list, next_id, seed, last]
+
+fn _piece[key, came]
+    Piece[key, came, -1.0, 0, -1.0, -1.0, 0, -1.0, 0.0, 0.0]
+
+fn fresh[at]
+    start = _piece[0, -1.0]
+    blocks = for k in range[3]
+        [start]
+    numbers = for n in range[1, 10]
+        _piece[n, -1.0]
+    State[true, blocks, 0, [start], -1, numbers, 10, 1 + int[floor[at]] % 2147483646, at]
+
+--- the example with its random source seeded, as the reference seeds it
+fn seeded[s, seed]
+    s.seed = seed
+    s
+
+--- ---- the random source: x = x * 48271 mod 2147483647, x / 2147483647 ----
+
+fn next_seed[x]
+    (x * 48271) % 2147483647
+
+fn unit_of[x]
+    x / 2147483647.0
+
+--- ---- easings ----
+
+fn _clamped[t]
+    max[0.0, min[1.0, t]]
+
+--- CSS's `ease`
+fn css_ease[t]
+    motion.ease_at['ease', _clamped[t]]
+
+--- the slide's way out: `cubic-bezier(1, 0.5, 0.8, 1)`
+fn slide_out[t]
+    motion.eased[motion.cubic_bezier[1.0, 0.5, 0.8, 1.0], _clamped[t]]
+
+--- the second block's keyframes at their progress `p`: from nothing to
+--- one and a half its size at the middle, then to its own, CSS's `ease`
+--- over each half
+fn bounce_scale[p]
+    if p lte 0.5
+        return 1.5 * css_ease[p / 0.5]
+    1.5 + (1.0 - 1.5) * css_ease[(p - 0.5) / 0.5]
+
+--- ---- each motion at a time ----
+
+--- the slide's opacity and offset as it comes (or stands)
+fn _slide_in[pc, at]
+    if pc.came lt 0.0
+        return [1.0, 0.0]
+    if pc.came_to lt 0.0
+        return [0.0, 10.0]
+    p = css_ease[(at - pc.came_to) / 300.0]
+    [p, 10.0 * (1.0 - p)]
+
+--- the first block's opacity and offset (CSS pixels to the right)
+fn slide_at[pc, at]
+    v = _slide_in[pc, at]
+    if pc.went gte 0.0 and pc.went_to gte 0.0
+        v0 = _slide_in[pc, pc.went_to]
+        p = slide_out[(at - pc.went_to) / 800.0]
+        v = [v0[0] * (1.0 - p), v0[1] + (10.0 - v0[1]) * p]
+    v
+
+--- the second block's size, a keyframed animation from the change (as it
+--- goes, its keyframes the other way)
+fn bounce_at[pc, at]
+    if pc.went gte 0.0
+        return bounce_scale[_clamped[1.0 - (at - pc.went) / 500.0]]
+    if pc.came gte 0.0 and at - pc.came lt 500.0
+        return bounce_scale[_clamped[(at - pc.came) / 500.0]]
+    1.0
+
+--- the third block's opacity, the program's straight fade from the change
+fn fade_at[pc, at]
+    if pc.went gte 0.0
+        return _clamped[1.0 - (at - pc.went) / 600.0]
+    if pc.came gte 0.0
+        return _clamped[(at - pc.came) / 600.0]
+    1.0
+
+--- a fade of 500 ms in CSS's `ease` as a thing comes
+fn _fade_in[pc, at]
+    if pc.came lt 0.0
+        return 1.0
+    if pc.came_to lt 0.0
+        return 0.0
+    css_ease[(at - pc.came_to) / 500.0]
+
+--- the switch's opacity: its fade in, and out from where it stood
+fn switch_at[pc, at]
+    o = _fade_in[pc, at]
+    if pc.went gte 0.0 and pc.went_to gte 0.0
+        o = _fade_in[pc, pc.went_to] * (1.0 - css_ease[(at - pc.went_to) / 500.0])
+    o
+
+--- a number's opacity and how far below its place it stands: it rises
+--- 30 px as it fades in, and sinks as it fades out
+fn item_at[pc, at]
+    o = _fade_in[pc, at]
+    ty = 30.0 * (1.0 - o)
+    if pc.went gte 0.0 and pc.went_to gte 0.0
+        p = css_ease[(at - pc.went_to) / 500.0]
+        o0 = _fade_in[pc, pc.went_to]
+        ty0 = 30.0 * (1.0 - o0)
+        o = o0 * (1.0 - p)
+        ty = ty0 + (30.0 - ty0) * p
+    [o, ty]
+
+--- how much of a number's glide is still to go (1 at its start, -1 when it
+--- is not gliding)
+fn glide_left[pc, at]
+    if pc.moved_at lt 0.0 or at - pc.moved_at gte 500.0
+        return -1.0
+    1.0 - css_ease[(at - pc.moved_at) / 500.0]
+
+--- whether a thing that goes has gone by `at`: a transition's at the first
+--- frame after it ends, an animation's after its own
+fn _gone[pc, at, kind]
+    if pc.went lt 0.0
+        return false
+    if kind eq 'bounce'
+        return at gte pc.went + 500.0
+    if kind eq 'fade'
+        return at gte pc.went + 600.0
+    if pc.went_to lt 0.0
+        return false
+    if kind eq 'slide'
+        return at gte pc.went_to + 800.0
+    at gte pc.went_to + 500.0
+
+--- a frame come: each change still waiting for its end state counts it,
+--- and has it at the second
+fn _counted[pc, at]
+    if pc.came gte 0.0 and pc.came_to lt 0.0
+        pc.came_frames = pc.came_frames + 1
+        if pc.came_frames gte 2
+            pc.came_to = at
+    if pc.went gte 0.0 and pc.went_to lt 0.0
+        pc.went_frames = pc.went_frames + 1
+        if pc.went_frames gte 2
+            pc.went_to = at
+    pc
+
+--- the thing set going at `at` (one going already goes on)
+fn _going[pc, at]
+    if pc.went lt 0.0
+        pc.went = at
+        pc.went_frames = 0
+    pc
+
+fn _kinds[]
+    ['slide', 'bounce', 'fade']
+
+--- the example at a frame's time: the frame counted, what has gone taken
+--- away, and the switch's next choice put in once the old has gone
+fn before[s, at]
+    if at gt s.last
+        blocks = for blk in s.blocks
+            row = for pc in blk
+                _counted[pc, at]
+            row
+        s.blocks = blocks
+        sw = for pc in s.switch
+            _counted[pc, at]
+        s.switch = sw
+        items = for pc in s.list
+            _counted[pc, at]
+        s.list = items
+        s.last = at
+    kinds = _kinds[]
+    blocks = for k in range[3]
+        row = for pc in s.blocks[k]
+            if not _gone[pc, at, kinds[k]]
+                pc
+        row
+    s.blocks = blocks
+    sw = for pc in s.switch
+        if not _gone[pc, at, 'switch']
+            pc
+    if len[sw] eq 0 and s.waiting gte 0
+        sw = push[sw, _piece[s.waiting, at]]
+        s.waiting = -1
+    s.switch = sw
+    items = for pc in s.list
+        if not _gone[pc, at, 'list']
+            pc
+    s.list = items
+    s
+
+--- ---- what the reader does ----
+
+--- the blocks hidden (each goes) or shown (a new one comes, before any
+--- still going)
+fn _toggled[s, at]
+    s.shown = not s.shown
+    blocks = for blk in s.blocks
+        row = for pc in blk
+            _going[pc, at]
+        if s.shown
+            row = concat[[_piece[0, at]], blk]
+        row
+    s.blocks = blocks
+    s
+
+--- the switch turned: the old choice goes, the next waits for it
+fn _turned[s, at]
+    s.select = (s.select + 1) % 3
+    sw = for pc in s.switch
+        _going[pc, at]
+    s.switch = sw
+    s.waiting = s.select
+    if len[sw] eq 0
+        s.switch = [_piece[s.select, at]]
+        s.waiting = -1
+    s
+
+--- a number's width in the line, as Chrome lays its digits
+fn _width[n]
+    8.0 * len['`n`']
+
+--- where each number stands along the line (CSS pixels; -1 for one going,
+--- which stands where it was, out of the line)
+fn _places[items]
+    out = slice[[0.0], 0, 0]
+    x = 0.0
+    i = 0
+    while i lt len[items]
+        if items[i].went lt 0.0
+            out = push[out, x]
+            x = x + _width[items[i].key] + 10.0
+        else
+            out = push[out, -1.0]
+        i = i + 1
+    out
+
+--- where a number is seen to stand: its place and what is left of its
+--- glide
+fn _seen_at[pc, place, at]
+    left = glide_left[pc, at]
+    if left lt 0.0
+        return place
+    place + pc.moved_by * left
+
+--- the numbers after a change, each that was in the line and now stands
+--- elsewhere gliding from where it was seen to its place
+fn _glided[old, changed, at]
+    was = _places[old]
+    will = _places[changed]
+    out = slice[changed, 0, 0]
+    i = 0
+    while i lt len[changed]
+        pc = changed[i]
+        j = 0
+        while j lt len[old]
+            if old[j].key eq pc.key and was[j] gte 0.0 and will[i] gte 0.0
+                d = _seen_at[old[j], was[j], at] - will[i]
+                if abs[d] gt 0.001
+                    pc.moved_at = at
+                    pc.moved_by = d
+            j = j + 1
+        out = push[out, pc]
+        i = i + 1
+    out
+
+--- where in the line the `idx`th number still in it stands (the line's
+--- end where there are fewer)
+fn _slot_of[items, idx]
+    seen = 0
+    i = 0
+    while i lt len[items]
+        if items[i].went lt 0.0
+            if seen eq idx
+                return i
+            seen = seen + 1
+        i = i + 1
+    len[items]
+
+fn _in_line[items]
+    kept = for pc in items
+        if pc.went lt 0.0
+            pc
+    len[kept]
+
+--- a number added at a random place among those in the line
+fn _added[s, at]
+    s.seed = next_seed[s.seed]
+    idx = int[floor[unit_of[s.seed] * _in_line[s.list]]]
+    j = _slot_of[s.list, idx]
+    changed = concat[slice[s.list, 0, j], [_piece[s.next_id, at]], slice[s.list, j, len[s.list]]]
+    s.next_id = s.next_id + 1
+    s.list = _glided[s.list, changed, at]
+    s
+
+--- a number at a random place set going
+fn _taken[s, at]
+    s.seed = next_seed[s.seed]
+    idx = int[floor[unit_of[s.seed] * _in_line[s.list]]]
+    j = _slot_of[s.list, idx]
+    if j lt len[s.list]
+        changed = s.list
+        changed[j] = _going[changed[j], at]
+        changed[j].stood = _seen_at[s.list[j], _places[s.list][j], at]
+        s.list = _glided[s.list, changed, at]
+    s
+
+--- the numbers in the line shuffled (those going stay where they are)
+fn _mixed[s, at]
+    numbers = for pc in s.list
+        if pc.went lt 0.0
+            pc.key
+    order = _order_of[s, numbers]
+    s.seed = order.seed
+    changed = s.list
+    k = 0
+    i = 0
+    while i lt len[changed]
+        if changed[i].went lt 0.0
+            j = 0
+            while j lt len[s.list]
+                if s.list[j].key eq order.keys[k]
+                    changed[i] = s.list[j]
+                j = j + 1
+            k = k + 1
+        i = i + 1
+    s.list = _glided[s.list, changed, at]
+    s
+
+--- keys in a shuffled order, with the random source after the draws
+struct Shuffled [keys, seed]
+
+--- the keys in the order Chrome sorts them by a comparison that answers a
+--- draw less a half: each from the second on put where a halving search
+--- of those before it ends, a draw below a half sending it left
+fn _order_of[s, numbers]
+    seed = s.seed
+    order = numbers
+    i = 1
+    while i lt len[order]
+        pivot = order[i]
+        lo = 0
+        hi = i
+        while lo lt hi
+            mid = lo + (hi - lo) / 2
+            seed = next_seed[seed]
+            if unit_of[seed] - 0.5 lt 0.0
+                hi = mid
+            else
+                lo = mid + 1
+        order = concat[slice[order, 0, lo], [pivot], slice[order, lo, i], slice[order, i + 1, len[order]]]
+        i = i + 1
+    Shuffled[order, seed]
+
+fn after[s, shown, at]
+    for e in shown.events
+        if e.act eq 'press'
+            if e.id eq 'animations.toggle'
+                s = _toggled[s, at]
+            if e.id eq 'animations.next'
+                s = _turned[s, at]
+            if e.id eq 'animations.add'
+                s = _added[s, at]
+            if e.id eq 'animations.remove'
+                s = _taken[s, at]
+            if e.id eq 'animations.shuffle'
+                s = _mixed[s, at]
+    s
+
+--- ---- drawn ----
+
+fn label_of[s]
+    if s.shown
+        return 'Hide'
+    'Show'
+
+fn _choice[k]
+    if k eq 0
+        return 'The First'
+    if k eq 1
+        return 'The Second'
+    'The Third'
+
+fn _words[k]
+    if k eq 0
+        return 'These words slide in as they fade in, and slide out more slowly.'
+    if k eq 1
+        return 'These words grow past their size and settle, and shrink away.'
+    'These words are faded in and out by the program itself.'
+
+fn _shown_piece[k, pc, at]
+    words = gui.text[_words[k]]
+    if k eq 0
+        v = slide_at[pc, at]
+        return gui.moved[gui.faded[words, v[0]], v[1], 0.0]
+    if k eq 1
+        return gui.scaled[words, bounce_at[pc, at]]
+    gui.faded[words, fade_at[pc, at]]
+
+fn _block[s, k, at]
+    shown = for pc in s.blocks[k]
+        _shown_piece[k, pc, at]
+    gui.column[shown, gap = 4.0]
+
+--- the numbers as the painter is handed them: each its number, where it
+--- is seen along the line, how far below and how opaque, ' ' between
+fn _line_words[s, at]
+    places = _places[s.list]
+    parts = slice[[''], 0, 0]
+    i = 0
+    while i lt len[s.list]
+        pc = s.list[i]
+        v = item_at[pc, at]
+        x = pc.stood
+        if places[i] gte 0.0
+            x = _seen_at[pc, places[i], at]
+        parts = push[parts, '`pc.key`:`x`:`v[1]`:`v[0]`']
+        i = i + 1
+    join[parts, ' ']
+
+--- the numbers drawn where they are seen, in the look's ink
+fn lined[d]
+    for item in split[d.words, ' ']
+        part = split[item, ':']
+        if len[part] eq 4
+            x = d.x + (0.0 + float[part[1]]) * 1.25 * d.s
+            y = d.y + (6.0 + float[part[2]]) * d.s
+            d.c = lory.text[d.c, x, y, part[0], 18.0 * d.s, lory.fade[d.look.ink, float[part[3]]]]
+    d
+
+fn tree[s, at, dark]
+    switch = for pc in s.switch
+        gui.faded[gui.text[_choice[pc.key]], switch_at[pc, at]]
+    buttons = gui.row[[gui.button['animations.add', 'Add'], gui.button['animations.remove', 'Remove'], gui.button['animations.shuffle', 'Shuffle']], gap = 8.0]
+    line = gui.drawn['', 0.0, 0.0, 56.0, lined, words = _line_words[s, at]]
+    parts = [gui.button['animations.toggle', label_of[s]], gui.label['Transition'], _block[s, 0, at], gui.label['Animation'], _block[s, 1, at], gui.label['Custom JS'], _block[s, 2, at], gui.label['Switch out-in'], gui.button['animations.next', 'Next'], gui.column[switch], gui.label['Group'], buttons, line]
+    gui.column[parts, gap = 10.0]
+
+--- ---- what the example shows, as tests/solid/reference.json records ----
+
+fn _num[x]
+    encode[x]
+
+fn seen[s, at]
+    slides = for pc in s.blocks[0]
+        v = slide_at[pc, at]
+        '{"opacity": `_num[v[0]]`, "tx": `_num[v[1]]`, "scale": 1}'
+    bounces = for pc in s.blocks[1]
+        '{"opacity": 1, "tx": 0, "scale": `_num[bounce_at[pc, at]]`}'
+    fades = for pc in s.blocks[2]
+        '{"opacity": `_num[fade_at[pc, at]]`, "tx": 0, "scale": 1}'
+    b0 = join[slides, ', ']
+    b1 = join[bounces, ', ']
+    b2 = join[fades, ', ']
+    switched = for pc in s.switch
+        '{"text": `encode[_choice[pc.key]]`, "opacity": `_num[switch_at[pc, at]]`}'
+    sw = join[switched, ', ']
+    items = for pc in s.list
+        v = item_at[pc, at]
+        left = glide_left[pc, at]
+        still = 'null'
+        if left gte 0.0
+            still = _num[left]
+        '{"n": `pc.key`, "opacity": `_num[v[0]]`, "ty": `_num[v[1]]`, "out": `encode[pc.went gte 0.0]`, "left": `still`}'
+    li = join[items, ', ']
+    label = label_of[s]
+    '{"t": `encode[at]`, "label": `encode[label]`, "blocks": [[`b0`], [`b1`], [`b2`]], "switch": [`sw`], "list": [`li`]}'
+
+--- a page 1000 by 900 at `t` ms with no input, as the page hands a frame
+fn _page[t]
+    json['{"t": `t`, "width": 1000, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 900, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+test the_random_source_is_park_and_millers[]
+    next_seed[1] eq 48271
+    next_seed[48271] eq 182605794
+    unit_of[2147483646] lt 1.0
+
+test the_bounce_grows_past_its_size_and_settles[]
+    bounce_scale[0.0] eq 0.0
+    bounce_scale[0.5] eq 1.5
+    bounce_scale[1.0] eq 1.0
+    abs[bounce_scale[0.968] - 1.00114] lt 0.00001
+
+test a_transition_starts_two_frames_after_its_change[]
+    s = seeded[fresh[0.0], 4242]
+    s = _toggled[s, 0.0]
+    s = before[s, 16.0]
+    s.blocks[0][0].went_to eq -1.0
+    s = before[s, 32.0]
+    s.blocks[0][0].went_to eq 32.0
+    s = before[s, 832.0]
+    len[s.blocks[0]] eq 0
+
+test the_shuffle_draws_as_chrome_sorts[]
+    order = _order_of[seeded[fresh[0.0], 4242], [1, 2, 3]]
+    len[order.keys] eq 3
+    order.seed ne 4242
+
+test its_controls_are_drawn[]
+    shown = gui.show[lory.begin[_page[0.0]], tree[fresh[0.0], 0.0, false]]
+    'animations.shuffle' in shown.boxes
+    'animations.toggle' in shown.boxes

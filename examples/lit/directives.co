@@ -1,0 +1,416 @@
+--- Lit's playground, Directives, drawn by Lory: one example for each of
+--- asyncAppend, asyncReplace, cache, classMap, guard, ifDefined, live,
+--- ref, repeat, styleMap, templateContent, unsafeHTML, unsafeSVG and
+--- until.
+---
+--- A directive is how Lit's template reaches past "this value goes here".
+--- In immediate mode most of them are plain code: a list streamed in or a
+--- value replaced is the example's state at its clock's time; classMap and
+--- styleMap are a look; ifDefined is an `if`; guard keeps a value until
+--- what it depends on changes. Where the directive's point is what the DOM
+--- keeps by itself (cache's reused inputs, live's input typed in, repeat's
+--- checkboxes moving with their items), the example keeps that in its state
+--- and renders it as Lit's DOM would: the behaviour is held, not the DOM.
+
+use lory
+use lory.gui
+use shared
+
+--- ---- asyncAppend ----
+
+--- ten coins tossed a second apart, each shown as it lands (heads where
+--- its chance is over one half): the first at once, the tenth at 9 s
+fn async_append_view[s, t]
+    landed = min[10, max[0, floor[t / 1000.0] + 1]]
+    rows = []
+    i = 0
+    while i lt landed
+        side = 'Tails'
+        if i lt len[s.draws] and s.draws[i] gt 0.5
+            side = 'Heads'
+        rows = push[rows, shared.entry[[gui.text[side]]]]
+        i = i + 1
+    gui.column[rows]
+
+--- ---- asyncReplace ----
+
+--- a count down from 10 a second at a time, each value replacing the last;
+--- it stops at 1
+fn async_replace_view[s, t]
+    left = max[1, 10 - floor[t / 1000.0]]
+    gui.column[[gui.text['Timer: `left`.']]]
+
+--- ---- cache ----
+
+--- the default an input of either view starts with
+fn _fresh_input[]
+    'edit me then toggle'
+
+--- two views of an input, toggled: drawn afresh each time (what was typed
+--- is lost), and cached (each view's input kept while the other shows)
+fn cache_view[s, t]
+    v = _view_shown[s]
+    plain = shared.words_of[s, 'plain', _fresh_input[]]
+    kept = shared.words_of[s, 'kept-`v`', _fresh_input[]]
+    gui.column[[shared.titled[3, 'cache directive example', '', ''], gui.button['cache-toggle', 'Toggle View'], shared.rule[], gui.text['Un-cached (DOM re-created when template re-rendered):'], gui.row[[gui.text['View `v`:'], gui.sized[gui.field['cache-plain', plain], 220.0]]], shared.rule[], gui.text['Cached (DOM cached and re-used when template re-rendered):'], gui.row[[gui.text['View `v`:'], gui.sized[gui.field['cache-kept', kept], 220.0]]]]]
+
+fn _view_shown[s]
+    if shared.number_of[s, 'view'] eq 2.0
+        return 2
+    1
+
+fn cache_answered[s, e, t]
+    v = _view_shown[s]
+    if e.id eq 'cache-toggle' and e.act eq 'press'
+        other = 2.0
+        if v eq 2
+            other = 1.0
+        s = shared.set_words[s, 'plain', _fresh_input[]]
+        return shared.set_number[s, 'view', other]
+    if e.id eq 'cache-plain' and e.act eq 'edit'
+        return shared.set_words[s, 'plain', e.words]
+    if e.id eq 'cache-kept' and e.act eq 'edit'
+        return shared.set_words[s, 'kept-`v`', e.words]
+    s
+
+--- ---- classMap ----
+
+--- words whose classes the checkboxes turn: `enabled` a light green
+--- ground, `hidden` 20% opaque, `padded` always
+fn class_map_view[s, t]
+    enabled = not shared.flag_of[s, 'disabled']
+    hidden = shared.flag_of[s, 'hidden']
+    gui.column[[shared.titled[3, 'classMap directive example', '', ''], shared.inked['', 'Classy text', _classed['cm-box', enabled, hidden]], shared.rule[], gui.row[[gui.checkbox['cm-enabled', 'Enabled', enabled], gui.checkbox['cm-hidden', 'Hidden', hidden]]]]]
+
+--- the look the classes make, and styleMap's styles make the same
+fn _classed[name, enabled, hidden]
+    ground = 'none'
+    if enabled
+        ground = '#90ee90'
+    seen = '1'
+    if hidden
+        seen = '0.2'
+    'name=`name`;bg=`ground`;opacity=`seen`;pad=10;block=1;color=#000000'
+
+fn class_map_answered[s, e, t]
+    if e.act ne 'toggle'
+        return s
+    if e.id eq 'cm-enabled' or e.id eq 'sm-enabled'
+        return shared.set_flag[s, 'disabled', not shared.flag_of[s, 'disabled']]
+    if e.id eq 'cm-hidden' or e.id eq 'sm-hidden'
+        return shared.set_flag[s, 'hidden', not shared.flag_of[s, 'hidden']]
+    s
+
+--- ---- guard ----
+
+--- a SHA-256 worked out (a second, as the example's own delay) only when
+--- the value it is of changes: Calculate takes what was typed, and the
+--- counter's presses leave it be
+fn guard_view[s, t]
+    value = shared.words_of[s, 'value', 'test string']
+    typed = shared.words_of[s, 'typed', value]
+    counter = int[shared.number_of[s, 'counter']]
+    gui.column[[shared.titled[3, 'guard directive example', '', ''], gui.row[[gui.sized[gui.field['guard-value', typed], 220.0], gui.button['guard-calc', 'Calculate']]], gui.text['The SHA for \'`value`\' is:'], gui.text[_sha_shown[value, t - shared.number_of[s, 'sha-at']]], shared.rule[], gui.text['Incrementing the counter does not recalculate SHA:'], gui.button['guard-inc', 'Increment: `counter`']]]
+
+--- the digest's text, or its placeholder while it is worked out
+fn _sha_shown[value, since]
+    if since lt 1000.0
+        return 'Calculating sha...'
+    digest = hash[value, 'sha256']
+    if not digest.ok
+        return ''
+    '`digest`'
+
+fn guard_answered[s, e, t]
+    value = shared.words_of[s, 'value', 'test string']
+    if e.id eq 'guard-value' and e.act eq 'edit'
+        return shared.set_words[s, 'typed', e.words]
+    if e.id eq 'guard-calc' and e.act eq 'press'
+        typed = shared.words_of[s, 'typed', value]
+        if typed eq value
+            return s
+        s = shared.set_words[s, 'value', typed]
+        return shared.set_number[s, 'sha-at', t]
+    if e.id eq 'guard-inc' and e.act eq 'press'
+        return shared.set_number[s, 'counter', shared.number_of[s, 'counter'] + 1.0]
+    s
+
+--- ---- ifDefined ----
+
+--- a picture by name: with ifDefined a name that is none of the three
+--- takes the address away; without it the address is written with its
+--- parts empty (Lit writes `undefined` in an attribute as nothing)
+fn if_defined_view[s, t]
+    name = shared.words_of[s, 'name', 'beach']
+    number = _picture_number[name]
+    guarded = ''
+    unguarded = 'https:///id//200/200'
+    if number ne ''
+        guarded = 'https://picsum.photos/id/`number`/200/200'
+        unguarded = guarded
+    gui.column[[shared.titled[3, 'ifDefined directive example', '', ''], gui.text['Type one of \'beach\', \'river\', or \'canyon\':'], gui.sized[gui.field['ifd-name', name], 220.0], shared.rule[], gui.text['Using ifDefined (src removed when undefined):'], picture['ifd-with', guarded], shared.rule[], gui.text['Without ifDefined (will 404 when undefined):'], picture['ifd-without', unguarded]]]
+
+fn _picture_number[name]
+    if name eq 'beach'
+        return '100'
+    if name eq 'river'
+        return '1015'
+    if name eq 'canyon'
+        return '1016'
+    ''
+
+--- a picture's place, 200 pixels square, with its address (none: an
+--- image with no `src`); the picture itself is not fetched
+fn picture[name, address]
+    ground = 'none'
+    if address ne ''
+        ground = '#cbd5e1'
+    shared.inked['', '', 'name=`name`;src=`address`;wide=200;tall=200;bg=`ground`;border=#94a3b8;line=1']
+
+fn if_defined_answered[s, e, t]
+    if e.id eq 'ifd-name' and e.act eq 'edit'
+        return shared.set_words[s, 'name', e.words]
+    s
+
+--- ---- live ----
+
+--- three inputs: one whose words Commit takes, one bound with live
+--- (Commit sets it again wherever a reader typed over it) and one
+--- without (set only when the value rendered changes)
+fn live_view[s, t]
+    data = shared.words_of[s, 'data', 'test']
+    source = shared.words_of[s, 'source', data]
+    bound = shared.words_of[s, 'with', data]
+    unbound = shared.words_of[s, 'without', data]
+    gui.column[[shared.titled[3, 'live directive example', '', ''], gui.text['Set this value to the inputs below.'], gui.row[[gui.sized[gui.field['live-source', source], 220.0], gui.button['live-commit', 'Commit']]], shared.rule[], gui.text['With live: will update if out of sync with last rendered value'], gui.sized[gui.field['live-with', bound, hint = 'type here, click commit'], 260.0], shared.rule[], gui.text['Without live: will not update if out of sync with last rendered value'], gui.sized[gui.field['live-without', unbound, hint = 'type here, click commit'], 260.0]]]
+
+fn live_answered[s, e, t]
+    data = shared.words_of[s, 'data', 'test']
+    if e.act eq 'edit' and e.id eq 'live-source'
+        return shared.set_words[s, 'source', e.words]
+    if e.act eq 'edit' and e.id eq 'live-with'
+        return shared.set_words[s, 'with', e.words]
+    if e.act eq 'edit' and e.id eq 'live-without'
+        return shared.set_words[s, 'without', e.words]
+    if e.id eq 'live-commit' and e.act eq 'press'
+        value = shared.words_of[s, 'source', data]
+        s = shared.set_words[s, 'with', value]
+        if value ne data
+            s = shared.set_words[s, 'without', value]
+        return shared.set_words[s, 'data', value]
+    s
+
+--- ---- ref ----
+
+--- an input that takes the focus once the example has first drawn (a ref
+--- held), and a paragraph scrolled to the top of its box a frame later (a
+--- ref's callback): `gallery` scrolls it, from where `ref-mark` is drawn
+fn ref_view[s, t]
+    lorem = _lorem[]
+    gui.column[[gui.text['Passing ref directive a Ref object that will hold the element in .value:'], gui.sized[gui.field['ref-input', shared.words_of[s, 'typed', '']], 220.0], shared.rule[], gui.text['Passing ref directive a change callback'], gui.scroll['ref-scroll', 100.0, [gui.text[lorem], gui.area['ref-mark', 0.0, 0.0], gui.text['Scrolled into view!'], gui.text[lorem]]]]]
+
+fn _lorem[]
+    words = []
+    i = 0
+    while i lt 100
+        words = push[words, 'Lorem ipsum dolor sit amet.']
+        i = i + 1
+    join[words, ' ']
+
+fn ref_answered[s, e, t]
+    if e.id eq 'ref-input' and e.act eq 'edit'
+        return shared.set_words[s, 'typed', e.words]
+    s
+
+--- ---- repeat ----
+
+fn _names[]
+    ['Justin', 'Steve', 'Kevin', 'Russell', 'Liz', 'Peter']
+
+--- six names in two lists of checkboxes, sorted either way: keyed by
+--- their ids (a tick moves with its name) and not (a tick stays in its
+--- place, and the name beside it changes)
+fn repeat_view[s, t]
+    names = _names[]
+    order = _order[s]
+    keyed = []
+    unkeyed = []
+    i = 0
+    while i lt len[order]
+        id = order[i]
+        name = names[int[id]]
+        keyed = push[keyed, shared.entry[[gui.text['`i`:'], gui.checkbox['rk-`id`', name, shared.flag_of[s, 'rk-`id`']]]]]
+        unkeyed = push[unkeyed, shared.entry[[gui.text['`i`:'], gui.checkbox['ru-`i`', name, shared.flag_of[s, 'ru-`i`']]]]]
+        i = i + 1
+    gui.column[[shared.titled[3, 'repeat directive example', '', ''], gui.row[[gui.button['rep-up', 'Sort ascending'], gui.button['rep-down', 'Sort descending']]], shared.rule[], gui.text['With keying (DOM including checkbox state moves with items):'], gui.column[keyed, gap = 4.0], shared.rule[], gui.text['Without keying (items are re-used in place, checkbox state does not change):'], gui.column[unkeyed, gap = 4.0]]]
+
+--- the ids in the order shown (as given, until sorted)
+fn _order[s]
+    if 'order' in s.lists
+        return s.lists['order']
+    ['0', '1', '2', '3', '4', '5']
+
+--- the ids sorted by their names, one way or the other (by character, as
+--- `localeCompare` sorts these names)
+fn _sorted_ids[ids, up]
+    names = _names[]
+    out = ids
+    i = 1
+    while i lt len[out]
+        j = i
+        while j gt 0 and _before[names[int[out[j]]], names[int[out[j - 1]]], up]
+            held = out[j]
+            out[j] = out[j - 1]
+            out[j - 1] = held
+            j = j - 1
+        i = i + 1
+    out
+
+fn _before[a, b, up]
+    if up
+        return a lt b
+    a gt b
+
+fn repeat_answered[s, e, t]
+    if e.act eq 'toggle'
+        return shared.set_flag[s, e.id, e.num gt 0.5]
+    if e.act eq 'press' and (e.id eq 'rep-up' or e.id eq 'rep-down')
+        return shared.set_list[s, 'order', _sorted_ids[_order[s], e.id eq 'rep-up']]
+    s
+
+--- ---- styleMap ----
+
+--- the same look as classMap's, made of styles: a light green ground or
+--- none, opaque or 20%, and 10 pixels inside
+fn style_map_view[s, t]
+    enabled = not shared.flag_of[s, 'disabled']
+    hidden = shared.flag_of[s, 'hidden']
+    gui.column[[shared.titled[3, 'styleMap directive example', '', ''], shared.inked['', 'Hello style!', _classed['sm-box', enabled, hidden]], shared.rule[], gui.row[[gui.checkbox['sm-enabled', 'Enabled', enabled], gui.checkbox['sm-hidden', 'Hidden', hidden]]]]]
+
+--- ---- templateContent ----
+
+--- what a `<template>` holds, stamped where the example asks: a tree held
+--- as a value
+fn template_content_view[s, t]
+    rows = [shared.titled[3, 'templateContent directive example', '', ''], gui.text['Here\'s some content from a template element:']]
+    for n in _template_content[]
+        rows = push[rows, n]
+    gui.column[rows]
+
+fn _template_content[]
+    [shared.titled[3, 'This is content stamped from an HTML <template>!', '', ''], picture['tc-picture', 'https://picsum.photos/id/429/200']]
+
+--- ---- unsafeHTML ----
+
+--- markup read into controls where it stands (a heading of each level,
+--- a paragraph): the words of markup made by the program, not a reader
+fn unsafe_html_view[s, t]
+    rows = [shared.titled[3, 'unsafeHTML directive example', '', ''], gui.text['Look out, potentially unsafe HTML ahead:']]
+    for n in markup_read['<h3>Some HTML to render.</h3>']
+        rows = push[rows, n]
+    gui.column[rows]
+
+--- the controls simple markup makes: `<h1>` to `<h6>` headings and `<p>`
+--- paragraphs, each holding words; words outside them are words
+fn markup_read[markup]
+    out = [gui.space[0.0]]
+    rest = markup
+    while '<' in rest
+        parts = split[rest, '<']
+        before = trim[parts[0]]
+        if before ne ''
+            out = push[out, gui.text[before]]
+        after = slice[rest, len[parts[0]] + 1, len[rest]]
+        tag = split[after, '>'][0]
+        inside = slice[after, len[tag] + 1, len[after]]
+        closing = '</`tag`>'
+        pieces = split[inside, closing]
+        words = trim[pieces[0]]
+        level = _level_of[tag]
+        if level gt 0
+            out = push[out, shared.titled[level, words, '', '']]
+        else
+            out = push[out, gui.text[words]]
+        rest = slice[inside, len[pieces[0]] + len[closing], len[inside]]
+    if trim[rest] ne ''
+        out = push[out, gui.text[trim[rest]]]
+    slice[out, 1, len[out]]
+
+--- ---- unsafeSVG ----
+
+--- a circle read from SVG markup and drawn 40 pixels square, as the
+--- markup's 100-unit view box scales it
+fn unsafe_svg_view[s, t]
+    circle = svg_circle['<circle cx="50" cy="50" r="40" fill="red" />', 100.0, 40.0]
+    gui.column[[shared.titled[3, 'unsafeSVG directive example', '', ''], gui.row[[gui.text['Look out, potentially unsafe SVG ahead:'], gui.drawn['', 0.0, 40.0, 40.0, _svg_painted, 0.0, 1.0, '`circle`|']]]]]
+
+--- the look of the circle SVG markup names, in the pixels of a drawing
+--- `wide` across whose view box is `box` units across: its fill, and the
+--- box it fills
+fn svg_circle[markup, box, wide]
+    k = wide / box
+    cx = _attribute_number[markup, 'cx'] * k
+    cy = _attribute_number[markup, 'cy'] * k
+    r = _attribute_number[markup, 'r'] * k
+    fill = _named_colour[_attribute[markup, 'fill']]
+    'name=usvg-circle;fill=`fill`;x=`cx - r`;y=`cy - r`;w=`2.0 * r`;h=`2.0 * r`'
+
+--- the level of a heading's tag (`h1` to `h6`), 0 for any other tag
+fn _level_of[tag]
+    if len[tag] ne 2 or not starts[tag, 'h']
+        return 0
+    n = int[slice[tag, 1, 2]]
+    if not n.ok
+        return 0
+    max[1, min[6, n]]
+
+fn _attribute[markup, name]
+    marker = ' `name`="'
+    if not (marker in markup)
+        return ''
+    after = split[markup, marker][1]
+    split[after, '"'][0]
+
+fn _attribute_number[markup, name]
+    n = float[_attribute[markup, name]]
+    if not n.ok
+        return 0.0
+    0.0 + n
+
+fn _named_colour[name]
+    if starts[name, '#']
+        return name
+    names = map['red' = '#ff0000', 'blue' = '#0000ff', 'green' = '#008000', 'black' = '#000000', 'white' = '#ffffff', 'orange' = '#ffa500', 'purple' = '#800080']
+    if name in names
+        return names[name]
+    '#000000'
+
+fn _svg_painted[d]
+    l = shared.looks_of[split[d.words, '|'][0]]
+    s = d.s
+    w = shared.look_number[l, 'w', 0.0]
+    x = shared.look_number[l, 'x', 0.0]
+    y = shared.look_number[l, 'y', 0.0]
+    fill = '#000000'
+    if 'fill' in l
+        fill = l['fill']
+    c = d.c
+    c = lory.circle[c, d.x + (x + w / 2.0) * s, d.y + (y + w / 2.0) * s, w / 2.0 * s, lory.hex[fill]]
+    d.c = c
+    d
+
+fn _painters_known[]
+    _svg_painted[shared.blank_drawn[]]
+
+--- ---- until ----
+
+--- a placeholder until the content comes, two seconds later
+fn until_view[s, t]
+    shown = 'Loading...'
+    if t gte 2000.0
+        shown = 'Lorem Ipsum'
+    gui.column[[shared.titled[3, 'until directive example', '', ''], gui.text[shown]]]
+
+--- the part's trees shown on a canvas
+fn shown_on[c, s, t]
+    gui.show[c, cache_view[s, t]]

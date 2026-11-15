@@ -1,0 +1,3614 @@
+--- Lory's form controls (docs/components/forms.md says what each holds
+--- to and how it was held to its reference): a button that stays pressed,
+--- a group of them, a segmented control, a switch, a rating, cards to tick
+--- or choose, a slider of two thumbs, a number stepper, a password field
+--- with its reveal, a one-time code, a combobox, a field kept to a mask, the
+--- rules a form is checked by with the words shown under a field, a
+--- fieldset, fields linked by a conversion, a colour picker, a zone to drop
+--- files on, and small controls: a count of characters, a copy button and
+--- a badge of states.
+---
+--- Each is built of gui's vocabulary (`lory.gui`) and is placed in a tree
+--- as gui's own controls are. A control of one part is drawn by Lory
+--- (`gui.drawn`) and tells its events as gui's do, by its id:
+---
+---     fn view[s]
+---         gui.column[[forms.switch['wifi', 'Wi-Fi', s.wifi], forms.rating['stars', s.stars]]]
+---
+---     for e in shown.events
+---         if e.id eq 'wifi'
+---             s.wifi = e.num gt 0.5
+---
+--- A control of several parts that holds what is being typed (a stepper,
+--- a combobox, a code) keeps it in a record of its own that the program
+--- holds, as it holds the value of a field: the control is drawn from it
+--- (`stepper[id, s.qty, …]`) and the record is brought up to date from what
+--- the reader did (`stepper_after[id, s.qty, shown, …]`), once a frame,
+--- after `gui.show`. What moves (a switch's thumb, a copy button's tick, a
+--- badge's mark) is eased by Lory's motion (`lory.motion`).
+
+use memory
+use lory
+use gui
+use icons
+use colors
+use motion
+
+--- ---- shared ----
+
+fn _one[yes]
+    if yes
+        return 1.0
+    0.0
+
+--- how wide words are at `size` CSS pixels, as Lory lays them before its
+--- type is read (a wider guess than the type's own: the words fit)
+fn _wide_of[words, size]
+    len[words] * size * 0.55
+
+--- a button's width for its words, as gui sizes one
+fn _button_wide[words]
+    max[64.0, _wide_of[words, 15.0] + 28.0]
+
+--- the part of the lines at `i`, or '' past their end
+fn _part[parts, i]
+    if i lt len[parts]
+        return parts[i]
+    ''
+
+--- Each painter here is a pair: `_x_painted` answers what `_x_drawing`
+--- drew, or the control as it was handed in where the drawing failed (a
+--- list read past its end, a number that did not parse). gui's node holds
+--- one kind of painter, and Crow compares a function's kind with its
+--- failure kept: a painter that may fail is refused beside one that may
+--- not.
+
+--- whether Enter or space was typed into the control
+fn _activated[d]
+    hit = false
+    for k in d.keys
+        if k eq 'Enter' or k eq ' '
+            hit = true
+    hit
+
+--- whether a key of that name was typed into the control
+fn _typed_key[d, name]
+    hit = false
+    for k in d.keys
+        if k eq name
+            hit = true
+    hit
+
+--- the event told under the id of the group the drawn control is part of
+fn _told_as[d, group, act, words, num]
+    own = d.id
+    d.id = group
+    d = gui.tell[d, act, words, num]
+    d.id = own
+    d
+
+--- a colour of the look by its name
+fn _tone[look, tone]
+    if tone eq 'success'
+        return look.success
+    if tone eq 'danger'
+        return look.danger
+    if tone eq 'warning'
+        return look.warning
+    if tone eq 'muted'
+        return look.muted
+    if tone eq 'ink'
+        return look.ink
+    look.accent
+
+--- whether the list holds the words
+fn _holds[words_list, words]
+    hit = false
+    for w in words_list
+        if w eq words
+            hit = true
+    hit
+
+--- an empty list of words, typed
+fn _no_words[]
+    slice[[''], 0, 0]
+
+--- ---- a toggle button (Radix Toggle) ----
+
+--- a button that stays pressed: pressed, or Enter or space while it has the
+--- focus, it tells `toggle` (`num` 1 now pressed, 0 let up; `words` its
+--- words). `on` shows it pressed; `wide` 0 sizes it to its words.
+fn toggle_button[id, words, on, wide = 0.0]
+    w = wide
+    if w lte 0.0
+        w = _button_wide[words]
+    gui.row[[gui.drawn[id, _one[on], w, 34.0, _toggle_painted, words = words]]]
+
+fn _toggle_painted[d]
+    out = _toggle_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _toggle_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    on = d.num gt 0.5
+    if d.pressed or _activated[d]
+        on = not on
+        d = gui.tell[d, 'toggle', d.words, _one[on]]
+    c = _pressable_ground[c, d, on, 8.0 * s]
+    ink = look.ink
+    if on
+        ink = look.accent
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, d.words, 15.0 * s, ink]
+    d.c = c
+    d
+
+--- a control's ground as a button's: quiet when up, the accent's tint
+--- when pressed in, the hover's and the press's grounds
+fn _pressable_ground[c, d, on, r]
+    s = d.s
+    look = d.look
+    ground = look.field
+    edge = look.edge
+    if on
+        ground = lory.mix[look.field, look.accent, 0.22]
+        edge = lory.fade[look.accent, 0.7]
+    if d.hover
+        ground = lory.mix[ground, look.hover, 0.6]
+    if d.down
+        ground = look.press
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, ground]
+    lory.round_outline[c, d.x, d.y, d.w, d.h, r, 1.0 * s, edge]
+
+--- ---- a toggle group (Radix Toggle Group) and a segmented control ----
+
+--- buttons that stay pressed, side by side (`along` 'row') or one under
+--- another ('column'): one stop of Tab, the arrows along it moving the
+--- focus between them (round past the ends where `loop`), Home and End to
+--- the first and the last, Enter or space pressing the one with the focus.
+--- One at most is pressed (`multiple` false: pressing it tells `choose`
+--- with its words, pressing it again `choose` with '', none pressed), or
+--- any (`multiple`: each press tells `toggle`, its words and 1 or 0).
+--- `pressed` holds the words of those pressed.
+fn toggle_group[id, choices, pressed, multiple = false, along = 'row', loop = true]
+    mode = 'single'
+    if multiple
+        mode = 'multiple'
+    kids = []
+    n = len[choices]
+    for i in range[n]
+        words = choices[i]
+        w = _button_wide[words]
+        kids = push[kids, gui.drawn['`id`:`i`', _one[_holds[pressed, words]], w, 34.0, _group_painted, lo = i + 0.0, hi = n + 0.0, words = '`id`\n`words`\n`mode`']]
+    gui.roving[id, kids, along = along, loop = loop, gap = 4.0]
+
+--- the words pressed once the event is applied: a group's `choose` or
+--- `toggle` (`multiple`), the others leaving them as they are
+fn pressed_after[pressed, e, multiple = false]
+    if e.act eq 'choose' and not multiple
+        if e.words eq ''
+            return _no_words[]
+        return [e.words]
+    if e.act eq 'toggle' and multiple
+        out = _no_words[]
+        for w in pressed
+            if w ne e.words
+                out = push[out, w]
+        if e.num gt 0.5
+            out = push[out, e.words]
+        return out
+    pressed
+
+fn _group_painted[d]
+    out = _group_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _group_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    parts = split[d.words, '\n']
+    group = _part[parts, 0]
+    words = _part[parts, 1]
+    mode = _part[parts, 2]
+    on = d.num gt 0.5
+    if d.pressed or _activated[d]
+        if mode eq 'multiple'
+            on = not on
+            d = _told_as[d, group, 'toggle', words, _one[on]]
+        else
+            if on
+                on = false
+                d = _told_as[d, group, 'choose', '', -1.0]
+            else
+                on = true
+                d = _told_as[d, group, 'choose', words, d.lo]
+    c = _pressable_ground[c, d, on, 6.0 * s]
+    ink = look.ink
+    if on
+        ink = look.accent
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, words, 15.0 * s, ink]
+    d.c = c
+    d
+
+--- choices side by side on one track, one always chosen (Radix Themes'
+--- segmented control, Vuetify's mandatory group): pressing another, or
+--- Enter or space on the one with the focus, tells `choose` with its words
+--- and place; the arrows move the focus along it, round past the ends.
+--- `wide` 0 sizes each to its words, or the track is `wide` and shared out.
+fn segmented[id, choices, chosen, wide = 0.0]
+    kids = []
+    n = len[choices]
+    for i in range[n]
+        words = choices[i]
+        w = max[56.0, _wide_of[words, 14.0] + 24.0]
+        if wide gt 0.0
+            w = wide / max[1, n]
+        kids = push[kids, gui.drawn['`id`:`i`', _one[words eq chosen], w, 32.0, _segment_painted, lo = i + 0.0, hi = n + 0.0, words = '`id`\n`words`']]
+    gui.roving[id, kids, along = 'row', loop = true, gap = 0.0]
+
+fn _segment_painted[d]
+    out = _segment_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _segment_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    parts = split[d.words, '\n']
+    group = _part[parts, 0]
+    words = _part[parts, 1]
+    on = d.num gt 0.5
+    if (d.pressed or _activated[d]) and not on
+        on = true
+        d = _told_as[d, group, 'choose', words, d.lo]
+    --- (the track: its outer corners round, the inner ones square)
+    r = 8.0 * s
+    i = int[d.lo]
+    n = int[d.hi]
+    track = look.field
+    if d.hover and not on
+        track = lory.mix[look.field, look.hover, 0.7]
+    c = _segment_ground[c, d.x, d.y, d.w, d.h, r, i, n, track]
+    c = _segment_edge[c, d, r, i, n]
+    if on
+        c = lory.round_rect[c, d.x + 3.0 * s, d.y + 3.0 * s, d.w - 6.0 * s, d.h - 6.0 * s, r - 3.0 * s, look.panel]
+        c = lory.round_outline[c, d.x + 3.0 * s, d.y + 3.0 * s, d.w - 6.0 * s, d.h - 6.0 * s, r - 3.0 * s, 1.0 * s, look.edge]
+    ink = look.muted
+    if on
+        ink = look.ink
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, words, 14.0 * s, ink]
+    d.c = c
+    d
+
+--- a part of a track: the first rounded on its left, the last on its
+--- right, one alone all round, the rest square
+fn _segment_ground[c, x, y, w, h, r, i, n, color]
+    if n lte 1
+        return lory.round_rect[c, x, y, w, h, r, color]
+    if i eq 0
+        c = lory.round_rect[c, x, y, w, h, r, color]
+        return lory.rect[c, x + w / 2.0, y, w - w / 2.0, h, color]
+    if i eq n - 1
+        c = lory.round_rect[c, x, y, w, h, r, color]
+        return lory.rect[c, x, y, w / 2.0, h, color]
+    lory.rect[c, x, y, w, h, color]
+
+--- the track's edge along the part: its top and foot, and its ends where
+--- it ends the track
+fn _segment_edge[c, d, r, i, n]
+    s = d.s
+    edge = d.look.edge
+    line = 1.0 * s
+    left = d.x
+    right = d.x + d.w
+    if i eq 0
+        left = d.x + r
+    if i eq n - 1
+        right = d.x + d.w - r
+    c = lory.rect[c, left, d.y, right - left, line, edge]
+    c = lory.rect[c, left, d.y + d.h - line, right - left, line, edge]
+    if i eq 0
+        c = lory.round_outline[c, d.x, d.y, 2.0 * r, d.h, r, line, edge]
+        c = lory.rect[c, d.x + r, d.y + line, r, d.h - 2.0 * line, _ground_under[d, i, n]]
+    if i eq n - 1
+        c = lory.round_outline[c, d.x + d.w - 2.0 * r, d.y, 2.0 * r, d.h, r, line, edge]
+        c = lory.rect[c, d.x + d.w - 2.0 * r, d.y + line, r, d.h - 2.0 * line, _ground_under[d, i, n]]
+    c
+
+--- the track's ground where the part's rounded edge was squared off
+fn _ground_under[d, i, n]
+    look = d.look
+    if d.hover and d.num lte 0.5
+        return lory.mix[look.field, look.hover, 0.7]
+    look.field
+
+--- ---- a switch (Headless UI, Radix and Vuetify's) ----
+
+--- a switch, on or off, with its words beside it: pressed (its words as
+--- well), or space while it has the focus, it tells `toggle` (`num` 1 now
+--- on, 0 off). Enter toggles it too (Radix's), or, `submits`, tells
+--- `submit` (Headless UI's: Enter sends the form). `size` is `small`,
+--- `medium` or `large`, `tone` the colour of its track when on (a tone of
+--- the look), and `busy` shows it working (Vuetify's loading): it turns
+--- and takes no input until it is not.
+fn switch[id, words, on, size = 'medium', tone = 'accent', submits = false, busy = false]
+    tw = _switch_w[size]
+    th = _switch_h[size]
+    w = tw
+    if words ne ''
+        w = tw + 10.0 + _wide_of[words, 15.0]
+    flags = _one[submits] + 2.0 * _one[busy]
+    gui.row[[gui.drawn[id, _one[on], w, max[th, 24.0], _switch_painted, lo = flags, hi = th, words = '`tone`\n`words`']]]
+
+fn _switch_w[size]
+    if size eq 'small'
+        return 32.0
+    if size eq 'large'
+        return 48.0
+    40.0
+
+fn _switch_h[size]
+    if size eq 'small'
+        return 18.0
+    if size eq 'large'
+        return 28.0
+    22.0
+
+fn _switch_painted[d]
+    out = _switch_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _switch_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    parts = split[d.words, '\n']
+    tone = _part[parts, 0]
+    words = _part[parts, 1]
+    flags = int[d.lo]
+    submits = flags % 2 eq 1
+    busy = flags gte 2
+    on = d.num gt 0.5
+    if not busy
+        hit = d.pressed or _typed_key[d, ' ']
+        if _typed_key[d, 'Enter']
+            if submits
+                d = gui.tell[d, 'submit', words, _one[on]]
+            else
+                hit = true
+        if hit
+            on = not on
+            d = gui.tell[d, 'toggle', words, _one[on]]
+    th = d.hi * s
+    tw = th * 40.0 / 22.0
+    if d.hi eq 18.0
+        tw = 32.0 * s
+    if d.hi eq 28.0
+        tw = 48.0 * s
+    x = d.x
+    y = d.y + (d.h - th) / 2.0
+    --- (the thumb slides and the track takes its colour over 150
+    --- milliseconds, as Headless UI's example and Radix's switch move)
+    k = motion.tween[c, '`d.id`:thumb', _one[on], 150.0, 'outQuad']
+    track = lory.mix[look.edge, _tone[look, tone], k]
+    if d.hover and not busy
+        track = lory.mix[track, look.ink, 0.12]
+    c = lory.round_rect[c, x, y, tw, th, th / 2.0, track]
+    r = th / 2.0 - 3.0 * s
+    cx = x + th / 2.0 + k * (tw - th)
+    c = lory.circle[c, cx, y + th / 2.0, r, look.on_accent]
+    if busy
+        c = icons.spinning[c, 'loader', cx - r, y + th / 2.0 - r, 2.0 * r, track, lory.time[c]]
+    if words ne ''
+        ink = look.ink
+        if busy
+            ink = look.muted
+        c = lory.text[c, x + tw + 10.0 * s, d.y + (d.h - lory.line_height[c, 15.0 * s]) / 2.0, words, 15.0 * s, ink]
+    d.c = c
+    d
+
+--- ---- a rating (Semantic UI's and Vuetify's) ----
+
+--- stars, `value` of `most` lit: pressing one sets the rating to it (its
+--- left half to a half star, where `half`), pressing the one set again
+--- clears it (`clearable`), the pointer over them showing what a press
+--- would set, and the right and left arrows raising and lowering it a star
+--- (a half where `half`) while it has the focus; each is a `change`
+--- (`num` the rating). `readonly` shows it and takes no input. `size` is a
+--- star's in CSS pixels.
+fn rating[id, value, most = 5, half = false, clearable = true, readonly = false, size = 24.0]
+    flags = _one[half] + 2.0 * _one[clearable] + 4.0 * _one[readonly]
+    gui.row[[gui.drawn[id, value, most * (size + 4.0), size + 8.0, _rating_painted, lo = flags, hi = most + 0.0, words = str[size]]]]
+
+--- the rating a press at `px` CSS pixels into the stars sets
+fn rating_at[px, most, size, half]
+    cell = size + 4.0
+    i = floor[px / cell]
+    if i lt 0
+        return 0.0
+    if i gte most
+        return most + 0.0
+    v = i + 1.0
+    if half and px - i * cell lt cell / 2.0
+        v = i + 0.5
+    v
+
+--- the rating once a press set it: cleared where it is the one set and
+--- may be cleared
+fn rating_pressed[was, at, clearable]
+    if clearable and at eq was
+        return 0.0
+    at
+
+--- the rating once an arrow moved it: a star (a half where `half`) up or
+--- down, kept from 0 to `most`
+fn rating_keyed[was, key, most, half]
+    step = 1.0
+    if half
+        step = 0.5
+    if key eq 'ArrowRight'
+        return min[most + 0.0, was + step]
+    if key eq 'ArrowLeft'
+        return max[0.0, was - step]
+    was
+
+fn _rating_painted[d]
+    out = _rating_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _rating_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    flags = int[d.lo]
+    half = flags % 2 eq 1
+    clearable = (flags / 2) % 2 eq 1
+    readonly = flags gte 4
+    most = int[d.hi]
+    size = d.h / s - 8.0
+    shown = d.num
+    if not readonly
+        at = rating_at[d.px / s, most, size, half]
+        if d.hover
+            shown = at
+        if d.pressed
+            d.num = rating_pressed[d.num, at, clearable]
+            shown = d.num
+        for k in d.keys
+            d.num = rating_keyed[d.num, k, most, half]
+            shown = d.num
+    cell = (size + 4.0) * s
+    r = size * s / 2.0
+    lit = look.warning
+    if d.hover and not readonly
+        lit = lory.mix[look.warning, look.ink, 0.15]
+    for i in range[most]
+        x = d.x + i * cell + 2.0 * s
+        y = d.y + d.h / 2.0 - r
+        if shown gte i + 1.0
+            c = icons.draw[c, 'star-filled', x, y, 2.0 * r, lit]
+        else
+            c = icons.draw[c, 'star', x, y, 2.0 * r, look.muted]
+            if shown gte i + 0.5
+                kept = lory.clipped[c]
+                c = lory.clip[c, x, y, r, 2.0 * r]
+                c = icons.draw[c, 'star-filled', x, y, 2.0 * r, lit]
+                c = lory.unclip[c, kept]
+    d.c = c
+    d
+
+--- ---- cards to choose and to tick (Radix Themes' radio and checkbox cards) ----
+
+--- a card: the words it stands for, its title and the words under it
+struct Card [value, title, words]
+
+fn card[value, title, words = '']
+    Card[value, title, words]
+
+--- cards one of which is chosen, `columns` to a row, `tall` CSS pixels
+--- high: one stop of Tab, a press on one or a key choosing (`card_after_key`:
+--- Radix's radio group), each choice a `choose` with the card's value and
+--- place; the one chosen is outlined in the accent
+fn radio_cards[id, cards, chosen, columns = 2, tall = 64.0]
+    k = max[1, columns]
+    rows = (len[cards] + k - 1) / k
+    lines = []
+    at = -1
+    for i in range[len[cards]]
+        one = cards[i]
+        lines = push[lines, '`one.value`\t`one.title`\t`one.words`']
+        if one.value eq chosen
+            at = i
+    gui.drawn[id, at + 0.0, 0.0, rows * tall + (rows - 1) * 10.0, _radio_cards_painted, lo = k + 0.0, hi = tall, words = join[lines, '\n']]
+
+--- the card a radio group's key moves to from `at`, of `n`: Radix's
+--- roving focus, along the cards as they are written whatever the
+--- columns (the right and down arrows to the next, round past the last;
+--- the left and up arrows to the one before; Home and Page Up to the
+--- first, End and Page Down to the last)
+fn card_after_key[at, key, n]
+    if n eq 0
+        return -1
+    if at lt 0
+        return 0
+    to = at
+    if key eq 'ArrowRight' or key eq 'ArrowDown'
+        to = (at + 1) % n
+    if key eq 'ArrowLeft' or key eq 'ArrowUp'
+        to = (at + n - 1) % n
+    if key eq 'Home' or key eq 'PageUp'
+        to = 0
+    if key eq 'End' or key eq 'PageDown'
+        to = n - 1
+    to
+
+fn _radio_cards_painted[d]
+    out = _radio_cards_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _radio_cards_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    lines = split[d.words, '\n']
+    n = len[lines]
+    if d.words eq ''
+        n = 0
+    columns = int[d.lo]
+    tall = d.hi * s
+    gap = 10.0 * s
+    cw = (d.w - (columns - 1) * gap) / columns
+    at = int[d.num]
+    if d.pressed
+        i = 0
+        while i lt n
+            x = d.x + (i % columns) * (cw + gap)
+            y = d.y + (i / columns) * (tall + gap)
+            if d.px + d.x gte x and d.px + d.x lt x + cw and d.py + d.y gte y and d.py + d.y lt y + tall
+                at = i
+            i = i + 1
+    for k in d.keys
+        if k eq ' ' or k eq 'Enter'
+            if at lt 0 and n gt 0
+                at = 0
+        else
+            at = card_after_key[at, k, n]
+    if at ne int[d.num]
+        one = split[lines[at], '\t']
+        d = gui.tell[d, 'choose', _part[one, 0], at + 0.0]
+    i = 0
+    while i lt n
+        one = split[lines[i], '\t']
+        x = d.x + (i % columns) * (cw + gap)
+        y = d.y + (i / columns) * (tall + gap)
+        hot = d.hover and d.px + d.x gte x and d.px + d.x lt x + cw and d.py + d.y gte y and d.py + d.y lt y + tall
+        c = _card_drawn[c, d, x, y, cw, tall, _part[one, 1], _part[one, 2], i eq at, hot, 'radio']
+        i = i + 1
+    d.c = c
+    d
+
+--- a card drawn: its ground and edge (the accent's where it is chosen),
+--- its mark (a ring or a box) and its words
+fn _card_drawn[c, d, x, y, w, h, title, words, on, hot, kind]
+    s = d.s
+    look = d.look
+    ground = look.panel
+    if hot
+        ground = lory.mix[look.panel, look.hover, 0.8]
+    edge = look.edge
+    line = 1.0 * s
+    if on
+        ground = lory.mix[ground, look.accent, 0.1]
+        edge = look.accent
+        line = 2.0 * s
+    c = lory.round_rect[c, x, y, w, h, 10.0 * s, ground]
+    c = lory.round_outline[c, x, y, w, h, 10.0 * s, line, edge]
+    mx = x + w - 22.0 * s
+    my = y + 14.0 * s
+    if kind eq 'radio'
+        c = lory.ring[c, mx + 6.0 * s, my + 6.0 * s, 7.0 * s, 1.5 * s, lory.mix[look.muted, look.accent, _one[on]]]
+        if on
+            c = lory.circle[c, mx + 6.0 * s, my + 6.0 * s, 3.5 * s, look.accent]
+    else
+        if on
+            c = lory.round_rect[c, mx - 1.0 * s, my - 1.0 * s, 14.0 * s, 14.0 * s, 3.0 * s, look.accent]
+            c = icons.draw[c, 'check', mx - 1.0 * s, my - 1.0 * s, 14.0 * s, look.on_accent]
+        else
+            c = lory.round_outline[c, mx - 1.0 * s, my - 1.0 * s, 14.0 * s, 14.0 * s, 3.0 * s, 1.5 * s, look.muted]
+    kept = lory.clipped[c]
+    c = lory.clip[c, x + 12.0 * s, y, w - 44.0 * s, h]
+    c = lory.text[c, x + 14.0 * s, y + 12.0 * s, title, 15.0 * s, look.ink]
+    c = lory.text[c, x + 14.0 * s, y + 34.0 * s, words, 13.0 * s, look.muted]
+    lory.unclip[c, kept]
+
+--- cards any of which are ticked, `columns` to a row, each its own stop
+--- of Tab: a press on one, or space while it has the focus, tells
+--- `toggle` under the group's id with the card's value (`num` 1 ticked, 0
+--- not); `ticked` holds the values ticked
+fn checkbox_cards[id, cards, ticked, columns = 2, tall = 64.0]
+    cells = []
+    for i in range[len[cards]]
+        one = cards[i]
+        cells = push[cells, gui.drawn['`id`:`i`', _one[_holds[ticked, one.value]], 0.0, tall, _checkbox_card_painted, lo = i + 0.0, words = '`id`\t`one.value`\t`one.title`\t`one.words`']]
+    gui.grid[cells, columns = columns, gap = 10.0]
+
+fn _checkbox_card_painted[d]
+    out = _checkbox_card_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _checkbox_card_drawing[d]
+    c = d.c
+    parts = split[d.words, '\t']
+    on = d.num gt 0.5
+    if d.pressed or _typed_key[d, ' ']
+        on = not on
+        d = _told_as[d, _part[parts, 0], 'toggle', _part[parts, 1], _one[on]]
+    c = _card_drawn[c, d, d.x, d.y, d.w, d.h, _part[parts, 2], _part[parts, 3], on, d.hover, 'checkbox']
+    d.c = c
+    d
+
+--- ---- a slider of two thumbs (Radix's range, Vuetify's range slider) ----
+
+--- a range from `low` to `high` within `lo` to `hi`, set by two thumbs on
+--- one track `wide` CSS pixels long, each its own stop of Tab: a press on
+--- the track moves the thumb nearer it there and drags it, the arrows move
+--- the thumb with the focus a `step` (Page Up and Page Down ten), Home
+--- takes the low thumb to `lo` and End the high one to `hi` (Radix's, from
+--- either thumb), and a thumb stops `gap_steps` steps short of the other.
+--- Each move tells `change` under its id, `words` `low` or `high`, `num`
+--- the thumb's value, snapped to the steps from `lo`.
+fn range_slider[id, low, high, lo, hi, step = 1.0, gap_steps = 0, wide = 240.0]
+    a = min[low, high]
+    b = max[low, high]
+    pad = 10.0
+    room = wide - 2.0 * pad
+    span = hi - lo
+    if span lte 0.0
+        span = 1.0
+    xa = pad + (a - lo) / span * room
+    xb = pad + (b - lo) / span * room
+    split_at = (xa + xb) / 2.0
+    left = gui.drawn['`id`:low', a, split_at, 30.0, _range_painted, lo = lo, hi = hi, words = '`id`\nlow\n`b`\n`step`\n`gap_steps`\n`wide`']
+    right = gui.drawn['`id`:high', b, wide - split_at, 30.0, _range_painted, lo = lo, hi = hi, words = '`id`\nhigh\n`a`\n`step`\n`gap_steps`\n`wide`']
+    gui.row[[left, right], gap = 0.0]
+
+--- the low and high once an event of the range is applied
+fn range_after[low, high, e]
+    if e.act eq 'change' and e.words eq 'low'
+        return [e.num, high]
+    if e.act eq 'change' and e.words eq 'high'
+        return [low, e.num]
+    [low, high]
+
+--- a value snapped to the steps from `lo` (Radix's: the nearest step, to
+--- the step's decimals) and kept from `lo` to `hi`
+fn snapped[v, lo, hi, step]
+    if step lte 0.0
+        return max[lo, min[hi, v]]
+    k = round[(v - lo) / step]
+    out = _to_places[k * step + lo, _places_of[step]]
+    max[lo, min[hi, out]]
+
+--- the decimals a number is written with (0.25: 2)
+fn _places_of[x]
+    t = str[x]
+    parts = split[t, '.']
+    if len[parts] lt 2
+        return 0
+    len[parts[1]]
+
+--- the number rounded to `places` decimals
+fn _to_places[x, places]
+    k = 1.0
+    for i in range[places]
+        k = k * 10.0
+    round[x * k] / k
+
+--- a thumb's value once a key moved it, kept within the range and short
+--- of the other thumb
+fn range_keyed[v, key, lo, hi, step, which]
+    big = step * 10.0
+    if key eq 'ArrowRight' or key eq 'ArrowUp'
+        return snapped[v + step, lo, hi, step]
+    if key eq 'ArrowLeft' or key eq 'ArrowDown'
+        return snapped[v - step, lo, hi, step]
+    if key eq 'PageUp'
+        return snapped[v + big, lo, hi, step]
+    if key eq 'PageDown'
+        return snapped[v - big, lo, hi, step]
+    v
+
+--- the thumb kept `gap` short of the other: the low one below it, the high
+--- one above
+fn _short_of[v, other, gap, which]
+    if which eq 'low'
+        return min[v, other - gap]
+    max[v, other + gap]
+
+fn _range_painted[d]
+    out = _range_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _range_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    parts = split[d.words, '\n']
+    group = _part[parts, 0]
+    which = _part[parts, 1]
+    other = _number_in[_part[parts, 2]]
+    step = _number_in[_part[parts, 3]]
+    gap = _number_in[_part[parts, 4]] * step
+    wide = _number_in[_part[parts, 5]] * s
+    pad = 10.0 * s
+    room = wide - 2.0 * pad
+    span = d.hi - d.lo
+    if span lte 0.0
+        span = 1.0
+    --- (the track's left end in the drawing: the low part starts it, the
+    --- high part ends it)
+    x0 = d.x
+    if which eq 'high'
+        x0 = d.x + d.w - wide
+    v = d.num
+    if d.down
+        v = snapped[d.lo + (d.x + d.px - x0 - pad) / room * span, d.lo, d.hi, step]
+        v = _short_of[v, other, gap, which]
+    for k in d.keys
+        if k eq 'Home'
+            if which eq 'low'
+                v = d.lo
+            else
+                d = _told_as[d, group, 'change', 'low', d.lo]
+        else if k eq 'End'
+            if which eq 'high'
+                v = d.hi
+            else
+                d = _told_as[d, group, 'change', 'high', d.hi]
+        else
+            v = _short_of[range_keyed[v, k, d.lo, d.hi, step, which], other, gap, which]
+    if v ne d.num
+        d = _told_as[d, group, 'change', which, v]
+    cy = d.y + d.h / 2.0
+    track_h = 4.0 * s
+    c = lory.rect[c, d.x, cy - track_h / 2.0, d.w, track_h, look.edge]
+    tx = x0 + pad + (v - d.lo) / span * room
+    if which eq 'low'
+        c = lory.rect[c, tx, cy - track_h / 2.0, d.x + d.w - tx, track_h, look.accent]
+        c = lory.round_rect[c, d.x, cy - track_h / 2.0, min[pad, d.w], track_h, track_h / 2.0, look.edge]
+    else
+        c = lory.rect[c, d.x, cy - track_h / 2.0, tx - d.x, track_h, look.accent]
+    r = 8.0 * s
+    if d.focused
+        c = lory.circle[c, tx, cy, r + 5.0 * s, lory.fade[look.focus, 0.3]]
+    c = lory.circle[c, tx, cy, r, look.on_accent]
+    c = lory.ring[c, tx, cy, r, 2.0 * s, look.accent]
+    if d.down
+        label = str[v]
+        lw = lory.measure[c, label, 12.0 * s] + 12.0 * s
+        c = lory.round_rect[c, tx - lw / 2.0, cy - r - 26.0 * s, lw, 20.0 * s, 6.0 * s, look.accent]
+        c = lory.text_centered[c, tx, cy - r - 16.0 * s, label, 12.0 * s, look.on_accent]
+    d.c = c
+    d
+
+--- the number written, or 0 where it is not one
+fn _number_in[words]
+    v = float[words]
+    if not v.ok
+        return 0.0
+    v
+
+--- ---- masks (Vuetify's mask input) ----
+---
+--- A mask is written with tokens and the characters kept as they are:
+--- `#` a digit, `A` a letter made upper case, `a` a letter made lower
+--- case, `N` a digit or a letter made upper case, `n` one made lower case,
+--- `X` a mark between parts (`-`, `/`, `.`, a space …); a backslash before a
+--- character keeps it as written.
+
+--- the mask of that name (`credit-card`, `date`, `date-time`, `iso-date`,
+--- `phone`, `social`, `time`), or the words given where they name none
+fn mask_named[name]
+    if name eq 'credit-card'
+        return '#### #### #### ####'
+    if name eq 'date'
+        return '##/##/####'
+    if name eq 'date-time'
+        return '##/##/#### ##:##'
+    if name eq 'iso-date'
+        return '####-##-##'
+    if name eq 'phone'
+        return '(###) ###-####'
+    if name eq 'social'
+        return '###-##-####'
+    if name eq 'time'
+        return '##:##'
+    name
+
+fn _is_token[ch]
+    ch eq '#' or ch eq 'A' or ch eq 'a' or ch eq 'N' or ch eq 'n' or ch eq 'X'
+
+--- whether the character may stand where the token is
+fn _token_takes[token, ch]
+    if ch eq ''
+        return false
+    if token eq '#'
+        return matches[ch, '^[0-9]$']
+    if token eq 'A' or token eq 'a'
+        return matches[ch, '^[A-Za-z]$']
+    if token eq 'N' or token eq 'n'
+        return matches[ch, '^[0-9A-Za-z]$']
+    if token eq 'X'
+        return occurs['-!$%^&*()_+|~=\`{}[]:";\'<>?,./\\ ', ch] gt 0
+    false
+
+fn _token_made[token, ch]
+    if token eq 'A' or token eq 'N'
+        return upper[ch]
+    if token eq 'a' or token eq 'n'
+        return lower[ch]
+    ch
+
+--- the words as the mask writes them: each token filled by the next
+--- character it takes (those it does not are passed over), the mask's own
+--- characters written where they stand, until the words run out at a token
+fn mask_text[words, mask]
+    m = split[mask_named[mask], '']
+    text = split[_spaced_once[trim[words]], '']
+    if len[m] eq 0 or len[text] eq 0
+        return join[text, '']
+    out = []
+    ti = 0
+    mi = 0
+    while mi lt len[m]
+        mc = m[mi]
+        tc = _part[text, ti]
+        if mc eq '\\'
+            out = push[out, _part[m, mi + 1]]
+            mi = mi + 2
+        else if not _is_token[mc]
+            out = push[out, mc]
+            if tc eq mc
+                ti = ti + 1
+            mi = mi + 1
+        else if _token_takes[mc, tc]
+            out = push[out, _token_made[mc, tc]]
+            ti = ti + 1
+            mi = mi + 1
+        else if ti lt len[text]
+            ti = ti + 1
+        else
+            mi = len[m]
+    join[out, '']
+
+--- runs of white space as one space
+fn _spaced_once[words]
+    sub[words, '\s+', ' ']
+
+--- which characters of the words are the mask's own (true) and which
+--- fill its tokens (false)
+fn _mask_marks[words, mask]
+    m = split[mask_named[mask], '']
+    text = split[words, '']
+    marks = []
+    for i in range[len[text]]
+        marks = push[marks, true]
+    ti = 0
+    mi = 0
+    while ti lt len[text]
+        tc = text[ti]
+        if mi gte len[m]
+            marks[ti] = false
+            ti = ti + 1
+        else
+            mc = m[mi]
+            if mc eq '\\'
+                if tc eq _part[m, mi + 1]
+                    ti = ti + 1
+                mi = mi + 2
+            else if _token_takes[mc, tc]
+                marks[ti] = false
+                ti = ti + 1
+                mi = mi + 1
+            else if mc ne tc
+                looking = true
+                while looking
+                    next = _part[m, mi]
+                    mi = mi + 1
+                    if next eq '' or _token_takes[next, tc]
+                        looking = false
+            else
+                ti = ti + 1
+                mi = mi + 1
+    marks
+
+--- the words without the mask's own characters
+fn unmask_text[words, mask]
+    if len[mask_named[mask]] eq 0 or words eq ''
+        return words
+    text = split[words, '']
+    marks = _mask_marks[words, mask]
+    out = []
+    for i in range[len[text]]
+        if not marks[i]
+            out = push[out, text[i]]
+    join[out, '']
+
+--- whether the words are as the mask would write them: nothing of theirs
+--- is lost in the writing
+fn mask_valid[words, mask]
+    if words eq ''
+        return false
+    unmask_text[words, mask] eq unmask_text[mask_text[words, mask], mask]
+
+--- whether the words fill every token of the mask
+fn mask_complete[words, mask]
+    if words eq ''
+        return false
+    len[mask_text[words, mask]] eq len[mask_named[mask]] and mask_valid[words, mask]
+
+--- ---- filtering choices as they are typed (Vuetify's filter) ----
+
+--- the words in lower case, a final sigma as any other
+fn _folded[words]
+    replace[lower[words], 'ς', 'σ']
+
+--- where the query is found in the words, case aside: each place's start
+--- and end, left to right, none overlapping (none for an empty query)
+fn match_ranges[words, query]
+    q = _folded[query]
+    if q eq ''
+        return slice[[[0, 0]], 0, 0]
+    parts = split[_folded[words], q]
+    out = slice[[[0, 0]], 0, 0]
+    at = 0
+    i = 0
+    while i lt len[parts] - 1
+        at = at + len[parts[i]]
+        out = push[out, [at, at + len[q]]]
+        at = at + len[q]
+        i = i + 1
+    out
+
+--- the places of the choices the query is found in, in their order (all
+--- of them for an empty query); `prefix`, those found as a whole first,
+--- then at their start, then at a word's start, then anywhere (Vuetify's
+--- filtered order `prefix`)
+fn filtered[choices, query, prefix = false]
+    found = []
+    for i in range[len[choices]]
+        if query eq '' or len[match_ranges[choices[i], query]] gt 0
+            found = push[found, i]
+    if not prefix or query eq ''
+        return found
+    out = []
+    for rank in range[4]
+        for i in found
+            if _prefix_rank[choices[i], query] eq rank
+                out = push[out, i]
+    out
+
+fn _prefix_rank[words, query]
+    ranges = match_ranges[words, query]
+    n = len[words]
+    best = 3
+    chars = split[words, '']
+    for r in ranges
+        if r[0] eq 0 and r[1] eq n
+            best = min[best, 0]
+        else if r[0] eq 0
+            best = min[best, 1]
+        else if matches[chars[r[0] - 1], '^[^\p{L}\p{M}\p{N}]$']
+            best = min[best, 2]
+    best
+
+--- the choices the query is found in, in the order `filtered` gives
+fn matching[choices, query, prefix = true]
+    out = _no_words[]
+    for i in filtered[choices, query, prefix = prefix]
+        out = push[out, choices[i]]
+    out
+
+--- ---- numbers written as a number input writes them (Vuetify's, en-US) ----
+
+--- the number written with `places` decimals (-1: as few as it needs, at
+--- most 20), rounded half away from zero on its shortest digits as
+--- Intl.NumberFormat rounds, no grouping; a negative number rounded to
+--- nothing keeps its sign
+fn number_text[x, places = -1]
+    if x ne x
+        return 'NaN'
+    if _infinite[x]
+        if x gt 0.0
+            return '∞'
+        return '-∞'
+    plain = str[x]
+    neg = starts[plain, '-']
+    if neg
+        plain = slice[plain, 1, len[plain]]
+    parts = split[plain, '.']
+    whole = parts[0]
+    frac = _part[parts, 1]
+    most = places
+    if places lt 0
+        most = 20
+    if len[frac] gt most
+        up = _digit_of[slice[frac, most, most + 1]] gte 5
+        kept = slice[frac, 0, most]
+        if up
+            raised = _plus_one['`whole``kept`']
+            whole = slice[raised, 0, len[raised] - len[kept]]
+            kept = slice[raised, len[raised] - len[kept], len[raised]]
+        frac = kept
+    if places lt 0
+        frac = _no_trailing_zeros[frac]
+    else
+        frac = '`frac``_zeros[places - len[frac]]`'
+    out = whole
+    if frac ne ''
+        out = '`whole`.`frac`'
+    if neg
+        return '-`out`'
+    out
+
+--- whether the number is infinite (nought times it is no number)
+fn _infinite[x]
+    x eq x and x * 0.0 ne 0.0
+
+fn _digit_of[ch]
+    i = occurs['0123456789', ch]
+    if i eq 0
+        return 0
+    len[split['0123456789', ch][0]]
+
+--- a whole number's digits, one more
+fn _plus_one[digits]
+    ds = split[digits, '']
+    i = len[ds] - 1
+    carry = true
+    while carry and i gte 0
+        d = _digit_of[ds[i]] + 1
+        if d eq 10
+            ds[i] = '0'
+            i = i - 1
+        else
+            ds[i] = str[d]
+            carry = false
+    out = join[ds, '']
+    if carry
+        return '1`out`'
+    out
+
+--- as many noughts
+fn _zeros[n]
+    repeat['0', max[0, n]]
+
+fn _no_trailing_zeros[digits]
+    ds = split[digits, '']
+    n = len[ds]
+    while n gt 0 and ds[n - 1] eq '0'
+        n = n - 1
+    join[slice[ds, 0, n], '']
+
+--- the characters of a number in the words: its digits, a minus sign
+--- first, its first point, and `places` decimals (-1: all; 0: none)
+fn number_kept[words, places = -1]
+    chars = split[replace[words, '−', '-'], '']
+    valid = []
+    for ch in chars
+        if matches[ch, '^[0-9.\-]$']
+            valid = push[valid, ch]
+    out = []
+    seen_point = false
+    for i in range[len[valid]]
+        ch = valid[i]
+        if (i eq 0 and ch eq '-') or matches[ch, '^[0-9]$']
+            out = push[out, ch]
+        else if ch eq '.' and not seen_point
+            out = push[out, ch]
+            seen_point = true
+    clean = join[out, '']
+    if places eq 0
+        return split[clean, '.'][0]
+    if places gt 0 and matches[clean, '\.[0-9]']
+        parts = split[clean, '.']
+        return '`parts[0]`.`slice[parts[1], 0, places]`'
+    clean
+
+--- what typing `data` does to a number's words `value` with the caret at
+--- `start` (a selection to `end`), `how` it is taken: `as_typed` (the
+--- field takes it as it is), `refused` (nothing of it is a number's), or
+--- `changed` to the words and the caret's place given (Vuetify's
+--- processPlainInput)
+struct Typed [how, words, caret]
+
+fn number_typed[data, value, start, end, places = -1]
+    if data eq ''
+        return Typed['as_typed', value, start]
+    v = split[replace[value, '−', '-'], '']
+    before = join[slice[v, 0, start], '']
+    after = join[slice[v, end, len[v]], '']
+    clean = number_kept[data, places = places]
+    if starts[clean, '-'] and len[before] gt 0
+        clean = slice[clean, 1, len[clean]]
+    if occurs[clean, '.'] gt 0 and occurs['`before``after`', '.'] gt 0
+        clean = _without_first[clean, '.']
+    if clean eq ''
+        return Typed['refused', value, start]
+    candidate = '`before``clean``after`'
+    if not matches[candidate, '^-?[0-9]*\.?[0-9]*$']
+        return Typed['changed', number_kept[candidate, places = places], start]
+    if places gte 0 and len[_part[split[candidate, '.'], 1]] gt places
+        words = number_kept[candidate, places = places]
+        caret = start + len[clean]
+        if words eq '`before``after`'
+            caret = start
+        return Typed['changed', words, caret]
+    if clean eq data
+        return Typed['as_typed', candidate, start + len[clean]]
+    Typed['changed', candidate, start + len[clean]]
+
+fn _without_first[words, part]
+    pieces = split[words, part]
+    if len[pieces] lt 2
+        return words
+    rest = join[slice[pieces, 1, len[pieces]], part]
+    '`pieces[0]``rest`'
+
+--- ---- a file's size (Vuetify's) ----
+
+--- bytes as words: below `base` as they are, else in kilo-, mega- or
+--- gigabytes (kibi-, mebi- and gibibytes where `base` is 1024) to a
+--- decimal, as JavaScript's toFixed(1) rounds the number held
+fn file_size[bytes, base = 1000]
+    if bytes lt base
+        return '`js_text[bytes + 0.0]` B'
+    units = ['k', 'M', 'G']
+    if base eq 1024
+        units = ['Ki', 'Mi', 'Gi']
+    x = bytes + 0.0
+    unit = -1
+    while abs[x] gte base and unit lt 2
+        x = x / base
+        unit = unit + 1
+    '`fixed_text[x, 1]` `units[unit]`B'
+
+--- the number to `places` decimals as JavaScript's toFixed writes it: from
+--- the float's exact value, a half rounded up
+fn fixed_text[x, places]
+    neg = x lt 0.0
+    exact = _exact_digits[abs[x]]
+    whole = exact[0]
+    frac = '`exact[1]``_zeros[places + 1]`'
+    kept = slice[frac, 0, places]
+    if _digit_of[slice[frac, places, places + 1]] gte 5
+        raised = _plus_one['`whole``kept`']
+        whole = slice[raised, 0, len[raised] - places]
+        kept = slice[raised, len[raised] - places, len[raised]]
+    out = whole
+    if places gt 0
+        out = '`whole`.`kept`'
+    if neg
+        return '-`out`'
+    out
+
+--- a float's exact value in decimal: its whole digits and its fraction's
+--- (every one: a float is a whole number over a power of two)
+fn _exact_digits[x]
+    y = x
+    k = 0
+    while y ne floor[y] + 0.0 and k lt 1100
+        y = y * 2.0
+        k = k + 1
+    m = int[y]
+    five = 1
+    for i in range[k]
+        five = five * 5
+    digits = str[m * five]
+    if k eq 0
+        return [digits, '']
+    if len[digits] lte k
+        digits = '`_zeros[k - len[digits] + 1]``digits`'
+    [slice[digits, 0, len[digits] - k], slice[digits, len[digits] - k, len[digits]]]
+
+--- ---- numbers as JavaScript reads and writes them ----
+
+--- the number words are as JavaScript's Number reads them: white space
+--- round them aside, nothing 0, a decimal (a sign, a point, an exponent),
+--- Infinity, or a whole number in hex, octal or binary (`0x`, `0o`, `0b`);
+--- anything else is not a number
+fn js_number[words]
+    t = trim[words]
+    if t eq ''
+        return 0.0
+    if matches[t, '^[+-]?Infinity$']
+        if starts[t, '-']
+            return -1.0 / 0.0
+        return 1.0 / 0.0
+    if matches[t, '^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$']
+        v = float[t]
+        if not v.ok
+            return 0.0 / 0.0
+        return v
+    if matches[t, '^0[xX][0-9a-fA-F]+$']
+        return _based[slice[t, 2, len[t]], 16]
+    if matches[t, '^0[oO][0-7]+$']
+        return _based[slice[t, 2, len[t]], 8]
+    if matches[t, '^0[bB][01]+$']
+        return _based[slice[t, 2, len[t]], 2]
+    0.0 / 0.0
+
+fn _based[digits, base]
+    v = 0.0
+    for ch in split[digits, '']
+        v = v * base + len[split[lower['0123456789abcdef'], lower[ch]][0]]
+    v
+
+--- the number as JavaScript writes it (String(x)): its shortest digits,
+--- with an exponent from 1e21 up and below 1e-6, NaN, Infinity, and
+--- nought for a negative nought
+fn js_text[x]
+    if x ne x
+        return 'NaN'
+    if _infinite[x]
+        if x gt 0.0
+            return 'Infinity'
+        return '-Infinity'
+    if x eq 0.0
+        return '0'
+    if x lt 0.0
+        inner = js_text[0.0 - x]
+        return '-`inner`'
+    parts = split[str[x], '.']
+    whole = parts[0]
+    frac = _part[parts, 1]
+    digits = ''
+    n = 0
+    if whole ne '0'
+        digits = '`whole``frac`'
+        n = len[whole]
+    else
+        z = 0
+        fs = split[frac, '']
+        while z lt len[fs] and fs[z] eq '0'
+            z = z + 1
+        digits = slice[frac, z, len[frac]]
+        n = 0 - z
+    digits = _no_trailing_zeros[digits]
+    k = len[digits]
+    if k lte n and n lte 21
+        return '`digits``_zeros[n - k]`'
+    if n gt 0 and n lte 21
+        return '`slice[digits, 0, n]`.`slice[digits, n, k]`'
+    if n gt -6 and n lte 0
+        return '0.`_zeros[0 - n]``digits`'
+    e = n - 1
+    sign = '+'
+    if e lt 0
+        sign = '-'
+    if k eq 1
+        return '`digits`e`sign``abs[e]`'
+    '`slice[digits, 0, 1]`.`slice[digits, 1, k]`e`sign``abs[e]`'
+
+--- ---- fields linked by a conversion (7GUIs' temperature converter) ----
+
+--- the other field's words once one is typed in, as JavaScript computes
+--- and writes them: no rounding, and words that are no number make NaN
+fn fahrenheit_of[celsius]
+    js_text[js_number[celsius] * (9.0 / 5.0) + 32.0]
+
+fn celsius_of[fahrenheit]
+    js_text[(js_number[fahrenheit] - 32.0) * (5.0 / 9.0)]
+
+--- ---- the rules a form is checked by (Semantic UI's) ----
+---
+--- A rule is written as Semantic UI writes it, its name and, in brackets,
+--- what it is measured against: `empty` (something is written), `checked`
+--- (a box is ticked: its value is not ''), `email`, `url`, `integer`
+--- (`integer[1..10]`, `integer[5]`, `integer[..3]`, `integer[3..]`: within
+--- a span), `decimal`, `number`, `is[x]` and `not[x]` (case aside),
+--- `isExactly[x]`, `notExactly[x]`, `contains[x]`, `doesntContain[x]` (case
+--- aside), `containsExactly[x]`, `doesntContainExactly[x]`, `minLength[n]`
+--- (and `length[n]`, the same), `exactLength[n]`, `maxLength[n]`,
+--- `match[field]` and `different[field]` (the other field's value),
+--- `regExp[/pattern/flags]` (a pattern found in it; `i` the one flag kept),
+--- and `minCount[n]`, `exactCount[n]`, `maxCount[n]` (choices written with
+--- commas between them). A value is checked with the white space round it
+--- left out; a rule Lory does not know fails.
+
+--- the rule's name and what it is measured against: the words between its
+--- first `[` and its last `]`
+fn rule_name[rule]
+    if not matches[rule, '\[.*\]']
+        return rule
+    split[rule, '['][0]
+
+fn rule_value[rule]
+    if not matches[rule, '\[.*\]']
+        return ''
+    chars = split[rule, '']
+    first = len[split[rule, '['][0]]
+    last = len[chars] - 1
+    while last gt first and chars[last] ne ']'
+        last = last - 1
+    join[slice[chars, first + 1, last], '']
+
+--- whether the value passes the rule; `fields` holds the form's other
+--- fields' fields by name, as written (for `match` and `different`)
+fn passes[rule, value, fields]
+    v = trim[value]
+    name = rule_name[rule]
+    arg = rule_value[rule]
+    if name eq 'empty' or name eq 'checked'
+        return v ne ''
+    if name eq 'email'
+        return matches[v, '(?i)^[a-z0-9!#$%&\'*+/=?^_\`{|}~.-]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$']
+    if name eq 'url'
+        return _is_url[v]
+    if name eq 'integer'
+        return _integer_within[v, arg]
+    if name eq 'decimal'
+        return matches[v, '^[0-9]+\.?[0-9]*$']
+    if name eq 'number'
+        return matches[v, '^-?[0-9]*(\.[0-9]+)?$']
+    if name eq 'is'
+        return lower[v] eq lower[arg]
+    if name eq 'isExactly'
+        return v eq arg
+    if name eq 'not'
+        return lower[v] ne lower[arg]
+    if name eq 'notExactly'
+        return v ne arg
+    if name eq 'contains'
+        return occurs[lower[v], lower[arg]] gt 0 or arg eq ''
+    if name eq 'containsExactly'
+        return occurs[v, arg] gt 0 or arg eq ''
+    if name eq 'doesntContain'
+        return not (occurs[lower[v], lower[arg]] gt 0 or arg eq '')
+    if name eq 'doesntContainExactly'
+        return not (occurs[v, arg] gt 0 or arg eq '')
+    if name eq 'minLength' or name eq 'length' or name eq 'exactLength' or name eq 'maxLength'
+        n = int[arg]
+        if not n.ok
+            return false
+        if name eq 'exactLength'
+            return len[v] eq n
+        if name eq 'maxLength'
+            return len[v] lte n
+        return len[v] gte n
+    if name eq 'match' or name eq 'different'
+        if not (arg in fields)
+            return false
+        if name eq 'match'
+            return v eq fields[arg]
+        return v ne fields[arg]
+    if name eq 'regExp'
+        return _found_by[v, arg]
+    if name eq 'minCount' or name eq 'exactCount' or name eq 'maxCount'
+        return _counted[name, v, arg]
+    false
+
+--- a web address in the words (Semantic UI's pattern, its look-ahead
+--- written out: after `http://` either `www.` or a part not starting
+--- with `www`)
+fn _is_url[v]
+    run = '(?:[^\s.w][^\s.]*|w(?:[^\s.w][^\s.]*)?|ww(?:[^\s.w][^\s.]*)?)'
+    matches[v, '(?i)(https?://(?:www\.[^\s.]+|`run`)\.[^\s]{2,}|www\.[^\s]+\.[^\s]{2,})']
+
+--- a whole number, within the span where one is written (`lo..hi`, either
+--- end left out, or one number for both)
+fn _integer_within[v, span]
+    if not matches[v, '^-?[0-9]+$']
+        return false
+    n = int[v]
+    if not n.ok
+        return false
+    if span eq '' or span eq '..'
+        return true
+    if occurs[span, '..'] eq 0
+        if matches[span, '^-?[0-9]+$']
+            k = int[span]
+            if not k.ok
+                return true
+            return n eq k
+        return true
+    bounds = split[span, '..']
+    ok = true
+    if matches[bounds[0], '^-?[0-9]+$']
+        lo = int[bounds[0]]
+        if lo.ok
+            ok = ok and n gte lo
+    if matches[_part[bounds, 1], '^-?[0-9]+$']
+        hi = int[bounds[1]]
+        if hi.ok
+            ok = ok and n lte hi
+    ok
+
+--- a pattern written `/pattern/flags` (or bare) found in the words
+fn _found_by[v, written]
+    pattern = written
+    flags = ''
+    if starts[written, '/']
+        chars = split[written, '']
+        last = len[chars] - 1
+        while last gt 0 and chars[last] ne '/'
+            last = last - 1
+        if last gt 0
+            pattern = join[slice[chars, 1, last], '']
+            flags = join[slice[chars, last + 1, len[chars]], '']
+    if occurs[flags, 'i'] gt 0
+        pattern = '(?i)`pattern`'
+    found = matches[v, pattern]
+    if not found.ok
+        return false
+    found
+
+fn _counted[name, v, arg]
+    n = int[arg]
+    if not n.ok
+        return false
+    k = len[split[v, ',']]
+    if name eq 'minCount'
+        if n eq 0
+            return true
+        if n eq 1
+            return v ne ''
+        return k gte n
+    if name eq 'exactCount'
+        if n eq 0
+            return v eq ''
+        if n eq 1
+            return v ne '' and occurs[v, ','] eq 0
+        return k eq n
+    if n eq 0
+        return false
+    if n eq 1
+        return occurs[v, ','] eq 0
+    k lte n
+
+--- what a failed rule says of the field named `label`
+fn rule_says[rule, label]
+    name = rule_name[rule]
+    arg = rule_value[rule]
+    if name eq 'empty'
+        return '`label` is needed'
+    if name eq 'checked'
+        return '`label` must be ticked'
+    if name eq 'email'
+        return '`label` is not an email address'
+    if name eq 'url'
+        return '`label` is not a web address'
+    if name eq 'integer'
+        if arg eq '' or arg eq '..'
+            return '`label` must be a whole number'
+        return '`label` must be a whole number in `arg`'
+    if name eq 'decimal'
+        return '`label` must be a number with a point'
+    if name eq 'number'
+        return '`label` must be a number'
+    if name eq 'is' or name eq 'isExactly'
+        return '`label` must be “`arg`”'
+    if name eq 'not' or name eq 'notExactly'
+        return '`label` may not be “`arg`”'
+    if name eq 'contains' or name eq 'containsExactly'
+        return '`label` must hold “`arg`”'
+    if name eq 'doesntContain' or name eq 'doesntContainExactly'
+        return '`label` may not hold “`arg`”'
+    if name eq 'minLength' or name eq 'length'
+        return '`label` needs `arg` characters or more'
+    if name eq 'exactLength'
+        return '`label` needs `arg` characters exactly'
+    if name eq 'maxLength'
+        return '`label` holds `arg` characters at most'
+    if name eq 'match'
+        return '`label` must be the same as `arg`'
+    if name eq 'different'
+        return '`label` must differ from `arg`'
+    if name eq 'minCount'
+        return 'Choose `arg` or more for `label`'
+    if name eq 'exactCount'
+        return 'Choose `arg` exactly for `label`'
+    if name eq 'maxCount'
+        return 'Choose `arg` at most for `label`'
+    '`label` is not right'
+
+--- a field and what it is checked by: its id, the name its messages call
+--- it, its rules in order, what each says where it fails ('' or none:
+--- `rule_says`), and whether it may be left empty (`optional`: an empty
+--- one passes)
+struct Want [field, label, rules, says, optional]
+
+fn want[field, label, rules, says = [], optional = false]
+    words = _no_words[]
+    for w in says
+        words = push[words, w]
+    Want[field, label, rules, words, optional]
+
+--- what each failing rule of the field says, in the rules' order (Semantic
+--- UI lists them all; the first is the one shown under the field)
+fn failures_of[w, fields]
+    value = ''
+    if w.field in fields
+        value = fields[w.field]
+    out = _no_words[]
+    if w.optional and trim[value] eq ''
+        return out
+    for i in range[len[w.rules]]
+        rule = w.rules[i]
+        if not passes[rule, value, fields]
+            says = _part[w.says, i]
+            if says eq ''
+                says = rule_says[rule, w.label]
+            out = push[out, says]
+    out
+
+--- the first failure of each field ('' where it passes), by field
+fn errors_of[wants, fields]
+    out = map['' = '']
+    for w in wants
+        failed = failures_of[w, fields]
+        out[w.field] = _part[failed, 0]
+    out
+
+--- ---- what the reader does to a control of several parts ----
+
+--- a number no field of these controls has had for its turn: gui keeps
+--- the caret of every id it gave the focus, and `gui.focus` sets none, so
+--- a field given new words under an id it never had takes them with its
+--- caret at their end (counted for the whole program, so a record made
+--- again does not take up an old id and its caret)
+fn _turn[]
+    held = recall['lory.forms', Turns[0]]
+    held.last = held.last + 1
+    remember['lory.forms', held]
+    held.last
+
+--- what the controls keep between frames: the last turn given a field
+struct Turns [last]
+
+--- whether the id is the control's own or one of its parts' (`id:…`)
+fn _ours[e_id, id]
+    e_id eq id or starts[e_id, '`id`:']
+
+--- the part of the control whose box holds the point (CSS pixels), or ''
+fn _part_at[shown, id, x, y]
+    hit = ''
+    for k in keys[shown.boxes]
+        if _ours[k, id]
+            b = shown.boxes[k]
+            if x gte b[0] and y gte b[1] and x lt b[0] + b[2] and y lt b[1] + b[3]
+                hit = k
+    hit
+
+--- whether the focus stands on one of the control's parts once the frame
+--- is answered, as far as the frame shows it: an edit, a submit or a move
+--- by arrows among them puts it there; then, in the frame's order, a press
+--- on one of them puts it there and a press elsewhere or Tab takes it
+--- away. (Tab into the control is not seen until the reader types: gui
+--- does not say where its focus is.)
+fn _focus_held[was, id, shown]
+    on = was
+    for e in shown.events
+        if _ours[e.id, id] and (e.act eq 'edit' or e.act eq 'submit' or e.act eq 'rove')
+            on = true
+    c = shown.canvas
+    s = lory.px[c]
+    evs = lory.events[c]
+    i = 0
+    while i lt len[evs]
+        e = evs[i]
+        if e.on eq 'down'
+            on = _part_at[shown, id, e.x / s, e.y / s] ne ''
+        if e.on eq 'key' and e.key eq 'Tab'
+            on = false
+        i = i + 1
+    on
+
+--- the events of the frame of that id
+fn _events_of[shown, id]
+    out = slice[[gui.Event['', '', '', 0.0]], 0, 0]
+    for e in shown.events
+        if e.id eq id
+            out = push[out, e]
+    out
+
+--- ---- a number stepper (Vuetify's number input) ----
+
+--- a number being typed and stepped: the words its field shows, the
+--- number they stand for (`empty`: none), whether its field has the focus,
+--- and what Lory holds while it is answered (the field's turn, `gen`, so a
+--- field given new words takes them with its caret at their end; which
+--- button is held down, since when, and the steps a hold has made)
+struct Stepper [text, value, empty, focused, gen, hold, since, ticks]
+
+--- a stepper holding `value` (`empty`: nothing), written with `places`
+--- decimals
+fn stepper_of[value, places = 0, empty = false]
+    words = ''
+    if not empty
+        words = number_text[value + 0.0, places = places]
+    Stepper[words, value + 0.0, empty, false, 0, '', 0.0, 0]
+
+--- a field for a number between `lo` and `hi`, a button either side that
+--- steps it down and up by `step` (held, the first step at once and one
+--- each 50 milliseconds after half a second), each set aside where a step
+--- would not move it; the up and down arrows step it while the field has
+--- the focus. Typing keeps only a number's characters and `places`
+--- decimals; leaving the field holds the number within `lo` to `hi`,
+--- written with `places` decimals; coming back to it writes it with no
+--- more than it needs. `stepper_after` answers the reader.
+fn stepper[id, s, lo = -9007199254740991.0, hi = 9007199254740991.0, step = 1.0, hint = '', wide = 180.0]
+    down = gui.drawn['`id`:down', 0.0, 34.0, 34.0, _step_painted, words = 'down']
+    up = gui.drawn['`id`:up', 0.0, 34.0, 34.0, _step_painted, words = 'up']
+    if not _can_step[s, lo, hi, step, false]
+        down = gui.disabled[down]
+    if not _can_step[s, lo, hi, step, true]
+        up = gui.disabled[up]
+    field = gui.sized[gui.field['`id`:field:`s.gen`', s.text, hint = hint], max[60.0, wide - 76.0]]
+    gui.row[[down, field, up], gap = 4.0]
+
+fn _step_painted[d]
+    out = _step_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _step_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    if _activated[d]
+        d = gui.tell[d, 'press', d.words, 0.0]
+    c = _pressable_ground[c, d, false, 8.0 * s]
+    name = 'minus'
+    if d.words eq 'up'
+        name = 'plus'
+    c = icons.draw[c, name, d.x + d.w / 2.0 - 8.0 * s, d.y + d.h / 2.0 - 8.0 * s, 16.0 * s, look.ink]
+    d.c = c
+    d
+
+--- whether a step that way would move the number (none held: it would)
+fn _can_step[s, lo, hi, step, up]
+    if s.empty
+        return true
+    now_at = _stepper_number[s.text]
+    next = _stepped_by[now_at, step, up]
+    _clamped[next, lo, hi] ne now_at
+
+fn _stepped_by[x, step, up]
+    if up
+        return x + step
+    x - step
+
+fn _clamped[x, lo, hi]
+    max[lo, min[hi, x]]
+
+--- the number the stepper's words stand for, as Vuetify reads them: all
+--- but digits, points and minus signs left out, then JavaScript's Number
+fn _stepper_number[words]
+    kept = []
+    for ch in split[replace[words, '−', '-'], '']
+        if matches[ch, '^[0-9.\-]$']
+            kept = push[kept, ch]
+    js_number[join[kept, '']]
+
+--- the decimals JavaScript writes a number with (Vuetify's inferPrecision)
+fn _js_places[x]
+    parts = split[js_text[x], '.']
+    len[_part[parts, 1]]
+
+--- the stepper once its words are set to `words`: the number they stand
+--- for taken where it is one within the range
+fn _stepper_set[s, words, lo, hi]
+    if words eq ''
+        s.text = ''
+        s.empty = true
+        return s
+    v = _stepper_number[words]
+    if v eq v
+        s.text = words
+        if v gte lo and v lte hi
+            s.value = v
+            s.empty = false
+    else
+        s.text = words
+    s
+
+--- the stepper stepped once (Vuetify's toggleUpDown)
+fn _stepper_stepped[s, lo, hi, step, places, up]
+    if not _can_step[s, lo, hi, step, up]
+        return s
+    if s.empty
+        return _stepper_set[s, number_text[_clamped[0.0, lo, hi], places = _places_now[s, places]], lo, hi]
+    now_at = _stepper_number[s.text]
+    stepped = _stepped_by[now_at, step, up]
+    next = _clamped[stepped, lo, hi]
+    words = number_text[next, places = _places_now[s, places]]
+    if next eq stepped
+        words = number_text[next, places = max[_js_places[now_at], _js_places[step]]]
+    _stepper_set[s, words, lo, hi]
+
+--- the decimals words are written with: as few as they need while the
+--- field has the focus, `places` while it has not
+fn _places_now[s, places]
+    if s.focused
+        return -1
+    places
+
+--- the words given to the field while it has the focus: a new turn of the
+--- field, so its caret stands at their end
+fn _given[s, id, words]
+    s.gen = _turn[]
+    gui.focus['`id`:field:`s.gen`', words]
+    s
+
+--- the stepper once the reader's frame is answered: words typed, the
+--- arrows, a button pressed or held, the field left (the number held
+--- within the range and written with `places` decimals) or come back to
+--- (written with as few as it needs)
+fn stepper_after[id, s, shown, lo = -9007199254740991.0, hi = 9007199254740991.0, step = 1.0, places = 0]
+    c = shown.canvas
+    px = lory.px[c]
+    t = lory.time[c]
+    field = '`id`:field:`s.gen`'
+    was = s.focused
+    focus = was
+    stepped = false
+    edited = false
+    typed = ''
+    for e in shown.events
+        if e.id eq field and e.act eq 'edit'
+            typed = e.words
+            edited = true
+            focus = true
+            s = _stepper_set[s, number_kept[e.words, places = places], lo, hi]
+        if e.id eq field and e.act eq 'submit'
+            focus = true
+        if (e.id eq '`id`:up' or e.id eq '`id`:down') and e.act eq 'press'
+            s = _stepper_stepped[s, lo, hi, step, places, e.id eq '`id`:up']
+            stepped = true
+    evs = lory.events[c]
+    pressed_button = false
+    i = 0
+    while i lt len[evs]
+        e = evs[i]
+        if e.on eq 'down'
+            at = _part_at[shown, id, e.x / px, e.y / px]
+            focus = at ne ''
+            if at eq '`id`:up' or at eq '`id`:down'
+                pressed_button = true
+                s.hold = 'up'
+                if at eq '`id`:down'
+                    s.hold = 'down'
+                s.since = t
+                s.ticks = 0
+                s.focused = focus
+                s = _stepper_stepped[s, lo, hi, step, places, s.hold eq 'up']
+                stepped = true
+        if e.on eq 'up'
+            s.hold = ''
+        if e.on eq 'key' and e.key eq 'Tab'
+            focus = false
+        if focus and was and e.on eq 'key' and (e.key eq 'ArrowUp' or e.key eq 'ArrowDown')
+            s.focused = true
+            s = _stepper_stepped[s, lo, hi, step, places, e.key eq 'ArrowUp']
+            stepped = true
+        i = i + 1
+    --- (a button held: a step each 50 milliseconds after half a second)
+    if s.hold ne '' and lory.pressed[c] and t - s.since gte 500.0
+        due = int[floor[(t - s.since - 500.0) / 50.0]] + 1
+        while s.ticks lt due
+            s = _stepper_stepped[s, lo, hi, step, places, s.hold eq 'up']
+            s.ticks = s.ticks + 1
+            stepped = true
+    if not lory.pressed[c]
+        s.hold = ''
+    s.focused = focus
+    before = s.text
+    if was and not focus
+        --- (left: held within the range, `places` decimals)
+        v = _stepper_number[s.text]
+        if s.text ne '' and v eq v
+            s = _stepper_set[s, number_text[_clamped[v, lo, hi], places = places], lo, hi]
+        else
+            s.text = ''
+            s.empty = true
+    if focus and not was
+        --- (come back to: as few decimals as it needs)
+        if s.empty
+            s.text = ''
+        else
+            s.text = number_text[s.value, places = -1]
+    --- (the field given words the reader did not type, its caret at their
+    --- end: a step, or the words written anew as it is come back to; a
+    --- press on a button keeps the focus in the field, as Vuetify's does.
+    --- What was typed and is kept but for a character stays in the field
+    --- as it is, its caret where it was.)
+    if focus and (stepped or pressed_button or (not was and s.text ne before))
+        s = _given[s, id, s.text]
+    else if focus and edited and s.text ne typed
+        gui.focus[field, s.text]
+    s
+
+--- ---- a password field with its reveal (Radix's password toggle field) ----
+
+--- a field whose words are dots until its button reveals them: a press on
+--- the button shows or hides them and gives the field back the focus,
+--- Enter or space on the button does it and keeps the focus there. Its
+--- words are the field's (an `edit` under `id`); `shown` is whether they
+--- show, which `password_after` answers.
+fn password[id, value, shown, hint = '', wide = 240.0]
+    kind = 'password'
+    if shown
+        kind = 'text'
+    base = gui.sized[gui.field[id, value, kind = kind, hint = hint], wide]
+    top = gui.drawn['`id`:reveal', _one[shown], 38.0, 34.0, _reveal_painted]
+    gui.row[[gui.overlay[base, top, anchor = 'right']]]
+
+fn _reveal_painted[d]
+    out = _reveal_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _reveal_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    on = d.num gt 0.5
+    if d.pressed
+        on = not on
+        d = gui.tell[d, 'toggle', 'pointer', _one[on]]
+    else if _activated[d]
+        on = not on
+        d = gui.tell[d, 'toggle', 'key', _one[on]]
+    ink = look.muted
+    if d.hover or d.focused
+        ink = look.ink
+    name = 'eye-closed'
+    if on
+        name = 'eye-open'
+    c = icons.draw[c, name, d.x + d.w / 2.0 - 10.0 * s, d.y + d.h / 2.0 - 8.0 * s, 16.0 * s, ink]
+    d.c = c
+    d
+
+--- whether the password shows once the frame is answered: the button's
+--- `toggle`, a press on it giving the field back the focus (with the words
+--- it holds, as edited this frame), Enter in the field (the form sent)
+--- hiding it again
+fn password_after[id, value, shown, frame_shown]
+    words = value
+    for e in frame_shown.events
+        if e.id eq id and e.act eq 'edit'
+            words = e.words
+    out = shown
+    for e in frame_shown.events
+        if e.id eq '`id`:reveal' and e.act eq 'toggle'
+            out = e.num gt 0.5
+            if e.words eq 'pointer'
+                gui.focus[id, words]
+        if e.id eq id and e.act eq 'submit'
+            out = false
+    out
+
+--- ---- a one-time code (Radix's one-time password field, Vuetify's OTP input) ----
+
+--- a code being typed a character to a box: its characters (always the
+--- first ones: a code has no gaps), the box with the focus, whether one of
+--- its boxes has it, and whether it was sent this frame (Enter, or the
+--- last box filled where it sends itself)
+struct Code [chars, at, focused, done]
+
+fn code_of[words = '']
+    Code[_letters_of[words], 0, false, false]
+
+fn _letters_of[words]
+    if words eq ''
+        return _no_words[]
+    split[words, '']
+
+--- the code's characters as words
+fn code_text[s]
+    join[s.chars, '']
+
+--- `size` boxes of a character each, side by side: one stop of Tab, the
+--- arrows moving between those filled and the first empty one, typing
+--- filling the box with the focus and moving on, Backspace clearing and
+--- moving back, Delete clearing and closing up those after, Control or
+--- Command with Backspace clearing all, a paste filling every box from the
+--- first, Enter sending it (`done`), `masked` showing dots
+fn otp[id, s, size = 6, masked = false]
+    cells = []
+    for i in range[size]
+        ch = _part[s.chars, i]
+        flags = _one[s.focused and s.at eq i] + 2.0 * _one[masked]
+        face = gui.drawn['', flags, 44.0, 48.0, _code_cell_painted, words = ch]
+        box = gui.faded[gui.sized[gui.field['`id`:`i`', ch], 44.0], 0.0]
+        cells = push[cells, gui.overlay[face, box, anchor = 'center']]
+    gui.roving[id, cells, along = 'row', loop = false, gap = 8.0]
+
+fn _code_cell_painted[d]
+    out = _code_cell_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _code_cell_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    flags = int[d.num]
+    active = flags % 2 eq 1
+    masked = flags gte 2
+    edge = look.edge
+    line = 1.0 * s
+    if active
+        edge = look.accent
+        line = 2.0 * s
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * s, look.field]
+    c = lory.round_outline[c, d.x, d.y, d.w, d.h, 8.0 * s, line, edge]
+    face = d.words
+    if masked and face ne ''
+        face = '•'
+    if face ne ''
+        c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, face, 22.0 * s, look.ink]
+    else if active and (int[lory.time[c] / 530.0]) % 2 eq 0
+        c = lory.rect[c, d.x + d.w / 2.0 - 1.0 * s, d.y + 13.0 * s, 2.0 * s, d.h - 26.0 * s, look.ink]
+    d.c = c
+    d
+
+--- the box the focus may stand in at most: the first empty one (or the
+--- last)
+fn _last_open[chars, size]
+    max[0, min[len[chars], size - 1]]
+
+--- the characters a code keeps of what is typed or pasted: white space
+--- left out, and what its `kind` refuses (`numeric` all but digits,
+--- `alpha` all but letters, `alphanumeric` all but both, `none` nothing)
+fn code_kept[words, kind = 'numeric']
+    out = []
+    for ch in split[words, '']
+        keep = not matches[ch, '^\s$']
+        if kind eq 'numeric'
+            keep = keep and matches[ch, '^[0-9]$']
+        if kind eq 'alpha'
+            keep = keep and matches[ch, '^[a-zA-Z]$']
+        if kind eq 'alphanumeric'
+            keep = keep and matches[ch, '^[a-zA-Z0-9]$']
+        if keep and ch ne ''
+            out = push[out, ch]
+    join[out, '']
+
+--- the code once a character (or a paste of more) is typed at the box
+--- `at` (Radix's: a paste replaces the code; a character the box holds
+--- already moves on; one refused is passed over)
+fn code_typed[s, words, size, kind = 'numeric']
+    clean = code_kept[words, kind = kind]
+    if len[words] gt 1
+        chars = _letters_of[clean]
+        if len[chars] gt size
+            chars = slice[chars, 0, size]
+        s.chars = chars
+        s.at = max[0, len[chars] - 1]
+        return s
+    if _part[s.chars, s.at] eq words and words ne ''
+        s.at = min[s.at + 1, size - 1]
+        return s
+    if clean eq ''
+        return s
+    chars = s.chars
+    if s.at lt len[chars]
+        chars[s.at] = clean
+    else
+        chars = push[chars, clean]
+    s.chars = chars
+    if s.at lt size - 1
+        s.at = s.at + 1
+    s
+
+--- the code once a key is pressed in it: Backspace, Delete, Clear, Enter,
+--- the arrows, Home and End (`ctrl` or `meta`: Control or Command held)
+fn code_keyed[s, key, ctrl, size]
+    chars = s.chars
+    filled = s.at lt len[chars]
+    if (key eq 'Backspace' and ctrl) or key eq 'Clear'
+        s.chars = _no_words[]
+        s.at = 0
+    else if key eq 'Backspace'
+        if filled
+            s.chars = concat[slice[chars, 0, s.at], slice[chars, s.at + 1, len[chars]]]
+        s.at = max[0, s.at - 1]
+    else if key eq 'Delete'
+        if filled
+            s.chars = concat[slice[chars, 0, s.at], slice[chars, s.at + 1, len[chars]]]
+    else if key eq 'Enter'
+        s.done = true
+    else if key eq 'ArrowLeft'
+        s.at = max[0, s.at - 1]
+    else if key eq 'ArrowRight'
+        s.at = min[_last_open[chars, size], s.at + 1]
+    else if key eq 'Home'
+        s.at = 0
+    else if key eq 'End'
+        s.at = _last_open[chars, size]
+    s
+
+--- the code once the reader's frame is answered (`auto`: sent as its
+--- last box is filled)
+fn otp_after[id, s, shown, size = 6, kind = 'numeric', auto = false]
+    c = shown.canvas
+    px = lory.px[c]
+    before = code_text[s]
+    s.done = false
+    arrows_seen = false
+    if not s.focused
+        for e in shown.events
+            if _ours[e.id, id] and (e.act eq 'edit' or e.act eq 'submit')
+                s.focused = true
+                s.at = _code_box_of[e.id, id]
+            if e.id eq id and e.act eq 'rove'
+                s.focused = true
+                s.at = int[e.num]
+                arrows_seen = true
+    evs = lory.events[c]
+    i = 0
+    while i lt len[evs]
+        e = evs[i]
+        if e.on eq 'down'
+            hit = _code_box_at[shown, id, size, e.x / px, e.y / px]
+            s.focused = hit gte 0
+            if hit gte 0
+                s.at = min[hit, _last_open[s.chars, size]]
+        if s.focused and e.on eq 'text'
+            s = code_typed[s, e.words, size, kind = kind]
+        if s.focused and e.on eq 'key'
+            if e.key eq 'Tab'
+                s.focused = false
+            else if not (arrows_seen and (e.key eq 'ArrowLeft' or e.key eq 'ArrowRight' or e.key eq 'Home' or e.key eq 'End'))
+                s = code_keyed[s, e.key, e.ctrl or e.meta, size]
+        i = i + 1
+    s.at = min[s.at, _last_open[s.chars, size]]
+    if auto and code_text[s] ne before and len[s.chars] eq size
+        s.done = true
+    if s.focused
+        gui.focus['`id`:`s.at`', _part[s.chars, s.at]]
+    s
+
+--- the box a part's id names (`id:3`: 3)
+fn _code_box_of[part, id]
+    n = int[slice[part, len[id] + 1, len[part]]]
+    if not n.ok
+        return 0
+    n
+
+--- the box under the point, its face as tall as 48 (its field 34), or -1
+fn _code_box_at[shown, id, size, x, y]
+    hit = -1
+    for i in range[size]
+        k = '`id`:`i`'
+        if k in shown.boxes
+            b = shown.boxes[k]
+            if x gte b[0] and x lt b[0] + b[2] and y gte b[1] - 7.0 and y lt b[1] + b[3] + 7.0
+                hit = i
+    hit
+
+--- ---- a combobox (Headless UI's, Vuetify's autocomplete and combobox) ----
+
+--- a choice being typed for: the words in its field, the choice made
+--- ('' none), whether its list is open, the entry the keys stand on (-1
+--- none), whether its field has the focus, the field's turn (`gen`),
+--- whether the reader has typed since the list opened (else every choice
+--- is listed), and whether a choice was made this frame (`picked`)
+struct Combo [query, chosen, open, active, focused, gen, typed, picked]
+
+fn combo_of[chosen = '']
+    Combo[chosen, chosen, false, -1, false, 0, false, false]
+
+--- the choices the list shows: those the words typed are found in, in
+--- Vuetify's prefix order (every one until the reader types)
+fn combo_choices[s, choices, prefix = true]
+    if not s.typed or s.query eq ''
+        return choices
+    matching[choices, s.query, prefix = prefix]
+
+--- a field to type in and, while it is open, a list under it of the
+--- choices what is typed is found in (at most `most`), the part found
+--- marked: typing opens it, the first entry ready for Enter; the down and
+--- up arrows open it and move along it (no further than its ends), Home
+--- and Page Up to its first, End and Page Down to its last; Enter or a
+--- press chooses, Escape closes it and puts back the words of the choice
+--- made, Tab chooses the entry the keys stand on and moves on, and a press
+--- elsewhere closes it. `combobox_after` answers the reader.
+fn combobox[id, s, choices, hint = '', wide = 240.0, most = 8, prefix = true]
+    field_id = '`id`:field:`s.gen`'
+    field = gui.row[[gui.sized[gui.field[field_id, s.query, hint = hint], wide]]]
+    if not s.open
+        return gui.column[[field], gap = 0.0]
+    listed = combo_choices[s, choices, prefix = prefix]
+    items = []
+    q = ''
+    if s.typed
+        q = s.query
+    for i in range[min[most, len[listed]]]
+        choice = listed[i]
+        flags = _one[i eq s.active] + 2.0 * _one[choice eq s.chosen]
+        items = push[items, gui.drawn['`id`:opt:`i`', flags, wide - 12.0, 32.0, _option_painted, lo = i + 0.0, words = '`id`\n`q`\n`choice`']]
+    if len[items] eq 0
+        items = push[items, gui.note['Nothing found']]
+    list = gui.layer['`id`:list', [gui.column[items, gap = 2.0]], at = field_id, side = 'bottom', align = 'start', gap = 4.0, wide = wide, pad = 6.0]
+    gui.column[[field, list], gap = 0.0]
+
+fn _option_painted[d]
+    out = _option_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _option_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    parts = split[d.words, '\n']
+    group = _part[parts, 0]
+    query = _part[parts, 1]
+    choice = _part[parts, 2]
+    flags = int[d.num]
+    active = flags % 2 eq 1
+    chosen = flags gte 2
+    if d.pressed
+        d = _told_as[d, group, 'pick', choice, d.lo]
+    if active or d.hover
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, 6.0 * s, look.hover]
+    if chosen
+        c = icons.draw[c, 'check', d.x + 6.0 * s, d.y + d.h / 2.0 - 8.0 * s, 16.0 * s, look.accent]
+    x = d.x + 28.0 * s
+    y = d.y + (d.h - lory.line_height[c, 15.0 * s]) / 2.0
+    chars = split[choice, '']
+    at = 0
+    for r in match_ranges[choice, query]
+        plain = join[slice[chars, at, r[0]], '']
+        c = lory.text[c, x, y, plain, 15.0 * s, look.ink]
+        x = x + lory.measure[c, plain, 15.0 * s]
+        found = join[slice[chars, r[0], r[1]], '']
+        c = lory.text[c, x, y, found, 15.0 * s, look.accent]
+        x = x + lory.measure[c, found, 15.0 * s]
+        at = r[1]
+    c = lory.text[c, x, y, join[slice[chars, at, len[chars]], ''], 15.0 * s, look.ink]
+    d.c = c
+    d
+
+--- the combobox once the reader's frame is answered (`free`: what is typed
+--- is the choice where no entry is, as Vuetify's combobox takes it)
+fn combobox_after[id, s, choices, shown, prefix = true, free = false]
+    c = shown.canvas
+    px = lory.px[c]
+    field = '`id`:field:`s.gen`'
+    s.picked = false
+    listed = combo_choices[s, choices, prefix = prefix]
+    was = s.focused
+    for e in shown.events
+        if e.id eq field and e.act eq 'edit'
+            s.query = e.words
+            s.typed = true
+            s.open = true
+            s.focused = true
+            listed = combo_choices[s, choices, prefix = prefix]
+            s.active = -1
+            if len[listed] gt 0
+                s.active = 0
+            if e.words eq '' and not free
+                s.chosen = ''
+        if e.id eq field and e.act eq 'submit'
+            s.focused = true
+            if s.open and s.active gte 0 and s.active lt len[listed]
+                s = _combo_picked[s, id, listed[s.active]]
+            else if free
+                s = _combo_picked[s, id, s.query]
+            else if s.open
+                s = _combo_closed[s, id, free]
+        if e.id eq id and e.act eq 'pick'
+            s.focused = true
+            s = _combo_picked[s, id, e.words]
+        if e.id eq '`id`:list' and e.act eq 'dismiss'
+            s = _combo_closed[s, id, free]
+    evs = lory.events[c]
+    i = 0
+    while i lt len[evs]
+        e = evs[i]
+        if e.on eq 'down'
+            at = _part_at[shown, id, e.x / px, e.y / px]
+            s.focused = at ne ''
+            if at eq '' and s.open
+                s = _combo_closed[s, id, free]
+        if e.on eq 'move' and s.open
+            at = _part_at[shown, id, e.x / px, e.y / px]
+            if starts[at, '`id`:opt:']
+                n = int[slice[at, len[id] + 5, len[at]]]
+                if n.ok
+                    s.active = n
+        if e.on eq 'key' and (s.focused or was)
+            s = _combo_keyed[s, id, e.key, e.shift, listed, choices, free]
+        i = i + 1
+    s
+
+--- the list opened, the keys standing on the choice made (or the first,
+--- or the last going up), every choice listed
+fn _combo_opened[s, choices, up]
+    s.open = true
+    s.typed = false
+    s.active = -1
+    for i in range[len[choices]]
+        if choices[i] eq s.chosen
+            s.active = i
+    if s.active lt 0 and len[choices] gt 0
+        s.active = 0
+        if up
+            s.active = len[choices] - 1
+    s
+
+fn _combo_keyed[s, id, key, shift, listed, choices, free]
+    n = len[listed]
+    if key eq 'ArrowDown'
+        if not s.open
+            return _combo_opened[s, choices, false]
+        s.active = min[n - 1, s.active + 1]
+    else if key eq 'ArrowUp'
+        if not s.open
+            return _combo_opened[s, choices, true]
+        if s.active lt 0
+            s.active = n - 1
+        else
+            s.active = max[0, s.active - 1]
+    else if s.open and ((key eq 'Home' and not shift) or key eq 'PageUp')
+        s.active = min[0, n - 1]
+    else if s.open and ((key eq 'End' and not shift) or key eq 'PageDown')
+        s.active = n - 1
+    else if key eq 'Escape' and s.open
+        s = _combo_closed[s, id, free]
+    else if key eq 'Tab'
+        if s.open and s.active gte 0 and s.active lt n
+            s = _combo_picked[s, id, listed[s.active]]
+        else if s.open
+            s = _combo_closed[s, id, free]
+        s.focused = false
+    s
+
+--- a choice made: written in the field (its caret at the end, where the
+--- field has the focus) and the list closed
+fn _combo_picked[s, id, choice]
+    s.chosen = choice
+    s.query = choice
+    s.open = false
+    s.active = -1
+    s.typed = false
+    s.picked = true
+    if s.focused
+        s.gen = _turn[]
+        gui.focus['`id`:field:`s.gen`', choice]
+    s
+
+--- the list closed and the words of the choice made put back (or, `free`,
+--- what is typed taken as the choice)
+fn _combo_closed[s, id, free]
+    s.open = false
+    s.active = -1
+    s.typed = false
+    if free
+        if s.query ne s.chosen
+            s.chosen = s.query
+            s.picked = true
+        return s
+    if s.query ne s.chosen
+        s.query = s.chosen
+        if s.focused
+            s.gen = _turn[]
+            gui.focus['`id`:field:`s.gen`', s.chosen]
+    s
+
+--- ---- a field kept to a mask (Vuetify's mask input) ----
+
+--- the words a masked field shows, whether it has the focus and its turn
+struct Masked [text, focused, gen]
+
+fn masked_of[words, mask]
+    Masked[mask_text[words, mask], false, 0]
+
+--- a field whose words are kept to the mask as they are typed (the mask's
+--- own characters written in, what a token refuses passed over, Backspace
+--- over a mask's character taking the one before it); `masked_after`
+--- answers the reader, and `unmask_text` reads what was typed
+fn masked[id, s, mask, hint = '', wide = 240.0]
+    shown_hint = hint
+    if hint eq ''
+        shown_hint = mask_named[mask]
+    gui.row[[gui.sized[gui.field['`id`:`s.gen`', s.text, hint = shown_hint], wide]]]
+
+fn masked_after[id, s, mask, shown]
+    field = '`id`:`s.gen`'
+    for e in shown.events
+        if e.id eq field and e.act eq 'edit'
+            words = e.words
+            kept = mask_text[words, mask]
+            if len[words] lt len[s.text] and kept eq s.text
+                --- (Backspace took only the mask's own: the one before it goes)
+                typed = split[unmask_text[s.text, mask], '']
+                kept = mask_text[join[slice[typed, 0, max[0, len[typed] - 1]], ''], mask]
+            if kept ne words
+                s.gen = _turn[]
+                gui.focus['`id`:`s.gen`', kept]
+            s.text = kept
+            s.focused = true
+    s
+
+--- ---- a form: its fields' values, checked by their rules ----
+
+--- a form being filled: each field's value by its id, the words shown
+--- under each (its first failed rule, '' none), the field the focus was
+--- last seen in, when a field in error is to be checked again (Semantic
+--- UI's 200 milliseconds after typing stops), and what happened this
+--- frame: `sent` (checked and passing), `failed` (checked and not)
+struct Form [fields, errors, at, due, sent, failed]
+
+fn form_of[fields]
+    Form[fields, map['' = ''], '', map['' = 0.0], false, false]
+
+--- the form once the reader's frame is answered: a field's `edit` (a
+--- checkbox's `toggle`: 'on' or '', a choice's `choose`) is its value; the
+--- form is checked when its button `submit` is pressed or Enter is typed
+--- in a field (the first field that fails given the focus, where
+--- `focus_first`). A field is checked on its own as it is left (`on`
+--- 'blur'), as it is typed in ('input'), or, `on` 'submit', only once it
+--- shows an error, after it is typed in or as it is left. A press on a
+--- field's label (`labelled`) gives the field the focus.
+fn form_after[f, wants, shown, on = 'submit', submit = 'submit', focus_first = true]
+    c = shown.canvas
+    px = lory.px[c]
+    t = lory.time[c]
+    f.sent = false
+    f.failed = false
+    sending = false
+    filled = f.fields
+    errors = f.errors
+    due = f.due
+    left = ''
+    for e in shown.events
+        if _wanted[wants, e.id]
+            changed = false
+            if e.act eq 'edit' or e.act eq 'choose'
+                filled[e.id] = e.words
+                changed = true
+            if e.act eq 'toggle'
+                filled[e.id] = ''
+                if e.num gt 0.5
+                    filled[e.id] = 'on'
+                changed = true
+            if e.act eq 'submit'
+                sending = true
+            if changed
+                if f.at ne '' and f.at ne e.id
+                    left = f.at
+                f.at = e.id
+                if on eq 'input' or (e.act ne 'edit' and _showing[errors, e.id])
+                    errors[e.id] = _first_failure[wants, e.id, filled]
+                else if _showing[errors, e.id]
+                    due[e.id] = t + 200.0
+        if e.id eq submit and e.act eq 'press'
+            sending = true
+        if e.act eq 'press' and ends[e.id, ':label']
+            named = slice[e.id, 0, len[e.id] - 6]
+            if _wanted[wants, named]
+                kept = ''
+                if named in filled
+                    kept = filled[named]
+                gui.focus[named, kept]
+                f.at = named
+    --- (the field the focus was in left: a press elsewhere, or Tab)
+    evs = lory.events[c]
+    i = 0
+    while i lt len[evs]
+        e = evs[i]
+        if e.on eq 'down' and f.at ne ''
+            if f.at in shown.boxes
+                b = shown.boxes[f.at]
+                x = e.x / px
+                y = e.y / px
+                if not (x gte b[0] and y gte b[1] and x lt b[0] + b[2] and y lt b[1] + b[3])
+                    left = f.at
+                    f.at = ''
+        if e.on eq 'key' and e.key eq 'Tab' and f.at ne ''
+            left = f.at
+            f.at = ''
+        i = i + 1
+    if left ne '' and (on eq 'blur' or _showing[errors, left])
+        errors[left] = _first_failure[wants, left, filled]
+        due[left] = 0.0
+    for w in wants
+        if w.field in due
+            if due[w.field] gt 0.0 and t gte due[w.field]
+                errors[w.field] = _first_failure[wants, w.field, filled]
+                due[w.field] = 0.0
+    if sending
+        errors = errors_of[wants, filled]
+        first = ''
+        for w in wants
+            if first eq '' and errors[w.field] ne ''
+                first = w.field
+        if first eq ''
+            f.sent = true
+        else
+            f.failed = true
+            if focus_first
+                kept = ''
+                if first in filled
+                    kept = filled[first]
+                gui.focus[first, kept]
+                f.at = first
+    f.fields = filled
+    f.errors = errors
+    f.due = due
+    f
+
+fn _wanted[wants, id]
+    hit = false
+    for w in wants
+        if w.field eq id
+            hit = true
+    hit
+
+fn _showing[errors, id]
+    if id in errors
+        return errors[id] ne ''
+    false
+
+fn _first_failure[wants, id, fields]
+    out = ''
+    for w in wants
+        if w.field eq id
+            out = _part[failures_of[w, fields], 0]
+    out
+
+--- the words a form shows under a field: its error ('' none)
+fn error_of[f, field]
+    if field in f.errors
+        return f.errors[field]
+    ''
+
+--- a field with its label over it (a press on the label gives the field
+--- the focus, unless `passive`: Headless UI's), words that say more under
+--- it (`note`) and, where there is one, its error (`fault`) under them in the
+--- look's danger
+fn labelled[field_id, label, control, note = '', fault = '', passive = false]
+    head = gui.label[label]
+    if not passive
+        head = gui.overlay[head, gui.area['`field_id`:label', max[24.0, _wide_of[label, 14.0]], 20.0], anchor = 'top_left']
+    kids = [head, control]
+    if note ne ''
+        kids = push[kids, gui.note[note]]
+    if fault ne ''
+        kids = push[kids, gui.text[fault, size = 13.0, tone = 'danger']]
+    gui.column[kids, gap = 6.0]
+
+--- controls grouped under a legend; `disabled` sets every one of them
+--- aside (Headless UI's fieldset)
+fn fieldset[legend, kids, disabled = false]
+    n = gui.column[concat[[gui.text[legend, size = 16.0]], kids], gap = 12.0]
+    if disabled
+        return gui.disabled[n]
+    n
+
+--- ---- the temperature converter's two fields (7GUIs') ----
+
+--- the converter's two fields' words
+struct Linked [celsius, fahrenheit]
+
+fn temperature_of[]
+    Linked['0', '32']
+
+--- a field of degrees Celsius and one of Fahrenheit: typing in either
+--- writes the other (`temperature_after`)
+fn temperature[id, t]
+    gui.row[[gui.sized[gui.field['`id`:c', t.celsius], 120.0], gui.text['Celsius ='], gui.sized[gui.field['`id`:f', t.fahrenheit], 120.0], gui.text['Fahrenheit']], gap = 8.0]
+
+fn temperature_after[id, t, shown]
+    for e in shown.events
+        if e.id eq '`id`:c' and e.act eq 'edit'
+            t.celsius = e.words
+            t.fahrenheit = fahrenheit_of[e.words]
+        if e.id eq '`id`:f' and e.act eq 'edit'
+            t.fahrenheit = e.words
+            t.celsius = celsius_of[e.words]
+    t
+
+--- ---- binding words to controls (Vue's form bindings) ----
+
+--- the words' characters the other way round (Vue's example of handling
+--- input)
+fn reversed[words]
+    reverse[words]
+
+--- the values ticked, in the order they were ticked: one ticked goes at
+--- the end, one let go is taken out (Vue's checkbox group)
+fn ticked_after[ticked, value, on]
+    out = _no_words[]
+    for w in ticked
+        if w ne value
+            out = push[out, w]
+    if on
+        out = push[out, value]
+    out
+
+--- ---- small controls (Motion's examples) ----
+
+--- how many characters of `most` are written, quiet until nine tenths, then
+--- in the warning's colour, past `most` in the danger's
+fn char_count[words, most]
+    gui.text['`len[words]` / `most`', size = 13.0, tone = count_tone[words, most]]
+
+--- the tone a count of characters is written in: `muted`, `warning` from
+--- nine tenths of `most`, `danger` past it
+fn count_tone[words, most]
+    n = len[words]
+    tone = 'muted'
+    if n * 10 gte most * 9
+        tone = 'warning'
+    if n gt most
+        tone = 'danger'
+    tone
+
+--- a button that copies `words` to the clipboard: pressed, or Enter or
+--- space while it has the focus, it hands them to the page and tells
+--- `copy`; a tick draws itself in over a fifth of a second from
+--- `copied_at` (the frame's time the program kept) and shows for a second
+--- and a half
+fn copy_button[id, words, copied_at = -1.0]
+    gui.row[[gui.drawn[id, copied_at, 34.0, 34.0, _copy_painted, words = words]]]
+
+fn _copy_painted[d]
+    out = _copy_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _copy_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    if d.pressed or _activated[d]
+        c = lory.copy[c, d.words]
+        d = gui.tell[d, 'copy', d.words, lory.time[c]]
+    c = _pressable_ground[c, d, false, 8.0 * s]
+    since = lory.time[c] - d.num
+    x = d.x + d.w / 2.0 - 8.0 * s
+    y = d.y + d.h / 2.0 - 8.0 * s
+    if d.num gte 0.0 and since lt 1500.0
+        c = icons.draw[c, 'check', x, y, 16.0 * s, lory.mix[look.panel, look.success, motion.ease_at['outQuad', min[1.0, since / 200.0]]]]
+    else
+        c = icons.draw[c, 'copy', x, y, 16.0 * s, look.ink]
+    d.c = c
+    d
+
+--- a badge showing a state with its words: `idle` (a dot), `busy` (an arc
+--- going round), `done` (a tick) or `failed` (a cross); pressed, or Enter
+--- or space with the focus, it tells `press` with its state
+fn badge[id, words, state]
+    gui.row[[gui.drawn[id, 0.0, _wide_of[words, 13.0] + 44.0, 30.0, _badge_painted, words = '`state`\n`words`']]]
+
+--- the state a badge goes to next: idle, busy, done and round again (a
+--- failure back to idle)
+fn badge_next[state]
+    if state eq 'idle'
+        return 'busy'
+    if state eq 'busy'
+        return 'done'
+    'idle'
+
+fn _badge_painted[d]
+    out = _badge_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _badge_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    parts = split[d.words, '\n']
+    state = _part[parts, 0]
+    words = _part[parts, 1]
+    if d.pressed or _activated[d]
+        d = gui.tell[d, 'press', state, 0.0]
+    tone = _badge_tone[look, state]
+    ground = lory.mix[look.panel, tone, 0.16]
+    if d.hover
+        ground = lory.mix[look.panel, tone, 0.26]
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, d.h / 2.0, ground]
+    cx = d.x + 16.0 * s
+    cy = d.y + d.h / 2.0
+    --- (each state's mark grows in over a fifth of a second as the last
+    --- one shrinks away, as Motion's badge swaps its icons)
+    for mark in ['idle', 'busy', 'done', 'failed']
+        p = motion.presence[c, '`d.id`:`mark`', mark eq state, 200.0, 120.0, 'outQuad']
+        if p.present
+            c = _badge_mark[c, mark, cx, cy, s * (0.5 + 0.5 * p.value), lory.fade[_badge_tone[look, mark], p.value]]
+    c = lory.text[c, d.x + 30.0 * s, d.y + (d.h - lory.line_height[c, 13.0 * s]) / 2.0, words, 13.0 * s, look.ink]
+    d.c = c
+    d
+
+--- the colour of a badge's state
+fn _badge_tone[look, state]
+    if state eq 'busy'
+        return look.accent
+    if state eq 'done'
+        return look.success
+    if state eq 'failed'
+        return look.danger
+    look.muted
+
+--- a state's mark at its size (`k` times the drawing's pixel): a dot, an
+--- arc going round, a tick or a cross
+fn _badge_mark[c, mark, cx, cy, k, ink]
+    r = 7.0 * k
+    if mark eq 'busy'
+        return icons.spinning[c, 'loader', cx - r, cy - r, 2.0 * r, ink, lory.time[c]]
+    if mark eq 'done'
+        return icons.draw[c, 'check', cx - r, cy - r, 2.0 * r, ink]
+    if mark eq 'failed'
+        return icons.draw[c, 'cross-2', cx - r, cy - r, 2.0 * r, ink]
+    lory.circle[c, cx, cy, 4.0 * k, ink]
+
+--- ---- a colour picker (react-colorful's and Vuetify's) ----
+
+--- a colour being picked, in HSV: its hue (0 to 360, kept while the
+--- colour is a gray, which has none, so the square keeps its hue as the
+--- reader drags through white or black), saturation and value (0 to 1),
+--- its opacity and the words its field shows
+struct Picker [hue, sat, val, alpha, text]
+
+--- a picker holding the colour a CSS hex code names (`#rgb`, `#rrggbb`,
+--- `#rrggbbaa`: `colors.parse`)
+fn picker_of[code]
+    c = colors.parse[code]
+    hsv = colors.to_hsv[c]
+    hue = hsv.h
+    if not (hue eq hue)
+        hue = 0.0
+    p = Picker[hue, hsv.s, hsv.v, c.a, '']
+    p.text = picker_hex[p]
+    p
+
+--- the colour the picker holds
+fn picker_color[p]
+    colors.from_hsv[colors.Hsv[p.hue, p.sat, p.val, p.alpha]]
+
+--- its hex code: `#rrggbb`, or `#rrggbbaa` while it is not opaque
+fn picker_hex[p]
+    c = picker_color[p]
+    if p.alpha lt 1.0
+        return colors.hex_alpha_of[c]
+    colors.hex_of[c]
+
+--- a square of saturation (across) and value (up) at the picker's hue, a
+--- bar of hues under it and one of opacity (`opacity`), the colour beside
+--- its hex code in a field, and swatches of `swatches`' codes to choose
+--- from. The square and the bars are dragged, or moved by the arrows while
+--- they have the focus (a hundredth, a degree on the hue's; ten times as
+--- far with Shift held is not told by gui, so each press is one step);
+--- a hex code typed is taken once it is one. `color_after` answers the
+--- reader.
+fn color_picker[id, p, opacity = true, swatches = [], wide = 240.0]
+    kids = [gui.drawn['`id`:area', p.hue, wide, 150.0, _sv_painted, lo = p.sat, hi = p.val, words = id]]
+    kids = push[kids, gui.drawn['`id`:hue', p.hue, wide, 16.0, _hue_painted, words = id]]
+    if opacity
+        kids = push[kids, gui.drawn['`id`:alpha', p.alpha, wide, 16.0, _alpha_painted, words = '`id`\n`colors.hex_of[picker_color[p]]`']]
+    face = gui.drawn['', p.alpha, 34.0, 34.0, _swatch_painted, words = '\n`picker_hex[p]`']
+    kids = push[kids, gui.row[[face, gui.sized[gui.field['`id`:hex', p.text, hint = '#rrggbb'], max[80.0, wide - 44.0]]], gap = 10.0, align = 'center']]
+    if len[swatches] gt 0
+        chips = []
+        for i in range[len[swatches]]
+            chips = push[chips, gui.drawn['`id`:swatch:`i`', 1.0, 24.0, 24.0, _swatch_painted, words = '`id`\n`swatches[i]`']]
+        kids = push[kids, gui.row[chips, gap = 6.0]]
+    gui.column[kids, gap = 10.0]
+
+fn _held_in[x]
+    max[0.0, min[1.0, x]]
+
+--- the square: dragged, the saturation and value under the pointer; the
+--- arrows a hundredth each way
+fn _sv_painted[d]
+    out = _sv_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _sv_drawing[d]
+    c = d.c
+    s = d.s
+    group = d.words
+    hue = d.num
+    sat = d.lo
+    val = d.hi
+    moved = false
+    if d.down
+        sat = _held_in[d.px / d.w]
+        val = _held_in[1.0 - d.py / d.h]
+        moved = true
+    for k in d.keys
+        if k eq 'ArrowRight'
+            sat = _held_in[sat + 0.01]
+        if k eq 'ArrowLeft'
+            sat = _held_in[sat - 0.01]
+        if k eq 'ArrowUp'
+            val = _held_in[val + 0.01]
+        if k eq 'ArrowDown'
+            val = _held_in[val - 0.01]
+        moved = true
+    if moved
+        d = _told_as[d, group, 'shade', '`sat` `val`', hue]
+    --- (a grid of shaded triangles: along a hue, a channel is the value
+    --- less the value times the saturation times a number of the hue, so
+    --- each cell's corners give it nearly exactly)
+    n = 8
+    cw = d.w / n
+    ch = d.h / n
+    for i in range[n]
+        for j in range[n]
+            x0 = d.x + i * cw
+            y0 = d.y + j * ch
+            s0 = i / (n + 0.0)
+            s1 = (i + 1) / (n + 0.0)
+            v0 = 1.0 - j / (n + 0.0)
+            v1 = 1.0 - (j + 1) / (n + 0.0)
+            a = _hsv_of[hue, s0, v0]
+            b = _hsv_of[hue, s1, v0]
+            e = _hsv_of[hue, s1, v1]
+            f = _hsv_of[hue, s0, v1]
+            c = lory.shaded[c, x0, y0, a, x0 + cw, y0, b, x0 + cw, y0 + ch, e]
+            c = lory.shaded[c, x0, y0, a, x0 + cw, y0 + ch, e, x0, y0 + ch, f]
+    kx = d.x + sat * d.w
+    ky = d.y + (1.0 - val) * d.h
+    c = lory.ring[c, kx, ky, 8.0 * s, 3.0 * s, lory.white[]]
+    c = lory.ring[c, kx, ky, 9.5 * s, 1.0 * s, lory.fade[lory.black[], 0.4]]
+    d.c = c
+    d
+
+fn _hsv_of[hue, sat, val]
+    colors.from_hsv[colors.Hsv[hue, sat, val, 1.0]]
+
+--- the bar of hues: six spans, red to red, each exact between its ends
+fn _hue_painted[d]
+    out = _hue_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _hue_drawing[d]
+    c = d.c
+    s = d.s
+    group = d.words
+    hue = d.num
+    moved = false
+    if d.down
+        hue = _held_in[d.px / d.w] * 360.0
+        moved = true
+    for k in d.keys
+        if k eq 'ArrowRight' or k eq 'ArrowUp'
+            hue = min[360.0, hue + 1.0]
+        if k eq 'ArrowLeft' or k eq 'ArrowDown'
+            hue = max[0.0, hue - 1.0]
+        moved = true
+    if moved
+        d = _told_as[d, group, 'hue', '', hue]
+    r = d.h / 2.0
+    kept = lory.clipped[c]
+    c = lory.clip[c, d.x, d.y, d.w, d.h]
+    span = d.w / 6.0
+    for i in range[6]
+        x0 = d.x + i * span
+        a = _hsv_of[i * 60.0, 1.0, 1.0]
+        b = _hsv_of[(i + 1) * 60.0, 1.0, 1.0]
+        c = lory.shaded[c, x0, d.y, a, x0 + span, d.y, b, x0 + span, d.y + d.h, b]
+        c = lory.shaded[c, x0, d.y, a, x0 + span, d.y + d.h, b, x0, d.y + d.h, a]
+    c = lory.unclip[c, kept]
+    c = _bar_knob[c, d.x + hue / 360.0 * d.w, d.y + r, r, s]
+    d.c = c
+    d
+
+fn _bar_knob[c, x, y, r, s]
+    c = lory.ring[c, x, y, r + 1.0 * s, 3.0 * s, lory.white[]]
+    lory.ring[c, x, y, r + 2.5 * s, 1.0 * s, lory.fade[lory.black[], 0.4]]
+
+--- squares of light and dark under what is not opaque
+fn _checks[c, x, y, w, h, k]
+    light = lory.rgb[0.86, 0.86, 0.86]
+    dark = lory.rgb[0.62, 0.62, 0.62]
+    c = lory.rect[c, x, y, w, h, light]
+    cols = int[ceil[w / k]]
+    rows = int[ceil[h / k]]
+    for i in range[cols]
+        for j in range[rows]
+            if (i + j) % 2 eq 1
+                c = lory.rect[c, x + i * k, y + j * k, min[k, w - i * k], min[k, h - j * k], dark]
+    c
+
+--- the bar of opacity: the colour from clear to opaque over the checks
+fn _alpha_painted[d]
+    out = _alpha_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _alpha_drawing[d]
+    c = d.c
+    s = d.s
+    parts = split[d.words, '\n']
+    group = _part[parts, 0]
+    solid = colors.parse[_part[parts, 1]]
+    a = d.num
+    moved = false
+    if d.down
+        a = _held_in[d.px / d.w]
+        moved = true
+    for k in d.keys
+        if k eq 'ArrowRight' or k eq 'ArrowUp'
+            a = _held_in[a + 0.01]
+        if k eq 'ArrowLeft' or k eq 'ArrowDown'
+            a = _held_in[a - 0.01]
+        moved = true
+    if moved
+        d = _told_as[d, group, 'alpha', '', a]
+    kept = lory.clipped[c]
+    c = lory.clip[c, d.x, d.y, d.w, d.h]
+    c = _checks[c, d.x, d.y, d.w, d.h, d.h / 2.0]
+    clear = lory.fade[solid, 0.0]
+    c = lory.shaded[c, d.x, d.y, clear, d.x + d.w, d.y, solid, d.x + d.w, d.y + d.h, solid]
+    c = lory.shaded[c, d.x, d.y, clear, d.x + d.w, d.y + d.h, solid, d.x, d.y + d.h, clear]
+    c = lory.unclip[c, kept]
+    c = _bar_knob[c, d.x + a * d.w, d.y + d.h / 2.0, d.h / 2.0, s]
+    d.c = c
+    d
+
+--- a swatch: its colour over the checks; one with a group (`group\ncode`)
+--- tells `swatch` with its code under the group when pressed
+fn _swatch_painted[d]
+    out = _swatch_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _swatch_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    parts = split[d.words, '\n']
+    group = _part[parts, 0]
+    code = _part[parts, 1]
+    if group ne '' and (d.pressed or _activated[d])
+        d = _told_as[d, group, 'swatch', code, 0.0]
+    kept = lory.clipped[c]
+    c = lory.clip[c, d.x, d.y, d.w, d.h]
+    c = _checks[c, d.x, d.y, d.w, d.h, 6.0 * s]
+    c = lory.unclip[c, kept]
+    c = lory.rect[c, d.x, d.y, d.w, d.h, colors.parse[code]]
+    edge = look.edge
+    if d.hover
+        edge = look.ink
+    c = lory.round_outline[c, d.x, d.y, d.w, d.h, 4.0 * s, 1.0 * s, edge]
+    d.c = c
+    d
+
+--- the picker once the reader's frame is answered: the square, the bars
+--- and the swatches as they were moved or pressed, and a hex code typed
+--- in its field once it is one (the field keeping what is typed until
+--- then); moving the square or a bar writes the new code in the field
+fn color_after[id, p, shown]
+    moved = false
+    for e in shown.events
+        if e.id eq id and e.act eq 'shade'
+            parts = split[e.words, ' ']
+            p.sat = _number_in[_part[parts, 0]]
+            p.val = _number_in[_part[parts, 1]]
+            moved = true
+        if e.id eq id and e.act eq 'hue'
+            p.hue = e.num
+            moved = true
+        if e.id eq id and e.act eq 'alpha'
+            p.alpha = e.num
+            moved = true
+        if e.id eq id and e.act eq 'swatch'
+            p = _picked[p, e.words]
+            moved = true
+        if e.id eq '`id`:hex' and e.act eq 'edit'
+            p.text = e.words
+            if colors.is_hex[e.words]
+                p = _picked[p, e.words]
+                p.text = e.words
+    if moved
+        p.text = picker_hex[p]
+    p
+
+--- the picker given a code: a gray's (or black's) hue is the one it had
+fn _picked[p, code]
+    hue = p.hue
+    out = picker_of[code]
+    if out.sat eq 0.0 or out.val eq 0.0
+        out.hue = hue
+    out
+
+--- ---- a zone to drop files on (Vuetify's file input and file upload) ----
+
+--- a file chosen: its name and its size in bytes
+struct Picked [name, bytes]
+
+--- a zone to drop files on or press to choose them, the files chosen under
+--- it with a button each to take one away, and how many there are and
+--- their size (in kilobytes of 1000, or of 1024: `base`). A press on the
+--- zone, or Enter or space while it has the focus, tells `press`: the
+--- page's file chooser and its drops are the page's to hand the program
+--- (Lory's page has neither yet).
+fn file_drop[id, files, hint = 'Drop files here, or press to choose', wide = 0.0, tall = 110.0, base = 1000]
+    total = 0
+    for f in files
+        total = total + f.bytes
+    kids = [gui.drawn[id, len[files] + 0.0, wide, tall, _zone_painted, words = hint]]
+    for i in range[len[files]]
+        f = files[i]
+        kids = push[kids, gui.row[[gui.text['`f.name` (`file_size[f.bytes, base = base]`)', size = 14.0], gui.button['`id`:remove:`i`', 'Remove']], gap = 8.0, align = 'center']]
+    if len[files] gt 0
+        n = len[files]
+        unit = 'files'
+        if n eq 1
+            unit = 'file'
+        kids = push[kids, gui.note['`n` `unit`, `file_size[total, base = base]` in all']]
+    gui.column[kids, gap = 8.0]
+
+--- the files once a button took one away
+fn files_after[id, files, shown]
+    out = slice[[Picked['', 0]], 0, 0]
+    gone = -1
+    for e in shown.events
+        if starts[e.id, '`id`:remove:'] and e.act eq 'press'
+            n = int[slice[e.id, len[id] + 8, len[e.id]]]
+            if n.ok
+                gone = n
+    for i in range[len[files]]
+        if i ne gone
+            out = push[out, files[i]]
+    out
+
+fn _zone_painted[d]
+    out = _zone_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _zone_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    if d.pressed or _activated[d]
+        d = gui.tell[d, 'press', '', d.num]
+    ground = look.field
+    if d.hover
+        ground = lory.mix[look.field, look.hover, 0.6]
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 12.0 * s, ground]
+    xs = [d.x + 6.0 * s, d.x + d.w - 6.0 * s, d.x + d.w - 6.0 * s, d.x + 6.0 * s, d.x + 6.0 * s]
+    ys = [d.y + 6.0 * s, d.y + 6.0 * s, d.y + d.h - 6.0 * s, d.y + d.h - 6.0 * s, d.y + 6.0 * s]
+    c = lory.dashed_path[c, xs, ys, 1.5 * s, look.muted, 8.0 * s, 6.0 * s]
+    cx = d.x + d.w / 2.0
+    cy = d.y + d.h / 2.0 - 14.0 * s
+    c = icons.draw[c, 'upload', cx - 12.0 * s, cy - 12.0 * s, 24.0 * s, look.accent]
+    c = lory.text_centered[c, cx, cy + 26.0 * s, d.words, 14.0 * s, look.muted]
+    d.c = c
+    d
+
+--- ---- tests: frames as a page hands them ----
+
+--- a frame 900 by 700 at `t` milliseconds, with the input given (JSON
+--- events, joined); in a headset where `xr`
+fn _frame_of[t, items, xr]
+    inner = join[items, ', ']
+    given = '[`inner`]'
+    eye = 'none'
+    if xr
+        eye = 'left'
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": `xr`, "views": [{"eye": "`eye`", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+--- a pointer's event at a place (`on`: down, move or up), a press and a
+--- release there, a key typed (with Shift, Control or Meta held where
+--- asked) and words typed
+fn _at[on, x, y]
+    '{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+fn _press[x, y]
+    [_at['down', x, y], _at['up', x, y]]
+
+fn _key[name]
+    '{"type": "key", "key": "`name`", "code": "`name`", "shift": false}'
+
+fn _key_with[name, held]
+    '{"type": "key", "key": "`name`", "code": "`name`", "shift": false, "`held`": true}'
+
+fn _text[words]
+    '{"type": "text", "text": "`words`"}'
+
+--- the tree shown in a frame of that input, at `t`
+fn _shown[tree, items, t = 0.0]
+    gui.show[_frame_of[t, items, false], tree]
+
+--- the tree shown after the focus another test left is let go (a press on
+--- no control)
+fn _first[tree]
+    gui.unfocus[]
+    _shown[tree, _press[899.0, 699.0]]
+
+--- the middle of a control's box, and a place `fx`, `fy` of the way into it
+fn _mid[shown, id]
+    b = shown.boxes[id]
+    [b[0] + b[2] / 2.0, b[1] + b[3] / 2.0]
+
+fn _into[shown, id, fx, fy]
+    b = shown.boxes[id]
+    [b[0] + b[2] * fx, b[1] + b[3] * fy]
+
+--- a press in the middle of a control
+fn _press_on[shown, id]
+    m = _mid[shown, id]
+    _press[m[0], m[1]]
+
+--- the events of that id, each as its act, words and number
+fn _said[shown, id]
+    out = _no_words[]
+    for e in shown.events
+        if e.id eq id
+            out = push[out, '`e.act` `e.words` `e.num`']
+    out
+
+--- one item, and two, as the input of a frame
+fn _one_of[item]
+    [item]
+
+fn _toggles[]
+    gui.row[[toggle_button['bold', 'Bold', false], toggle_button['italic', 'Italic', true]]]
+
+test a_toggle_button_pressed_tells_toggle_and_its_new_state[]
+    first = _first[_toggles[]]
+    pressed = _shown[_toggles[], _press_on[first, 'bold']]
+    _said[pressed, 'bold'] eq ['toggle Bold 1']
+    let_up = _shown[_toggles[], _press_on[first, 'italic']]
+    _said[let_up, 'italic'] eq ['toggle Italic 0']
+
+test a_toggle_button_with_the_focus_is_toggled_by_enter_and_space[]
+    first = _first[_toggles[]]
+    _shown[_toggles[], _press_on[first, 'bold']]
+    entered = _shown[_toggles[], _one_of[_key['Enter']]]
+    _said[entered, 'bold'] eq ['toggle Bold 1']
+    spaced = _shown[_toggles[], _one_of[_key[' ']]]
+    _said[spaced, 'bold'] eq ['toggle Bold 1']
+    _said[spaced, 'italic'] eq []
+
+fn _aligns[pressed, multiple]
+    toggle_group['align', ['left', 'center', 'right'], pressed, multiple = multiple]
+
+test a_toggle_group_of_one_tells_choose_and_lets_the_pressed_one_up[]
+    first = _first[_aligns[['left'], false]]
+    chose = _shown[_aligns[['left'], false], _press_on[first, 'align:1']]
+    _said[chose, 'align'] eq ['choose center 1']
+    again = _shown[_aligns[['center'], false], _press_on[first, 'align:1']]
+    _said[again, 'align'] eq ['choose  -1']
+    pressed_after[['center'], again.events[0]] eq []
+    pressed_after[['left'], chose.events[0]] eq ['center']
+
+test a_toggle_group_of_many_tells_toggle_for_each[]
+    first = _first[_aligns[['left'], true]]
+    on = _shown[_aligns[['left'], true], _press_on[first, 'align:2']]
+    _said[on, 'align'] eq ['toggle right 1']
+    off = _shown[_aligns[['left', 'right'], true], _press_on[first, 'align:0']]
+    _said[off, 'align'] eq ['toggle left 0']
+    pressed_after[['left'], on.events[0], multiple = true] eq ['left', 'right']
+    pressed_after[['left', 'right'], off.events[0], multiple = true] eq ['right']
+
+test a_toggle_groups_arrows_move_its_focus_round_and_space_presses[]
+    tree = _aligns[['left'], false]
+    first = _first[tree]
+    _shown[tree, _press_on[first, 'align:0']]
+    moved = _shown[tree, _one_of[_key['ArrowRight']]]
+    _said[moved, 'align'] eq ['rove align:1 1']
+    ended = _shown[tree, _one_of[_key['End']]]
+    _said[ended, 'align'] eq ['rove align:2 2']
+    round = _shown[tree, _one_of[_key['ArrowRight']]]
+    _said[round, 'align'] eq ['rove align:0 0']
+    back = _shown[tree, _one_of[_key['ArrowLeft']]]
+    _said[back, 'align'] eq ['rove align:2 2']
+    spaced = _shown[tree, _one_of[_key[' ']]]
+    _said[spaced, 'align'] eq ['choose right 2']
+
+fn _views[chosen]
+    segmented['view', ['Day', 'Week', 'Month'], chosen]
+
+test a_segmented_control_chooses_another_and_keeps_the_one_chosen[]
+    first = _first[_views['Week']]
+    other = _shown[_views['Week'], _press_on[first, 'view:2']]
+    _said[other, 'view'] eq ['choose Month 2']
+    same = _shown[_views['Week'], _press_on[first, 'view:1']]
+    _said[same, 'view'] eq []
+    keyed = _shown[_views['Week'], _one_of[_key['ArrowLeft']]]
+    _said[keyed, 'view'] eq ['rove view:0 0']
+    entered = _shown[_views['Week'], _one_of[_key['Enter']]]
+    _said[entered, 'view'] eq ['choose Day 0']
+
+fn _switches[busy]
+    gui.column[[switch['wifi', 'Wi-Fi', false], switch['sync', 'Sync', true, submits = true], switch['vpn', 'VPN', false, busy = busy]]]
+
+test a_switch_is_toggled_by_a_press_on_it_or_its_words_and_by_space[]
+    first = _first[_switches[false]]
+    _said[_shown[_switches[false], _press_on[first, 'wifi']], 'wifi'] eq ['toggle Wi-Fi 1']
+    words = _into[first, 'wifi', 0.9, 0.5]
+    _said[_shown[_switches[false], _press[words[0], words[1]]], 'wifi'] eq ['toggle Wi-Fi 1']
+    _said[_shown[_switches[false], _one_of[_key[' ']]], 'wifi'] eq ['toggle Wi-Fi 1']
+    _said[_shown[_switches[false], _one_of[_key['Enter']]], 'wifi'] eq ['toggle Wi-Fi 1']
+
+test a_switch_that_submits_tells_submit_on_enter_and_a_busy_one_nothing[]
+    first = _first[_switches[true]]
+    _shown[_switches[true], _press_on[first, 'sync']]
+    _said[_shown[_switches[true], _one_of[_key['Enter']]], 'sync'] eq ['submit Sync 1']
+    _said[_shown[_switches[true], _one_of[_key[' ']]], 'sync'] eq ['toggle Sync 0']
+    _said[_shown[_switches[true], _press_on[first, 'vpn']], 'vpn'] eq []
+
+fn _lamp[on]
+    gui.column[[switch['lamp', 'Lamp', on]]]
+
+test a_switchs_thumb_slides_over_150_milliseconds_as_it_is_toggled[]
+    first = _first[_lamp[false]]
+    toggled = _shown[_lamp[false], _press_on[first, 'lamp'], t = 1000.0]
+    _said[toggled, 'lamp'] eq ['toggle Lamp 1']
+    --- (from where it stood: half way through its time, three quarters of
+    --- the way along; there at 150 milliseconds, and still)
+    halfway = _shown[_lamp[true], [], t = 1075.0]
+    there = _shown[_lamp[true], [], t = 1150.0]
+    settled = _shown[_lamp[true], [], t = 1400.0]
+    halfway.canvas.verts ne there.canvas.verts
+    there.canvas.verts eq settled.canvas.verts
+
+test a_badges_mark_grows_in_as_the_last_one_goes[]
+    _first[badge['sync', 'Sync', 'idle']]
+    _shown[badge['sync', 'Sync', 'idle'], [], t = 1000.0]
+    --- (a tenth of a second after the state changed both marks are drawn,
+    --- the dot going and the arc coming; at 300 milliseconds the arc alone)
+    both = _shown[badge['sync', 'Sync', 'busy'], [], t = 1100.0]
+    _shown[badge['sync', 'Sync', 'busy'], [], t = 1200.0]
+    one = _shown[badge['sync', 'Sync', 'busy'], [], t = 1400.0]
+    len[both.canvas.verts] gt len[one.canvas.verts]
+
+fn _stars[value, half]
+    gui.column[[rating['stars', value, half = half], rating['shown', 3.0, readonly = true]]]
+
+test a_rating_is_set_by_a_press_and_cleared_by_pressing_it_again[]
+    first = _first[_stars[0.0, false]]
+    third = _into[first, 'stars', 0.5, 0.5]
+    _said[_shown[_stars[0.0, false], _press[third[0], third[1]]], 'stars'] eq ['change  3']
+    _said[_shown[_stars[3.0, false], _press[third[0], third[1]]], 'stars'] eq ['change  0']
+    _said[_shown[_stars[2.0, false], _press_on[first, 'shown']], 'shown'] eq []
+
+test a_rating_of_halves_takes_a_half_from_a_stars_left_half[]
+    first = _first[_stars[0.0, true]]
+    b = first.boxes['stars']
+    --- (the second star's cell is 28 wide from 28: its left half is 28 to 42)
+    _said[_shown[_stars[0.0, true], _press[b[0] + 31.0, b[1] + 10.0]], 'stars'] eq ['change  1.5']
+    _said[_shown[_stars[1.5, true], _one_of[_key['ArrowRight']]], 'stars'] eq ['change  2']
+    rating_at[31.0, 5, 24.0, true] eq 1.5
+    rating_at[45.0, 5, 24.0, true] eq 2.0
+    rating_keyed[5.0, 'ArrowRight', 5, false] eq 5.0
+    rating_keyed[0.5, 'ArrowLeft', 5, true] eq 0.0
+    rating_pressed[2.0, 2.0, false] eq 2.0
+
+fn _plans[chosen]
+    radio_cards['plan', [card['free', 'Free', 'For one'], card['team', 'Team', 'Up to ten'], card['firm', 'Firm', 'Any number']], chosen]
+
+test radio_cards_are_chosen_by_a_press_and_by_every_arrow[]
+    first = _first[_plans['free']]
+    second = _into[first, 'plan', 0.75, 0.2]
+    _said[_shown[_plans['free'], _press[second[0], second[1]]], 'plan'] eq ['choose team 1']
+    _said[_shown[_plans['team'], _one_of[_key['ArrowDown']]], 'plan'] eq ['choose firm 2']
+    _said[_shown[_plans['free'], _one_of[_key['ArrowDown']]], 'plan'] eq ['choose team 1']
+    _said[_shown[_plans['firm'], _one_of[_key['ArrowRight']]], 'plan'] eq ['choose free 0']
+    _said[_shown[_plans['free'], _one_of[_key['ArrowLeft']]], 'plan'] eq ['choose firm 2']
+    card_after_key[2, 'ArrowUp', 3] eq 1
+    card_after_key[0, 'ArrowUp', 3] eq 2
+    card_after_key[1, 'End', 3] eq 2
+    card_after_key[2, 'PageUp', 3] eq 0
+    card_after_key[-1, 'ArrowDown', 3] eq 0
+
+fn _extras[ticked]
+    checkbox_cards['extras', [card['ssd', 'Disk', 'A fast one'], card['ram', 'Memory', 'Twice as much']], ticked]
+
+test checkbox_cards_tell_toggle_under_the_groups_id[]
+    first = _first[_extras[['ram']]]
+    _said[_shown[_extras[['ram']], _press_on[first, 'extras:0']], 'extras'] eq ['toggle ssd 1']
+    _said[_shown[_extras[['ram']], _press_on[first, 'extras:1']], 'extras'] eq ['toggle ram 0']
+    _said[_shown[_extras[['ram']], _one_of[_key[' ']]], 'extras'] eq ['toggle ram 0']
+
+fn _price[low, high]
+    range_slider['price', low, high, 0.0, 100.0, step = 5.0, gap_steps = 2, wide = 220.0]
+
+test a_range_sliders_thumbs_move_by_press_keys_and_stop_short_of_each_other[]
+    first = _first[_price[20.0, 80.0]]
+    low = first.boxes['price:low']
+    high = first.boxes['price:high']
+    --- (the track runs 10 to 210 of the 220: 20 at 50, 80 at 170, split at 110)
+    low[2] eq 110.0
+    high[0] eq low[0] + 110.0
+    near_high = _shown[_price[20.0, 80.0], _press[low[0] + 150.0, low[1] + 15.0]]
+    _said[near_high, 'price'] eq ['change high 70']
+    near_low = _shown[_price[20.0, 80.0], _press[low[0] + 40.0, low[1] + 15.0]]
+    _said[near_low, 'price'] eq ['change low 15']
+    _said[_shown[_price[15.0, 80.0], _one_of[_key['ArrowRight']]], 'price'] eq ['change low 20']
+    _said[_shown[_price[20.0, 80.0], _one_of[_key['PageUp']]], 'price'] eq ['change low 70']
+    _said[_shown[_price[70.0, 80.0], _one_of[_key['ArrowRight']]], 'price'] eq []
+    _said[_shown[_price[70.0, 80.0], _one_of[_key['End']]], 'price'] eq ['change high 100']
+    _said[_shown[_price[70.0, 80.0], _one_of[_key['Home']]], 'price'] eq ['change low 0']
+    range_after[20.0, 80.0, gui.Event['price', 'change', 'high', 90.0]] eq [20.0, 90.0]
+    snapped[12.4, 0.0, 100.0, 5.0] eq 10.0
+    snapped[0.3, 0.0, 1.0, 0.25] eq 0.25
+    snapped[0.38, 0.0, 1.0, 0.25] eq 0.5
+
+--- the tree shown in a frame at `t` with the pointer held down at a
+--- place (a press not yet let go)
+fn _shown_held[tree, items, t, x, y]
+    inner = join[items, ', ']
+    given = '[`inner`]'
+    gui.show[lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [{"x": `x`, "y": `y`, "down": true}], "controllers": [], "said": []}']], tree]
+
+fn _qty[s]
+    stepper['qty', s, lo = 0.0, hi = 10.0]
+
+fn _qty_after[s, shown]
+    stepper_after['qty', s, shown, lo = 0.0, hi = 10.0]
+
+test a_stepper_steps_by_its_buttons_and_its_arrows_and_stops_at_its_ends[]
+    s = stepper_of[5.0]
+    s.text eq '5' and not s.empty
+    first = _first[_qty[s]]
+    s = _qty_after[s, _shown[_qty[s], _press_on[first, 'qty:up']]]
+    s.value eq 6.0 and s.text eq '6'
+    --- (a press on a button leaves the focus in the field: the arrows step)
+    s.focused
+    s = _qty_after[s, _shown[_qty[s], _one_of[_key['ArrowUp']]]]
+    s.value eq 7.0
+    s = _qty_after[s, _shown[_qty[s], _press_on[first, 'qty:down']]]
+    s.value eq 6.0
+    top = stepper_of[10.0]
+    top = _qty_after[top, _shown[_qty[top], _press_on[first, 'qty:up']]]
+    top.value eq 10.0 and top.text eq '10'
+
+test a_stepper_keeps_a_numbers_characters_and_holds_it_in_range_once_left[]
+    s = stepper_of[5.0]
+    first = _first[_qty[s]]
+    s = _qty_after[s, _shown[_qty[s], _press_on[first, 'qty:field:0']]]
+    s.focused
+    s = _qty_after[s, _shown[_qty[s], [_text['7'], _text['x']]]]
+    s.text eq '57'
+    s.value eq 5.0
+    s = _qty_after[s, _shown[_qty[s], _one_of[_key['Tab']]]]
+    not s.focused
+    s.text eq '10' and s.value eq 10.0
+    places = stepper_of[1.5, places = 2]
+    places.text eq '1.50'
+
+test a_stepper_held_down_steps_at_once_then_each_fifty_milliseconds_after_half_a_second[]
+    s = stepper_of[0.0]
+    first = _first[_qty[s]]
+    up = _mid[first, 'qty:up']
+    s = _qty_after[s, _shown_held[_qty[s], _one_of[_at['down', up[0], up[1]]], 1000.0, up[0], up[1]]]
+    s.value eq 1.0 and s.hold eq 'up'
+    s = _qty_after[s, _shown_held[_qty[s], [], 1400.0, up[0], up[1]]]
+    s.value eq 1.0
+    s = _qty_after[s, _shown_held[_qty[s], [], 1700.0, up[0], up[1]]]
+    s.value eq 6.0
+    s = _qty_after[s, _shown[_qty[s], _one_of[_at['up', up[0], up[1]]], t = 1750.0]]
+    s.hold eq ''
+
+fn _secret[revealed]
+    password['pw', 'hunter2', revealed]
+
+test a_password_is_revealed_by_its_button_and_hidden_again_once_sent[]
+    first = _first[_secret[false]]
+    pressed = _shown[_secret[false], _press_on[first, 'pw:reveal']]
+    _said[pressed, 'pw:reveal'] eq ['toggle pointer 1']
+    password_after['pw', 'hunter2', false, pressed] eq true
+    --- (a press gives the field back the focus: what is typed goes there)
+    typed = _shown[_secret[true], _one_of[_text['!']]]
+    _said[typed, 'pw'] eq ['edit hunter2! 0']
+    sent = _shown[_secret[true], _one_of[_key['Enter']]]
+    password_after['pw', 'hunter2!', true, sent] eq false
+    --- (Tab to the button and Enter: revealed, the focus kept on it)
+    tabbed = _shown[_secret[false], _one_of[_key['Tab']]]
+    keyed = _shown[_secret[false], _one_of[_key['Enter']]]
+    _said[keyed, 'pw:reveal'] eq ['toggle key 1']
+    password_after['pw', 'hunter2!', false, keyed] eq true
+    _said[_shown[_secret[true], _one_of[_text['?']]], 'pw'] eq []
+
+fn _code_view[s]
+    otp['code', s, size = 4]
+
+test a_code_takes_a_character_a_box_and_backspace_and_delete_as_radix_does[]
+    s = code_of['']
+    first = _first[_code_view[s]]
+    --- (a press past the first empty box lands on it)
+    s = otp_after['code', s, _shown[_code_view[s], _press_on[first, 'code:2']], size = 4]
+    s.focused and s.at eq 0
+    s = otp_after['code', s, _shown[_code_view[s], [_text['1'], _text['x'], _text['2']]], size = 4]
+    code_text[s] eq '12' and s.at eq 2
+    --- (Backspace in an empty box moves back; in a full one clears it)
+    s = otp_after['code', s, _shown[_code_view[s], _one_of[_key['Backspace']]], size = 4]
+    code_text[s] eq '12' and s.at eq 1
+    s = otp_after['code', s, _shown[_code_view[s], _one_of[_key['Backspace']]], size = 4]
+    code_text[s] eq '1' and s.at eq 0
+    --- (a paste fills from the first box, what a digit's box refuses left out)
+    s = otp_after['code', s, _shown[_code_view[s], _one_of[_text['98 7a6']]], size = 4]
+    code_text[s] eq '9876' and s.at eq 3
+    s = otp_after['code', s, _shown[_code_view[s], _one_of[_key['Home']]], size = 4]
+    s = otp_after['code', s, _shown[_code_view[s], _one_of[_key['Delete']]], size = 4]
+    code_text[s] eq '876' and s.at eq 0
+    s = otp_after['code', s, _shown[_code_view[s], _one_of[_key_with['Backspace', 'ctrl']]], size = 4]
+    code_text[s] eq '' and s.at eq 0
+    s = otp_after['code', s, _shown[_code_view[s], _one_of[_key['Enter']]], size = 4]
+    s.done
+    whole = otp_after['code', s, _shown[_code_view[s], _one_of[_text['1234']]], size = 4, auto = true]
+    whole.done
+    code_kept['a1 b2', kind = 'alpha'] eq 'ab'
+    code_kept['a1 b2', kind = 'alphanumeric'] eq 'a1b2'
+
+fn _fruit_list[]
+    ['Apple', 'Banana', 'Apricot', 'Grape']
+
+fn _fruits[s]
+    combobox['fruit', s, _fruit_list[]]
+
+fn _fruit_after[s, items]
+    combobox_after['fruit', s, _fruit_list[], _shown[_fruits[s], items]]
+
+test a_combobox_lists_the_choices_typed_for_and_enter_chooses_the_one_the_keys_stand_on[]
+    s = combo_of['']
+    first = _first[_fruits[s]]
+    s = combobox_after['fruit', s, _fruit_list[], _shown[_fruits[s], _press_on[first, 'fruit:field:0']]]
+    s.focused and not s.open
+    s = _fruit_after[s, [_text['a'], _text['p']]]
+    s.open and s.active eq 0 and s.query eq 'ap'
+    combo_choices[s, _fruit_list[]] eq ['Apple', 'Apricot', 'Grape']
+    listed = _shown[_fruits[s], []]
+    'fruit:opt:2' in listed.boxes
+    not ('fruit:opt:3' in listed.boxes)
+    s = _fruit_after[s, _one_of[_key['ArrowDown']]]
+    s.active eq 1
+    s = _fruit_after[s, [_key['ArrowDown'], _key['ArrowDown'], _key['ArrowDown']]]
+    s.active eq 2
+    s = _fruit_after[s, _one_of[_key['Home']]]
+    s.active eq 0
+    s = _fruit_after[s, _one_of[_key['End']]]
+    s = _fruit_after[s, _one_of[_key['Enter']]]
+    s.chosen eq 'Grape' and s.query eq 'Grape' and s.picked and not s.open
+    --- (the field took the choice's words under a new turn, its caret at
+    --- their end)
+    s.gen gt 0
+    _said[_shown[_fruits[s], _one_of[_text['s']]], 'fruit:field:`s.gen`'] eq ['edit Grapes 0']
+
+test a_combobox_closed_by_escape_puts_back_the_choice_and_opens_on_it_by_the_arrows[]
+    s = combo_of['Banana']
+    first = _first[_fruits[s]]
+    s = combobox_after['fruit', s, _fruit_list[], _shown[_fruits[s], _press_on[first, 'fruit:field:0']]]
+    s = _fruit_after[s, _one_of[_text['x']]]
+    s.query eq 'Bananax' and s.open
+    s = _fruit_after[s, _one_of[_key['Escape']]]
+    not s.open and s.query eq 'Banana' and s.chosen eq 'Banana'
+    s = _fruit_after[s, _one_of[_key['ArrowDown']]]
+    s.open and s.active eq 1
+    --- (a press on an entry chooses it)
+    shown = _shown[_fruits[s], []]
+    s = _fruit_after[s, _press_on[shown, 'fruit:opt:3']]
+    s.chosen eq 'Grape' and not s.open
+    --- (a press elsewhere closes the list)
+    s = _fruit_after[s, _one_of[_key['ArrowUp']]]
+    s.open
+    s = _fruit_after[s, _press[880.0, 680.0]]
+    not s.open and not s.focused
+
+test a_masked_field_writes_the_masks_characters_as_it_is_typed[]
+    s = masked_of['', 'phone']
+    s.text eq ''
+    first = _first[masked['tel', s, 'phone']]
+    s = masked_after['tel', s, 'phone', _shown[masked['tel', s, 'phone'], _press_on[first, 'tel:0']]]
+    s = masked_after['tel', s, 'phone', _shown[masked['tel', s, 'phone'], [_text['5'], _text['5'], _text['x'], _text['5'], _text['1']]]]
+    s.text eq '(555) 1'
+    unmask_text[s.text, 'phone'] eq '5551'
+    s = masked_after['tel', s, 'phone', _shown[masked['tel', s, 'phone'], _one_of[_key['Backspace']]]]
+    s = masked_after['tel', s, 'phone', _shown[masked['tel', s, 'phone'], _one_of[_key['Backspace']]]]
+    unmask_text[s.text, 'phone'] eq '55'
+
+fn _wants[]
+    [want['name', 'Name', ['empty']], want['email', 'Email', ['email']], want['agree', 'Terms', ['checked']]]
+
+fn _signup[f]
+    name = labelled['name', 'Name', gui.field['name', f.fields['name']], fault = error_of[f, 'name']]
+    email = labelled['email', 'Email', gui.field['email', f.fields['email']], fault = error_of[f, 'email']]
+    agree = gui.checkbox['agree', 'I agree', f.fields['agree'] eq 'on']
+    gui.column[[name, email, agree, gui.button['submit', 'Sign up']]]
+
+fn _signup_after[f, shown]
+    form_after[f, _wants[], shown]
+
+test a_form_sent_checks_every_field_and_gives_the_first_failing_one_the_focus[]
+    f = form_of[map['name' = '', 'email' = 'ada@', 'agree' = '']]
+    first = _first[_signup[f]]
+    f = _signup_after[f, _shown[_signup[f], _press_on[first, 'submit']]]
+    f.failed and not f.sent
+    error_of[f, 'name'] eq rule_says['empty', 'Name']
+    error_of[f, 'email'] eq rule_says['email', 'Email']
+    error_of[f, 'agree'] eq rule_says['checked', 'Terms']
+    --- (the name field has the focus; its error stays until typing stops
+    --- for 200 milliseconds)
+    f = _signup_after[f, _shown[_signup[f], _one_of[_text['A']], t = 1000.0]]
+    f.fields['name'] eq 'A'
+    error_of[f, 'name'] ne ''
+    f = _signup_after[f, _shown[_signup[f], [], t = 1150.0]]
+    error_of[f, 'name'] ne ''
+    f = _signup_after[f, _shown[_signup[f], [], t = 1250.0]]
+    error_of[f, 'name'] eq ''
+    --- (a press on a label gives its field the focus)
+    shown = _shown[_signup[f], [], t = 1300.0]
+    f = _signup_after[f, _shown[_signup[f], _press_on[shown, 'email:label'], t = 1300.0]]
+    f = _signup_after[f, _shown[_signup[f], _one_of[_text['x.io']], t = 1400.0]]
+    f.fields['email'] eq 'ada@x.io'
+    f = _signup_after[f, _shown[_signup[f], _press_on[shown, 'agree'], t = 1500.0]]
+    f.fields['agree'] eq 'on'
+    error_of[f, 'agree'] eq ''
+    --- (the error gone, the button stands higher)
+    now_shown = _shown[_signup[f], [], t = 1550.0]
+    f = _signup_after[f, _shown[_signup[f], _press_on[now_shown, 'submit'], t = 1600.0]]
+    f.sent and not f.failed
+
+test a_form_checks_a_field_as_it_is_left_when_asked_to[]
+    f = form_of[map['name' = '', 'email' = '', 'agree' = '']]
+    first = _first[_signup[f]]
+    f = form_after[f, _wants[], _shown[_signup[f], _press_on[first, 'email']], on = 'blur']
+    f = form_after[f, _wants[], _shown[_signup[f], _one_of[_text['ada']]], on = 'blur']
+    error_of[f, 'email'] eq ''
+    f = form_after[f, _wants[], _shown[_signup[f], _one_of[_key['Tab']]], on = 'blur']
+    error_of[f, 'email'] eq rule_says['email', 'Email']
+    typing = form_of[map['name' = '', 'email' = '', 'agree' = '']]
+    typing = form_after[typing, _wants[], _shown[_signup[typing], _press_on[first, 'email']], on = 'input']
+    typing = form_after[typing, _wants[], _shown[_signup[typing], _one_of[_text['a']]], on = 'input']
+    error_of[typing, 'email'] eq rule_says['email', 'Email']
+
+test fields_set_aside_together_take_no_input[]
+    tree = fieldset['Delivery', [gui.field['street', ''], gui.button['send', 'Send']], disabled = true]
+    first = _first[tree]
+    _said[_shown[tree, _press_on[first, 'send']], 'send'] eq []
+
+test linked_fields_write_each_other_as_either_is_typed[]
+    t = temperature_of[]
+    first = _first[temperature['temp', t]]
+    _shown[temperature['temp', t], _press_on[first, 'temp:c']]
+    t = temperature_after['temp', t, _shown[temperature['temp', t], [_key['Backspace'], _text['1'], _text['0'], _text['0']]]]
+    t.celsius eq '100' and t.fahrenheit eq '212'
+    _shown[temperature['temp', t], _press_on[first, 'temp:f']]
+    t = temperature_after['temp', t, _shown[temperature['temp', t], _one_of[_text['.5']]]]
+    t.fahrenheit eq '212.5' and t.celsius eq '100.27777777777779'
+
+test words_bound_to_controls_are_reversed_and_ticked_in_order[]
+    reversed['Hello, Vue'] eq 'euV ,olleH'
+    ticked_after[['Jack', 'John'], 'Mike', true] eq ['Jack', 'John', 'Mike']
+    ticked_after[['Jack', 'John', 'Mike'], 'John', false] eq ['Jack', 'Mike']
+    ticked_after[['Jack'], 'Jack', true] eq ['Jack']
+
+test small_controls_count_copy_and_go_round_their_states[]
+    count_tone['abc', 10] eq 'muted'
+    count_tone['abcdefghi', 10] eq 'warning'
+    count_tone['abcdefghijk', 10] eq 'danger'
+    first = _first[copy_button['copy', 'npm i lory']]
+    copied = _shown[copy_button['copy', 'npm i lory'], _press_on[first, 'copy'], t = 500.0]
+    _said[copied, 'copy'] eq ['copy npm i lory 500']
+    ['@copy', '=npm i lory'] in copied.canvas.asks
+    badge_next['idle'] eq 'busy'
+    badge_next['busy'] eq 'done'
+    badge_next['done'] eq 'idle'
+    badge_next['failed'] eq 'idle'
+    shown = _first[badge['save', 'Save', 'idle']]
+    _said[_shown[badge['save', 'Save', 'idle'], _press_on[shown, 'save']], 'save'] eq ['press idle 0']
+
+fn _palette[p]
+    color_picker['paint', p, swatches = ['#ff0000', '#808080']]
+
+fn _palette_after[p, items]
+    color_after['paint', p, _shown[_palette[p], items]]
+
+test a_colour_picker_reads_its_square_bars_swatches_and_typed_code[]
+    p = picker_of['#3366cc']
+    abs[p.hue - 220.0] lt 0.000001 and abs[p.sat - 0.75] lt 0.000001 and abs[p.val - 0.8] lt 0.000001
+    picker_hex[p] eq '#3366cc'
+    first = _first[_palette[p]]
+    --- (a press in the square's top right corner: full saturation and value)
+    corner = _into[first, 'paint:area', 0.999, 0.001]
+    p = _palette_after[p, _press[corner[0], corner[1]]]
+    p.sat gt 0.99 and p.val gt 0.99
+    picker_hex[p] eq '#0055ff'
+    --- (half way along the hue bar: cyan)
+    half = _into[first, 'paint:hue', 0.5, 0.5]
+    p = _palette_after[p, _press[half[0], half[1]]]
+    abs[p.hue - 180.0] lt 1.0
+    p = _palette_after[p, _press_on[first, 'paint:swatch:1']]
+    p.text eq '#808080' and p.sat eq 0.0
+    --- (a gray keeps the hue the square had)
+    abs[p.hue - 180.0] lt 1.0
+    p = _palette_after[p, _press_on[first, 'paint:hex']]
+    p = _palette_after[p, [_key['Backspace'], _key['Backspace'], _key['Backspace'], _key['Backspace'], _key['Backspace'], _key['Backspace'], _text['0f']]]
+    p.text eq '#0f'
+    picker_hex[p] eq '#808080'
+    p = _palette_after[p, _one_of[_text['0']]]
+    picker_hex[p] eq '#00ff00'
+    --- (the opacity bar at a quarter: a code of eight digits)
+    quarter = _into[first, 'paint:alpha', 0.25, 0.5]
+    p = _palette_after[p, _press[quarter[0], quarter[1]]]
+    abs[p.alpha - 0.25] lt 0.01
+    len[picker_hex[p]] eq 9
+
+test a_zone_to_drop_files_on_lists_them_and_takes_one_away[]
+    files = [Picked['notes.txt', 1200], Picked['photo.png', 2048000]]
+    first = _first[file_drop['up', files]]
+    _said[_shown[file_drop['up', files], _press_on[first, 'up']], 'up'] eq ['press  2']
+    left = files_after['up', files, _shown[file_drop['up', files], _press_on[first, 'up:remove:0']]]
+    len[left] eq 1 and left[0].name eq 'photo.png'
+    file_size[2049200] eq '2.0 MB'
+
+--- a headset's frame at `t`, the right hand's ray resting at (x, y) on its
+--- page of 1000 by 560, the trigger pressed and let go there where `press`
+fn _headset_at[t, x, y, press]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    ox = x * 0.002 - 1.0
+    oy = 1.8 - y * 0.002
+    given = '[]'
+    if press
+        given = '[{"type": "down", "device": "ray", "id": "right"}, {"type": "up", "device": "ray", "id": "right"}]'
+    lory.begin[json['{"t": `t`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [`ox`, `oy`, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']]
+
+fn _headset_form[s, stars]
+    gui.column[[otp['code', s, size = 4], rating['stars', stars]]]
+
+--- in a headset the ray presses the controls as a pointer does: a star is
+--- rated, and a code's box given the focus brings up gui's drawn keyboard,
+--- whose keys type into it
+test in_a_headset_the_ray_rates_and_types_a_code_on_the_drawn_keyboard[]
+    gui.unfocus[]
+    s = code_of['']
+    first = gui.show[_headset_at[1000.0, 999.0, 559.0, false], _headset_form[s, 0.0]]
+    star = _into[first, 'stars', 0.5, 0.5]
+    rated = gui.show[_headset_at[1100.0, star[0], star[1], true], _headset_form[s, 0.0]]
+    _said[rated, 'stars'] eq ['change  3']
+    box = _mid[first, 'code:0']
+    pressed = gui.show[_headset_at[1200.0, box[0], box[1], true], _headset_form[s, 3.0]]
+    s = otp_after['code', s, pressed, size = 4]
+    s.focused and s.at eq 0
+    board = gui.keys_of[pressed.canvas, false]
+    four = board[3]
+    four.face eq '4'
+    keyed = gui.show[_headset_at[1300.0, four.x + four.w / 2.0, four.y + four.h / 2.0, true], _headset_form[s, 3.0]]
+    s = otp_after['code', s, keyed, size = 4]
+    code_text[s] eq '4' and s.at eq 1
+    lory.end[keyed.canvas] gt 0

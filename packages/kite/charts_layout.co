@@ -1,0 +1,820 @@
+--- How a chart shares out its room, as Chart.js lays a chart: the
+--- legend, the subtitle and title and the axes are boxes along the sides
+--- (each side's boxes in order of their weight), fitted in turn into the
+--- room the others leave, the axes fitted again where another box's size
+--- changed theirs, and what is left in the middle is the chart's area,
+--- where the datasets are drawn and a radial axis is laid.
+---
+--- These are Chart.js 4.5.1's rules (its layouts, legend and title),
+--- written anew (see charts_model.co).
+use math
+use charts_model
+use charts_scales
+use charts_fit
+
+--- one box the chart lays: what it is (`what`: legend, subtitle, title or
+--- scale) and its id; the axis it is (its place among the scales, -1
+--- for none); its side and whether it runs across; whether it is shown
+--- and spans the chart; its weight among the boxes of its side; the stack
+--- of boxes it shares a side with and its weight in it; its box (left,
+--- top, right, bottom, width, height) and the room it wants past its ends
+--- (left, top, right, bottom)
+struct Part [what, id, scale, position, horizontal, shown, full_size, weight, stack, stack_weight, left, top, right, bottom, width, height, padding]
+
+--- a legend's item: its text, whether it is hidden, the dataset it stands
+--- for (and the value, in a legend of values; -1 for none), its colours and
+--- its point's shape
+struct Item [text, hidden, set, index, fill, edge, edge_width, point_style]
+
+--- a legend laid: its items, each item's box (left, top, width, height)
+--- and its row or column, each row's width or each column's size, an
+--- item's box size (`box_width`, `box_height`) and height, and the room its
+--- title takes
+struct Legended [items, hits, lines, line_widths, columns, box_width, box_height, item_height, title_height]
+
+--- a chart laid in a box of `width` by `height`: its area (left, top,
+--- right, bottom), its boxes in the order the chart keeps them, its axes,
+--- its legend laid, and the room its points spill past the area
+--- (`overflow`)
+struct Laid [width, height, area, parts, scales, legend, overflow]
+
+--- one box as the layout holds it while fitting: its place among the
+--- parts, its side, whether it runs across, its weight, its stack ('' for
+--- none) and its weight there, whether it spans the chart; the room it was
+--- given (`lay_w`, `lay_h`; 0 where the area's room is used) and the room
+--- it took along its side last (`size`)
+struct Wrap [index, pos, horizontal, weight, stack, stack_weight, full_size, lay_w, lay_h, size]
+
+--- a stack of boxes on one side: its key, how many boxes are in it and
+--- their weight together, the most room any took, the room placed so far,
+--- and where it was placed (`start`, nan before)
+struct Stack [key, count, weight, size, placed, start]
+
+--- the chart's area while it is fitted: its sides (the room taken from
+--- each), its width and height, where boxes are being placed (`x`, `y`)
+--- and the most room any axis's labels want past each side
+struct Room [left, top, right, bottom, w, h, x, y, most_left, most_top, most_right, most_bottom]
+
+--- everything a layout pass changes: the parts, the scales, the wraps, the
+--- stacks, the area and the legend
+struct Pass [parts, scales, wraps, stacks, room, legend]
+
+--- ---- the whole chart ----
+
+--- the chart laid in a box of `width` by `height`, its words measured
+--- with `pen`
+fn laid_out[ch, width, height, pen]
+    scales = charts_scales.scales_of[ch]
+    ps = charts_scales.parsed_of[ch, scales]
+    scales = charts_scales.ranged[ch, ps, scales]
+    overflow = 0.0
+    if ch.auto_padding
+        overflow = overflow_of[ch, ps]
+    parts = _parts_of[ch, scales]
+    legend = Legended[legend_items[ch, ps], slice[[[0.0, 0.0, 0.0, 0.0]], 0, 0], charts_model.no_numbers[], charts_model.no_numbers[], slice[[[0.0, 0.0]], 0, 0], 0.0, 0.0, 0.0, 0.0]
+    pad = ch.padding
+    avail_w = max[width - pad[0] - pad[2], 0.0]
+    avail_h = max[height - pad[1] - pad[3], 0.0]
+    wraps = _wraps_of[parts]
+    vertical = _vertical_of[wraps]
+    horizontal = _horizontal_of[wraps]
+    shown_vertical = 0
+    i = 0
+    while i lt len[vertical]
+        if parts[wraps[vertical[i]].index].shown
+            shown_vertical = shown_vertical + 1
+        i = i + 1
+    if shown_vertical eq 0
+        shown_vertical = 1
+    v_box_max_w = avail_w / 2.0 / (0.0 + shown_vertical)
+    h_box_max_h = avail_h / 2.0
+    stacks = _stacks_of[wraps]
+    wraps = _layout_dims[wraps, stacks, v_box_max_w, h_box_max_h, avail_w, avail_h, parts]
+    room = Room[pad[0], pad[1], pad[2], pad[3], avail_w, avail_h, pad[0], pad[1], max[pad[0], overflow], max[pad[1], overflow], max[pad[2], overflow], max[pad[3], overflow]]
+    pass = Pass[parts, scales, wraps, stacks, room, legend]
+    fixed = _full_size_of[wraps]
+    pass = _fitted_boxes[pass, ch, ps, fixed, width, height, pen].pass
+    pass = _fitted_boxes[pass, ch, ps, vertical, width, height, pen].pass
+    across = _fitted_boxes[pass, ch, ps, horizontal, width, height, pen]
+    pass = across.pass
+    if across.other
+        pass = _fitted_boxes[pass, ch, ps, vertical, width, height, pen].pass
+    pass.room = _max_padding_handled[pass.room]
+    pass = _placed[pass, _left_and_top_of[wraps], width, height, pad]
+    r = pass.room
+    r.x = r.x + r.w
+    r.y = r.y + r.h
+    pass.room = r
+    pass = _placed[pass, _right_and_bottom_of[wraps], width, height, pad]
+    r = pass.room
+    area = [r.left, r.top, r.left + r.w, r.top + r.h]
+    scales = pass.scales
+    parts = pass.parts
+    k = 0
+    while k lt len[parts]
+        p = parts[k]
+        if p.what eq 'scale'
+            j = p.scale
+            sc = scales[j]
+            a = ch.axes[sc.place]
+            if p.position eq 'chartArea'
+                if r.w gt 0.0 and r.h gt 0.0
+                    sc = charts_fit.radial_updated[sc, a, ch, ps, area, pen]
+                    p.left = area[0]
+                    p.top = area[1]
+                    p.right = area[2]
+                    p.bottom = area[3]
+                    p.width = r.w
+                    p.height = r.h
+                    parts[k] = p
+            else
+                sc.left = p.left
+                sc.top = p.top
+                sc.right = p.right
+                sc.bottom = p.bottom
+                sc.width = p.width
+                sc.height = p.height
+            sc = charts_scales.configured[sc, a]
+            scales[j] = sc
+        k = k + 1
+    legend = _hits_adjusted[pass.legend, ch, parts[0], pen]
+    Laid[width, height, area, parts, scales, legend, overflow]
+
+--- ---- the boxes ----
+
+fn _parts_of[ch, scales]
+    out = slice[[_heading_part['legend', ch.title]], 0, 0]
+    l = ch.legend
+    out = push[out, Part['legend', 'legend', -1, l.position, _across[l.position], l.shown, l.full_size, l.weight, '', 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, [0.0, 0.0, 0.0, 0.0]]]
+    out = push[out, _heading_part['subtitle', ch.subtitle]]
+    out = push[out, _heading_part['title', ch.title]]
+    i = 0
+    while i lt len[scales]
+        sc = scales[i]
+        a = ch.axes[sc.place]
+        shared = ''
+        if a.stack ne ''
+            shared = '`a.position``a.stack`'
+        out = push[out, Part['scale', sc.id, i, a.position, sc.horizontal, sc.shown, false, a.weight, shared, a.stack_weight, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, [0.0, 0.0, 0.0, 0.0]]]
+        i = i + 1
+    out
+
+fn _heading_part[kind, h]
+    Part[kind, kind, -1, h.position, _across[h.position], h.shown, h.full_size, h.weight, '', 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, [0.0, 0.0, 0.0, 0.0]]
+
+fn _across[position]
+    position eq 'top' or position eq 'bottom'
+
+fn _wraps_of[parts]
+    out = slice[[Wrap[0, '', false, 0.0, '', 1.0, false, 0.0, 0.0, 0.0]], 0, 0]
+    i = 0
+    while i lt len[parts]
+        p = parts[i]
+        out = push[out, Wrap[i, p.position, p.horizontal, p.weight, p.stack, p.stack_weight, p.full_size, 0.0, 0.0, 0.0]]
+        i = i + 1
+    out
+
+--- the wraps on a side (their places), by weight, the heavier first where
+--- `heavy_first` (ties by place, the later first then too)
+fn _side_of_wraps[wraps, side, heavy_first]
+    found = []
+    for i in range[0]
+        found = push[found, 0]
+    i = 0
+    while i lt len[wraps]
+        if wraps[i].pos eq side
+            found = push[found, i]
+        i = i + 1
+    _by_weight[wraps, found, heavy_first]
+
+--- places sorted by their wraps' weights (and their places among the
+--- boxes where they weigh the same), backwards where `backwards`
+fn _by_weight[wraps, found, backwards]
+    out = found
+    n = len[out]
+    i = 1
+    while i lt n
+        j = i
+        going = true
+        while going and j gt 0
+            if _before[wraps[out[j]], wraps[out[j - 1]], backwards]
+                held = out[j]
+                out[j] = out[j - 1]
+                out[j - 1] = held
+                j = j - 1
+            else
+                going = false
+        i = i + 1
+    out
+
+fn _before[a, b, backwards]
+    if backwards
+        if a.weight eq b.weight
+            return a.index gt b.index
+        return a.weight gt b.weight
+    if a.weight eq b.weight
+        return a.index lt b.index
+    a.weight lt b.weight
+
+fn _full_size_of[wraps]
+    found = []
+    for i in range[0]
+        found = push[found, 0]
+    i = 0
+    while i lt len[wraps]
+        if wraps[i].full_size
+            found = push[found, i]
+        i = i + 1
+    _by_weight[wraps, found, true]
+
+fn _joined[a, b]
+    out = a
+    i = 0
+    while i lt len[b]
+        out = push[out, b[i]]
+        i = i + 1
+    out
+
+fn _vertical_of[wraps]
+    _joined[_side_of_wraps[wraps, 'left', true], _side_of_wraps[wraps, 'right', false]]
+
+fn _horizontal_of[wraps]
+    _joined[_side_of_wraps[wraps, 'top', true], _side_of_wraps[wraps, 'bottom', false]]
+
+fn _left_and_top_of[wraps]
+    _joined[_side_of_wraps[wraps, 'left', true], _side_of_wraps[wraps, 'top', true]]
+
+fn _right_and_bottom_of[wraps]
+    _joined[_side_of_wraps[wraps, 'right', false], _side_of_wraps[wraps, 'bottom', false]]
+
+fn _stacks_of[wraps]
+    out = slice[[Stack['', 0.0, 0.0, 0.0, 0.0, nan]], 0, 0]
+    i = 0
+    while i lt len[wraps]
+        w = wraps[i]
+        on_side = w.pos eq 'left' or w.pos eq 'top' or w.pos eq 'right' or w.pos eq 'bottom'
+        if w.stack ne '' and on_side
+            k = _stack_at[out, w.stack]
+            if k lt 0
+                out = push[out, Stack[w.stack, 0.0, 0.0, 0.0, 0.0, nan]]
+                k = len[out] - 1
+            st = out[k]
+            st.count = st.count + 1.0
+            st.weight = st.weight + w.stack_weight
+            out[k] = st
+        i = i + 1
+    out
+
+fn _stack_at[stacks, key]
+    if key eq ''
+        return -1
+    i = 0
+    while i lt len[stacks]
+        if stacks[i].key eq key
+            return i
+        i = i + 1
+    -1
+
+--- the room each box is first given: across, half the height (and the
+--- width where it spans the chart, or its share of a stack's); up and
+--- down, its share of half the width (and the height where it spans)
+fn _layout_dims[wraps0, stacks, v_box_max_w, h_box_max_h, avail_w, avail_h, parts]
+    wraps = wraps0
+    i = 0
+    while i lt len[wraps]
+        w = wraps[i]
+        k = _stack_at[stacks, w.stack]
+        factor = 0.0
+        if k gte 0
+            factor = w.stack_weight / stacks[k].weight
+        if w.horizontal
+            w.lay_w = 0.0
+            if factor ne 0.0
+                w.lay_w = factor * v_box_max_w
+            else if w.full_size
+                w.lay_w = avail_w
+            w.lay_h = h_box_max_h
+        else
+            w.lay_w = v_box_max_w
+            w.lay_h = 0.0
+            if factor ne 0.0
+                w.lay_h = factor * h_box_max_h
+            else if w.full_size
+                w.lay_h = avail_h
+        wraps[i] = w
+        i = i + 1
+    wraps
+
+--- ---- fitting ----
+
+--- the boxes (their places among the wraps) fitted in turn, and fitted
+--- again (those that do not span the chart) while one's fitting changes
+--- the room along it for those before: the pass, and whether the room
+--- across them changed (`other`)
+fn _fitted_boxes[pass0, ch, ps, list0, width, height, pen]
+    pass = pass0
+    list = list0
+    changed = false
+    rounds = 0
+    going = true
+    while going and rounds lt 16
+        refit = false
+        again = []
+        for i in range[0]
+            again = push[again, 0]
+        i = 0
+        while i lt len[list]
+            wi = list[i]
+            pass = _box_updated[pass, ch, ps, wi, width, height, pen]
+            dims = _dims_updated[pass, wi, width, height]
+            pass = dims.pass
+            if dims.same and len[again] gt 0
+                refit = true
+            if dims.other
+                changed = true
+            if not pass.wraps[wi].full_size
+                again = push[again, wi]
+            i = i + 1
+        rounds = rounds + 1
+        if refit
+            list = again
+        else
+            going = false
+    Fitted[pass, false, changed]
+
+--- what fitting one box changed: the pass, and whether the room along
+--- the box (`same`) and across it (`other`) changed
+struct Fitted [pass, same, other]
+
+--- one box given its room: as wide and high as its wrap says (or the
+--- area's room), with the margins of the area's sides along it
+fn _box_updated[pass0, ch, ps, wi, width, height, pen]
+    pass = pass0
+    w = pass.wraps[wi]
+    r = pass.room
+    max_w = w.lay_w
+    if max_w eq 0.0
+        max_w = r.w
+    max_h = w.lay_h
+    if max_h eq 0.0
+        max_h = r.h
+    margins = [0.0, max[r.top, r.most_top], 0.0, max[r.bottom, r.most_bottom]]
+    if w.horizontal
+        margins = [max[r.left, r.most_left], 0.0, max[r.right, r.most_right], 0.0]
+    p = pass.parts[w.index]
+    if p.what eq 'scale'
+        sc = pass.scales[p.scale]
+        a = ch.axes[sc.place]
+        sc = charts_fit.updated[sc, a, ch, ps, max_w, max_h, margins, pen, width, height]
+        p.width = sc.width
+        p.height = sc.height
+        p.padding = sc.padding
+        all_scales = pass.scales
+        all_scales[p.scale] = sc
+        pass.scales = all_scales
+    else if p.what eq 'legend'
+        fit = _legend_fitted[pass.legend, ch, max_w, max_h, pen]
+        pass.legend = fit.legend
+        p.width = fit.width
+        p.height = fit.height
+    else
+        h = ch.title
+        if p.what eq 'subtitle'
+            h = ch.subtitle
+        size = _heading_size[h, max_w, max_h]
+        p.width = size[0]
+        p.height = size[1]
+    all_parts = pass.parts
+    all_parts[w.index] = p
+    pass.parts = all_parts
+    pass
+
+--- the room a box took added to the area's side, and the area's room
+--- worked out again
+fn _dims_updated[pass0, wi, width, height]
+    pass = pass0
+    w = pass.wraps[wi]
+    r = pass.room
+    p = pass.parts[w.index]
+    if w.size ne 0.0
+        r = _side_moved[r, w.pos, 0.0 - w.size]
+    k = _stack_at[pass.stacks, w.stack]
+    taken = p.width
+    if w.horizontal
+        taken = p.height
+    count = 1.0
+    size = taken
+    if k gte 0
+        st = pass.stacks[k]
+        st.size = max[st.size, taken]
+        all_stacks = pass.stacks
+        all_stacks[k] = st
+        pass.stacks = all_stacks
+        size = st.size
+        count = st.count
+    w.size = size / count
+    r = _side_moved[r, w.pos, w.size]
+    if p.what eq 'scale'
+        r.most_left = max[r.most_left, p.padding[0]]
+        r.most_top = max[r.most_top, p.padding[1]]
+        r.most_right = max[r.most_right, p.padding[2]]
+        r.most_bottom = max[r.most_bottom, p.padding[3]]
+    new_w = max[0.0, width - (max[r.most_left, r.left] + max[r.most_right, r.right])]
+    new_h = max[0.0, height - (max[r.most_top, r.top] + max[r.most_bottom, r.bottom])]
+    width_changed = new_w ne r.w
+    height_changed = new_h ne r.h
+    r.w = new_w
+    r.h = new_h
+    all_wraps = pass.wraps
+    all_wraps[wi] = w
+    pass.wraps = all_wraps
+    pass.room = r
+    if w.horizontal
+        return Fitted[pass, width_changed, height_changed]
+    Fitted[pass, height_changed, width_changed]
+
+fn _side_moved[r0, side, by]
+    r = r0
+    if side eq 'left'
+        r.left = r.left + by
+    if side eq 'top'
+        r.top = r.top + by
+    if side eq 'right'
+        r.right = r.right + by
+    if side eq 'bottom'
+        r.bottom = r.bottom + by
+    r
+
+--- the area's sides widened to the room the axes' labels want past them
+fn _max_padding_handled[r0]
+    r = r0
+    top = max[r.most_top - r.top, 0.0]
+    left = max[r.most_left - r.left, 0.0]
+    r.top = r.top + top
+    r.left = r.left + left
+    r.right = r.right + max[r.most_right - r.right, 0.0]
+    r.bottom = r.bottom + max[r.most_bottom - r.bottom, 0.0]
+    r.y = r.y + top
+    r.x = r.x + left
+    r
+
+--- ---- placing ----
+
+--- the boxes (their places among the wraps) placed outward from the area's
+--- corner: across, one under the next (a box spanning the chart from its
+--- padding's left to its right); up and down, one beside the next
+fn _placed[pass0, list, width, height, pad]
+    pass = pass0
+    r = pass.room
+    x = r.x
+    y = r.y
+    i = 0
+    while i lt len[list]
+        w = pass.wraps[list[i]]
+        p = pass.parts[w.index]
+        k = _stack_at[pass.stacks, w.stack]
+        weight = w.stack_weight
+        placed = 0.0
+        size = 0.0
+        start = nan
+        if k gte 0
+            st = pass.stacks[k]
+            weight = w.stack_weight / st.weight
+            placed = st.placed
+            size = st.size
+            start = st.start
+        if weight ne weight or weight eq 0.0
+            weight = 1.0
+        if w.horizontal
+            wide = r.w * weight
+            tall = size
+            if tall eq 0.0
+                tall = p.height
+            if start eq start
+                y = start
+            if p.full_size
+                p = _dims_set[p, pad[0], y, width - pad[2] - pad[0], tall]
+            else
+                p = _dims_set[p, r.left + placed, y, wide, tall]
+            if k gte 0
+                st = pass.stacks[k]
+                st.start = y
+                st.placed = st.placed + wide
+                all_stacks = pass.stacks
+                all_stacks[k] = st
+                pass.stacks = all_stacks
+            y = p.bottom
+        else
+            tall = r.h * weight
+            wide = size
+            if wide eq 0.0
+                wide = p.width
+            if start eq start
+                x = start
+            if p.full_size
+                p = _dims_set[p, x, pad[1], wide, height - pad[3] - pad[1]]
+            else
+                p = _dims_set[p, x, r.top + placed, wide, tall]
+            if k gte 0
+                st = pass.stacks[k]
+                st.start = x
+                st.placed = st.placed + tall
+                all_stacks = pass.stacks
+                all_stacks[k] = st
+                pass.stacks = all_stacks
+            x = p.right
+        all_parts = pass.parts
+        all_parts[w.index] = p
+        pass.parts = all_parts
+        i = i + 1
+    r.x = x
+    r.y = y
+    pass.room = r
+    pass
+
+fn _dims_set[p0, left, top, width, height]
+    p = p0
+    p.left = left
+    p.top = top
+    p.right = left + width
+    p.bottom = top + height
+    p.width = width
+    p.height = height
+    p
+
+--- ---- titles ----
+
+--- the room a title or subtitle takes given the most it may (width,
+--- height): its lines and the room above and below them, across; none
+--- where it is not shown
+fn _heading_size[h, max_w, max_h]
+    if not h.shown
+        return [0.0, 0.0]
+    lines = max[len[h.lines], 1]
+    tall = (0.0 + lines) * charts_model.line_of[h.size] + h.padding_top + h.padding_bottom
+    if _across[h.position]
+        return [max_w, tall]
+    [tall, max_h]
+
+--- ---- the legend ----
+
+--- the legend's items: one for each dataset (in the order they are drawn,
+--- the hidden ones too), or for each value where the chart's arcs are its
+--- values; reversed where the legend says
+fn legend_items[ch, ps]
+    out = slice[[Item['', false, -1, -1, charts_model.palette_at[0], charts_model.palette_at[0], 0.0, '']], 0, 0]
+    if charts_model.arcs_kind[ch.form]
+        if len[ch.sets] gt 0
+            s = ch.sets[0]
+            i = 0
+            while i lt len[ch.labels]
+                fill = charts_model.color_at[s.fills, i, charts_model.palette_at[i]]
+                edge = charts_model.color_at[s.edges, i, charts_model.white[]]
+                out = push[out, Item[ch.labels[i], charts_model.point_hidden[ch, i], 0, i, fill, edge, s.edge_width, '']]
+                i = i + 1
+    else
+        order = charts_model.sorted_sets[ch, false]
+        k = 0
+        while k lt len[order]
+            d = order[k]
+            s = ch.sets[d]
+            fill = charts_model.color_at[s.fills, 0, charts_model.fade_of[charts_model.palette_at[d]]]
+            edge = charts_model.color_at[s.edges, 0, charts_model.palette_at[d]]
+            out = push[out, Item[s.label, s.hidden, d, -1, fill, edge, s.edge_width, s.point_style]]
+            k = k + 1
+    if ch.legend.reverse
+        back = slice[out, 0, 0]
+        i = len[out] - 1
+        while i gte 0
+            back = push[back, out[i]]
+            i = i - 1
+        return back
+    out
+
+--- the size of a legend item's box (width, height) and the item's height
+fn legend_box[l]
+    size = l.size
+    box_h = l.box_height
+    if box_h ne box_h
+        box_h = size
+    box_w = l.box_width
+    if box_w ne box_w
+        box_w = size
+    if l.point_style
+        box_h = min[box_h, size]
+        box_w = min[box_w, size]
+        if l.point_style_width eq l.point_style_width
+            box_w = l.point_style_width
+    [box_w, box_h, max[size, box_h]]
+
+fn _legend_title_height[ch]
+    if not ch.legend.title_shown
+        return 0.0
+    charts_model.line_of[ch.size]
+
+--- a legend fitted: the legend, and the width and height it takes
+struct LegendFit [legend, width, height]
+
+--- the legend fitted in the room it is given: across, its items in rows
+--- (a new row where the next would not fit); up and down, in columns
+fn _legend_fitted[lg0, ch, max_w, max_h, pen]
+    lg = lg0
+    l = ch.legend
+    if not l.shown
+        return LegendFit[lg, 0.0, 0.0]
+    box = legend_box[l]
+    lg.box_width = box[0]
+    lg.box_height = box[1]
+    lg.item_height = box[2]
+    lg.title_height = _legend_title_height[ch]
+    hits = slice[[[0.0, 0.0, 0.0, 0.0]], 0, 0]
+    lines = charts_model.no_numbers[]
+    widths = charts_model.no_numbers[]
+    columns = slice[[[0.0, 0.0]], 0, 0]
+    pad = l.padding
+    w = max_w
+    h = max_h
+    if _across[l.position]
+        line_h = box[2] + pad
+        total = lg.title_height
+        widths = push[widths, 0.0]
+        row = -1.0
+        top = 0.0 - line_h
+        i = 0
+        while i lt len[lg.items]
+            item_w = box[0] + l.size / 2.0 + charts_model.wide[pen, l.size, false, lg.items[i].text]
+            last = len[widths] - 1
+            if i eq 0 or widths[last] + item_w + 2.0 * pad gt max_w
+                total = total + line_h
+                if i gt 0
+                    widths = push[widths, 0.0]
+                else
+                    widths[0] = 0.0
+                top = top + line_h
+                row = row + 1.0
+            hits = push[hits, [0.0, top, item_w, box[2]]]
+            lines = push[lines, row]
+            last = len[widths] - 1
+            widths[last] = widths[last] + item_w + pad
+            i = i + 1
+        h = total + 10.0
+    else
+        limit = max_h - lg.title_height
+        total = pad
+        col_w = 0.0
+        col_h = 0.0
+        left = 0.0
+        col = 0.0
+        i = 0
+        while i lt len[lg.items]
+            item_w = box[0] + l.size / 2.0 + charts_model.wide[pen, l.size, false, lg.items[i].text]
+            item_h = box[2]
+            if i gt 0 and col_h + item_h + 2.0 * pad gt limit
+                total = total + col_w + pad
+                columns = push[columns, [col_w, col_h]]
+                left = left + col_w + pad
+                col = col + 1.0
+                col_w = 0.0
+                col_h = 0.0
+            hits = push[hits, [left, col_h, item_w, item_h]]
+            lines = push[lines, col]
+            col_w = max[col_w, item_w]
+            col_h = col_h + item_h + pad
+            i = i + 1
+        total = total + col_w
+        columns = push[columns, [col_w, col_h]]
+        w = total + 10.0
+    most_w = max_w
+    if l.max_width eq l.max_width
+        most_w = l.max_width
+    most_h = max_h
+    if l.max_height eq l.max_height
+        most_h = l.max_height
+    lg.hits = hits
+    lg.lines = lines
+    lg.line_widths = widths
+    lg.columns = columns
+    LegendFit[lg, min[w, most_w], min[h, most_h]]
+
+--- the legend's items' boxes moved to where the legend was placed, each
+--- row (or column) aligned along it
+fn _hits_adjusted[lg0, ch, p, pen]
+    lg = lg0
+    l = ch.legend
+    if not l.shown
+        return lg
+    pad = l.padding
+    hits = lg.hits
+    if _across[l.position]
+        row = 0
+        left = _aligned[l.align, p.left + pad, p.right - lg.line_widths[0]]
+        i = 0
+        while i lt len[hits]
+            hb = hits[i]
+            r = int[lg.lines[i]]
+            if r ne row
+                row = r
+                left = _aligned[l.align, p.left + pad, p.right - lg.line_widths[row]]
+            hb[1] = hb[1] + p.top + lg.title_height + pad
+            hb[0] = left
+            left = left + hb[2] + pad
+            hits[i] = hb
+            i = i + 1
+    else
+        col = 0
+        top = _aligned[l.align, p.top + lg.title_height + pad, p.bottom - lg.columns[0][1]]
+        i = 0
+        while i lt len[hits]
+            hb = hits[i]
+            c = int[lg.lines[i]]
+            if c ne col
+                col = c
+                top = _aligned[l.align, p.top + lg.title_height + pad, p.bottom - lg.columns[col][1]]
+            hb[1] = top
+            hb[0] = hb[0] + p.left + pad
+            top = top + hb[3] + pad
+            hits[i] = hb
+            i = i + 1
+    lg.hits = hits
+    lg
+
+fn _aligned[align, start, finish]
+    if align eq 'start'
+        return start
+    if align eq 'end'
+        return finish
+    (start + finish) / 2.0
+
+--- the legend's item under the point (x, y), -1 for none
+fn legend_item_at[laid, x, y]
+    p = laid.parts[0]
+    if not (x gte p.left and x lte p.right and y gte p.top and y lte p.bottom)
+        return -1
+    hits = laid.legend.hits
+    i = 0
+    while i lt len[hits]
+        hb = hits[i]
+        if x gte hb[0] and x lte hb[0] + hb[2] and y gte hb[1] and y lte hb[1] + hb[3]
+            return i
+        i = i + 1
+    -1
+
+--- ---- points spilling past the area ----
+
+--- how far the datasets' points and lines spill past the chart's area:
+--- the room Chart.js keeps about it (half a point at a line's ends, and
+--- half its line's width once the chart has been laid before; a bubble's
+--- radius and edge)
+fn overflow_of[ch, ps]
+    most = 0.0
+    d = 0
+    while d lt len[ch.sets]
+        s = ch.sets[d]
+        form = charts_model.form_of[ch, s]
+        v = 0.0
+        if form eq 'line' or (form eq 'scatter' and s.show_line)
+            border = 0.0
+            if ch.laid_before
+                border = s.edge_width
+            n = len[s.ys]
+            if n eq 0
+                v = border
+            else
+                v = max[border, _point_size[s, s.point_radius]] / 2.0
+        if form eq 'scatter' and not s.show_line
+            v = _point_size[s, s.point_radius] / 2.0
+        if form eq 'bubble'
+            i = 0
+            while i lt len[s.rs]
+                r = s.rs[i]
+                if r eq r
+                    v = max[v, _point_size[s, r] / 2.0]
+                i = i + 1
+        most = max[most, v]
+        d = d + 1
+    most
+
+--- a point's size as Chart.js counts its overflow: its radius (its
+--- radius under the pointer, if more) and its edge, across
+fn _point_size[s, radius]
+    r = radius
+    if r ne r or r lt 0.0
+        r = 0.0
+    if r ne 0.0
+        r = max[r, s.hover_radius]
+    edge = 0.0
+    if r ne 0.0
+        edge = s.point_edge_width
+    (r + edge) * 2.0
+
+--- ---- tests ----
+
+test legends_are_laid_in_rows_as_chart_js_lays_them[]
+    ch = charts_model.chart_of['c', 'bar', ['a', 'b']]
+    s = charts_model.dataset['bar', 'Sales', [1.0, 2.0]]
+    ch.sets = [s, s]
+    laid = laid_out[ch, 640.0, 400.0, charts_model.plain_pen[]]
+    laid.parts[0].height eq 32.0
+    laid.area[1] eq 32.0
+    len[laid.legend.hits] eq 2
+    laid.legend.hits[0][1] eq 10.0

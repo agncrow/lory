@@ -1,0 +1,2328 @@
+--- Lory's maps: the earth in a box of a page. Raster tiles (OpenStreetMap's
+--- or any server's), GeoJSON shapes in styles, markers, popups and
+--- tooltips, circles of metres, clusters of points and a heatmap of
+--- them, zoom buttons, a scale bar and the tiles' credit; dragged and
+--- thrown, zoomed by the wheel about the pointer, by a double click, by a
+--- pinch, by the keys and by a box drawn with Shift, and flown from place
+--- to place.
+---
+--- It is Leaflet's (1.9.4) behaviour, written anew in Crow and held to the
+--- numbers Leaflet answers (tests/map/reference.co): its projection, its
+--- zooms and their snapping, its fitBounds, its scale bar, its flyTo, its
+--- wheel, its double click, its throw, its tiles and their addresses; its
+--- controls, popups and tooltips are laid out by its style sheet's sizes.
+---
+--- A map is a record the program keeps between frames by its id, as
+--- Lory's controls keep theirs (`use memory`); its shapes and its tiles
+--- are kept under names of their own, so the record stays light.
+---
+---     use sys
+---     use lory
+---     use map
+---
+---     fn draw[frame]
+---         c = lory.begin[frame]
+---         m = map.of['world']
+---         if not m.made
+---             m = map.at[m, 20.0, 0.0, 2.0]
+---             m = map.tiles[m, map.openstreetmap[]]
+---             m = map.add_marker[m, 'paris', 48.8566, 2.3522, 'Paris']
+---         c = map.show[c, m, 0.0, 0.0, lory.width[c], lory.height[c]]
+---         lory.end[c]
+---
+---     sys.frames[draw]
+---
+--- `show` reads the frame's input inside the map's box, moves the view,
+--- draws it and keeps the map; `happened[id]` says what the reader did to
+--- it. A map moving by itself (`moving`) needs a frame drawn each frame.
+--- In a tree of Lory's controls the map is a drawn control of its own,
+--- `gui.drawn['world', 0.0, 600.0, 400.0, map.painter]`, the map kept by
+--- the program (`map.keep[m]`) before the tree is shown; what it tells is
+--- among the tree's events.
+---
+--- The box a program hands a map is in the canvas's pixels; a map's
+--- insides are CSS pixels, as Leaflet's are.
+use math
+use memory
+use lory
+use lory.gui
+use geo
+use camera
+use grid
+use features
+use points
+
+--- the zooms a map allows and how it moves between them: the lowest and
+--- highest (the highest -1: its tiles' highest), the multiple zooms snap
+--- to (0: none), the step of a button, a key or a double click, a box of
+--- places the view is held inside (`bounded`), and how firmly a drag is
+--- held at its edge (0: let go, then brought back; 1: never past it)
+struct Limits [lowest, highest, snap, delta, bounded, south, west, north, east, viscosity]
+
+--- the box a map was last drawn in, in the canvas's pixels, and the
+--- canvas's pixels to a CSS pixel
+struct Box [x, y, w, h, s]
+
+--- a move of the view under way: a flight (`fly`), a zoom drawn from one
+--- view to another (`zoom`, the map's view already the second), a pan
+--- (`pan`, the view moving), or none (''); since when (milliseconds; -1
+--- until it is first shown), from and to what view, how long (a flight's
+--- 0: as long as its path is), how a pan eases out (its power), and a
+--- flight's path
+struct Motion [how, since, lat0, lng0, zoom0, lat1, lng1, zoom1, seconds, power, flight]
+
+--- what the reader's hands are doing to a map: a press and whether it has
+--- moved the view (a drag), where it began and the view's middle in the
+--- world's pixels then, the pointer's places and times since (for a
+--- throw), a box being drawn with Shift and its far corner, a control
+--- pressed (`button`), the wheel turned and not yet zoomed (its pixels,
+--- since when, where), the fingers on the map (their ids and places), a
+--- pinch (how far apart the fingers began, the zoom then, the place
+--- between them), and how far a drag may go before it is held (where the
+--- map is bounded)
+struct Hand [down, moved, x0, y0, cx0, cy0, xs, ys, times, boxing, bx, by, button, wheel, wheel_since, wheel_x, wheel_y, ids, txs, tys, apart0, pinch_zoom0, pinch_lat, pinch_lng, pinching, limited, low_x, high_x, low_y, high_y]
+
+--- what a map shows besides its layers and how it may be moved: zoom
+--- buttons, a scale bar (in metres, in feet and miles), the credit line
+--- and the words it starts with, and which hands move it
+struct Options [zoom_buttons, scale_bar, metric, imperial, credits, prefix, dragging, wheel_zoom, double_zoom, keyboard, box_zoom, pinch, inertia]
+
+--- a popup open on the map: whether one is, the place it points at, its
+--- words, how far from the place its tip points (a marker's head: CSS
+--- pixels), the feature it belongs to ('' for none), and whether it has
+--- just opened (the map then pans to show it whole)
+struct Popup [shown, lat, lng, words, dx, dy, owner, fresh]
+
+--- where the reader's device is, and how sure it is (metres)
+struct Located [shown, lat, lng, accuracy]
+
+--- what the reader did to a map in a frame: `click` on a feature (`what`
+--- its id) or on the map ('' and the place), `hover` over a feature,
+--- `popup` opened or `closed`, `moved` (the view changed), `located`; and
+--- the map's zoom then
+struct Told [act, what, lat, lng, zoom]
+
+--- a map: its id and whether the program has set it up, its middle and
+--- zoom, its limits, the box it was last drawn in, the move under way,
+--- the reader's hands, its options and tiles, its popup, the feature the
+--- pointer is over, the device's place, what the reader did in the last
+--- frame drawn, whether it has the keyboard, the time of the frame it was
+--- last shown in, and what the pointer is over (`feature`, `cluster`,
+--- `control`, `disabled`, `popup` or '')
+struct Map [id, made, lat, lng, zoom, limits, box, motion, hand, options, tiles, popup, hover, located, told, focused, shown_at, over]
+
+--- the layers of a map, kept apart from it: each layer's name and how it
+--- is drawn (`shapes`, `cluster`, `heat`) with its radius, in the order
+--- they are drawn; every feature (a layer's drawn in the order they are
+--- here); and whether each layer is hidden
+struct Layers [names, modes, radii, features, hidden]
+
+--- what is under a point of a map: a `feature` (its id), a `cluster`
+--- (where pressing it zooms to: its place and the zoom it comes apart
+--- at), or nothing ('')
+struct Target [what, id, lat, lng, zoom]
+
+--- ---- making and keeping ----
+
+fn _no_told[]
+    slice[[Told['', '', 0.0, 0.0, 0.0]], 0, 0]
+
+fn _hand[]
+    Hand[false, false, 0.0, 0.0, 0.0, 0.0, [], [], [], false, 0.0, 0.0, '', 0.0, -1.0, 0.0, 0.0, slice[[''], 0, 0], [], [], 0.0, 0.0, 0.0, 0.0, false, false, 0.0, 0.0, 0.0, 0.0]
+
+fn _no_flight[]
+    camera.Flight[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0]
+
+fn _still[]
+    Motion['', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, _no_flight[]]
+
+--- a map with Leaflet's defaults: the whole world at zoom 0, zooms from 0
+--- to its tiles' highest snapped to whole ones, the buttons, the scale
+--- bar and the credit shown, every hand moving it, no tiles, no layers
+fn fresh[id]
+    Map[id, false, 0.0, 0.0, 0.0, Limits[0.0, -1.0, 1.0, 1.0, false, 0.0, 0.0, 0.0, 0.0, 0.0], Box[0.0, 0.0, 0.0, 0.0, 1.0], _still[], _hand[], Options[true, true, true, true, true, 'Lory', true, true, true, true, true, true, true], grid.layer['', ''], Popup[false, 0.0, 0.0, '', 0.0, 0.0, '', false], '', Located[false, 0.0, 0.0, 0.0], _no_told[], false, 0.0, '']
+
+--- the map kept under `id`, or a new one (`made` false) where none is
+fn of[id]
+    recall['map.`id`', fresh[id]]
+
+--- the map kept until the next frame (and answered)
+fn keep[m]
+    remember['map.`m.id`', m]
+    m
+
+--- the map of an id let go, with its layers and its tiles
+fn forget_map[id]
+    forget['map.`id`']
+    forget['map.`id`.layers']
+    forget['map.`id`.tiles']
+
+fn _no_layers[]
+    Layers[slice[[''], 0, 0], slice[[''], 0, 0], [], features.no_features[], slice[[false], 0, 0]]
+
+--- the layers of the map kept under `id`
+fn layers_of[id]
+    recall['map.`id`.layers', _no_layers[]]
+
+--- the layers kept, and the clusters made of them let go (made again
+--- when next drawn)
+fn _keep_layers[id, l]
+    for name in l.names
+        forget['map.`id`.tree.`name`']
+    remember['map.`id`.layers', l]
+
+--- ---- the view ----
+
+fn _css_w[m]
+    m.box.w / m.box.s
+
+fn _css_h[m]
+    m.box.h / m.box.s
+
+--- the point of the world's picture at a zoom at the top left of a view of
+--- a place, on a whole pixel of the canvas (so a still view's tiles fall
+--- on the screen's pixels; on a page of one pixel a CSS pixel this is
+--- Leaflet's pixel origin)
+fn _origin[m, lat, lng, zoom]
+    s = m.box.s
+    p = geo.project[lat, lng, zoom]
+    geo.Point[geo.js_round[(p.x - _css_w[m] / 2.0) * s] / s, geo.js_round[(p.y - _css_h[m] / 2.0) * s] / s]
+
+--- what the map's view shows, its pixels reckoned as it is drawn
+fn seen_of[m]
+    o = _origin[m, m.lat, m.lng, m.zoom]
+    geo.Seen[m.lat, m.lng, m.zoom, _css_w[m], _css_h[m], o.x, o.y]
+
+--- the highest zoom a map allows: its own, or its tiles' where it has
+--- none (a Leaflet map takes its layers')
+fn highest[m]
+    if m.limits.highest gte 0.0
+        return m.limits.highest
+    if m.tiles.template ne ''
+        return m.tiles.highest
+    18.0
+
+--- a zoom snapped and held to the zooms the map allows
+fn _limited[m, zoom]
+    geo.limit_zoom[zoom, m.limits.snap, m.limits.lowest, highest[m]]
+
+fn _bounds[m]
+    geo.Bounds[m.limits.south, m.limits.west, m.limits.north, m.limits.east]
+
+--- the middle a view of a place at a zoom takes inside the map's box of
+--- places, where it has one and its size is known
+fn _inside_bounds[m, lat, lng, zoom]
+    if not m.limits.bounded or m.box.w eq 0.0
+        return geo.Place[lat, lng]
+    camera.held_inside[lat, lng, zoom, _css_w[m], _css_h[m], _bounds[m]]
+
+--- the view held inside the map's box of places, at once
+fn _held_in[m]
+    p = _inside_bounds[m, m.lat, m.lng, m.zoom]
+    m.lat = p.lat
+    m.lng = p.lng
+    m
+
+--- the map showing a place at a zoom, at once (Leaflet's setView without
+--- its animation)
+fn at[m, lat, lng, zoom]
+    m.made = true
+    m.motion = _still[]
+    m.zoom = _limited[m, zoom]
+    m.lat = lat
+    m.lng = lng
+    _held_in[m]
+
+--- the zooms the map allows: from `low` to `high` (`high` -1: its tiles')
+fn zooms[m, low, high]
+    m.limits.lowest = low
+    m.limits.highest = high
+    m.zoom = _limited[m, m.zoom]
+    m
+
+--- the multiple of a zoom the map's zooms snap to (0: any zoom at all),
+--- and the step its buttons, keys and double clicks zoom by
+fn zoom_steps[m, snap, delta]
+    m.limits.snap = snap
+    m.limits.delta = delta
+    m
+
+--- the map's view held inside a box of places (Leaflet's maxBounds), a
+--- drag held `viscosity` firmly at its edge (0 to 1)
+fn bounded[m, south, west, north, east, viscosity = 0.0]
+    m.limits.bounded = true
+    m.limits.south = min[south, north]
+    m.limits.west = min[west, east]
+    m.limits.north = max[south, north]
+    m.limits.east = max[west, east]
+    m.limits.viscosity = max[0.0, min[1.0, viscosity]]
+    _held_in[m]
+
+--- the map free to go anywhere
+fn unbounded[m]
+    m.limits.bounded = false
+    m
+
+--- the map flying to a place at a zoom along Leaflet's path, out and in
+--- again, in `seconds` (0: as long as its path is, 0.8 s a unit of it);
+--- it sets off when the map is next shown
+fn fly_to[m, lat, lng, zoom, seconds = 0.0]
+    m.made = true
+    to = _limited[m, zoom]
+    m.motion = Motion['fly', -1.0, m.lat, m.lng, m.zoom, lat, lng, to, seconds, 2.0, _no_flight[]]
+    m
+
+--- the map flying to show a box of places (Leaflet's flyToBounds), kept
+--- `padding` CSS pixels clear of the map's edge
+fn fly_to_bounds[m, south, west, north, east, padding = 0.0]
+    v = _fitted[m, south, west, north, east, padding]
+    fly_to[m, v.lat, v.lng, v.zoom]
+
+--- the map eased to a place at a zoom in `seconds`, its picture scaled and
+--- slid from where it stands to the other view, slowing at the end
+fn ease_to[m, lat, lng, zoom, seconds = 0.25]
+    m.made = true
+    to = _limited[m, zoom]
+    p = _inside_bounds[m, lat, lng, to]
+    if seconds lte 0.0 or m.box.w eq 0.0
+        return at[m, p.lat, p.lng, to]
+    standing = _shown[m, m.shown_at]
+    m.motion = Motion['zoom', -1.0, standing.lat, standing.lng, standing.zoom, p.lat, p.lng, to, seconds, 2.0, _no_flight[]]
+    m.lat = p.lat
+    m.lng = p.lng
+    m.zoom = to
+    m
+
+--- the view that fits a box of places in the map's box, `padding` CSS
+--- pixels kept clear all round (Leaflet's fitBounds)
+fn _fitted[m, south, west, north, east, padding]
+    b = geo.Bounds[min[south, north], min[west, east], max[south, north], max[west, east]]
+    geo.fit[b, _css_w[m], _css_h[m], m.zoom, m.limits.snap, m.limits.lowest, highest[m], padding, padding, padding, padding]
+
+--- the map showing a box of places, `padding` CSS pixels clear of its
+--- edge, zoomed there as Leaflet zooms (drawn where it may be)
+fn fit_bounds[m, south, west, north, east, padding = 0.0]
+    m.made = true
+    v = _fitted[m, south, west, north, east, padding]
+    _zoom_to[m, v.lat, v.lng, v.zoom, -1.0]
+
+--- the map zoomed in by its step about its middle, `steps` times
+fn zoom_in[m, steps = 1.0]
+    _zoom_to[m, m.lat, m.lng, m.zoom + m.limits.delta * steps, -1.0]
+
+--- the map zoomed out by its step about its middle, `steps` times
+fn zoom_out[m, steps = 1.0]
+    _zoom_to[m, m.lat, m.lng, m.zoom - m.limits.delta * steps, -1.0]
+
+--- the map panned to a place at its zoom, slid there where it is near
+fn pan_to[m, lat, lng]
+    p = _inside_bounds[m, lat, lng, m.zoom]
+    _pan_to_at[m, p.lat, p.lng, -1.0]
+
+--- the map panned by CSS pixels (its middle moved east and south), slid
+--- there where that is within a view's size
+fn pan_by[m, dx, dy]
+    _pan_by[m, dx, dy, -1.0]
+
+--- the view moved to another, drawn as a zoom from the one to the other
+--- where Leaflet animates one (at most four zooms apart, the point both
+--- views keep within reach), and as a pan where the zoom is the same; a
+--- zoom asked while one is drawn is let go, as Leaflet lets it go
+fn _zoom_to[m, lat, lng, zoom, when]
+    time_asked = when
+    if time_asked lt 0.0
+        time_asked = m.shown_at
+    mo = m.motion
+    if mo.how eq 'zoom' and mo.since gte 0.0 and time_asked - mo.since lt mo.seconds * 1000.0
+        return m
+    to = _limited[m, zoom]
+    p = _inside_bounds[m, lat, lng, to]
+    if to eq m.zoom
+        return _pan_to_at[m, p.lat, p.lng, when]
+    w = _css_w[m]
+    h = _css_h[m]
+    near = false
+    if w gt 0.0
+        scale = geo.zoom_scale[to, m.zoom]
+        v = seen_of[m]
+        q = geo.project[p.lat, p.lng, m.zoom]
+        off_x = (geo.js_round[q.x] - v.ox - w / 2.0) / (1.0 - 1.0 / scale)
+        off_y = (geo.js_round[q.y] - v.oy - h / 2.0) / (1.0 - 1.0 / scale)
+        near = abs[off_x] lte w and abs[off_y] lte h and abs[to - m.zoom] lte 4.0
+    if near
+        m.motion = Motion['zoom', when, m.lat, m.lng, m.zoom, p.lat, p.lng, to, 0.25, 2.0, _no_flight[]]
+    else
+        m.motion = _still[]
+    m.lat = p.lat
+    m.lng = p.lng
+    m.zoom = to
+    m
+
+--- the view panned to a place at its zoom: slid there in a quarter of a
+--- second where it is within a view's size, at once where it is not
+--- (Leaflet's panTo), and not at all where it is under a pixel away
+fn _pan_to_at[m, lat, lng, when]
+    v = seen_of[m]
+    q = geo.point_of[v, lat, lng]
+    dx = q.x - v.w / 2.0
+    dy = q.y - v.h / 2.0
+    if v.w eq 0.0 or abs[dx] gt v.w or abs[dy] gt v.h or (abs[dx] lt 0.5 and abs[dy] lt 0.5)
+        m.motion = _still[]
+        m.lat = lat
+        m.lng = lng
+        return m
+    m.motion = Motion['pan', when, m.lat, m.lng, m.zoom, lat, lng, m.zoom, 0.25, 2.0, _no_flight[]]
+    m
+
+--- the view's middle slid by CSS pixels (Leaflet's panBy): in a quarter
+--- of a second, easing out, or at once where that is farther than a
+--- view's size
+fn _pan_by[m, dx, dy, when]
+    c = geo.project[m.lat, m.lng, m.zoom]
+    to = geo.unproject[c.x + geo.js_round[dx], c.y + geo.js_round[dy], m.zoom]
+    if m.box.w eq 0.0 or abs[dx] gt _css_w[m] or abs[dy] gt _css_h[m]
+        m.motion = _still[]
+        m.lat = to.lat
+        m.lng = to.lng
+        return m
+    if geo.js_round[dx] eq 0.0 and geo.js_round[dy] eq 0.0
+        return m
+    m.motion = Motion['pan', when, m.lat, m.lng, m.zoom, to.lat, to.lng, m.zoom, 0.25, 2.0, _no_flight[]]
+    m
+
+--- whether the map is moving by itself: flying, zooming, panning
+fn moving[m]
+    m.motion.how ne ''
+
+--- whether a zoom is being drawn at a time (one whose time is over is
+--- not, though no frame has stepped it yet: input then takes the map)
+fn _zooming[m, when]
+    mo = m.motion
+    mo.how eq 'zoom' and (mo.since lt 0.0 or when - mo.since lt mo.seconds * 1000.0)
+
+--- the place under a point of the canvas, in the map's box as last drawn
+fn place_under[m, x, y]
+    geo.place_at[seen_of[m], (x - m.box.x) / m.box.s, (y - m.box.y) / m.box.s]
+
+--- where a place is on the canvas, in the map's box as last drawn
+fn point_on[m, lat, lng]
+    p = geo.point_of[seen_of[m], lat, lng]
+    geo.Point[m.box.x + p.x * m.box.s, m.box.y + p.y * m.box.s]
+
+--- the box of places the map shows
+fn bounds_shown[m]
+    geo.bounds_of[seen_of[m]]
+
+--- the scale bar's numbers for the map as it stands (100 CSS pixels at
+--- most, Leaflet's)
+fn scale_shown[m]
+    geo.scale_of[seen_of[m], 100.0]
+
+--- ---- tiles ----
+
+--- OpenStreetMap's tiles, zooms 0 to 19, credited to its contributors
+fn openstreetmap[]
+    grid.openstreetmap[]
+
+--- a layer of tiles at a template (`{z}`, `{x}`, `{y}`, `{s}`), credited
+--- to its makers
+fn tile_layer[template, credit]
+    grid.layer[template, credit]
+
+--- the map drawing a layer of tiles under its shapes
+fn tiles[m, t]
+    m.made = true
+    m.tiles = t
+    m.zoom = _limited[m, m.zoom]
+    m
+
+--- the map without tiles
+fn no_tiles[m]
+    m.tiles = grid.layer['', '']
+    m
+
+--- ---- styles ----
+
+--- the style shapes are drawn in where no other is given: Leaflet's blue
+--- stroke 3 pixels wide, its fill a fifth as opaque, points as markers
+fn style[]
+    features.style[]
+
+--- the style with its stroke `color` (`#rrggbb`) `weight` pixels wide
+fn stroke[s, color, weight]
+    features.stroke[s, color, weight]
+
+--- the style with its stroke `opacity` (0 to 1) opaque
+fn stroke_opacity[s, opacity]
+    features.stroke_opacity[s, opacity]
+
+--- the style with its stroke dashed: `on` pixels drawn, `off` left
+fn dashes[s, on, off]
+    features.dashes[s, on, off]
+
+--- the style with polygons and circles filled with `color` at `opacity`
+fn filled[s, color, opacity]
+    features.filled[s, color, opacity]
+
+--- the style with nothing filled
+fn unfilled[s]
+    features.unfilled[s]
+
+--- the style with points drawn as circles `radius` pixels across
+fn circles[s, radius]
+    features.circles[s, radius]
+
+--- the style with points drawn as a picture of the page's (object `n`,
+--- loaded by `lory.load_image`), `w` by `h` CSS pixels, its point (x, y)
+--- standing on the place
+fn icon[s, n, w, h, x, y]
+    features.icon[s, n, w, h, x, y]
+
+--- the style with points drawn as markers of one of Lory's icons by name,
+--- `size` CSS pixels square, in `color` (`#rrggbb`): a pin (map-pin,
+--- sewing-pin or drawing-pin, or the filled form of each) with its point
+--- on the place, any other icon with its middle there
+fn glyph[s, name, size, color]
+    features.glyph[s, name, size, color]
+
+--- ---- layers ----
+
+--- a layer's place among the layers, made where it is not yet there
+fn _layer_at[l, name, mode, radius]
+    for i in range[len[l.names]]
+        if l.names[i] eq name
+            return l
+    l.names = push[l.names, name]
+    l.modes = push[l.modes, mode]
+    l.radii = push[l.radii, radius]
+    l.hidden = push[l.hidden, false]
+    l
+
+--- GeoJSON text added to the map as a layer of its name, in a style (a
+--- FeatureCollection, a Feature, or a geometry)
+fn add_geojson[m, name, words, s]
+    m.made = true
+    l = _layer_at[layers_of[m.id], name, 'shapes', 0.0]
+    for f in features.read_geojson[name, words, s]
+        l.features = push[l.features, f]
+    _keep_layers[m.id, l]
+    m
+
+--- a marker added at a place, the words of its popup ('' for none), in
+--- a layer of markers
+fn add_marker[m, id, lat, lng, words = '', layer = 'markers']
+    m.made = true
+    l = _layer_at[layers_of[m.id], layer, 'shapes', 0.0]
+    f = features.marker_of[layer, id, lat, lng, features.style[]]
+    f.popup = words
+    l.features = push[l.features, f]
+    _keep_layers[m.id, l]
+    m
+
+--- a point added at a place in a layer, in a style (a marker, or a
+--- circle where the style says so): one of many a layer may cluster
+fn add_point[m, layer, id, lat, lng, s]
+    m.made = true
+    l = _layer_at[layers_of[m.id], layer, 'shapes', 0.0]
+    l.features = push[l.features, features.marker_of[layer, id, lat, lng, s]]
+    _keep_layers[m.id, l]
+    m
+
+--- a circle `metres` about a place added, in a style
+fn add_circle[m, id, lat, lng, metres, s, layer = 'circles']
+    m.made = true
+    l = _layer_at[layers_of[m.id], layer, 'shapes', 0.0]
+    l.features = push[l.features, features.circle_of[layer, id, lat, lng, metres, s]]
+    _keep_layers[m.id, l]
+    m
+
+fn _mode_of[m, name, mode, radius]
+    l = _layer_at[layers_of[m.id], name, mode, radius]
+    for i in range[len[l.names]]
+        if l.names[i] eq name
+            l.modes[i] = mode
+            l.radii[i] = radius
+    _keep_layers[m.id, l]
+    m
+
+--- a layer's points drawn as clusters where they stand within `radius`
+--- CSS pixels of each other at the zoom shown
+fn cluster[m, name, radius = 60.0]
+    _mode_of[m, name, 'cluster', radius]
+
+--- a layer's points drawn as a heatmap, each spread `radius` CSS pixels
+fn heat[m, name, radius = 25.0]
+    _mode_of[m, name, 'heat', radius]
+
+--- a layer's points drawn each as itself again
+fn shapes[m, name]
+    _mode_of[m, name, 'shapes', 0.0]
+
+--- the features of one layer put back among all of them, changed
+fn _put_back[all_of, name, changed]
+    out = features.no_features[]
+    k = 0
+    for f in all_of
+        if f.layer eq name
+            out = push[out, changed[k]]
+            k = k + 1
+        else
+            out = push[out, f]
+    out
+
+fn _of_layer[l, name]
+    out = features.no_features[]
+    for f in l.features
+        if f.layer eq name
+            out = push[out, f]
+    out
+
+--- a layer drawn in another style
+fn restyle[m, name, s]
+    l = layers_of[m.id]
+    changed = features.no_features[]
+    for f in _of_layer[l, name]
+        f.style = s
+        changed = push[changed, f]
+    l.features = _put_back[l.features, name, changed]
+    _keep_layers[m.id, l]
+    m
+
+--- a layer's shapes filled by steps of a number among their properties
+--- (a choropleth): `base` below the first of `stops`, from each stop on
+--- the colour beside it
+fn fill_steps[m, name, property, base, stops, colors]
+    l = layers_of[m.id]
+    changed = features.fill_steps[_of_layer[l, name], property, base, stops, colors]
+    l.features = _put_back[l.features, name, changed]
+    _keep_layers[m.id, l]
+    m
+
+--- a layer's shapes filled by a word among their properties: the colour
+--- beside the first of `choices` it is, `otherwise` where it is none
+fn fill_match[m, name, property, choices, colors, otherwise]
+    l = layers_of[m.id]
+    changed = features.fill_match[_of_layer[l, name], property, choices, colors, otherwise]
+    l.features = _put_back[l.features, name, changed]
+    _keep_layers[m.id, l]
+    m
+
+--- a feature's popup: the words shown when it is pressed
+--- (the features are made again, not changed in place: the compiled
+--- program cannot yet change a field of an item of a list held in a
+--- record's field)
+fn bind_popup[m, id, words]
+    l = layers_of[m.id]
+    out = features.no_features[]
+    for f in l.features
+        if f.id eq id
+            f.popup = words
+        out = push[out, f]
+    l.features = out
+    _keep_layers[m.id, l]
+    m
+
+--- a feature's tooltip: the words shown while the pointer is over it
+fn bind_tooltip[m, id, words]
+    l = layers_of[m.id]
+    out = features.no_features[]
+    for f in l.features
+        if f.id eq id
+            f.tooltip = words
+        out = push[out, f]
+    l.features = out
+    _keep_layers[m.id, l]
+    m
+
+--- the features that are kept and the map whose popup and pointer no
+--- longer point at those taken away (Leaflet closes a layer's popup and
+--- tooltip as it is removed)
+fn _taken_away[m, l, kept]
+    gone = true
+    for f in kept
+        if f.id eq m.popup.owner
+            gone = false
+    if m.popup.owner ne '' and gone
+        m.popup.shown = false
+        m.popup.owner = ''
+    lit = true
+    for f in kept
+        if f.id eq m.hover
+            lit = false
+    if lit
+        m.hover = ''
+    l.features = kept
+    _keep_layers[m.id, l]
+    m
+
+--- a layer's features all taken away, the layer kept in its place among
+--- the others and drawn as it was (Leaflet's clearLayers)
+fn clear_layer[m, name]
+    l = layers_of[m.id]
+    kept = features.no_features[]
+    for f in l.features
+        if f.layer ne name
+            kept = push[kept, f]
+    _taken_away[m, l, kept]
+
+--- a layer's features replaced by GeoJSON text's, in a style, where the
+--- layer stood (Mapbox's setData: a layer of live data drawn anew)
+fn set_geojson[m, name, words, s]
+    add_geojson[clear_layer[m, name], name, words, s]
+
+--- a feature taken off the map, a marker or a shape (Leaflet's remove)
+fn remove_feature[m, id]
+    l = layers_of[m.id]
+    kept = features.no_features[]
+    for f in l.features
+        if f.id ne id
+            kept = push[kept, f]
+    _taken_away[m, l, kept]
+
+--- a layer hidden or shown again
+fn _shown_or_not[m, name, hidden]
+    l = layers_of[m.id]
+    marks = slice[[false], 0, 0]
+    for i in range[len[l.names]]
+        if l.names[i] eq name
+            marks = push[marks, hidden]
+        else
+            marks = push[marks, l.hidden[i]]
+    l.hidden = marks
+    if hidden
+        for f in l.features
+            if f.layer eq name
+                if f.id eq m.popup.owner
+                    m.popup.shown = false
+                if f.id eq m.hover
+                    m.hover = ''
+    remember['map.`m.id`.layers', l]
+    m
+
+--- a layer hidden: neither drawn nor found under the pointer, its
+--- features kept for when it is shown again, and its open popup closed
+--- (Leaflet's removeLayer of a group, Mapbox's visibility `none`)
+fn hide_layer[m, name]
+    _shown_or_not[m, name, true]
+
+--- a hidden layer shown again where it stood among the others
+fn show_layer[m, name]
+    _shown_or_not[m, name, false]
+
+--- ---- popups ----
+
+--- a popup opened pointing at a place (the open one closed: one at once)
+fn open_popup[m, lat, lng, words]
+    m.popup = Popup[true, lat, lng, words, 0.0, 0.0, '', true]
+    m
+
+--- a feature's popup opened, at a marker's head or a shape's middle
+fn open_popup_of[m, id]
+    found = _feature_of[layers_of[m.id], id]
+    if len[found] eq 0
+        return m
+    p = features.middle_of[found[0]]
+    _open_popup_of[m, found[0], p.lat, p.lng]
+
+--- the popup closed
+fn close_popup[m]
+    m.popup.shown = false
+    m
+
+fn _closed[m]
+    m.popup.shown = false
+    _tell[m, 'closed', m.popup.owner, m.popup.lat, m.popup.lng]
+
+--- where a feature's popup points from its place, in CSS pixels: a
+--- marker's head (Leaflet's pin: 1 right, 34 up; a picture's or an
+--- icon's: its top middle), a shape's place itself
+fn _popup_anchor[f]
+    if not _is_point[f] or f.style.circles
+        return geo.Point[0.0, 0.0]
+    if f.style.icon lt 0 and f.style.glyph eq ''
+        return geo.Point[1.0, -34.0]
+    geo.Point[f.style.icon_w / 2.0 - f.style.icon_x, 0.0 - f.style.icon_y]
+
+--- where a feature's tooltip points from its place: beside a marker's
+--- head (Leaflet's pin: 16 right, 28 up; a picture's or an icon's right
+--- side), a shape's place itself
+fn _tooltip_anchor[f]
+    if not _is_point[f] or f.style.circles
+        return geo.Point[0.0, 0.0]
+    if f.style.icon lt 0 and f.style.glyph eq ''
+        return geo.Point[16.0, -28.0]
+    geo.Point[f.style.icon_w - f.style.icon_x, f.style.icon_h / 2.0 - f.style.icon_y]
+
+--- a feature's popup opened: at a point's place, or where a shape was
+--- pressed (as Leaflet opens a path's)
+fn _open_popup_of[m, f, lat, lng]
+    a = _popup_anchor[f]
+    p = geo.Place[lat, lng]
+    if _is_point[f]
+        p = features.middle_of[f]
+    m.popup = Popup[true, p.lat, p.lng, f.popup, a.x, a.y, f.id, true]
+    _tell[m, 'popup', f.id, p.lat, p.lng]
+
+--- the popup's words in lines at most 301 CSS pixels wide, as Leaflet's
+--- popup wraps them
+fn _popup_lines[c, m, s]
+    _lines[c, m.popup.words, 13.0 * s, 301.0 * s]
+
+--- words broken into lines no wider than `most` canvas pixels at `size`
+fn _lines[c, words, size, most]
+    out = slice[[''], 0, 0]
+    for para in split[words, '\n']
+        current = ''
+        for word in split[para, ' ']
+            tried = word
+            if current ne ''
+                tried = '`current` `word`'
+            if current ne '' and lory.measure[c, tried, size] gt most
+                out = push[out, current]
+                current = word
+            else
+                current = tried
+        out = push[out, current]
+    out
+
+--- the popup's box about the point (ax, ay) of the canvas its tip points
+--- at: left, top, width, height in the canvas's pixels (Leaflet's: 13 px
+--- words, 50 to 300 px of them and a pixel, a margin of 13, 24, 13 and
+--- 20 px inside a pixel's padding, its foot 32 px above the point)
+fn _popup_rect[c, lines, ax, ay, s]
+    size = 13.0 * s
+    wide = 0.0
+    for one in lines
+        wide = max[wide, lory.measure[c, one, size]]
+    inner = min[300.0 * s, max[50.0 * s, wide]] + 1.0 * s
+    bw = inner + 46.0 * s
+    bh = len[lines] * 16.9 * s + 28.0 * s
+    left = ax - geo.js_round[bw / s / 2.0] * s
+    top = ay - 32.0 * s - bh
+    [left, top, bw, bh]
+
+--- the open popup's box in the map's CSS pixels (left, top, width,
+--- height), as the map stands: what a press on it or its close button
+--- is measured against (none: an empty list)
+fn _popup_box[c, m]
+    if not m.popup.shown or m.box.w eq 0.0
+        return []
+    s = m.box.s
+    p = point_on[m, m.popup.lat, m.popup.lng]
+    r = _popup_rect[c, _popup_lines[c, m, s], p.x + m.popup.dx * s, p.y + m.popup.dy * s, s]
+    [(r[0] - m.box.x) / s, (r[1] - m.box.y) / s, r[2] / s, r[3] / s]
+
+--- a popup just opened shown whole: the map panned so that it stands 5
+--- CSS pixels inside the map's edge (Leaflet's autoPan)
+fn _autopan[c, m, when]
+    if not m.popup.shown or not m.popup.fresh
+        return m
+    m.popup.fresh = false
+    pb = _popup_box[c, m]
+    if len[pb] lt 4
+        return m
+    w = _css_w[m]
+    h = _css_h[m]
+    p = point_on[m, m.popup.lat, m.popup.lng]
+    foot = (p.y - m.box.y) / m.box.s + m.popup.dy + 7.0
+    tall = foot - pb[1]
+    dx = 0.0
+    dy = 0.0
+    if pb[0] + pb[2] + 5.0 gt w
+        dx = pb[0] + pb[2] - w + 5.0
+    if pb[0] - dx - 5.0 lt 0.0
+        dx = pb[0] - 5.0
+    if pb[1] + tall + 5.0 gt h
+        dy = pb[1] + tall - h + 5.0
+    if pb[1] - dy - 5.0 lt 0.0
+        dy = pb[1] - 5.0
+    _pan_by[m, dx, dy, when]
+
+--- ---- the device's place ----
+
+--- where the reader's device is, shown as a dot in a circle of how sure
+--- it is (metres): the program hands it over until the page can tell it
+--- (a `position` the page says is taken too)
+fn located[m, lat, lng, accuracy]
+    m.located = Located[true, lat, lng, accuracy]
+    m
+
+--- the device's place shown, and the map flown to it at `zoom`
+fn locate[m, lat, lng, accuracy, zoom = 15.0]
+    fly_to[located[m, lat, lng, accuracy], lat, lng, zoom]
+
+--- ---- what it shows and how it is moved ----
+
+--- which controls the map shows: its zoom buttons, its scale bar, the
+--- credit of its tiles
+fn controls[m, zoom_buttons = true, scale_bar = true, credits = true]
+    m.options.zoom_buttons = zoom_buttons
+    m.options.scale_bar = scale_bar
+    m.options.credits = credits
+    m
+
+--- which of the scale bar's measures it shows: metres, feet and miles
+fn scale_units[m, metric = true, imperial = true]
+    m.options.metric = metric
+    m.options.imperial = imperial
+    m
+
+--- the words the credit line starts with (Lory's name; '' for none)
+fn credit_prefix[m, words]
+    m.options.prefix = words
+    m
+
+--- which hands move the map: a drag, the wheel, a double click, the keys,
+--- a box drawn with Shift, two fingers, and whether a drag let go throws
+--- it on
+fn hands[m, dragging = true, wheel = true, double = true, keyboard = true, box = true, pinch = true, inertia = true]
+    m.options.dragging = dragging
+    m.options.wheel_zoom = wheel
+    m.options.double_zoom = double
+    m.options.keyboard = keyboard
+    m.options.box_zoom = box
+    m.options.pinch = pinch
+    m.options.inertia = inertia
+    m
+
+--- ---- what happened ----
+
+--- what the reader did to the map `id` in the frame it was last shown in
+fn happened[id]
+    of[id].told
+
+fn _tell[m, act, what, lat, lng]
+    m.told = push[m.told, Told[act, what, lat, lng, m.zoom]]
+    m
+
+--- ---- what is under the pointer ----
+
+--- whether a point of the canvas is inside the map's box
+fn _inside[m, x, y]
+    x gte m.box.x and y gte m.box.y and x lt m.box.x + m.box.w and y lt m.box.y + m.box.h
+
+--- the control under a point of the box (CSS pixels): `in`, `out`, the
+--- popup's `close`, the `popup`, or '' for the map
+fn _control_at[m, x, y, popup_box]
+    if m.options.zoom_buttons and x gte 12.0 and x lte 42.0
+        if y gte 12.0 and y lte 42.0
+            return 'in'
+        if y gt 42.0 and y lte 73.0
+            return 'out'
+    if m.popup.shown and len[popup_box] eq 4
+        right = popup_box[0] + popup_box[2]
+        if x gte right - 24.0 and x lte right and y gte popup_box[1] and y lte popup_box[1] + 24.0
+            return 'close'
+        if x gte popup_box[0] and x lte right and y gte popup_box[1] and y lte popup_box[1] + popup_box[3]
+            return 'popup'
+    ''
+
+fn _is_point[f]
+    len[f.pieces] gt 0 and f.pieces[0].form eq 'point'
+
+--- the feature of an id, as a list of none or one
+fn _feature_of[l, id]
+    out = features.no_features[]
+    for f in l.features
+        if f.id eq id and len[out] eq 0
+            out = push[out, f]
+    out
+
+--- whether a point of the world (zoom 0) is near enough a feature's box
+--- of places to be on it (a circle's box is its middle alone; a marker
+--- reaches as far as its picture does)
+fn _near_box[f, wx, wy, per]
+    if f.pieces[0].form eq 'circle'
+        return true
+    a = geo.project[f.north, f.west, 0.0]
+    b = geo.project[f.south, f.east, 0.0]
+    pad = max[50.0, max[f.style.icon_w, f.style.icon_h]] * per
+    wx gte a.x - pad and wx lte b.x + pad and wy gte a.y - pad and wy lte b.y + pad
+
+--- the points of a layer, with which feature each is
+fn _points_of[l, name]
+    lats = []
+    lngs = []
+    xs = []
+    ys = []
+    which = slice[[0], 0, 0]
+    for i in range[len[l.features]]
+        if l.features[i].layer eq name and _is_point[l.features[i]]
+            p = l.features[i].pieces[0]
+            lats = push[lats, p.lats[0]]
+            lngs = push[lngs, p.lngs[0]]
+            xs = push[xs, p.xs[0]]
+            ys = push[ys, p.ys[0]]
+            which = push[which, i]
+    points.Points[lats, lngs, xs, ys, which]
+
+--- the clusters of the `i`th layer, made once and kept until its layers
+--- change (or the map's zooms do)
+fn _tree_of[m, l, i]
+    name = l.names[i]
+    pts = _points_of[l, name]
+    key = 'map.`m.id`.tree.`name`'
+    t = recall[key, points.no_tree[]]
+    if t.count ne len[pts.xs] or t.radius ne l.radii[i] or t.highest ne highest[m] or t.lowest ne m.limits.lowest
+        t = points.tree[pts, l.radii[i], m.limits.lowest, highest[m]]
+        remember[key, t]
+    t
+
+--- the ids of the points of clustered layers shown alone at the zoom
+fn _alone[m, l, zoom]
+    out = map['' = true]
+    for i in range[len[l.names]]
+        if l.modes[i] eq 'cluster'
+            pts = _points_of[l, l.names[i]]
+            for g in points.groups_at[_tree_of[m, l, i], zoom]
+                if g.index gte 0
+                    out[l.features[pts.which[g.index]].id] = true
+    out
+
+--- what is under a point of the box (CSS pixels) as the map stands, the
+--- last drawn first: the marks drawn over every shape, layer by layer
+--- (a layer's points and markers, or its points shown alone and then its
+--- clusters), then the shapes, layer by layer (a hidden layer's none)
+fn _target_at[m, l, x, y]
+    v = seen_of[m]
+    k = geo.world[m.zoom] / 256.0
+    wx = (v.ox + x) / k
+    wy = (v.oy + y) / k
+    per = 1.0 / k
+    alone = _alone[m, l, m.zoom]
+    n = len[l.features]
+    j = len[l.names] - 1
+    while j gte 0
+        name = l.names[j]
+        mode = l.modes[j]
+        if l.hidden[j]
+            mode = 'hidden'
+        if mode ne 'heat' and mode ne 'hidden'
+            i = n - 1
+            while i gte 0
+                f = l.features[i]
+                if f.layer eq name and _is_point[f]
+                    if mode eq 'shapes' or f.id in alone
+                        if _near_box[f, wx, wy, per] and features.hits[f, wx, wy, per]
+                            return Target['feature', f.id, 0.0, 0.0, 0.0]
+                i = i - 1
+        if mode eq 'cluster'
+            groups = points.groups_at[_tree_of[m, l, j], m.zoom]
+            g = points.cluster_under[groups, k, v.ox, v.oy, x, y]
+            if g gte 0
+                return Target['cluster', '', groups[g].lat, groups[g].lng, groups[g].splits]
+        j = j - 1
+    j = len[l.names] - 1
+    while j gte 0
+        if not l.hidden[j]
+            i = n - 1
+            while i gte 0
+                f = l.features[i]
+                if f.layer eq l.names[j] and len[f.pieces] gt 0 and not _is_point[f]
+                    if _near_box[f, wx, wy, per] and features.hits[f, wx, wy, per]
+                        return Target['feature', f.id, 0.0, 0.0, 0.0]
+                i = i - 1
+        j = j - 1
+    Target['', '', 0.0, 0.0, 0.0]
+
+--- ---- input ----
+
+fn _steps[shift]
+    if shift
+        return 3.0
+    1.0
+
+--- a press let go without a drag: a control's act, a feature's click and
+--- its popup, a cluster zoomed into, or the map's click. Any of them
+--- closes the open popup first, as Leaflet's preclick closes it, but for
+--- a marker whose popup it is: that marker pressed again closes it
+fn _clicked[m, l, x, y, popup_box, shift, when]
+    act = _control_at[m, x, y, popup_box]
+    if act eq 'in'
+        if m.zoom lt highest[m]
+            return _zoom_to[m, m.lat, m.lng, m.zoom + m.limits.delta * _steps[shift], when]
+        return m
+    if act eq 'out'
+        if m.zoom gt m.limits.lowest
+            return _zoom_to[m, m.lat, m.lng, m.zoom - m.limits.delta * _steps[shift], when]
+        return m
+    if act eq 'close'
+        return _closed[m]
+    if act eq 'popup'
+        return m
+    p = geo.place_at[seen_of[m], x, y]
+    t = _target_at[m, l, x, y]
+    found = features.no_features[]
+    if t.what eq 'feature'
+        found = _feature_of[l, t.id]
+    toggled = false
+    if len[found] gt 0
+        toggled = m.popup.shown and m.popup.owner eq found[0].id and _is_point[found[0]]
+    if m.popup.shown and not toggled
+        m = _closed[m]
+    if t.what eq 'cluster'
+        return _zoom_to[m, t.lat, t.lng, t.zoom, when]
+    if t.what eq 'feature'
+        m = _tell[m, 'click', t.id, p.lat, p.lng]
+        if toggled
+            return _closed[m]
+        if len[found] gt 0
+            if found[0].popup ne ''
+                return _open_popup_of[m, found[0], p.lat, p.lng]
+        return m
+    _tell[m, 'click', '', p.lat, p.lng]
+
+--- how far a drag may move the picture before the map's box of places
+--- holds it (Leaflet's offset limit), taken where the drag starts
+fn _drag_limits[m, hd]
+    hd.limited = m.limits.bounded and m.limits.viscosity gt 0.0
+    if hd.limited
+        v = seen_of[m]
+        nw = geo.point_of[v, m.limits.north, m.limits.west]
+        se = geo.point_of[v, m.limits.south, m.limits.east]
+        hd.low_x = min[0.0 - nw.x, v.w - se.x]
+        hd.high_x = max[0.0 - nw.x, v.w - se.x]
+        hd.low_y = min[0.0 - nw.y, v.h - se.y]
+        hd.high_y = max[0.0 - nw.y, v.h - se.y]
+    hd
+
+--- a drag's offset held at a limit, as firmly as the map's viscosity
+fn _viscous[offset, low, high, viscosity]
+    if offset lt low
+        return offset - (offset - low) * viscosity
+    if offset gt high
+        return offset - (offset - high) * viscosity
+    offset
+
+--- a drag let go: thrown on as fast as it went in its last 50 ms (and
+--- held inside the map's box of places), or brought back inside that box
+fn _let_go[m, hd, when]
+    t = camera.throw_of[hd.xs, hd.ys, hd.times, when]
+    if not m.options.inertia or t.seconds lte 0.0
+        return _settle[m, when]
+    c = geo.project[m.lat, m.lng, m.zoom]
+    to = geo.unproject[c.x + t.dx, c.y + t.dy, m.zoom]
+    p = _inside_bounds[m, to.lat, to.lng, m.zoom]
+    m.motion = Motion['pan', when, m.lat, m.lng, m.zoom, p.lat, p.lng, m.zoom, t.seconds, 5.0, _no_flight[]]
+    m
+
+--- the frame's input inside the map's box read into the map (`when` the
+--- frame's time, `popup_box` the open popup's box)
+fn _read_input[m, l, c, when, popup_box]
+    s = m.box.s
+    hd = m.hand
+    o = m.options
+    for ev in lory.events[c]
+        x = (ev.x - m.box.x) / s
+        y = (ev.y - m.box.y) / s
+        inside = _inside[m, ev.x, ev.y]
+        touch = ev.device eq 'touch'
+        if ev.on eq 'down' and not inside
+            m.focused = false
+        if ev.on eq 'down' and inside
+            m.focused = true
+            if touch
+                hd.ids = push[hd.ids, ev.id]
+                hd.txs = push[hd.txs, x]
+                hd.tys = push[hd.tys, y]
+                --- (two fingers: a pinch from where they are, as Leaflet's)
+                if len[hd.ids] eq 2 and o.pinch and not _zooming[m, when]
+                    dx = hd.txs[1] - hd.txs[0]
+                    dy = hd.tys[1] - hd.tys[0]
+                    hd.apart0 = sqrt[dx * dx + dy * dy]
+                    hd.pinch_zoom0 = m.zoom
+                    mid = geo.place_at[seen_of[m], (hd.txs[0] + hd.txs[1]) / 2.0, (hd.tys[0] + hd.tys[1]) / 2.0]
+                    hd.pinch_lat = mid.lat
+                    hd.pinch_lng = mid.lng
+                    hd.pinching = true
+                    hd.down = false
+                    hd.moved = false
+                    m.motion = _still[]
+            if not hd.pinching and (ev.button eq 0 or touch)
+                hd.button = _control_at[m, x, y, popup_box]
+                --- (a press with Shift draws a box and never drags; a
+                --- press while a zoom is drawn does not drag either)
+                if hd.button eq '' and ev.shift and o.box_zoom
+                    hd.boxing = true
+                    hd.x0 = x
+                    hd.y0 = y
+                    hd.bx = x
+                    hd.by = y
+                if hd.button eq '' and not ev.shift and not _zooming[m, when]
+                    hd.down = true
+                    hd.moved = false
+                    hd.x0 = x
+                    hd.y0 = y
+                    centre = geo.project[m.lat, m.lng, m.zoom]
+                    hd.cx0 = centre.x
+                    hd.cy0 = centre.y
+                    hd.xs = []
+                    hd.ys = []
+                    hd.times = []
+                    m.motion = _still[]
+        if ev.on eq 'move' and hd.pinching and touch
+            for k in range[len[hd.ids]]
+                if hd.ids[k] eq ev.id
+                    hd.txs[k] = x
+                    hd.tys[k] = y
+            if len[hd.ids] gte 2 and hd.apart0 gt 0.0
+                dx = hd.txs[1] - hd.txs[0]
+                dy = hd.tys[1] - hd.tys[0]
+                apart = sqrt[dx * dx + dy * dy]
+                z = camera.pinch_zoom[apart, hd.apart0, hd.pinch_zoom0]
+                shift_x = (hd.txs[0] + hd.txs[1]) / 2.0 - _css_w[m] / 2.0
+                shift_y = (hd.tys[0] + hd.tys[1]) / 2.0 - _css_h[m] / 2.0
+                if apart ne hd.apart0 or shift_x ne 0.0 or shift_y ne 0.0
+                    p = geo.project[hd.pinch_lat, hd.pinch_lng, z]
+                    centre = geo.unproject[p.x - shift_x, p.y - shift_y, z]
+                    m.lat = centre.lat
+                    m.lng = centre.lng
+                    m.zoom = z
+                    m = _tell[m, 'moved', '', m.lat, m.lng]
+        if ev.on eq 'move' and hd.down and o.dragging
+            dx = x - hd.x0
+            dy = y - hd.y0
+            --- (a drag begins three pixels from the press, Leaflet's
+            --- clickTolerance, and the picture then follows the pointer)
+            if not hd.moved and abs[dx] + abs[dy] gte 3.0
+                hd.moved = true
+                hd = _drag_limits[m, hd]
+            if hd.moved
+                if hd.limited
+                    dx = _viscous[dx, hd.low_x, hd.high_x, m.limits.viscosity]
+                    dy = _viscous[dy, hd.low_y, hd.high_y, m.limits.viscosity]
+                centre = geo.unproject[hd.cx0 - dx, hd.cy0 - dy, m.zoom]
+                m.lat = centre.lat
+                m.lng = centre.lng
+                hd.xs = push[hd.xs, hd.x0 + dx]
+                hd.ys = push[hd.ys, hd.y0 + dy]
+                hd.times = push[hd.times, when]
+                m = _tell[m, 'moved', '', m.lat, m.lng]
+        if ev.on eq 'move' and hd.boxing
+            hd.bx = x
+            hd.by = y
+        if (ev.on eq 'up' or ev.on eq 'leave') and touch
+            kept_ids = slice[[''], 0, 0]
+            kept_x = []
+            kept_y = []
+            for k in range[len[hd.ids]]
+                if hd.ids[k] ne ev.id
+                    kept_ids = push[kept_ids, hd.ids[k]]
+                    kept_x = push[kept_x, hd.txs[k]]
+                    kept_y = push[kept_y, hd.tys[k]]
+            hd.ids = kept_ids
+            hd.txs = kept_x
+            hd.tys = kept_y
+            --- (a pinch let go: its zoom snapped, about the view's middle)
+            if hd.pinching and len[hd.ids] lt 2
+                hd.pinching = false
+                m = _zoom_to[m, m.lat, m.lng, m.zoom, when]
+        if ev.on eq 'up' and hd.boxing
+            hd.boxing = false
+            if hd.bx ne hd.x0 or hd.by ne hd.y0
+                a = geo.place_at[seen_of[m], hd.x0, hd.y0]
+                b = geo.place_at[seen_of[m], hd.bx, hd.by]
+                v = _fitted[m, a.lat, a.lng, b.lat, b.lng, 0.0]
+                m = _zoom_to[m, v.lat, v.lng, v.zoom, when]
+        if ev.on eq 'up' and hd.down
+            hd.down = false
+            if hd.moved
+                hd.moved = false
+                m = _let_go[m, hd, when]
+            else
+                if inside
+                    m = _clicked[m, l, x, y, popup_box, ev.shift, when]
+        if ev.on eq 'up' and hd.button ne ''
+            if inside and _control_at[m, x, y, popup_box] eq hd.button
+                m = _clicked[m, l, x, y, popup_box, ev.shift, when]
+            hd.button = ''
+        if ev.on eq 'double' and inside and o.double_zoom and _control_at[m, x, y, popup_box] eq ''
+            to = m.zoom + m.limits.delta
+            if ev.shift
+                to = m.zoom - m.limits.delta
+            p = camera.zoom_around[seen_of[m], x, y, to]
+            m = _zoom_to[m, p.lat, p.lng, to, when]
+        --- (Leaflet's wheel: its pixels, three of them a pixel on a Mac,
+        --- gathered for 40 ms from the first)
+        if ev.on eq 'wheel' and inside and o.wheel_zoom
+            hd.wheel = hd.wheel - ev.dy / (3.0 * s)
+            hd.wheel_x = x
+            hd.wheel_y = y
+            if hd.wheel_since lt 0.0
+                hd.wheel_since = when
+        if ev.on eq 'key' and m.focused and o.keyboard and not ev.alt and not ev.ctrl and not ev.meta
+            if hd.boxing and ev.key eq 'Escape'
+                hd.boxing = false
+            else
+                m = _key[m, ev, when]
+        if ev.on eq 'leave' and not touch
+            m.hover = ''
+        if ev.on eq 'blur'
+            hd.down = false
+            hd.moved = false
+            hd.boxing = false
+            hd.pinching = false
+            hd.ids = slice[[''], 0, 0]
+            hd.txs = []
+            hd.tys = []
+    --- (the wheel's turn zoomed once 40 ms have passed since it began)
+    if hd.wheel_since gte 0.0 and when - hd.wheel_since gte 40.0
+        step = camera.wheel_step[hd.wheel, m.zoom, m.limits.snap, m.limits.lowest, highest[m], 60.0]
+        wx = hd.wheel_x
+        wy = hd.wheel_y
+        hd.wheel = 0.0
+        hd.wheel_since = -1.0
+        if step ne 0.0
+            if m.motion.how ne 'zoom'
+                m.motion = _still[]
+            p = camera.zoom_around[seen_of[m], wx, wy, m.zoom + step]
+            m = _zoom_to[m, p.lat, p.lng, m.zoom + step, when]
+    m.hand = hd
+    m
+
+--- a key pressed while the map has the keyboard: the arrows pan 80 CSS
+--- pixels (Shift: 240), + and - zoom a step (Shift: three), Escape
+--- closes the popup (Leaflet's keyboard)
+fn _key[m, ev, when]
+    by = 80.0
+    if ev.shift
+        by = 240.0
+    dx = 0.0
+    dy = 0.0
+    if ev.key eq 'ArrowLeft'
+        dx = 0.0 - by
+    if ev.key eq 'ArrowRight'
+        dx = by
+    if ev.key eq 'ArrowUp'
+        dy = 0.0 - by
+    if ev.key eq 'ArrowDown'
+        dy = by
+    if dx ne 0.0 or dy ne 0.0
+        mo = m.motion
+        if mo.how eq 'pan' and mo.since gte 0.0 and when - mo.since lt mo.seconds * 1000.0
+            return m
+        c = geo.project[m.lat, m.lng, m.zoom]
+        to = geo.unproject[c.x + dx, c.y + dy, m.zoom]
+        p = _inside_bounds[m, to.lat, to.lng, m.zoom]
+        return _pan_to_at[m, p.lat, p.lng, when]
+    steps = _steps[ev.shift]
+    if ev.code eq 'NumpadAdd' or ev.key eq '+' or ev.key eq '='
+        return _zoom_to[m, m.lat, m.lng, m.zoom + m.limits.delta * steps, when]
+    if ev.code eq 'NumpadSubtract' or ev.key eq '-' or ev.key eq '_'
+        return _zoom_to[m, m.lat, m.lng, m.zoom - m.limits.delta * steps, when]
+    if ev.key eq 'Escape' and m.popup.shown
+        return _closed[m]
+    m
+
+--- a view left outside the map's box of places brought back inside it
+fn _settle[m, when]
+    if not m.limits.bounded
+        return m
+    p = _inside_bounds[m, m.lat, m.lng, m.zoom]
+    if p.lat eq m.lat and p.lng eq m.lng
+        return m
+    _pan_to_at[m, p.lat, p.lng, when]
+
+--- the move under way stepped to the frame's time: a flight or a pan
+--- moves the view; a zoom's view is already where it goes
+fn _step_motion[m, when]
+    mo = m.motion
+    if mo.how eq ''
+        return m
+    if mo.since lt 0.0
+        mo.since = when
+        if mo.how eq 'fly'
+            mo.flight = camera.flight[seen_of[m], mo.lat1, mo.lng1, mo.zoom1, mo.seconds]
+        m.motion = mo
+    elapsed = when - mo.since
+    if mo.how eq 'fly'
+        spot = camera.flight_at[mo.flight, elapsed]
+        m.lat = spot.lat
+        m.lng = spot.lng
+        m.zoom = spot.zoom
+        m = _tell[m, 'moved', '', m.lat, m.lng]
+        if spot.done
+            m.motion = _still[]
+            m = _held_in[m]
+        return m
+    t = elapsed / (mo.seconds * 1000.0)
+    if mo.how eq 'pan'
+        eased = camera.ease_out[t, mo.power]
+        a = geo.project[mo.lat0, mo.lng0, mo.zoom0]
+        b = geo.project[mo.lat1, mo.lng1, mo.zoom0]
+        p = geo.unproject[a.x + (b.x - a.x) * eased, a.y + (b.y - a.y) * eased, mo.zoom0]
+        m.lat = p.lat
+        m.lng = p.lng
+        if t gte 1.0
+            m.lat = mo.lat1
+            m.lng = mo.lng1
+            m.motion = _still[]
+            m = _settle[m, when]
+        return _tell[m, 'moved', '', m.lat, m.lng]
+    if t gte 1.0
+        m.motion = _still[]
+        m = _tell[m, 'moved', '', m.lat, m.lng]
+        m = _settle[m, when]
+    m
+
+--- where the view is drawn at a time: its middle and zoom part way
+--- through a zoom's drawing, or the view itself
+fn _shown[m, when]
+    mo = m.motion
+    if mo.how ne 'zoom' or mo.since lt 0.0
+        return camera.Spot[m.lat, m.lng, m.zoom, true]
+    t = (when - mo.since) / (mo.seconds * 1000.0)
+    camera.zoom_between[mo.lat0, mo.lng0, mo.zoom0, mo.lat1, mo.lng1, mo.zoom1, camera.bezier[t, 0.0, 0.0, 0.25, 1.0]]
+
+--- what the page said since the last frame taken in: the device's place
+fn _heard[m, c]
+    for said in lory.said[c]
+        if '`said.what`' eq 'position' and said.lat.ok and said.lng.ok
+            accuracy = 0.0
+            if said.accuracy.ok
+                accuracy = 0.0 + said.accuracy
+            m.located = Located[true, 0.0 + said.lat, 0.0 + said.lng, accuracy]
+            m = _tell[m, 'located', '', m.located.lat, m.located.lng]
+    m
+
+--- what the pointer is over found: the feature lit and its tooltip shown,
+--- a cluster or a control pointed at (nothing, where no pointer rests on
+--- the page; and kept as it was while the map is dragged or moves)
+fn _hover_at[c, m, l]
+    m.over = ''
+    if not lory.pointing[c]
+        m.hover = ''
+        return m
+    if m.hand.down or m.hand.pinching or m.motion.how ne ''
+        return m
+    px = lory.pointer_x[c]
+    py = lory.pointer_y[c]
+    if not _inside[m, px, py]
+        m.hover = ''
+        return m
+    x = (px - m.box.x) / m.box.s
+    y = (py - m.box.y) / m.box.s
+    act = _control_at[m, x, y, _popup_box[c, m]]
+    if act ne ''
+        m.hover = ''
+        m.over = 'control'
+        if (act eq 'in' and m.zoom gte highest[m]) or (act eq 'out' and m.zoom lte m.limits.lowest)
+            m.over = 'disabled'
+        if act eq 'popup'
+            m.over = 'popup'
+        return m
+    t = _target_at[m, l, x, y]
+    m.over = t.what
+    hit = ''
+    if t.what eq 'feature'
+        hit = t.id
+    if hit ne '' and hit ne m.hover
+        m = _tell[m, 'hover', hit, 0.0, 0.0]
+    m.hover = hit
+    m
+
+--- ---- drawing ----
+
+--- the map read, moved, drawn in the box (x, y, w, h) of the canvas and
+--- kept: its input inside the box taken, the move under way stepped, and
+--- its tiles, shapes, markers, the device's place, the tooltip and the
+--- popup, a box being drawn, and the controls drawn, clipped to the box
+fn show[c, m, x, y, w, h]
+    when = lory.time[c]
+    resized = m.box.w ne w or m.box.h ne h
+    m.told = _no_told[]
+    m.box = Box[x, y, w, h, lory.px[c]]
+    m.shown_at = when
+    if resized and m.motion.how eq ''
+        m = _held_in[m]
+    l = layers_of[m.id]
+    m = _heard[m, c]
+    m = _read_input[m, l, c, when, _popup_box[c, m]]
+    m = _step_motion[m, when]
+    m = _autopan[c, m, when]
+    m = _hover_at[c, m, l]
+    m = keep[m]
+    _drawn[c, m, l, when]
+
+--- the map drawn on the canvas as it stands (`when` the frame's time)
+fn _drawn[c, m, l, when]
+    s = m.box.s
+    before = lory.clipped[c]
+    c = lory.clip[c, m.box.x, m.box.y, m.box.w, m.box.h]
+    c = lory.rect[c, m.box.x, m.box.y, m.box.w, m.box.h, lory.hex['#dddddd']]
+    spot = _shown[m, when]
+    o = _origin[m, spot.lat, spot.lng, spot.zoom]
+    if m.tiles.template ne ''
+        c = _draw_tiles[c, m, spot, o.x, o.y, when]
+    k = geo.world[spot.zoom] / 256.0
+    c = _draw_layers[c, m, l, spot.zoom, k, o.x, o.y, false]
+    c = _draw_layers[c, m, l, spot.zoom, k, o.x, o.y, true]
+    if m.located.shown
+        c = _draw_located[c, m, spot.zoom, o.x, o.y]
+    c = _draw_tooltip[c, m, l, spot.zoom, o.x, o.y]
+    if m.popup.shown
+        c = _draw_popup[c, m, spot.zoom, o.x, o.y]
+    if m.hand.boxing
+        c = _draw_box[c, m]
+    c = _draw_controls[c, m]
+    c = _cursor[c, m]
+    lory.unclip[c, before]
+
+--- the pointer's shape over the map: a hand open over it, closed while
+--- it drags, a cross while a box is drawn, a finger over what may be
+--- pressed
+fn _cursor[c, m]
+    if not lory.pointing[c] or not _inside[m, lory.pointer_x[c], lory.pointer_y[c]]
+        return c
+    if m.hand.down and m.hand.moved
+        return lory.cursor[c, 'grabbing']
+    if m.hand.boxing
+        return lory.cursor[c, 'crosshair']
+    if m.over eq 'feature' or m.over eq 'cluster' or m.over eq 'control'
+        return lory.cursor[c, 'pointer']
+    if m.over eq 'disabled' or m.over eq 'popup'
+        return lory.cursor[c, 'default']
+    lory.cursor[c, 'grab']
+
+--- tiles placed in a view at `zoom` whose top left is (ox, oy)
+fn _placed[given, zoom, ox, oy]
+    out = slice[given, 0, 0]
+    for tile in given
+        size = 256.0 * geo.zoom_scale[zoom, 0.0 + tile.z]
+        tile.size = size
+        tile.left = (0.0 + tile.x) * size - ox
+        tile.top = (0.0 + tile.y) * size - oy
+        out = push[out, tile]
+    out
+
+--- the tiles of the view drawn, those it lacks asked for, and what is
+--- held of them kept: while a zoom is drawn, the tiles of the zoom it
+--- goes to over the view it ends at (zooming out, the view it leaves:
+--- Leaflet's), and while the view moves, new tiles asked for at most five
+--- times a second, or as the tiles' zoom changes (Leaflet's
+--- updateInterval)
+fn _draw_tiles[c, m, spot, ox, oy, when]
+    t = m.tiles
+    held = recall['map.`m.id`.tiles', grid.held_none[t.slots]]
+    held = grid.heard[held, t, lory.said[c], when]
+    tz = grid.tile_zoom[t, m.zoom]
+    mo = m.motion
+    lat = spot.lat
+    lng = spot.lng
+    zoom = spot.zoom
+    if mo.how eq 'zoom' and mo.since gte 0.0
+        lat = m.lat
+        lng = m.lng
+        zoom = max[m.zoom, mo.zoom0]
+    needed = _placed[grid.tiles_at[t, tz, lat, lng, zoom, _css_w[m], _css_h[m], 0.0, 0.0], spot.zoom, ox, oy]
+    calm = mo.how eq '' and not m.hand.moved and not m.hand.pinching
+    if calm or when - held.asked_at gte 200.0 or tz ne held.asked_zoom
+        held = grid.asked[held, t, needed, when]
+        held.asked_at = when
+        held.asked_zoom = tz
+    else
+        held = grid.nothing_asked[held]
+    c = grid.asks_for[c, held, t]
+    c = grid.draw_tiles[c, held, t, needed, m.box.x, m.box.y, m.box.s, when]
+    held = grid.drawn_at[held, needed, when]
+    remember['map.`m.id`.tiles', held]
+    c
+
+--- every layer drawn in order: its shapes, a heatmap of its points; or,
+--- `marks`, its points and markers over every shape (a clustered layer's
+--- clusters and the points shown alone)
+fn _draw_layers[c, m, l, zoom, k, ox, oy, marks]
+    s = m.box.s
+    w = _css_w[m]
+    h = _css_h[m]
+    for i in range[len[l.names]]
+        name = l.names[i]
+        mode = l.modes[i]
+        if l.hidden[i]
+            mode = 'hidden'
+        if mode ne 'hidden' and (not marks or mode eq 'shapes')
+            for f in l.features
+                if f.layer eq name and features.shows[f, k, ox, oy, w, h]
+                    c = features.draw_feature[c, f, k, zoom, ox, oy, m.box.x, m.box.y, s, f.id eq m.hover, marks]
+        if mode eq 'heat' and not marks
+            c = points.draw_heat[c, _points_of[l, name], k, ox, oy, m.box.x, m.box.y, w, h, s, l.radii[i]]
+        if mode eq 'cluster' and marks
+            pts = _points_of[l, name]
+            groups = points.groups_at[_tree_of[m, l, i], zoom]
+            c = points.draw_clusters[c, groups, k, ox, oy, m.box.x, m.box.y, s]
+            for g in groups
+                if g.index gte 0
+                    f = l.features[pts.which[g.index]]
+                    if features.shows[f, k, ox, oy, w, h]
+                        c = features.draw_feature[c, f, k, zoom, ox, oy, m.box.x, m.box.y, s, f.id eq m.hover, true]
+    c
+
+--- the device's place: a circle of how sure it is, and a blue dot ringed
+--- in white
+fn _draw_located[c, m, zoom, ox, oy]
+    s = m.box.s
+    p = geo.project[m.located.lat, m.located.lng, zoom]
+    x = m.box.x + (p.x - ox) * s
+    y = m.box.y + (p.y - oy) * s
+    if m.located.accuracy gt 0.0
+        r = geo.circle_radius[m.located.lat, m.located.lng, m.located.accuracy, zoom]
+        c = lory.circle[c, x, y, r.y * s, lory.rgba[51.0, 136.0, 255.0, 0.15]]
+        c = lory.ring[c, x, y, r.y * s, 1.0 * s, lory.rgba[51.0, 136.0, 255.0, 0.5]]
+    c = lory.circle[c, x, y, 9.0 * s, lory.white[]]
+    lory.circle[c, x, y, 6.5 * s, lory.hex['#1f7bf2']]
+
+--- the open popup: a white box of its words with a tip at the place and
+--- a close button at its top right
+fn _draw_popup[c, m, zoom, ox, oy]
+    s = m.box.s
+    q = geo.project[m.popup.lat, m.popup.lng, zoom]
+    ax = m.box.x + (q.x - ox + m.popup.dx) * s
+    ay = m.box.y + (q.y - oy + m.popup.dy) * s
+    lines = _popup_lines[c, m, s]
+    r = _popup_rect[c, lines, ax, ay, s]
+    left = r[0]
+    top = r[1]
+    bw = r[2]
+    bh = r[3]
+    --- (a soft shadow below it, and below its tip)
+    c = lory.round_rect[c, left - 3.0 * s, top, bw + 6.0 * s, bh + 6.0 * s, 15.0 * s, lory.rgba[0.0, 0.0, 0.0, 0.06]]
+    c = lory.round_rect[c, left - 1.0 * s, top + 2.0 * s, bw + 2.0 * s, bh + 2.0 * s, 13.0 * s, lory.rgba[0.0, 0.0, 0.0, 0.12]]
+    c = lory.triangle[c, ax - 14.0 * s, ay - 32.0 * s, ax + 14.0 * s, ay - 32.0 * s, ax, ay - 18.0 * s, lory.rgba[0.0, 0.0, 0.0, 0.12]]
+    c = lory.round_rect[c, left, top, bw, bh, 12.0 * s, lory.white[]]
+    c = lory.triangle[c, ax - 13.0 * s, ay - 33.0 * s, ax + 13.0 * s, ay - 33.0 * s, ax, ay - 20.0 * s, lory.white[]]
+    size = 13.0 * s
+    line_tall = 16.9 * s
+    lift = (line_tall - lory.line_height[c, size]) / 2.0
+    ink = lory.hex['#333333']
+    for i in range[len[lines]]
+        c = lory.text[c, left + 21.0 * s, top + 14.0 * s + i * line_tall + lift, lines[i], size, ink]
+    lory.text_centered[c, left + bw - 12.0 * s, top + 12.0 * s, '×', 16.0 * s, lory.hex['#757575']]
+
+--- the tooltip of the feature the pointer is over: its words in a small
+--- white box beside it, on the right where the feature stands left of
+--- the map's middle and on the left where it stands right of it
+--- (Leaflet's direction `auto`), a little arrow pointing at it
+fn _draw_tooltip[c, m, l, zoom, ox, oy]
+    if m.hover eq '' or m.hand.down
+        return c
+    found = _feature_of[l, m.hover]
+    if len[found] eq 0
+        return c
+    f = found[0]
+    if f.tooltip eq ''
+        return c
+    s = m.box.s
+    p = features.middle_of[f]
+    an = _tooltip_anchor[f]
+    q = geo.project[p.lat, p.lng, zoom]
+    px = m.box.x + (q.x - ox) * s
+    py = m.box.y + (q.y - oy) * s
+    size = 12.0 * s
+    wide = lory.measure[c, f.tooltip, size] + 14.0 * s
+    tall = 32.0 * s
+    right = px lt m.box.x + m.box.w / 2.0
+    left = px - an.x * s - 6.0 * s - wide
+    if right
+        left = px + an.x * s + 6.0 * s
+    top = py + an.y * s - tall / 2.0
+    mid = top + tall / 2.0
+    back = lory.fade[lory.white[], 0.9]
+    c = lory.round_rect[c, left, top + 1.0 * s, wide, tall + 1.0 * s, 3.0 * s, lory.rgba[0.0, 0.0, 0.0, 0.2]]
+    c = lory.round_rect[c, left, top, wide, tall, 3.0 * s, back]
+    if right
+        c = lory.triangle[c, left - 5.0 * s, mid, left + 1.0 * s, mid - 6.0 * s, left + 1.0 * s, mid + 6.0 * s, back]
+    else
+        c = lory.triangle[c, left + wide + 5.0 * s, mid, left + wide - 1.0 * s, mid - 6.0 * s, left + wide - 1.0 * s, mid + 6.0 * s, back]
+    lift = (18.0 * s - lory.line_height[c, size]) / 2.0
+    lory.text[c, left + 7.0 * s, top + 7.0 * s + lift, f.tooltip, size, lory.fade[lory.hex['#222222'], 0.9]]
+
+--- the box being drawn with Shift: half white, edged in dots of blue
+fn _draw_box[c, m]
+    s = m.box.s
+    x0 = m.box.x + min[m.hand.x0, m.hand.bx] * s
+    y0 = m.box.y + min[m.hand.y0, m.hand.by] * s
+    x1 = m.box.x + max[m.hand.x0, m.hand.bx] * s
+    y1 = m.box.y + max[m.hand.y0, m.hand.by] * s
+    c = lory.rect[c, x0, y0, x1 - x0, y1 - y0, lory.rgba[255.0, 255.0, 255.0, 0.5]]
+    inset = 1.0 * s
+    lory.dashed_path[c, [x0 + inset, x1 - inset, x1 - inset, x0 + inset, x0 + inset], [y0 + inset, y0 + inset, y1 - inset, y1 - inset, y0 + inset], 2.0 * s, lory.hex['#3388ff'], 2.0 * s, 2.0 * s]
+
+--- the controls: the zoom buttons at the top left, the scale bar at the
+--- bottom left, the credit at the bottom right
+fn _draw_controls[c, m]
+    under = ''
+    if lory.pointing[c] and _inside[m, lory.pointer_x[c], lory.pointer_y[c]] and not m.hand.down
+        under = _control_at[m, (lory.pointer_x[c] - m.box.x) / m.box.s, (lory.pointer_y[c] - m.box.y) / m.box.s, []]
+    if m.options.zoom_buttons
+        c = _draw_zoom_buttons[c, m, under]
+    if m.options.scale_bar and m.box.w gt 0.0
+        c = _draw_scale_bar[c, m]
+    if m.options.credits
+        c = _draw_credits[c, m]
+    c
+
+--- Leaflet's zoom buttons as a page of touch has them: two of 30 CSS
+--- pixels, a line between, in an edge of 2 pixels of a fifth of black,
+--- 10 pixels in from the corner; a button greyed where the zoom has come
+--- to its end, and lit while the pointer is over it
+fn _draw_zoom_buttons[c, m, under]
+    s = m.box.s
+    x = m.box.x
+    y = m.box.y
+    c = lory.round_rect[c, x + 10.0 * s, y + 10.0 * s, 34.0 * s, 65.0 * s, 4.0 * s, lory.rgba[0.0, 0.0, 0.0, 0.2]]
+    c = lory.round_rect[c, x + 12.0 * s, y + 12.0 * s, 30.0 * s, 61.0 * s, 2.0 * s, lory.white[]]
+    top_end = m.zoom gte highest[m]
+    foot_end = m.zoom lte m.limits.lowest
+    lit = lory.hex['#f4f4f4']
+    if top_end or under eq 'in'
+        c = lory.round_rect[c, x + 12.0 * s, y + 12.0 * s, 30.0 * s, 30.0 * s, 2.0 * s, lit]
+        c = lory.rect[c, x + 12.0 * s, y + 27.0 * s, 30.0 * s, 15.0 * s, lit]
+    if foot_end or under eq 'out'
+        c = lory.round_rect[c, x + 12.0 * s, y + 43.0 * s, 30.0 * s, 30.0 * s, 2.0 * s, lit]
+        c = lory.rect[c, x + 12.0 * s, y + 43.0 * s, 30.0 * s, 15.0 * s, lit]
+    c = lory.rect[c, x + 12.0 * s, y + 42.0 * s, 30.0 * s, 1.0 * s, lory.hex['#cccccc']]
+    ink_in = lory.black[]
+    if top_end
+        ink_in = lory.hex['#bbbbbb']
+    ink_out = lory.black[]
+    if foot_end
+        ink_out = lory.hex['#bbbbbb']
+    c = lory.rect[c, x + 21.0 * s, y + 25.5 * s, 13.0 * s, 3.0 * s, ink_in]
+    c = lory.rect[c, x + 26.0 * s, y + 20.5 * s, 3.0 * s, 13.0 * s, ink_in]
+    lory.rect[c, x + 21.0 * s, y + 56.5 * s, 13.0 * s, 3.0 * s, ink_out]
+
+--- one line of the scale bar: its box `wide` CSS pixels, edged in grey
+--- at its sides and its foot (the first line) or its top (a line below
+--- another), its words in it
+fn _scale_line[c, m, left, top, wide, words, first]
+    s = m.box.s
+    tall = 18.2 * s
+    edge = lory.hex['#777777']
+    c = lory.rect[c, left, top, wide * s, tall, lory.rgba[255.0, 255.0, 255.0, 0.8]]
+    c = lory.rect[c, left, top, 2.0 * s, tall, edge]
+    c = lory.rect[c, left + wide * s - 2.0 * s, top, 2.0 * s, tall, edge]
+    text_top = top + 2.0 * s
+    if first
+        c = lory.rect[c, left, top + tall - 2.0 * s, wide * s, 2.0 * s, edge]
+    else
+        c = lory.rect[c, left, top, wide * s, 2.0 * s, edge]
+        text_top = top + 4.0 * s
+    size = 12.0 * s
+    lift = (13.2 * s - lory.line_height[c, size]) / 2.0
+    c = lory.text[c, left + 8.0 * s, text_top + lift + 1.0 * s, words, size, lory.white[]]
+    lory.text[c, left + 7.0 * s, text_top + lift, words, size, lory.hex['#333333']]
+
+--- Leaflet's scale bar: a line in metres over one in feet or miles, each
+--- as wide as its round length is on the ground across the view's
+--- middle, 5 CSS pixels in from the bottom left corner
+fn _draw_scale_bar[c, m]
+    s = m.box.s
+    o = m.options
+    if not o.metric and not o.imperial
+        return c
+    sc = scale_shown[m]
+    rows = 0
+    if o.metric
+        rows = rows + 1
+    if o.imperial
+        rows = rows + 1
+    left = m.box.x + 5.0 * s
+    top = m.box.y + m.box.h - 5.0 * s - (rows * 18.2 - (rows - 1) * 2.0) * s
+    if o.metric
+        c = _scale_line[c, m, left, top, sc.metric_wide, sc.metric, true]
+        top = top + 16.2 * s
+    if o.imperial
+        c = _scale_line[c, m, left, top, sc.imperial_wide, sc.imperial, not o.metric]
+    c
+
+--- the credit line at the bottom right corner: Lory's name and the
+--- tiles' makers, in 12 CSS pixel words on a pale strip
+fn _draw_credits[c, m]
+    s = m.box.s
+    words = m.options.prefix
+    if m.tiles.template ne '' and m.tiles.credit ne ''
+        if words ne ''
+            words = '`words` | `m.tiles.credit`'
+        else
+            words = m.tiles.credit
+    if words eq ''
+        return c
+    size = 12.0 * s
+    wide = lory.measure[c, words, size] + 10.0 * s
+    tall = 16.8 * s
+    left = m.box.x + m.box.w - wide
+    top = m.box.y + m.box.h - tall
+    c = lory.rect[c, left, top, wide, tall, lory.rgba[255.0, 255.0, 255.0, 0.8]]
+    lory.text[c, left + 5.0 * s, top + (tall - lory.line_height[c, size]) / 2.0, words, size, lory.hex['#333333']]
+
+--- ---- in a tree of Lory's controls ----
+
+--- the map of the drawn control's id read, moved and drawn in its box,
+--- and kept; what the reader did told as the control's events: `click`
+--- (its words the feature's id, '' for the map; its number the zoom),
+--- `popup`, `closed`, `located`
+fn painter[d]
+    m = of[d.id]
+    if not m.made
+        d.c = lory.rect[d.c, d.x, d.y, d.w, d.h, lory.hex['#dddddd']]
+        return d
+    m.focused = d.focused
+    d.c = show[d.c, m, d.x, d.y, d.w, d.h]
+    for t in happened[d.id]
+        if t.act eq 'click' or t.act eq 'popup' or t.act eq 'closed' or t.act eq 'located'
+            d = gui.tell[d, t.act, t.what, t.zoom]
+    d
+
+--- (what Crow knows of a painter, told by a call of it where a Drawn is
+--- at hand: Lory's tree reaches it through a field)
+fn _typed[c]
+    d = gui.Drawn[c, '', 0.0, 0.0, 1.0, '', 0.0, 0.0, 10.0, 10.0, 1.0, gui.dark[], false, false, false, false, 0.0, 0.0, slice[[''], 0, 0], slice[[gui.Event['', '', '', 0.0]], 0, 0]]
+    painter[d]
+
+--- ---- tests: frames as a page hands them ----
+
+--- a frame 900 by 700 at time `t` (milliseconds), with the input given and
+--- what the page said (JSON lists)
+fn _frame[t, given, said]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": `said`}']]
+
+--- a mouse's event at a place (`on`: down, move, up, double)
+fn _ev[on, x, y]
+    '{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+--- a finger's event at a place
+fn _finger[on, id, x, y]
+    '{"type": "`on`", "device": "touch", "id": `id`, "x": `x`, "y": `y`, "button": 0}'
+
+--- a press and its release at a place
+fn _click[x, y]
+    d = _ev['down', x, y]
+    u = _ev['up', x, y]
+    '[`d`, `u`]'
+
+--- a key typed
+fn _key_of[name, code, shift]
+    '[{"type": "key", "key": "`name`", "code": "`code`", "shift": `shift`}]'
+
+--- the map of an id shown in the whole frame, and kept
+fn _shown_in[id, t, given, said]
+    c = show[_frame[t, given, said], of[id], 0.0, 0.0, 900.0, 700.0]
+    of[id]
+
+fn _acts[told]
+    out = slice[[''], 0, 0]
+    for t in told
+        out = push[out, t.act]
+    out
+
+test a_drag_moves_the_map_with_the_pointer_and_throws_it_on[]
+    forget_map['drag']
+    m = keep[at[of['drag'], 0.0, 0.0, 3.0]]
+    m = _shown_in['drag', 0.0, '[]', '[]']
+    d = _ev['down', 450.0, 350.0]
+    m = _shown_in['drag', 16.0, '[`d`]', '[]']
+    a = _ev['move', 500.0, 350.0]
+    m = _shown_in['drag', 32.0, '[`a`]', '[]']
+    b = _ev['move', 550.0, 350.0]
+    m = _shown_in['drag', 48.0, '[`b`]', '[]']
+    p = point_on[m, 0.0, 0.0]
+    abs[p.x - 550.0] lt 0.5
+    abs[p.y - 350.0] lt 0.5
+    'moved' in _acts[happened['drag']]
+    u = _ev['up', 550.0, 350.0]
+    m = _shown_in['drag', 56.0, '[`u`]', '[]']
+    moving[m]
+    m.motion.how eq 'pan'
+    m.motion.power eq 5.0
+    --- (the picture thrown east, the view's middle goes on west)
+    m.motion.lng1 lt m.lng
+    m = _shown_in['drag', 5000.0, '[]', '[]']
+    not moving[m]
+
+test a_press_let_go_within_three_pixels_is_a_click[]
+    forget_map['click']
+    m = keep[at[of['click'], 10.0, 20.0, 4.0]]
+    m = _shown_in['click', 0.0, '[]', '[]']
+    d = _ev['down', 300.0, 200.0]
+    a = _ev['move', 301.0, 201.0]
+    u = _ev['up', 301.0, 201.0]
+    m = _shown_in['click', 16.0, '[`d`, `a`, `u`]', '[]']
+    told = happened['click']
+    len[told] eq 1
+    told[0].act eq 'click'
+    told[0].what eq ''
+    p = place_under[m, 301.0, 201.0]
+    abs[told[0].lat - p.lat] lt 0.000001
+    m.lat eq 10.0
+    not moving[m]
+
+test the_wheel_zooms_about_the_pointer_40_ms_after_it_turns[]
+    forget_map['wheel']
+    m = keep[at[of['wheel'], 0.0, 0.0, 3.0]]
+    m = _shown_in['wheel', 0.0, '[]', '[]']
+    before = place_under[m, 600.0, 300.0]
+    w = '{"type": "wheel", "x": 600, "y": 300, "dx": 0, "dy": -100}'
+    m = _shown_in['wheel', 16.0, '[`w`]', '[]']
+    m.zoom eq 3.0
+    m = _shown_in['wheel', 40.0, '[]', '[]']
+    m.zoom eq 3.0
+    m = _shown_in['wheel', 60.0, '[]', '[]']
+    m.zoom eq 4.0
+    m.motion.how eq 'zoom'
+    m = _shown_in['wheel', 400.0, '[]', '[]']
+    not moving[m]
+    p = point_on[m, before.lat, before.lng]
+    abs[p.x - 600.0] lt 1.0
+    abs[p.y - 300.0] lt 1.0
+
+test a_double_click_zooms_in_about_where_it_was_and_with_shift_out[]
+    forget_map['double']
+    m = keep[at[of['double'], 30.0, 10.0, 5.0]]
+    m = _shown_in['double', 0.0, '[]', '[]']
+    before = place_under[m, 200.0, 500.0]
+    pressed = _ev['double', 200.0, 500.0]
+    m = _shown_in['double', 16.0, '[`pressed`]', '[]']
+    m.zoom eq 6.0
+    m = _shown_in['double', 400.0, '[]', '[]']
+    p = point_on[m, before.lat, before.lng]
+    abs[p.x - 200.0] lt 1.0
+    abs[p.y - 500.0] lt 1.0
+    out = '{"type": "double", "device": "mouse", "id": 1, "x": 200, "y": 500, "button": 0, "shift": true}'
+    m = _shown_in['double', 416.0, '[`out`]', '[]']
+    m.zoom eq 5.0
+
+test the_keys_pan_and_zoom_once_the_map_has_the_keyboard[]
+    forget_map['keys']
+    m = keep[at[of['keys'], 0.0, 0.0, 3.0]]
+    m = _shown_in['keys', 0.0, '[]', '[]']
+    m = _shown_in['keys', 16.0, _key_of['ArrowRight', 'ArrowRight', false], '[]']
+    not moving[m]
+    m = _shown_in['keys', 32.0, _click[600.0, 600.0], '[]']
+    m.focused
+    m = _shown_in['keys', 48.0, _key_of['ArrowRight', 'ArrowRight', false], '[]']
+    m.motion.how eq 'pan'
+    m = _shown_in['keys', 400.0, '[]', '[]']
+    abs[point_on[m, 0.0, 0.0].x - 370.0] lt 0.5
+    m = _shown_in['keys', 416.0, _key_of['=', 'Equal', false], '[]']
+    m.zoom eq 4.0
+    m = _shown_in['keys', 800.0, _key_of['-', 'Minus', true], '[]']
+    m.zoom eq 1.0
+
+test a_box_drawn_with_shift_zooms_the_map_to_it[]
+    forget_map['box']
+    m = keep[at[of['box'], 0.0, 0.0, 3.0]]
+    m = _shown_in['box', 0.0, '[]', '[]']
+    middle = place_under[m, 450.0, 300.0]
+    d = '{"type": "down", "device": "mouse", "id": 1, "x": 300, "y": 200, "button": 0, "shift": true}'
+    m = _shown_in['box', 16.0, '[`d`]', '[]']
+    m.hand.boxing
+    a = _ev['move', 600.0, 400.0]
+    m = _shown_in['box', 32.0, '[`a`]', '[]']
+    m.lat eq 0.0
+    u = _ev['up', 600.0, 400.0]
+    m = _shown_in['box', 48.0, '[`u`]', '[]']
+    not m.hand.boxing
+    --- (300 by 200 pixels, three times smaller than the view: a zoom more)
+    m.zoom eq 4.0
+    abs[m.lat - middle.lat] lt 0.0000001
+    abs[m.lng - middle.lng] lt 0.0000001
+
+test two_fingers_drawn_apart_zoom_the_map_in_about_them[]
+    forget_map['pinch']
+    m = keep[at[of['pinch'], 0.0, 0.0, 3.0]]
+    m = _shown_in['pinch', 0.0, '[]', '[]']
+    between = place_under[m, 450.0, 350.0]
+    a = _finger['down', 1, 400.0, 350.0]
+    b = _finger['down', 2, 500.0, 350.0]
+    m = _shown_in['pinch', 16.0, '[`a`, `b`]', '[]']
+    m.hand.pinching
+    spread = _finger['move', 2, 600.0, 350.0]
+    m = _shown_in['pinch', 32.0, '[`spread`]', '[]']
+    abs[m.zoom - 4.0] lt 0.000000001
+    p = point_on[m, between.lat, between.lng]
+    abs[p.x - 500.0] lt 1.0
+    u = _finger['up', 2, 600.0, 350.0]
+    m = _shown_in['pinch', 48.0, '[`u`]', '[]']
+    not m.hand.pinching
+    m.zoom eq 4.0
+
+test the_zoom_is_held_to_the_zooms_the_map_allows[]
+    forget_map['limits']
+    m = zooms[at[of['limits'], 0.0, 0.0, 3.0], 2.0, 5.0]
+    m = at[m, 0.0, 0.0, 9.0]
+    m.zoom eq 5.0
+    m = at[m, 0.0, 0.0, 0.4]
+    m.zoom eq 2.0
+    m = keep[at[m, 0.0, 0.0, 5.0]]
+    m = _shown_in['limits', 0.0, '[]', '[]']
+    m = _shown_in['limits', 16.0, _click[27.0, 27.0], '[]']
+    m.zoom eq 5.0
+    not moving[m]
+    m = _shown_in['limits', 32.0, _click[27.0, 58.0], '[]']
+    m.zoom eq 4.0
+    m.motion.how eq 'zoom'
+
+test the_view_is_held_inside_the_box_of_places_it_is_bounded_by[]
+    forget_map['bounds']
+    m = keep[bounded[at[of['bounds'], 0.0, 0.0, 3.0], -60.0, -100.0, 60.0, 100.0, 1.0]]
+    m = _shown_in['bounds', 0.0, '[]', '[]']
+    m.lng eq 0.0
+    d = _ev['down', 450.0, 350.0]
+    a = _ev['move', 850.0, 350.0]
+    m = _shown_in['bounds', 16.0, '[`d`, `a`]', '[]']
+    --- (the drag held where the box's western edge meets the view's)
+    abs[bounds_shown[m].west - -100.0] lt 0.2
+    m = at[m, 0.0, 170.0, 3.0]
+    abs[bounds_shown[m].east - 100.0] lt 0.2
+
+test a_marker_pressed_opens_its_popup_and_a_press_on_the_map_closes_it[]
+    forget_map['popup']
+    m = at[of['popup'], 48.8566, 2.3522, 5.0]
+    m = keep[add_marker[m, 'paris', 48.8566, 2.3522, 'Paris']]
+    m = _shown_in['popup', 0.0, '[]', '[]']
+    m = _shown_in['popup', 16.0, _click[450.0, 320.0], '[]']
+    acts = _acts[happened['popup']]
+    'click' in acts
+    'popup' in acts
+    happened['popup'][0].what eq 'paris'
+    m.popup.shown
+    m.popup.words eq 'Paris'
+    m.popup.dy eq -34.0
+    m = _shown_in['popup', 400.0, _click[800.0, 650.0], '[]']
+    not m.popup.shown
+    'closed' in _acts[happened['popup']]
+
+--- as Leaflet's: a marker pressed while its own popup is open closes
+--- it; another marker pressed closes the open popup before its click
+--- opens its own
+test a_marker_pressed_again_closes_its_popup_and_another_s_replaces_it[]
+    forget_map['two']
+    m = at[of['two'], 0.0, 0.0, 5.0]
+    m = add_marker[m, 'west', 0.0, -5.0, 'West']
+    m = keep[add_marker[m, 'east', 0.0, 5.0, 'East']]
+    m = _shown_in['two', 0.0, '[]', '[]']
+    west = point_on[m, 0.0, -5.0]
+    east = point_on[m, 0.0, 5.0]
+    m = _shown_in['two', 16.0, _click[west.x, west.y - 20.0], '[]']
+    _acts[happened['two']] eq ['click', 'popup']
+    m = _shown_in['two', 400.0, _click[west.x, west.y - 20.0], '[]']
+    _acts[happened['two']] eq ['click', 'closed']
+    not m.popup.shown
+    m = _shown_in['two', 800.0, _click[west.x, west.y - 20.0], '[]']
+    m.popup.owner eq 'west'
+    m = _shown_in['two', 1200.0, _click[east.x, east.y - 20.0], '[]']
+    _acts[happened['two']] eq ['closed', 'click', 'popup']
+    m.popup.owner eq 'east'
+
+--- a marker drawn as one of Lory's icons: a pin stands on its point, is
+--- pressed within its square and not below its point, and its popup
+--- points from the square's top
+test a_marker_drawn_as_an_icon_stands_on_its_point_and_is_pressed_in_its_square[]
+    forget_map['glyph']
+    m = at[of['glyph'], 0.0, 0.0, 5.0]
+    m = add_point[m, 'markers', 'tack', 0.0, 0.0, glyph[style[], 'map-pin-filled', 30.0, '#d6336c']]
+    m = keep[bind_popup[m, 'tack', 'A pin of Lory icons']]
+    m.popup.shown eq false
+    m = _shown_in['glyph', 0.0, '[]', '[]']
+    p = point_on[m, 0.0, 0.0]
+    --- (its square stands 27 pixels above its point and 3 below)
+    m = _shown_in['glyph', 16.0, _click[p.x, p.y + 6.0], '[]']
+    _acts[happened['glyph']] eq ['click']
+    happened['glyph'][0].what eq ''
+    m = _shown_in['glyph', 400.0, _click[p.x + 10.0, p.y - 20.0], '[]']
+    _acts[happened['glyph']] eq ['click', 'popup']
+    happened['glyph'][0].what eq 'tack'
+    m.popup.dx eq 0.0
+    m.popup.dy eq -27.0
+    s = layers_of['glyph'].features[0].style
+    s.icon_x eq 15.0
+    s.icon_y eq 27.0
+    glyph[style[], 'star', 20.0, '#000000'].icon_y eq 10.0
+
+--- a layer of live data drawn anew keeps its place under the others,
+--- and a marker taken away closes its popup
+test a_layer_is_drawn_anew_from_new_data_and_a_feature_taken_away[]
+    forget_map['live']
+    near_road = '{"type": "LineString", "coordinates": [[0, 0], [1, 1]]}'
+    far_road = '{"type": "FeatureCollection", "features": [{"type": "Feature", "id": "a", "geometry": {"type": "LineString", "coordinates": [[0, 0], [2, 2]]}}, {"type": "Feature", "id": "b", "geometry": {"type": "Point", "coordinates": [3, 3]}}]}'
+    m = add_geojson[at[of['live'], 0.0, 0.0, 5.0], 'road', near_road, style[]]
+    m = add_marker[m, 'here', 1.0, 1.0, 'Here']
+    m = keep[set_geojson[m, 'road', far_road, style[]]]
+    l = layers_of['live']
+    l.names eq ['road', 'markers']
+    len[l.features] eq 3
+    len[_feature_of[l, 'road.0']] eq 0
+    _feature_of[l, 'a'][0].pieces[0].lngs[1] eq 2.0
+    _feature_of[l, 'b'][0].layer eq 'road'
+    m = keep[open_popup_of[m, 'here']]
+    m.popup.shown
+    m = keep[remove_feature[m, 'here']]
+    not m.popup.shown
+    len[layers_of['live'].features] eq 2
+    m = keep[clear_layer[m, 'road']]
+    len[layers_of['live'].features] eq 0
+    layers_of['live'].names eq ['road', 'markers']
+
+--- Leaflet's zoom control: a press on + or - zooms a step about the
+--- middle, and the button of an end the zoom has come to does nothing
+test the_zoom_buttons_zoom_a_step_and_stop_at_the_ends[]
+    forget_map['buttons']
+    m = keep[zooms[at[of['buttons'], 10.0, 20.0, 3.0], 2.0, 4.0]]
+    m = _shown_in['buttons', 0.0, '[]', '[]']
+    m = _shown_in['buttons', 16.0, _click[27.0, 27.0], '[]']
+    m.zoom eq 4.0
+    m = _shown_in['buttons', 400.0, _click[27.0, 27.0], '[]']
+    m.zoom eq 4.0
+    m = _shown_in['buttons', 800.0, _click[27.0, 58.0], '[]']
+    m.zoom eq 3.0
+    m = _shown_in['buttons', 1200.0, _click[27.0, 58.0], '[]']
+    m = _shown_in['buttons', 1600.0, _click[27.0, 58.0], '[]']
+    m.zoom eq 2.0
+    m.lat eq 10.0
+    m.lng eq 20.0
+
+--- a hand turned off leaves the view as it was (Leaflet's handlers
+--- disabled): a drag, the wheel, a double click and the keys
+test a_hand_turned_off_leaves_the_view_as_it_was[]
+    forget_map['still']
+    m = keep[hands[at[of['still'], 10.0, 20.0, 5.0], dragging = false, wheel = false, double = false, keyboard = false, box = false, pinch = false]]
+    m = _shown_in['still', 0.0, '[]', '[]']
+    pressed = _ev['down', 400.0, 300.0]
+    moved = _ev['move', 500.0, 350.0]
+    lifted = _ev['up', 500.0, 350.0]
+    m = _shown_in['still', 16.0, '[`pressed`]', '[]']
+    m = _shown_in['still', 32.0, '[`moved`]', '[]']
+    m = _shown_in['still', 48.0, '[`lifted`]', '[]']
+    turned = '{"type": "wheel", "x": 600, "y": 300, "dx": 0, "dy": -300}'
+    m = _shown_in['still', 100.0, '[`turned`]', '[]']
+    twice = _ev['double', 600.0, 300.0]
+    m = _shown_in['still', 200.0, '[`twice`]', '[]']
+    m = _shown_in['still', 216.0, _click[600.0, 300.0], '[]']
+    m = _shown_in['still', 232.0, _key_of['ArrowRight', 'ArrowRight', false], '[]']
+    m = _shown_in['still', 600.0, '[]', '[]']
+    m.lat eq 10.0
+    m.lng eq 20.0
+    m.zoom eq 5.0
+    not moving[m]
+
+--- the program's own moves end where they were sent: a box fitted at
+--- the highest zoom that shows it whole, an ease, a pan by pixels, and
+--- zooms out and in about the middle
+test the_program_s_moves_end_where_they_were_sent[]
+    forget_map['moves']
+    m = keep[at[of['moves'], 0.0, 0.0, 3.0]]
+    m = _shown_in['moves', 0.0, '[]', '[]']
+    m = keep[fit_bounds[m, 35.0, 139.0, 36.0, 140.5]]
+    m = _shown_in['moves', 16.0, '[]', '[]']
+    m = _shown_in['moves', 600.0, '[]', '[]']
+    b = bounds_shown[m]
+    b.south lte 35.0 and b.north gte 36.0 and b.west lte 139.0 and b.east gte 140.5
+    closer = geo.bounds_of[geo.seen[m.lat, m.lng, m.zoom + 1.0, 900.0, 700.0]]
+    not (closer.south lte 35.0 and closer.north gte 36.0 and closer.west lte 139.0 and closer.east gte 140.5)
+    m = keep[ease_to[m, 35.6762, 139.6503, 11.0, seconds = 0.5]]
+    m = _shown_in['moves', 700.0, '[]', '[]']
+    moving[m]
+    m = _shown_in['moves', 1300.0, '[]', '[]']
+    not moving[m]
+    m.lat eq 35.6762
+    m.lng eq 139.6503
+    m.zoom eq 11.0
+    before = point_on[m, 35.6762, 139.6503]
+    m = keep[pan_by[m, 200.0, -100.0]]
+    m = _shown_in['moves', 1400.0, '[]', '[]']
+    m = _shown_in['moves', 1800.0, '[]', '[]']
+    after = point_on[m, 35.6762, 139.6503]
+    abs[after.x - (before.x - 200.0)] lt 0.5
+    abs[after.y - (before.y + 100.0)] lt 0.5
+    m = keep[zoom_out[m, steps = 2.0]]
+    m.zoom eq 9.0
+    m = keep[zoom_in[m]]
+    m.zoom eq 10.0
+
+--- a feature's tooltip is shown while the pointer rests on it, and told
+--- as `hover`; it goes when the pointer leaves the page
+test a_tooltip_shows_while_the_pointer_rests_on_its_feature[]
+    forget_map['tip']
+    park = '{"type": "Feature", "id": "park", "geometry": {"type": "Polygon", "coordinates": [[[-10, -10], [10, -10], [10, 10], [-10, 10], [-10, -10]]]}}'
+    m = add_geojson[at[of['tip'], 0.0, 0.0, 3.0], 'parks', park, style[]]
+    m = keep[bind_tooltip[m, 'park', 'A park']]
+    away = len[show[_frame[0.0, '[]', '[]'], of['tip'], 0.0, 0.0, 900.0, 700.0].verts]
+    moved = _ev['move', 450.0, 350.0]
+    resting = json['{"t": 16, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": [`moved`], "pointers": [{"x": 450, "y": 350, "down": false}], "controllers": [], "said": []}']
+    over = len[show[lory.begin[resting], of['tip'], 0.0, 0.0, 900.0, 700.0].verts]
+    of['tip'].hover eq 'park'
+    'hover' in _acts[happened['tip']]
+    over gt away
+    m = _shown_in['tip', 32.0, '[]', '[]']
+    of['tip'].hover eq ''
+
+--- a popup opened near the map's edge pans the map until it stands
+--- 5 pixels inside it (Leaflet's autoPan), to the nearest whole pixel
+--- (Leaflet's panBy moves whole pixels)
+test a_popup_opened_at_the_edge_pans_the_map_to_show_it_whole[]
+    forget_map['edge']
+    m = at[of['edge'], 0.0, 0.0, 5.0]
+    top = geo.place_at[geo.seen[0.0, 0.0, 5.0, 900.0, 700.0], 450.0, 60.0]
+    m = keep[add_marker[m, 'north', top.lat, top.lng, 'A popup of a few words, at the top of the map']]
+    m = _shown_in['edge', 0.0, '[]', '[]']
+    m = _shown_in['edge', 16.0, _click[450.0, 40.0], '[]']
+    m.popup.shown
+    m = _shown_in['edge', 600.0, '[]', '[]']
+    m = _shown_in['edge', 900.0, '[]', '[]']
+    box = _popup_box[_frame[900.0, '[]', '[]'], of['edge']]
+    abs[box[1] - 5.0] lte 0.5
+    of['edge'].lat gt 0.0
+
+--- a layer drawn over another is pressed first, though its features
+--- were added before the other's were drawn anew; a hidden layer is
+--- neither drawn nor pressed, and is again once shown
+test a_hidden_layer_is_neither_drawn_nor_pressed_and_the_top_one_is_pressed_first[]
+    forget_map['hide']
+    low = '{"type": "Feature", "id": "low", "geometry": {"type": "Polygon", "coordinates": [[[-20, -20], [20, -20], [20, 20], [-20, 20], [-20, -20]]]}}'
+    high = '{"type": "Feature", "id": "high", "geometry": {"type": "Polygon", "coordinates": [[[-10, -10], [10, -10], [10, 10], [-10, 10], [-10, -10]]]}}'
+    m = add_geojson[at[of['hide'], 0.0, 0.0, 3.0], 'under', low, style[]]
+    m = add_geojson[m, 'over', high, style[]]
+    m = keep[set_geojson[m, 'under', low, style[]]]
+    m = _shown_in['hide', 0.0, '[]', '[]']
+    all_drawn = len[show[_frame[10.0, '[]', '[]'], of['hide'], 0.0, 0.0, 900.0, 700.0].verts]
+    m = _shown_in['hide', 16.0, _click[450.0, 350.0], '[]']
+    happened['hide'][0].what eq 'high'
+    m = keep[hide_layer[of['hide'], 'over']]
+    layers_of['hide'].hidden eq [false, true]
+    len[show[_frame[400.0, '[]', '[]'], of['hide'], 0.0, 0.0, 900.0, 700.0].verts] lt all_drawn
+    m = _shown_in['hide', 416.0, _click[450.0, 350.0], '[]']
+    happened['hide'][0].what eq 'low'
+    m = keep[show_layer[of['hide'], 'over']]
+    m = _shown_in['hide', 800.0, _click[450.0, 350.0], '[]']
+    happened['hide'][0].what eq 'high'
+
+test a_shape_pressed_is_told_by_its_id[]
+    forget_map['shapes']
+    park = '{"type": "Feature", "id": "park", "properties": {"name": "Park"}, "geometry": {"type": "Polygon", "coordinates": [[[-10, -10], [10, -10], [10, 10], [-10, 10], [-10, -10]]]}}'
+    m = keep[add_geojson[at[of['shapes'], 0.0, 0.0, 3.0], 'parks', park, style[]]]
+    m = _shown_in['shapes', 0.0, '[]', '[]']
+    m = _shown_in['shapes', 16.0, _click[450.0, 350.0], '[]']
+    happened['shapes'][0].what eq 'park'
+    m = _shown_in['shapes', 32.0, _click[100.0, 100.0], '[]']
+    happened['shapes'][0].what eq ''
+
+test a_flight_ends_where_it_was_sent[]
+    forget_map['fly']
+    m = keep[at[of['fly'], 0.0, 0.0, 3.0]]
+    m = _shown_in['fly', 0.0, '[]', '[]']
+    m = keep[fly_to[m, 48.8566, 2.3522, 10.0]]
+    m = _shown_in['fly', 16.0, '[]', '[]']
+    m.motion.how eq 'fly'
+    m.motion.flight.duration gt 1000.0
+    m = _shown_in['fly', 1016.0, '[]', '[]']
+    moving[m]
+    m = _shown_in['fly', 30000.0, '[]', '[]']
+    not moving[m]
+    m.lat eq 48.8566
+    m.lng eq 2.3522
+    m.zoom eq 10.0
+
+test the_tiles_a_view_lacks_are_asked_for_and_drawn_once_they_come[]
+    forget_map['tiled']
+    m = keep[tiles[at[of['tiled'], 0.0, 0.0, 1.0], tile_layer['t/{z}/{x}/{y}.png', 'Tiles']]]
+    c = show[_frame[0.0, '[]', '[]'], of['tiled'], 0.0, 0.0, 900.0, 700.0]
+    asked = for a in c.asks
+        if len[a] gt 1
+            a[1]
+        else
+            ''
+    images = for a in asked
+        if a eq '@image'
+            1
+        else
+            0
+    --- (the world at zoom 1 is two tiles by two)
+    sum[images] eq 4
+    held = recall['map.tiled.tiles', grid.held_none[1]]
+    url = held.urls[0]
+    said = '[{"what": "image", "id": 40000, "url": "`url`", "width": 256, "height": 256}]'
+    c = show[_frame[500.0, '[]', said], of['tiled'], 0.0, 0.0, 900.0, 700.0]
+    40000 in c.seg_image
+    c = show[_frame[516.0, '[]', '[]'], of['tiled'], 0.0, 0.0, 900.0, 700.0]
+    again = for a in c.asks
+        if len[a] gt 1 and a[1] eq '@image'
+            1
+        else
+            0
+    sum[again] eq 0
+
+test the_device_s_place_the_page_says_is_shown_on_the_map[]
+    forget_map['here']
+    m = keep[at[of['here'], 0.0, 0.0, 3.0]]
+    said = '[{"what": "position", "id": 7, "lat": 51.5, "lng": -0.12, "accuracy": 30}]'
+    m = _shown_in['here', 0.0, '[]', said]
+    m.located.shown
+    m.located.lat eq 51.5
+    m.located.accuracy eq 30.0
+    'located' in _acts[happened['here']]
+    m = locate[m, 40.0, 3.0, 10.0]
+    m.located.lat eq 40.0
+    m.motion.how eq 'fly'
+
+test points_close_together_are_one_cluster_and_pressing_it_zooms_in[]
+    forget_map['crowd']
+    m = at[of['crowd'], 48.8566, 2.3522, 5.0]
+    m = add_point[m, 'cafes', 'a', 48.8566, 2.3522, style[]]
+    m = add_point[m, 'cafes', 'b', 48.8600, 2.3600, style[]]
+    m = add_point[m, 'cafes', 'c', 48.8500, 2.3400, style[]]
+    m = keep[cluster[m, 'cafes']]
+    m = _shown_in['crowd', 0.0, '[]', '[]']
+    t = _tree_of[m, layers_of['crowd'], 0]
+    groups = points.groups_at[t, 5.0]
+    len[groups] eq 1
+    groups[0].count eq 3
+    m = _shown_in['crowd', 16.0, _click[450.0, 350.0], '[]']
+    m.zoom gt 5.0
+    m.zoom eq groups[0].splits
+
+test the_map_in_a_tree_tells_its_presses_as_the_tree_s_events[]
+    forget_map['tree']
+    m = keep[at[of['tree'], 0.0, 0.0, 2.0]]
+    tree = gui.column[[gui.drawn['tree', 0.0, 400.0, 300.0, painter]]]
+    first = gui.show[_frame[0.0, '[]', '[]'], tree]
+    shown = gui.show[_frame[16.0, _click[224.0, 174.0], '[]'], tree]
+    acts = for told_event in shown.events
+        told_event.act
+    'click' in acts
+    of['tree'].box.w eq 400.0
+
+--- a headset's frame at time `t`: the page on its panel, the right hand's
+--- ray straight ahead from 1.25 m up, its thumbstick pushed `forward`
+--- (-1: away, all the way), and the input given
+fn _headset[t, forward, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 900, "height": 700, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0.05, `forward`]}], "said": []}']]
+
+--- the map of an id shown on the whole of a headset's page, and kept
+fn _worn[id, t, forward, given]
+    c = _headset[t, forward, given]
+    c = show[c, of[id], 0.0, 0.0, lory.width[c], lory.height[c]]
+    drawn = lory.end[c]
+    of[id]
+
+--- in a headset the ray is the pointer: its trigger presses the map, and
+--- the thumbstick pushed away zooms it in about where the ray rests, as a
+--- wheel turned there does
+test in_a_headset_the_thumbstick_zooms_the_map_and_the_trigger_presses_it[]
+    forget_map['worn']
+    m = keep[at[of['worn'], 0.0, 0.0, 3.0]]
+    c = _headset[1000.0, 0.0, '[]']
+    lory.pointing[c]
+    rested = place_under[_worn['worn', 1000.0, 0.0, '[]'], lory.pointer_x[c], lory.pointer_y[c]]
+    m = _worn['worn', 1050.0, -1.0, '[]']
+    m.zoom eq 3.0
+    m = _worn['worn', 1100.0, 0.0, '[]']
+    m.zoom eq 4.0
+    m = _worn['worn', 1400.0, 0.0, '[]']
+    not moving[m]
+    p = point_on[m, rested.lat, rested.lng]
+    abs[p.x - lory.pointer_x[c]] lt 1.0
+    abs[p.y - lory.pointer_y[c]] lt 1.0
+    pressed = '[{"type": "down", "device": "ray", "button": 0}, {"type": "up", "device": "ray", "button": 0}]'
+    m = _worn['worn', 1450.0, 0.0, pressed]
+    happened['worn'][0].act eq 'click'

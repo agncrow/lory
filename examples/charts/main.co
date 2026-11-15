@@ -1,0 +1,382 @@
+--- Kite's charts (`use kite.charts`): a gallery of every kind of chart
+--- Chart.js draws, drawn by Kite over the data the select at the top
+--- picks. A press on a legend item hides its dataset (in a pie, a
+--- doughnut or a polar area, its value) and a second press shows it
+--- again; the pointer over a mark shows its tooltip; data picked anew
+--- moves the marks to their new places as Chart.js animates them. The
+--- line beside the select is a sparkline, a chart in gui's tree
+--- (`charts.drawn`); the gallery's charts are each read from a Chart.js
+--- configuration (`charts.of`) and drawn straight onto the canvas
+--- (`charts.shown_at`).
+use sys
+use memory
+use lory
+use lory.gui
+use lory.icons
+use kite.charts
+
+--- what the reader has picked and done: the data the charts show, and
+--- what the charts last told
+struct App [picked, said]
+
+--- the app as it opens: the sales, and what may be done
+fn fresh[]
+    App['Sales', 'A press on a legend item hides its dataset; the pointer over a mark shows its tooltip.']
+
+--- ---- the data ----
+
+--- seven labels and two rows of values, named as the select names them
+struct Rows [name, labels, a, b]
+
+fn data_names[]
+    ['Sales', 'Weather', 'Visits']
+
+fn rows_of[name]
+    if name eq 'Weather'
+        return Rows['Weather', ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], [12.0, 15.0, 9.0, 17.0, 21.0, 19.0, 14.0], [4.0, 6.0, 2.0, 8.0, 11.0, 10.0, 7.0]]
+    if name eq 'Visits'
+        return Rows['Visits', ['Home', 'Docs', 'Blog', 'Shop', 'Help', 'News', 'About'], [320.0, 210.0, 150.0, 95.0, 60.0, 140.0, 35.0], [180.0, 260.0, 90.0, 130.0, 75.0, 40.0, 55.0]]
+    Rows['Sales', ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'], [65.0, 59.0, 80.0, 81.0, 56.0, 55.0, 40.0], [28.0, 48.0, 40.0, 19.0, 86.0, 27.0, 90.0]]
+
+--- ---- the gallery's charts, as Chart.js configurations ----
+
+--- numbers as a JSON list (null where there is none)
+fn _numbers[xs]
+    parts = slice[[''], 0, 0]
+    i = 0
+    while i lt len[xs]
+        x = xs[i]
+        if x eq x
+            parts = push[parts, '`x`']
+        else
+            parts = push[parts, 'null']
+        i = i + 1
+    '[`join[parts, \', \']`]'
+
+--- words as a JSON list
+fn _words[ws]
+    parts = slice[[''], 0, 0]
+    i = 0
+    while i lt len[ws]
+        parts = push[parts, '"`ws[i]`"']
+        i = i + 1
+    '[`join[parts, \', \']`]'
+
+--- the first `n` of the values
+fn _first[xs, n]
+    out = slice[[0.0], 0, 0]
+    i = 0
+    while i lt n and i lt len[xs]
+        out = push[out, xs[i]]
+        i = i + 1
+    out
+
+--- the values with none at the places named
+fn _gapped[xs, gaps]
+    out = slice[[0.0], 0, 0]
+    i = 0
+    while i lt len[xs]
+        if i in gaps
+            out = push[out, nan]
+        else
+            out = push[out, xs[i]]
+        i = i + 1
+    out
+
+--- each pair of values as a floating bar, from the less to the greater
+fn _spans[a, b]
+    parts = slice[[''], 0, 0]
+    i = 0
+    while i lt len[a]
+        parts = push[parts, '[`min[a[i], b[i]]`, `max[a[i], b[i]]`]']
+        i = i + 1
+    '[`join[parts, \', \']`]'
+
+--- points at (xs, ys), each `rs` pixels round where `rs` are given
+fn _points[xs, ys, rs]
+    parts = slice[[''], 0, 0]
+    i = 0
+    while i lt len[xs]
+        if len[rs] gt 0
+            parts = push[parts, '{"x": `xs[i]`, "y": `ys[i]`, "r": `rs[i]`}']
+        else
+            parts = push[parts, '{"x": `xs[i]`, "y": `ys[i]`}']
+        i = i + 1
+    '[`join[parts, \', \']`]'
+
+--- the values, each one ten times the one before it as well
+fn _decades[xs]
+    out = slice[[0.0], 0, 0]
+    k = 0.01
+    i = 0
+    while i lt len[xs]
+        out = push[out, xs[i] * k]
+        k = k * 10.0
+        i = i + 1
+    out
+
+--- the values taken from the others place by place
+fn _less[a, b]
+    out = slice[[0.0], 0, 0]
+    i = 0
+    while i lt len[a]
+        out = push[out, a[i] - b[i]]
+        i = i + 1
+    out
+
+--- each value at a day's start, a day apart from the first of 2026
+fn _days[n]
+    out = slice[[0.0], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, 1767225600000.0 + 86400000.0 * i]
+        i = i + 1
+    out
+
+--- each place, counted from 1, as a number
+fn _places[n]
+    out = slice[[0.0], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, 10.0 * (i + 1)]
+        i = i + 1
+    out
+
+--- a bubble's radius for each value: from 4 to 14 pixels
+fn _radii[xs]
+    top = 0.0
+    i = 0
+    while i lt len[xs]
+        top = max[top, xs[i]]
+        i = i + 1
+    out = slice[[0.0], 0, 0]
+    i = 0
+    while i lt len[xs]
+        out = push[out, 4.0 + 10.0 * xs[i] / max[top, 1.0]]
+        i = i + 1
+    out
+
+--- a card of the gallery: its title, its icon and its chart's
+--- configuration
+struct Card [title, icon, config]
+
+fn cards_of[r]
+    names_json = _words[r.labels]
+    a = _numbers[r.a]
+    b = _numbers[r.b]
+    five = _words[_first_words[r.labels, 5]]
+    six = _words[_first_words[r.labels, 6]]
+    out = slice[[Card['', '', '']], 0, 0]
+    out = push[out, Card['Bars', 'bar-chart', '{"type": "bar", "data": {"labels": `names_json`, "datasets": [{"label": "This year", "data": `a`, "borderRadius": 4}, {"label": "Last year", "data": `b`, "borderRadius": 4}]}}']]
+    out = push[out, Card['Bars across', 'bar-chart', '{"type": "bar", "data": {"labels": `names_json`, "datasets": [{"label": "East", "data": `a`, "borderWidth": 2}, {"label": "West", "data": `b`, "borderWidth": 2}]}, "options": {"indexAxis": "y", "plugins": {"legend": {"position": "right"}}}}']]
+    out = push[out, Card['Stacked bars', 'bar-chart', '{"type": "bar", "data": {"labels": `names_json`, "datasets": [{"label": "A", "data": `a`}, {"label": "B", "data": `b`}, {"label": "A less B", "data": `_numbers[_less[r.a, r.b]]`}]}, "options": {"scales": {"x": {"stacked": true}, "y": {"stacked": true}}}}']]
+    out = push[out, Card['Floating bars', 'bar-chart', '{"type": "bar", "data": {"labels": `names_json`, "datasets": [{"label": "Range", "data": `_spans[r.a, r.b]`, "borderRadius": 6, "borderSkipped": false}]}}']]
+    out = push[out, Card['Lines', 'activity-log', '{"type": "line", "data": {"labels": `names_json`, "datasets": [{"label": "Curve", "data": `a`, "tension": 0.4, "fill": "origin", "pointStyle": "rectRot", "pointRadius": 5}, {"label": "Steps", "data": `b`, "stepped": true}]}}']]
+    out = push[out, Card['Gaps', 'activity-log', '{"type": "line", "data": {"labels": `names_json`, "datasets": [{"label": "Broken", "data": `_numbers[_gapped[r.a, [2, 5]]]`}, {"label": "Spanned", "data": `_numbers[_gapped[r.b, [3]]]`, "spanGaps": true, "tension": 0.3}]}}']]
+    out = push[out, Card['Scatter', 'dots-horizontal', '{"type": "scatter", "data": {"datasets": [{"label": "A by B", "data": `_points[r.a, r.b, slice[[0.0], 0, 0]]`}, {"label": "B by A", "data": `_points[r.b, r.a, slice[[0.0], 0, 0]]`, "showLine": true}]}}']]
+    out = push[out, Card['Bubbles', 'dots-horizontal', '{"type": "bubble", "data": {"datasets": [{"label": "A", "data": `_points[_places[len[r.a]], r.a, _radii[r.b]]`}]}}']]
+    out = push[out, Card['Pie', 'pie-chart', '{"type": "pie", "data": {"labels": `five`, "datasets": [{"label": "A", "data": `_numbers[_first[r.a, 5]]`}]}}']]
+    out = push[out, Card['Doughnut', 'pie-chart', '{"type": "doughnut", "data": {"labels": `five`, "datasets": [{"label": "A", "data": `_numbers[_first[r.a, 5]]`}, {"label": "B", "data": `_numbers[_first[r.b, 5]]`}]}}']]
+    out = push[out, Card['Polar area', 'pie-chart', '{"type": "polarArea", "data": {"labels": `six`, "datasets": [{"label": "A", "data": `_numbers[_first[r.a, 6]]`}]}}']]
+    out = push[out, Card['Radar', 'target', '{"type": "radar", "data": {"labels": `names_json`, "datasets": [{"label": "A", "data": `a`, "fill": true}, {"label": "B", "data": `b`}]}}']]
+    out = push[out, Card['Bars and a line', 'bar-chart', '{"type": "bar", "data": {"labels": `names_json`, "datasets": [{"label": "Bars", "data": `a`, "order": 2}, {"label": "Line", "data": `b`, "type": "line", "order": 1}]}}']]
+    out = push[out, Card['Logarithmic', 'activity-log', '{"type": "line", "data": {"labels": `names_json`, "datasets": [{"label": "Tenfold", "data": `_numbers[_decades[r.a]]`}]}, "options": {"scales": {"y": {"type": "logarithmic"}}}}']]
+    out = push[out, Card['Time', 'calendar', '{"type": "line", "data": {"datasets": [{"label": "Daily", "data": `_points[_days[len[r.a]], r.a, slice[[0.0], 0, 0]]`}]}, "options": {"scales": {"x": {"type": "time"}}}}']]
+    out = push[out, Card['Two axes', 'activity-log', '{"type": "line", "data": {"labels": `names_json`, "datasets": [{"label": "Left", "data": `a`, "yAxisID": "y"}, {"label": "Right", "data": `_numbers[_decades[r.b]]`, "yAxisID": "y1"}]}, "options": {"scales": {"y1": {"type": "logarithmic", "position": "right", "grid": {"drawOnChartArea": false}}}}}']]
+    out
+
+--- the first `n` words
+fn _first_words[ws, n]
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt n and i lt len[ws]
+        out = push[out, ws[i]]
+        i = i + 1
+    out
+
+--- ---- the page ----
+
+--- the room round the page and between the cards, the header's height,
+--- a card's least height, its caption's height and the room inside it
+--- (CSS pixels: tests/charts/browser.py lays the cards out as these do)
+fn _margin[]
+    24.0
+
+fn _gap[]
+    16.0
+
+fn _head[]
+    56.0
+
+fn _least_card[]
+    230.0
+
+fn _caption[]
+    30.0
+
+fn _inset[]
+    10.0
+
+--- how many cards stand in a row on a page `wide` CSS pixels across
+fn columns_of[wide]
+    if wide gte 1180.0
+        return 4
+    if wide gte 880.0
+        return 3
+    if wide gte 580.0
+        return 2
+    1
+
+--- the box of the card at `i` of `n` (CSS pixels): left, top, width and
+--- height
+fn card_box[wide, tall, n, i]
+    columns = columns_of[wide]
+    rows = ceil[(0.0 + n) / (0.0 + columns)]
+    top = _margin[] + _head[] + _gap[]
+    w = (wide - 2.0 * _margin[] - _gap[] * (columns - 1)) / (0.0 + columns)
+    h = max[_least_card[], (tall - top - _margin[] - _gap[] * (rows - 1)) / (0.0 + rows)]
+    column = i % columns
+    row = floor[(0.0 + i) / (0.0 + columns)]
+    [_margin[] + column * (w + _gap[]), top + row * (h + _gap[]), w, h]
+
+--- what drawing the page answers: the canvas, and the app after what the
+--- reader did
+struct Painted [canvas, app]
+
+--- a card drawn at its box (canvas pixels: `s` of them to a CSS pixel):
+--- its ground and edge, its icon and title, and its chart; what the
+--- chart told written for the header
+fn card_drawn[c0, a0, k, i, box, s, look]
+    a = a0
+    x = box[0] * s
+    y = box[1] * s
+    w = box[2] * s
+    h = box[3] * s
+    c = lory.round_rect[c0, x, y, w, h, 10.0 * s, look.panel]
+    c = lory.round_outline[c, x, y, w, h, 10.0 * s, 1.0 * s, look.edge]
+    c = icons.draw[c, k.icon, x + 12.0 * s, y + 8.0 * s, 15.0 * s, look.muted]
+    c = lory.text[c, x + 34.0 * s, y + 7.0 * s, k.title, 14.0 * s, look.ink]
+    inset = _inset[] * s
+    ch = charts.of['card `i`', k.config]
+    shown = charts.shown_at[c, ch, x + inset, y + _caption[] * s, w - 2.0 * inset, h - _caption[] * s - inset]
+    told = shown.events
+    j = 0
+    while j lt len[told]
+        ev = told[j]
+        if ev.act eq 'legend'
+            a.said = '`k.title`: the legend turned `ev.words`.'
+        if ev.act eq 'press'
+            a.said = '`k.title`: pressed `ev.words` (dataset:place).'
+        j = j + 1
+    Painted[shown.canvas, a]
+
+--- the page drawn: the gallery's cards, then the header over them (the
+--- select's choices open over the cards); the app after the reader's
+--- doings
+fn painted[c0, a0]
+    --- (a frame read from the page's JSON may have failed; gui lays its
+    --- tree out from a canvas that cannot have)
+    if not c0.ok
+        return Painted[c0, a0]
+    a = a0
+    look = gui.light[]
+    s = lory.px[c0]
+    wide = _css[lory.width[c0], s]
+    tall = _css[lory.height[c0], s]
+    c = lory.clear[c0, look.page]
+    r = rows_of[a.picked]
+    cards = cards_of[r]
+    i = 0
+    while i lt len[cards]
+        p = card_drawn[c, a, cards[i], i, card_box[wide, tall, len[cards], i], s, look]
+        c = p.canvas
+        a = p.app
+        i = i + 1
+    spark = charts.sparkline['spark', r.a, 'trend', true, true, look.accent]
+    head = gui.row[[gui.select['data', data_names[], a.picked], charts.drawn[spark, 160.0, 36.0], gui.text[a.said, 13.0, 'muted']], gap = 16.0, align = 'center']
+    shown = gui.show_at[c, head, _margin[], _margin[], wide - 2.0 * _margin[], look]
+    told = shown.events
+    i = 0
+    while i lt len[told]
+        ev = told[i]
+        if ev.id eq 'data' and ev.act eq 'choose'
+            a.picked = ev.words
+        i = i + 1
+    Painted[shown.canvas, a]
+
+--- `n` canvas pixels in CSS pixels, `s` of them to one (a number that
+--- cannot have failed: gui lays its tree out in such numbers)
+fn _css[n, s]
+    v = n / s
+    if not v.ok
+        return 0.0
+    0.0 + v
+
+--- the page's frame: the app recalled, drawn and answered, and kept
+fn draw[frame]
+    a = recall['lory_charts.app', fresh[]]
+    p = painted[lory.begin[frame], a]
+    remember['lory_charts.app', p.app]
+    lory.end[p.canvas]
+
+sys.frames[draw]
+
+--- ---- tests: frames as a page hands them ----
+
+--- a frame 1600 by 1100 as the page hands it, at `t` seconds, with the
+--- input given and the pointers standing (JSON lists)
+fn screen[t, given, pointers]
+    json['{"t": `t`, "width": 1600, "height": 1100, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1600, "height": 1100, "projection": [], "camera": []}], "input": `given`, "pointers": `pointers`, "controllers": [], "said": []}']
+
+fn _press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+--- whether a chart has an axis of that kind
+fn _has_axis[ch, form]
+    i = 0
+    while i lt len[ch.axes]
+        if ch.axes[i].form eq form
+            return true
+        i = i + 1
+    false
+
+--- the page's first frame (each block draws one, as the page would: a
+--- block that drew none would leave the canvas's numbers unknown to gui)
+fn _opened[]
+    painted[lory.begin[screen[0.0, '[]', '[]']], fresh[]]
+
+test every_card_is_a_chart_of_its_data[]
+    _opened[].app.picked eq 'Sales'
+    cards = cards_of[rows_of['Sales']]
+    len[cards] eq 16
+    for k in cards
+        icons.known[k.icon]
+    charts.of['t', cards[0].config].form eq 'bar'
+    len[charts.of['t', cards[0].config].sets] eq 2
+    charts.of['t', cards[1].config].index_axis eq 'y'
+    charts.of['t', cards[3].config].sets[0].starts[0] eq 28.0
+    charts.of['t', cards[5].config].sets[0].ys[2] ne charts.of['t', cards[5].config].sets[0].ys[2]
+    charts.of['t', cards[7].config].form eq 'bubble'
+    charts.of['t', cards[10].config].form eq 'polarArea'
+    _has_axis[charts.of['t', cards[13].config], 'logarithmic']
+    _has_axis[charts.of['t', cards[14].config], 'time']
+    charts.of['t', cards[15].config].sets[1].y_axis eq 'y1'
+
+test the_cards_fill_the_page_in_rows[]
+    _opened[].app.picked eq 'Sales'
+    columns_of[1600.0] eq 4
+    columns_of[700.0] eq 2
+    first = card_box[1600.0, 1100.0, 16, 0]
+    first[0] eq 24.0
+    first[1] eq 96.0
+    first[2] eq 376.0
+    fifth = card_box[1600.0, 1100.0, 16, 5]
+    fifth[0] eq 24.0 + 376.0 + 16.0
+    fifth[1] gt first[1] + first[3]
+
+test a_frame_draws_every_card_and_the_select_picks_the_data[]
+    first = _opened[]
+    len[first.canvas.verts] gt 10000
+    first.app.picked eq 'Sales'
+    later_on = painted[lory.begin[screen[2.0, '[]', '[]']], first.app]
+    len[later_on.canvas.verts] gt len[first.canvas.verts]

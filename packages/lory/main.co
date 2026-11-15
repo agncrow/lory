@@ -47,7 +47,14 @@ struct Ev [on, x, y, button, dx, dy, key, code, words, shift, ctrl, alt, meta, d
 --- as the matrix from the scene to the reader's own space)
 --- (`early`: calls drawn once a frame before its views, into a target of
 --- their own — a shadow's depth — the frame's target bound again after)
-struct Canvas [frame, width, height, ratio, t, xr, verts, clear, missing, held, panel, clip, seg_at, seg_image, asks, events, px, py, down, there, said, deep, eye, eyepos, dt, rig, box, early]
+--- (`room`: the page folded around the reader — xr.co's `begin_room` —
+--- with no panels where it is one flat page; `keys`: the left, the foot
+--- and the width a drawn keyboard is given, the width 0 for the page's
+--- whole foot: xr.co's `keys_at`)
+--- (`blend`: what is seen behind the drawing, as the page says it —
+--- `opaque` on a screen and in a headset's own world, `alpha-blend` or
+--- `additive` in a headset that shows the room through it)
+struct Canvas [frame, width, height, ratio, t, xr, verts, clear, missing, held, panel, clip, seg_at, seg_image, asks, events, px, py, down, there, said, deep, eye, eyepos, dt, rig, box, early, room, keys, blend]
 
 --- a colour: red, green, blue and opacity, each 0 to 1
 struct Color [r, g, b, a]
@@ -88,6 +95,17 @@ fn _atlas_unit_id[]
 
 fn _image_unit_id[]
     9
+
+--- (a folded page's panels and their width: past the scene's objects)
+fn _fold_id[]
+    50
+
+fn _folded_id[]
+    51
+
+--- (each panel's part that is shown: the rest of it is not drawn)
+fn _pane_id[]
+    52
 
 fn _font[]
     'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif'
@@ -211,6 +229,11 @@ fn _event[j]
         ev.meta = _flag[j.meta]
     if ev.on eq 'text'
         ev.words = '`j.text`'
+    --- (what the page that hosts the canvas tells the program — a
+    --- `told` event it gives, its words in `text` — is no typing: a field
+    --- with the focus takes `text` for what was typed)
+    if ev.on eq 'told'
+        ev.words = '`j.text`'
     ev
 
 --- where a headset's controller points on the panel the drawing is shown
@@ -219,6 +242,8 @@ fn _event[j]
 fn _ray_hit[c, ctl]
     o = _numbers[ctl.origin]
     d = _numbers[ctl.direction]
+    if c.room.cols gt 0
+        return _room_hit[c.room, o, d]
     w = c.panel
     scale = w / c.width
     if abs[d[2]] lt 0.000001
@@ -236,12 +261,33 @@ fn _ray_hit[c, ctl]
 
 --- a canvas for the frame the page describes
 fn begin[frame]
+    _begun[frame, _no_room[]]
+
+fn _begun[frame, r]
     held = recall['lory', _fresh[]]
     for s in frame.said
         if s.what eq 'atlas'
             if s.id eq _atlas_id[]
                 held = _take_atlas[held, s]
-    c = Canvas[frame, 0.0 + frame.width, 0.0 + frame.height, 0.0 + frame.ratio, 0.0 + frame.t, frame.xr eq true, [], Color[0.0, 0.0, 0.0, 1.0], '', held, 1.6, _unclipped[], [0], [0], [], [], -1.0, -1.0, false, false, frame.said, [], identity[], [0.0, 0.0, 0.0], 0.0, identity[], [0.0, 0.0, 0.0, 0.0], []]
+    c = Canvas[frame, 0.0 + frame.width, 0.0 + frame.height, 0.0 + frame.ratio, 0.0 + frame.t, frame.xr eq true, [], Color[0.0, 0.0, 0.0, 1.0], '', held, 1.6, _unclipped[], [0], [0], [], [], -1.0, -1.0, false, false, frame.said, [], identity[], [0.0, 0.0, 0.0], 0.0, identity[], [0.0, 0.0, 0.0, 0.0], [], r, [0.0, 0.0, 0.0], 'opaque']
+    --- (a page from before 2026-11-14 says nothing of it: its drawing hid
+    --- what was behind)
+    if 'blend' in frame
+        c.blend = '`frame.blend`'
+    --- (a headset's frame is the size of its framebuffer — both eyes', side
+    --- by side: 3360 by 1760 on a Quest 3 — which is no page's. Laid out
+    --- at it, a control was three pixels tall in an eye. The drawing is a
+    --- page of its own size there, on a panel 2 m wide: a page's pixel is
+    --- 2 mm on the panel, 1.3 mm at a metre, so 14-pixel text stands 19 mm
+    --- tall at a metre, near the 20 a headset's text is asked to be)
+    if c.xr
+        c.width = 1000.0
+        c.height = 560.0
+        c.panel = 2.0
+        --- (a room's page is its panels side by side)
+        if r.cols gt 0
+            c.width = 0.0 + r.cols * r.wide
+            c.height = 0.0 + r.tall
     for p in frame.pointers
         c.px = 0.0 + p.x
         c.py = 0.0 + p.y
@@ -267,6 +313,10 @@ fn begin[frame]
                 c.down = true
             if ev.on eq 'up'
                 c.down = false
+        --- (a wheel turned over a room is turned where the ray points)
+        if ev.on eq 'wheel' and r.cols gt 0
+            ev.x = c.px
+            ev.y = c.py
         evs = push[evs, ev]
     c.events = evs
     --- (the keys held down: a key's press adds its code, its release or
@@ -290,7 +340,151 @@ fn begin[frame]
         c.dt = max[0.0, min[0.1, (c.t - held.last) / 1000.0]]
     held.last = c.t
     c.held = held
+    --- (in a headset a thumbstick pushed turns what the ray rests on, as a
+    --- wheel turned there: a scroll area, a list, a table. A room's page is
+    --- scrolled by its program, which reads the stick itself: xr.stick)
+    if c.xr and c.there and r.cols lt 1 and c.dt gt 0.0
+        for ctl in frame.controllers
+            push_by = _pushed[ctl]
+            if abs[push_by[0]] gt 0.0 or abs[push_by[1]] gt 0.0
+                ev = _no_event[]
+                ev.on = 'wheel'
+                ev.device = 'stick'
+                ev.x = c.px
+                ev.y = c.py
+                ev.dx = push_by[0] * _stick_speed[] * c.dt
+                ev.dy = push_by[1] * _stick_speed[] * c.dt
+                c.events = push[c.events, ev]
     c
+
+--- how far a thumbstick turns what it scrolls at its fullest push: page
+--- pixels a second (a 1000-pixel panel's height in about half a second)
+fn _stick_speed[]
+    1200.0
+
+--- a controller's thumbstick push, sideways and forward, each -1 to 1 (as
+--- WebXR gives it: pushed away, it is below 0, so the page scrolls up) —
+--- 0 within the stick's rest, where a stick let go still wanders
+fn _pushed[ctl]
+    axes = _numbers[ctl.axes]
+    at = 0
+    if len[axes] gte 4
+        at = 2
+    if len[axes] lt 2
+        return [0.0, 0.0]
+    out = [0.0, 0.0]
+    for i in range[2]
+        v = axes[at + i]
+        if abs[v] gt 0.15
+            out[i] = v
+    out
+
+--- ---- a room: the page folded around the reader ----
+
+--- (what a program asks of a room — its making, a panel stood freely, a
+--- place on it, its edges, the reader's head and hands — is xr.co's; here
+--- is what the drawing itself needs of it: its panels' matrices and shown
+--- parts for the shader, and a ray met with them)
+
+--- a page folded into flat panels standing around the reader: `cols` of
+--- them side by side (eight at most), each `wide` of the page's pixels
+--- across and `tall` high, a pixel `mm` metres, each panel's middle `away`
+--- metres from where the reader stands and its top `top` metres up; panel
+--- `front` stands ahead (a part of a panel may: 0.5 puts the seam of the
+--- first two ahead), and the whole is turned `turn` radians about the
+--- reader, to the right as it grows. On a screen the room is seen through
+--- one eye `eye` metres up, turned `look` radians to the right and `nod`
+--- up, its view `fov` radians tall.
+---
+--- A panel may be stood anywhere instead (`placed`: a matrix a panel, as
+--- xr.co's `pane` makes one — a window before the reader, a bar under
+--- it, a keyboard near and leaned back; the panels past those given stand
+--- folded as above), and only a part of it shown and met by a ray
+--- (`live`: its left, top, right and foot in the page's pixels a panel —
+--- a tall page seen through a window, scrolled by standing its panel
+--- higher). `dot` is whether Lory marks where the ray meets a panel: a
+--- program that draws its own cursor says not.
+struct Room [cols, wide, tall, mm, away, top, front, turn, eye, look, nod, fov, placed, live, dot]
+
+fn _no_facets[]
+    slice[[[0.0]], 0, 0]
+
+fn _no_room[]
+    Room[0, 0.0, 0.0, 0.002, 1.5, 1.8, 0.0, 0.0, 1.25, 0.0, 0.0, 1.2, _no_facets[], _no_facets[], true]
+
+--- the angle from one panel's middle to the next's, seen from the reader
+fn _fold_angle[r]
+    2.0 * atan[r.wide * r.mm / 2.0 / max[0.01, r.away]]
+
+--- where panel `k` faces from: the angle of its middle, to the right of
+--- straight ahead
+fn _panel_angle[r, k]
+    (0.0 + k - r.front) * _fold_angle[r] + r.turn
+
+--- the matrix of panel `k`: from the page's pixels (x across the whole
+--- page, y down, z out of the panel toward the reader) to the room's
+--- metres
+fn _facet[r, k]
+    if k lt len[r.placed]
+        return r.placed[k]
+    a = _panel_angle[r, k]
+    co = cos[a]
+    si = sin[a]
+    m = r.mm
+    left = (0.0 + k) * r.wide + r.wide / 2.0
+    [m * co, 0.0, m * si, 0.0, 0.0, 0.0 - m, 0.0, 0.0, 0.0 - m * si, 0.0, m * co, 0.0, r.away * si - left * m * co, r.top, 0.0 - r.away * co - left * m * si, 1.0]
+
+--- the part of panel `k` that is shown and met: its left, top, right and
+--- foot, in the page's pixels (the whole of it where none is said)
+fn _shown_part[r, k]
+    if k lt len[r.live]
+        return r.live[k]
+    [(0.0 + k) * r.wide, 0.0, (0.0 + k + 1) * r.wide, r.tall]
+
+--- every panel's shown part, one after another (the page's shader's `pane`)
+fn _panes_text[r]
+    parts = []
+    for k in range[8]
+        w = [0.0, 0.0, 0.0, 0.0]
+        if k lt r.cols
+            w = _shown_part[r, k]
+        for x in w
+            parts = push[parts, str[x]]
+    joined = join[parts, ' ']
+    'f32:`joined`'
+
+--- every panel's matrix, one after another (the page's shader's `fold`)
+fn _facets_text[r]
+    parts = []
+    for k in range[r.cols]
+        for x in _facet[r, k]
+            parts = push[parts, str[x]]
+    joined = join[parts, ' ']
+    'f32:`joined`'
+
+--- where a ray from `o` along `d` meets the room's panels, in the page's
+--- pixels, or (-1, -1) where it meets none: the nearest panel it strikes
+--- from the reader's side
+fn _room_hit[r, o, d]
+    best = [-1.0, -1.0]
+    near = -1.0
+    for k in range[r.cols]
+        f = _facet[r, k]
+        --- (the way the panel faces: a ray meets it from the reader's side)
+        facing = d[0] * f[8] + d[1] * f[9] + d[2] * f[10]
+        if facing lt -0.000000001
+            t = ((f[12] - o[0]) * f[8] + (f[13] - o[1]) * f[9] + (f[14] - o[2]) * f[10]) / facing
+            if t gt 0.0 and (near lt 0.0 or t lt near)
+                hx = o[0] + t * d[0] - f[12]
+                hy = o[1] + t * d[1] - f[13]
+                hz = o[2] + t * d[2] - f[14]
+                x = (hx * f[0] + hy * f[1] + hz * f[2]) / (f[0] * f[0] + f[1] * f[1] + f[2] * f[2])
+                y = (hx * f[4] + hy * f[5] + hz * f[6]) / (f[4] * f[4] + f[5] * f[5] + f[6] * f[6])
+                w = _shown_part[r, k]
+                if x gte w[0] and x lte w[2] and y gte w[1] and y lte w[3]
+                    near = t
+                    best = [x, y]
+    best
 
 --- what happened since the last frame (`Ev`s, in order)
 fn events[c]
@@ -344,26 +538,16 @@ fn dt[c]
 fn held_key[c, code]
     code in c.held.pressing
 
---- a headset controller's thumbstick, by hand (`left`, `right`): its
---- sideways and forward push, each -1 to 1 (none: 0, 0)
-fn stick[c, hand]
-    for ctl in c.frame.controllers
-        if '`ctl.hand`' eq hand
-            axes = _numbers[ctl.axes]
-            if len[axes] gte 4
-                return [axes[2], axes[3]]
-            if len[axes] gte 2
-                return [axes[0], axes[1]]
-    [0.0, 0.0]
-
---- whether the frame is drawn in a headset
-fn in_headset[c]
-    c.xr
-
 --- the colour the frame starts from
 fn clear[c, color]
     c.clear = color
     c
+
+--- whether the room is seen where the frame draws nothing: in a headset
+--- that shows the room through the drawing (entered by the page's Enter AR
+--- or the program's `@ar`), where the frame is cleared to nothing
+fn seen_through[c]
+    c.blend ne 'opaque'
 
 --- ---- shapes ----
 
@@ -623,23 +807,22 @@ fn _glyph[held, ch]
     held.glyphs['?']
 
 --- how wide the text is at `size` pixels
+--- (the atlas read where it is held: a copy of it is its every glyph)
 fn measure[c, words, size]
-    held = c.held
-    if held.size eq 0.0
+    if c.held.size eq 0.0
         return len[words] * size * 0.55
-    scale = size / held.size
+    scale = size / c.held.size
     w = 0.0
     for ch in split[words, '']
-        g = _glyph[held, ch]
+        g = _glyph[c.held, ch]
         w = w + g[4] * scale
     w
 
 --- the height of a line of text at `size` pixels
 fn line_height[c, size]
-    held = c.held
-    if held.size eq 0.0
+    if c.held.size eq 0.0
         return size * 1.25
-    (held.ascent + held.descent) * size / held.size
+    (c.held.ascent + c.held.descent) * size / c.held.size
 
 --- the characters of `words` the atlas lacks
 fn _lacking[held, words]
@@ -653,39 +836,92 @@ fn _lacking[held, words]
 
 --- the text drawn with its line's top left at (x, y), `size` pixels high
 fn text[c, x, y, words, size, color]
-    held = c.held
-    lacking = _lacking[held, words]
+    lacking = _lacking[c.held, words]
     if lacking ne ''
         c.missing = '`c.missing``lacking`'
-    if held.size eq 0.0
+    if c.held.size eq 0.0
         return c
-    scale = size / held.size
+    --- (the atlas read where it is held, not copied: a copy is its every
+    --- glyph, and words are laid many times a frame)
+    scale = size / c.held.size
+    pad = c.held.pad
+    aw = c.held.aw
+    ah = c.held.ah
     --- (the field's edge is half a unit; a screen pixel is 1 / scale of an
     --- atlas pixel, and the field falls by 1 / (2 spread) per atlas pixel)
-    soft = 1.0 / (2.0 * held.spread * scale)
-    top = y - held.pad * scale
+    soft = 1.0 / (2.0 * c.held.spread * scale)
+    top = y - pad * scale
     pen = x
     vs = c.verts
     for ch in split[words, '']
-        g = _glyph[held, ch]
+        g = _glyph[c.held, ch]
         if ch ne ' '
-            x0 = pen - held.pad * scale
-            u0 = g[0] / held.aw
-            v0 = g[1] / held.ah
-            u1 = (g[0] + g[2]) / held.aw
-            v1 = (g[1] + g[3]) / held.ah
+            x0 = pen - pad * scale
+            u0 = g[0] / aw
+            v0 = g[1] / ah
+            u1 = (g[0] + g[2]) / aw
+            v1 = (g[1] + g[3]) / ah
             vs = _quad[vs, x0, top, x0 + g[2] * scale, top + g[3] * scale, u0, v0, u1, v1, color, 3.0, soft, 0.0, 0.0, c.clip]
         pen = pen + g[4] * scale
     c.verts = vs
     c
 
 --- the text drawn with its line centred on (x, y)
+--- (measured first: the canvas then given whole to `text`, not copied)
 fn text_centered[c, x, y, words, size, color]
-    text[c, x - measure[c, words, size] / 2.0, y - line_height[c, size] / 2.0, words, size, color]
+    wide = measure[c, words, size]
+    tall = line_height[c, size]
+    text[c, x - wide / 2.0, y - tall / 2.0, words, size, color]
 
 --- the text drawn with its line's top right at (x, y)
 fn text_right[c, x, y, words, size, color]
-    text[c, x - measure[c, words, size], y, words, size, color]
+    wide = measure[c, words, size]
+    text[c, x - wide, y, words, size, color]
+
+--- ---- words laid once ----
+
+--- words as they were last laid: what they were laid from, and the
+--- vertices they came to. Laying words is the dearest thing a frame of a
+--- headset may do (a hundred labels are its whole time), and words change
+--- when what they say or where they stand does: they are laid once, and
+--- their vertices put into each frame after as they are
+struct Laid [from, verts]
+
+--- what the letters are drawn from now: the atlas's characters and its
+--- size (words laid from an older atlas are laid again)
+fn lettering[c]
+    '`len[c.held.chars]`|`c.held.aw`|`c.held.ah`'
+
+--- the kept vertices of the words of that name, where they were laid from
+--- the same words (`whole`); none where they must be laid
+fn kept_words[name, whole]
+    kept = recall['lory.words.`name`', Laid['', slice[[0.0], 0, 0]]]
+    if kept.from eq whole
+        return kept.verts
+    slice[[0.0], 0, 0]
+
+--- vertices kept put into a frame's
+fn put_words[verts, more]
+    for x in more
+        verts = push[verts, x]
+    verts
+
+--- the words laid from vertex `before` on kept under a name (where every
+--- letter was in the atlas: `lacking`, the letters missing before them).
+--- So a drawing lays its words once, and puts them back after:
+---
+---     had = lory.kept_words[name, whole]
+---     if len[had] gt 0
+---         c.verts = lory.put_words[c.verts, had]
+---     else
+---         before = len[c.verts]
+---         lacking = c.missing
+---         c = lory.text[c, …]
+---         c = lory.keep_words[c, name, whole, before, lacking]
+fn keep_words[c, name, whole, before, lacking]
+    if c.missing eq lacking and len[c.verts] gt before
+        remember['lory.words.`name`', Laid[whole, slice[c.verts, before, len[c.verts]]]]
+    c
 
 --- ---- matrices: 16 numbers, column by column, as WebGL takes them ----
 
@@ -721,7 +957,8 @@ fn _numbers[j]
     out
 
 --- in a headset, the frame's drawing is a panel in front of the reader:
---- `c.panel` metres wide, its top 1.8 m above the floor, 1.5 m away
+--- `c.panel` metres wide (the page's own width across it: `begin`), its
+--- top 1.8 m above the floor, 1.5 m away
 fn _panel[c]
     w = c.panel
     scale = w / c.width
@@ -737,18 +974,28 @@ layout(location = 2) in vec4 color;
 layout(location = 3) in vec4 mode;
 layout(location = 4) in vec4 clip;
 uniform mat4 matrix;
+uniform mat4 fold[8];
+uniform vec2 folded;
 out vec2 v_uv;
 out vec4 v_color;
 out vec4 v_mode;
 out vec4 v_clip;
 out vec2 v_at;
+flat out int v_k;
 void main() {
   v_uv = uv;
   v_color = color;
   v_mode = mode;
   v_clip = clip;
   v_at = at;
-  gl_Position = matrix * vec4(at, 0.0, 1.0);
+  v_k = 0;
+  if (folded.x > 0.0) {
+    int k = int(clamp(floor(at.x / folded.x), 0.0, folded.y - 1.0));
+    v_k = k;
+    gl_Position = matrix * (fold[k] * vec4(at, 1.0, 1.0));
+  } else {
+    gl_Position = matrix * vec4(at, 0.0, 1.0);
+  }
 }'
     fs = '#version 300 es
 precision highp float;
@@ -757,8 +1004,11 @@ in vec4 v_color;
 in vec4 v_mode;
 in vec4 v_clip;
 in vec2 v_at;
+flat in int v_k;
 uniform sampler2D atlas;
 uniform sampler2D image;
+uniform vec4 pane[8];
+uniform vec2 folded;
 out vec4 out_color;
 float box(vec2 p, vec2 half_size, float r) {
   vec2 q = abs(p) - half_size + r;
@@ -766,6 +1016,10 @@ float box(vec2 p, vec2 half_size, float r) {
 }
 void main() {
   if (v_at.x < v_clip.x || v_at.y < v_clip.y || v_at.x > v_clip.z || v_at.y > v_clip.w) discard;
+  if (folded.x > 0.0) {
+    vec4 w = pane[v_k];
+    if (v_at.x < w.x || v_at.y < w.y || v_at.x > w.z || v_at.y > w.w) discard;
+  }
   float mode = v_mode.x;
   float a = 1.0;
   if (mode > 4.5 && mode < 5.5) {
@@ -798,7 +1052,7 @@ fn _setup[calls]
     vs = shaders[0]
     fs = shaders[1]
     stride = str[floats[] * 4]
-    more = [[_id[_vertex_shader_id[]], 'createShader', 'VERTEX_SHADER'], ['shaderSource', _id[_vertex_shader_id[]], '=`vs`'], ['compileShader', _id[_vertex_shader_id[]]], [_id[_fragment_shader_id[]], 'createShader', 'FRAGMENT_SHADER'], ['shaderSource', _id[_fragment_shader_id[]], '=`fs`'], ['compileShader', _id[_fragment_shader_id[]]], [_id[_program_id[]], 'createProgram'], ['attachShader', _id[_program_id[]], _id[_vertex_shader_id[]]], ['attachShader', _id[_program_id[]], _id[_fragment_shader_id[]]], ['linkProgram', _id[_program_id[]]], [_id[_matrix_id[]], 'getUniformLocation', _id[_program_id[]], '=matrix'], [_id[_atlas_unit_id[]], 'getUniformLocation', _id[_program_id[]], '=atlas'], [_id[_image_unit_id[]], 'getUniformLocation', _id[_program_id[]], '=image'], [_id[_array_id[]], 'createVertexArray'], ['bindVertexArray', _id[_array_id[]]], [_id[_buffer_id[]], 'createBuffer'], ['bindBuffer', 'ARRAY_BUFFER', _id[_buffer_id[]]], ['enableVertexAttribArray', '0'], ['vertexAttribPointer', '0', '2', 'FLOAT', 'false', stride, '0'], ['enableVertexAttribArray', '1'], ['vertexAttribPointer', '1', '2', 'FLOAT', 'false', stride, '8'], ['enableVertexAttribArray', '2'], ['vertexAttribPointer', '2', '4', 'FLOAT', 'false', stride, '16'], ['enableVertexAttribArray', '3'], ['vertexAttribPointer', '3', '4', 'FLOAT', 'false', stride, '32'], ['enableVertexAttribArray', '4'], ['vertexAttribPointer', '4', '4', 'FLOAT', 'false', stride, '48'], ['bindVertexArray', 'null']]
+    more = [[_id[_vertex_shader_id[]], 'createShader', 'VERTEX_SHADER'], ['shaderSource', _id[_vertex_shader_id[]], '=`vs`'], ['compileShader', _id[_vertex_shader_id[]]], [_id[_fragment_shader_id[]], 'createShader', 'FRAGMENT_SHADER'], ['shaderSource', _id[_fragment_shader_id[]], '=`fs`'], ['compileShader', _id[_fragment_shader_id[]]], [_id[_program_id[]], 'createProgram'], ['attachShader', _id[_program_id[]], _id[_vertex_shader_id[]]], ['attachShader', _id[_program_id[]], _id[_fragment_shader_id[]]], ['linkProgram', _id[_program_id[]]], [_id[_matrix_id[]], 'getUniformLocation', _id[_program_id[]], '=matrix'], [_id[_atlas_unit_id[]], 'getUniformLocation', _id[_program_id[]], '=atlas'], [_id[_image_unit_id[]], 'getUniformLocation', _id[_program_id[]], '=image'], [_id[_fold_id[]], 'getUniformLocation', _id[_program_id[]], '=fold'], [_id[_folded_id[]], 'getUniformLocation', _id[_program_id[]], '=folded'], [_id[_pane_id[]], 'getUniformLocation', _id[_program_id[]], '=pane'], [_id[_array_id[]], 'createVertexArray'], ['bindVertexArray', _id[_array_id[]]], [_id[_buffer_id[]], 'createBuffer'], ['bindBuffer', 'ARRAY_BUFFER', _id[_buffer_id[]]], ['enableVertexAttribArray', '0'], ['vertexAttribPointer', '0', '2', 'FLOAT', 'false', stride, '0'], ['enableVertexAttribArray', '1'], ['vertexAttribPointer', '1', '2', 'FLOAT', 'false', stride, '8'], ['enableVertexAttribArray', '2'], ['vertexAttribPointer', '2', '4', 'FLOAT', 'false', stride, '16'], ['enableVertexAttribArray', '3'], ['vertexAttribPointer', '3', '4', 'FLOAT', 'false', stride, '32'], ['enableVertexAttribArray', '4'], ['vertexAttribPointer', '4', '4', 'FLOAT', 'false', stride, '48'], ['bindVertexArray', 'null']]
     for m in more
         calls = push[calls, m]
     calls
@@ -837,17 +1091,22 @@ fn _deep[calls, c, v]
     if framed
         todo = push[todo, ['disable', 'SCISSOR_TEST']]
         todo = push[todo, ['viewport', str[0.0 + v.x], str[0.0 + v.y], str[0.0 + v.width], str[0.0 + v.height]]]
+    --- (a call that names neither is given as it is: copied word by word for
+    --- each eye, a scene of many charts cost a tenth of a headset's frame)
     for d in todo
-        out = []
-        for a in d
-            if a eq '@eye'
-                out = push[out, eye_text]
-            else
-                if a eq '@eyepos'
-                    out = push[out, at_text]
+        if '@eye' in d or '@eyepos' in d
+            out = []
+            for a in d
+                if a eq '@eye'
+                    out = push[out, eye_text]
                 else
-                    out = push[out, a]
-        calls = push[calls, out]
+                    if a eq '@eyepos'
+                        out = push[out, at_text]
+                    else
+                        out = push[out, a]
+            calls = push[calls, out]
+        else
+            calls = push[calls, d]
     calls = push[calls, ['enable', 'BLEND']]
     calls = push[calls, ['useProgram', _id[_program_id[]]]]
     calls = push[calls, ['bindVertexArray', _id[_array_id[]]]]
@@ -882,12 +1141,22 @@ fn _draws[calls, firsts, images, n]
 --- a frame's calls, and what Lory holds after them
 struct Made [calls, held]
 
+--- the vertices the page's buffer holds: the last frame's that were sent
+struct Sent [verts]
+
+fn _none_sent[]
+    out = []
+    for i in range[0]
+        out = push[out, 0.0]
+    Sent[out]
+
 --- the frame's calls: Lory's objects the first time, the atlas when it is
 --- missing characters, the vertices, and a draw per view
 fn _made[c]
     held = c.held
     calls = []
-    if not held.made
+    fresh = not held.made
+    if fresh
         calls = _setup[calls]
         held.made = true
     if c.missing ne ''
@@ -901,15 +1170,19 @@ fn _made[c]
     for a in c.asks
         calls = push[calls, a]
     --- (in a headset, where the ray meets the panel is shown)
-    if c.xr and c.there
+    if c.xr and c.there and (c.room.cols lt 1 or c.room.dot)
         c.clip = _unclipped[]
         c = circle[c, c.px, c.py, 6.0, Color[1.0, 1.0, 1.0, 0.9]]
         c = ring[c, c.px, c.py, 9.0, 2.0, Color[0.2, 0.55, 1.0, 0.9]]
     n = len[c.verts] / floats[]
     calls = push[calls, ['bindBuffer', 'ARRAY_BUFFER', _id[_buffer_id[]]]]
-    if n gt 0
+    --- (vertices the same as the last frame's are not sent again: the page's
+    --- buffer holds them. Packed, sent and read back, they had been an
+    --- eighth of a headset's frame, and most frames draw what the last did)
+    if n gt 0 and (fresh or c.verts ne recall['lory.sent', _none_sent[]].verts)
         packed = sys.base64[sys.float_bytes[c.verts, 4, true]]
         calls = push[calls, ['bufferData', 'ARRAY_BUFFER', 'base64f32:`packed`', 'DYNAMIC_DRAW']]
+        remember['lory.sent', Sent[c.verts]]
     --- (what is drawn once a frame before its views — a shadow's depth —
     --- into a target of its own, the frame's put back after)
     if len[c.early] gt 0
@@ -924,12 +1197,24 @@ fn _made[c]
         calls = push[calls, ['bindTexture', 'TEXTURE_2D', _id[_atlas_id[]]]]
     calls = push[calls, ['uniform1i', _id[_atlas_unit_id[]], '0']]
     calls = push[calls, ['uniform1i', _id[_image_unit_id[]], '1']]
+    --- (a room's page is folded onto its panels by the shader)
+    r = c.room
+    if r.cols gt 0
+        calls = push[calls, ['uniformMatrix4fv', _id[_fold_id[]], 'false', _facets_text[r]]]
+        calls = push[calls, ['uniform2f', _id[_folded_id[]], str[r.wide], str[0.0 + r.cols]]]
+        calls = push[calls, ['uniform4fv', _id[_pane_id[]], _panes_text[r]]]
+    else
+        calls = push[calls, ['uniform2f', _id[_folded_id[]], '0', '0']]
     calls = push[calls, ['bindVertexArray', _id[_array_id[]]]]
     k = c.clear
     cleared = false
     for v in c.frame.views
         calls = push[calls, ['viewport', str[0.0 + v.x], str[0.0 + v.y], str[0.0 + v.width], str[0.0 + v.height]]]
         if not cleared
+            --- (where the room is seen through the drawing, the frame is
+            --- cleared to nothing: the colour asked would hide the room)
+            if seen_through[c]
+                k = Color[0.0, 0.0, 0.0, 0.0]
             calls = push[calls, ['clearColor', str[k.r], str[k.g], str[k.b], str[k.a]]]
             --- (COLOR_BUFFER_BIT and DEPTH_BUFFER_BIT)
             calls = push[calls, ['clear', '16640']]
@@ -939,8 +1224,18 @@ fn _made[c]
         m = _pixels[c.width, c.height]
         if c.xr
             m = mul[mul[_numbers[v.projection], _numbers[v.camera]], _panel[c]]
+            if r.cols gt 0
+                m = mul[_numbers[v.projection], _numbers[v.camera]]
+                --- (what stands out of the panels hides the page behind it:
+                --- the page is drawn against the scene's depth, writing none)
+                calls = push[calls, ['enable', 'DEPTH_TEST']]
+                calls = push[calls, ['depthFunc', 'LEQUAL']]
+                calls = push[calls, ['depthMask', 'false']]
         calls = push[calls, ['uniformMatrix4fv', _id[_matrix_id[]], 'false', _matrix_text[m]]]
         calls = _draws[calls, c.seg_at, c.seg_image, n]
+        if c.xr and r.cols gt 0
+            calls = push[calls, ['depthMask', 'true']]
+            calls = push[calls, ['disable', 'DEPTH_TEST']]
     calls = push[calls, ['bindVertexArray', 'null']]
     Made[calls, held]
 
@@ -955,3 +1250,80 @@ fn end[c]
     sys.paint[encode[made.calls]]
     remember['lory', made.held]
     len[made.calls]
+
+--- ---- tests ----
+
+fn _a_frame[]
+    begin[json['{"t": 0, "width": 400, "height": 300, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 400, "height": 300, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+
+fn _a_headset_frame[behind]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    begin[json['{"t": 0, "width": 400, "height": 300, "ratio": 1, "xr": true, "blend": "`behind`", "views": [{"eye": "left", "x": 0, "y": 0, "width": 400, "height": 300, "projection": `unit`, "camera": `unit`}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+
+fn _cleared[calls]
+    for call in calls
+        if call[0] eq 'clearColor'
+            return call
+    ['none']
+
+fn _a_stick_frame[t, forward]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    begin[json['{"t": `t`, "width": 400, "height": 300, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 400, "height": 300, "projection": `unit`, "camera": `unit`}], "input": [], "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0.05, `forward`]}], "said": []}']]
+
+fn _wheels[c]
+    out = []
+    for ev in c.events
+        if ev.on eq 'wheel'
+            out = push[out, [ev.x, ev.y, ev.dx, ev.dy]]
+    out
+
+--- in a headset a thumbstick pushed is a wheel turned where the ray meets
+--- the panel, as far as the frame's time and the push say: pushed away,
+--- up the page; a stick at rest (within its wander) turns nothing
+test a_thumbstick_pushed_turns_what_the_ray_rests_on[]
+    --- (a frame's time step is from the last frame ended)
+    drawn = end[_a_stick_frame[1000, 0]]
+    drawn gt 0
+    pushed = _a_stick_frame[1050, -1]
+    back = _a_stick_frame[1100, 0.5]
+    rested = _a_stick_frame[1150, 0.1]
+    turned = _wheels[pushed]
+    abs[pushed.dt - 0.05] lt 0.000001
+    len[turned] eq 1
+    turned[0][0] eq pushed.px and turned[0][1] eq pushed.py
+    turned[0][2] eq 0.0
+    abs[turned[0][3] + pushed.dt * _stick_speed[]] lt 0.001
+    abs[_wheels[back][0][3] - 0.5 * back.dt * _stick_speed[]] lt 0.001
+    len[_wheels[rested]] eq 0
+    len[_wheels[_a_frame[]]] eq 0
+
+--- in a headset that shows the room through the drawing, the frame is
+--- cleared to nothing, so the room is seen where nothing is drawn; in a
+--- headset's own world and on a screen (whose page may say nothing of
+--- it), to the colour asked
+test a_headset_showing_the_room_is_cleared_to_nothing[]
+    seen = clear[_a_headset_frame['alpha-blend'], Color[0.1, 0.2, 0.3, 1.0]]
+    own = clear[_a_headset_frame['opaque'], Color[0.1, 0.2, 0.3, 1.0]]
+    seen_through[seen]
+    seen_through[_a_headset_frame['additive']]
+    not seen_through[own]
+    not seen_through[_a_frame[]]
+    _cleared[batch[seen]] eq ['clearColor', str[0.0], str[0.0], str[0.0], str[0.0]]
+    _cleared[batch[own]] eq ['clearColor', str[0.1], str[0.2], str[0.3], str[1.0]]
+    _cleared[batch[clear[_a_frame[], Color[0.1, 0.2, 0.3, 1.0]]]] eq ['clearColor', str[0.1], str[0.2], str[0.3], str[1.0]]
+
+--- words laid are kept by what they were laid from, and put into a later
+--- frame as the vertices they came to; words laid from something else are
+--- not the kept ones, and words with a letter the atlas lacked are not kept
+test words_laid_are_kept_and_put_back[]
+    c = rect[_a_frame[], 0.0, 0.0, 10.0, 10.0, white[]]
+    drawn = len[c.verts]
+    drawn gt 0
+    c = keep_words[c, 'try', 'from these', 0, c.missing]
+    len[kept_words['try', 'from these']] eq drawn
+    len[kept_words['try', 'from others']] eq 0
+    next_frame = _a_frame[]
+    next_frame.verts = put_words[next_frame.verts, kept_words['try', 'from these']]
+    next_frame.verts eq c.verts
+    lacked = keep_words[c, 'short', 'from these', 0, 'a letter missing before']
+    len[kept_words['short', 'from these']] eq 0

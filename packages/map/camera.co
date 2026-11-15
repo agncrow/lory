@@ -1,0 +1,300 @@
+--- How a map's view moves: a flight from one view to another along the
+--- path that zooms out and in again, a zoom about the pointer (the wheel,
+--- a double click, a pinch), the throw a drag lets go with, a view held
+--- inside a box of places, and the easings a move is drawn with.
+---
+--- Each is Leaflet's (1.9.4) behaviour, written anew and held to what
+--- Leaflet answers (tests/map/reference.json): its flyTo (van Wijk and
+--- Nuij's smooth path, ρ = 1.42), its wheel's zoom for so many pixels
+--- turned, its double click, its drag's inertia, its maxBounds. Its
+--- easings are Lory's (`lory.motion`): a power eased out, as Leaflet
+--- eases a pan, a throw and a flight's path, and CSS's cubic-bezier(), as
+--- a browser draws Leaflet's zoom.
+use math
+use lory.motion
+use geo
+
+--- where a view stands at a moment of a move: its middle, its zoom, and
+--- whether the move is over
+struct Spot [lat, lng, zoom, done]
+
+--- a flight (Leaflet's flyTo): the view it starts from and the one it
+--- ends at, where both middles fall on the world's picture at the
+--- starting zoom, the view's longer side (`w0`) and that side at the end
+--- in the starting zoom's pixels (`w1`), the distance flown in those
+--- pixels (`u1`), the path's start (`r0`) and its length (`s`) in the
+--- path's own measure, and how long it takes, in milliseconds
+struct Flight [lat0, lng0, zoom0, lat1, lng1, zoom1, from_x, from_y, to_x, to_y, w0, w1, u1, r0, s, duration]
+
+--- a throw: how far the view's middle goes on after a drag is let go
+--- (the opposite way to the picture's throw), in CSS pixels, and in how
+--- many seconds (none where the drag had stopped)
+struct Throw [dx, dy, seconds]
+
+--- ---- a flight ----
+
+--- how much a flight zooms out against how far it flies (ρ: higher
+--- zooms out further)
+fn _rho[]
+    1.42
+
+fn _sinh[n]
+    (exp[n] - exp[0.0 - n]) / 2.0
+
+fn _cosh[n]
+    (exp[n] + exp[0.0 - n]) / 2.0
+
+fn _tanh[n]
+    _sinh[n] / _cosh[n]
+
+--- the path's measure at its start (`back` false) or its end (true)
+fn _path_end[back, w0, w1, u1]
+    rho2 = _rho[] * _rho[]
+    s1 = 1.0
+    s2 = w0
+    if back
+        s1 = -1.0
+        s2 = w1
+    t1 = w1 * w1 - w0 * w0 + s1 * rho2 * rho2 * u1 * u1
+    b1 = 2.0 * s2 * rho2 * u1
+    b = t1 / b1
+    sq = sqrt[b * b + 1.0] - b
+    if sq lt 0.000000001
+        return -18.0
+    ln[sq]
+
+--- the flight from the view `v` to a place at a zoom, taking `seconds`
+--- (0: as long as its path is, 0.8 s for each unit of it)
+fn flight[v, lat, lng, zoom, seconds]
+    from = geo.project[v.lat, v.lng, v.zoom]
+    to = geo.project[lat, lng, v.zoom]
+    w0 = max[v.w, v.h]
+    w1 = w0 * geo.zoom_scale[v.zoom, zoom]
+    dx = from.x - to.x
+    dy = from.y - to.y
+    u1 = sqrt[dx * dx + dy * dy]
+    if u1 eq 0.0
+        u1 = 1.0
+    r0 = _path_end[false, w0, w1, u1]
+    s = (_path_end[true, w0, w1, u1] - r0) / _rho[]
+    duration = 1000.0 * s * 0.8
+    if seconds gt 0.0
+        duration = 1000.0 * seconds
+    Flight[v.lat, v.lng, v.zoom, lat, lng, zoom, from.x, from.y, to.x, to.y, w0, w1, u1, r0, s, duration]
+
+--- where a flight stands `elapsed` milliseconds after it began: on its
+--- path while that is no longer than the flight, and at its end after
+fn flight_at[f, elapsed]
+    t = elapsed / f.duration
+    if not (t lte 1.0)
+        return Spot[f.lat1, f.lng1, f.zoom1, true]
+    rho = _rho[]
+    rho2 = rho * rho
+    s = ease_out[t, 1.5] * f.s
+    ws = f.w0 * (_cosh[f.r0] / _cosh[f.r0 + rho * s])
+    us = f.w0 * (_cosh[f.r0] * _tanh[f.r0 + rho * s] - _sinh[f.r0]) / rho2
+    k = us / f.u1
+    p = geo.unproject[f.from_x + (f.to_x - f.from_x) * k, f.from_y + (f.to_y - f.from_y) * k, f.zoom0]
+    Spot[p.lat, p.lng, geo.scale_zoom[f.w0 / ws, f.zoom0], false]
+
+--- ---- zooming about a point ----
+
+--- the middle a view takes when it zooms to `zoom` keeping the place
+--- under the point (x, y) of the view where it is (Leaflet's
+--- setZoomAround)
+fn zoom_around[v, x, y, zoom]
+    scale = geo.zoom_scale[zoom, v.zoom]
+    hx = v.w / 2.0
+    hy = v.h / 2.0
+    k = 1.0 - 1.0 / scale
+    geo.place_at[v, hx + (x - hx) * k, hy + (y - hy) * k]
+
+--- how far the wheel zooms a view at `zoom` for `delta` pixels turned
+--- (up, away from the reader, is more than 0: in), on multiples of
+--- `snap` and inside the zooms allowed, `per_level` pixels a zoom level
+--- (0 where it does not zoom at all)
+fn wheel_step[delta, zoom, snap, lowest, highest, per_level]
+    d2 = delta / (per_level * 4.0)
+    d3 = 4.0 * ln[2.0 / (1.0 + exp[0.0 - abs[d2]])] / 0.6931471805599453
+    d4 = d3
+    if snap gt 0.0
+        d4 = geo.js_ceil[d3 / snap] * snap
+    step = 0.0 - d4
+    if delta gt 0.0
+        step = d4
+    geo.limit_zoom[zoom + step, snap, lowest, highest] - zoom
+
+--- the zoom a pinch has come to: the starting zoom grown by how much
+--- farther apart the two fingers are than when they met the map
+fn pinch_zoom[apart, apart_at_start, zoom_at_start]
+    geo.scale_zoom[apart / apart_at_start, zoom_at_start]
+
+--- ---- a throw ----
+
+--- the throw a drag lets go with at `let_go` (milliseconds), from the
+--- pointer's places and times while it moved: those of the last 50
+--- milliseconds give its speed, which slows by `deceleration` pixels a
+--- second each second (Leaflet's inertia, its easeLinearity `ease`)
+fn throw_of[xs, ys, times, let_go, ease = 0.2, deceleration = 3400.0, fastest = -1.0]
+    n = len[times]
+    if n lt 2
+        return Throw[0.0, 0.0, 0.0]
+    first = 0
+    while n - first gt 1 and let_go - times[first] gt 50.0
+        first = first + 1
+    seconds = (times[n - 1] - times[first]) / 1000.0
+    sx = (xs[n - 1] - xs[first]) * (ease / seconds)
+    sy = (ys[n - 1] - ys[first]) * (ease / seconds)
+    ax = 0.0 - sx
+    ay = 0.0 - sy
+    speed = sqrt[ax * ax + ay * ay]
+    limited = speed
+    if fastest gte 0.0
+        limited = min[fastest, speed]
+    lx = sx * (limited / speed)
+    ly = sy * (limited / speed)
+    slowing = limited / (deceleration * ease)
+    ox = geo.js_round[lx * ((0.0 - slowing) / 2.0)]
+    oy = geo.js_round[ly * ((0.0 - slowing) / 2.0)]
+    if ox ne ox or oy ne oy or (ox eq 0.0 and oy eq 0.0)
+        return Throw[0.0, 0.0, 0.0]
+    Throw[ox, oy, slowing]
+
+--- ---- a view held inside a box ----
+
+--- how far a range must move to sit inside another: by half their
+--- difference where it is larger, else by what it overhangs (Leaflet's
+--- _rebound)
+fn _rebound[left, right]
+    if left + right gt 0.0
+        return geo.js_round[left - right] / 2.0
+    max[0.0, geo.js_ceil[left]] - max[0.0, geo.js_floor[right]]
+
+--- the middle a view of `w` by `h` CSS pixels at a zoom takes so that
+--- it shows nothing outside the box of places (where the box is smaller
+--- than the view, the box's middle; Leaflet's maxBounds)
+fn held_inside[lat, lng, zoom, w, h, b]
+    p = geo.project[lat, lng, zoom]
+    hx = w / 2.0
+    hy = h / 2.0
+    ne_point = geo.project[b.north, b.east, zoom]
+    sw_point = geo.project[b.south, b.west, zoom]
+    min_x = min[ne_point.x, sw_point.x]
+    min_y = min[ne_point.y, sw_point.y]
+    max_x = max[ne_point.x, sw_point.x]
+    max_y = max[ne_point.y, sw_point.y]
+    dx = _rebound[min_x - (p.x - hx), 0.0 - (max_x - (p.x + hx))]
+    dy = _rebound[min_y - (p.y - hy), 0.0 - (max_y - (p.y + hy))]
+    if abs[dx] lte 1.0 and abs[dy] lte 1.0
+        return geo.Place[lat, lng]
+    geo.unproject[p.x + dx, p.y + dy, zoom]
+
+--- ---- easings ----
+
+--- how far a move eased out is at `t` of its time (0 to 1): fast at the
+--- start, slow at the end, the harder the larger `power` (a pan's: 2; a
+--- throw's: 5; a flight's way along its path: 1.5), as Leaflet eases
+--- them: `out(power)` of Lory's motion, 1 - (1 - t) ^ power
+fn ease_out[t, power]
+    if t gte 1.0
+        return 1.0
+    motion.eased[motion.ease['out(`power`)'], max[0.0, t]]
+
+--- a cubic Bézier easing through (0, 0), (x1, y1), (x2, y2), (1, 1) at
+--- `t` of its time, as CSS's cubic-bezier() is (a zoom's is (0, 0, 0.25,
+--- 1), over a quarter of a second): Lory's motion's
+fn bezier[t, x1, y1, x2, y2]
+    if t lte 0.0
+        return 0.0
+    if t gte 1.0
+        return 1.0
+    motion.eased[motion.cubic_bezier[x1, y1, x2, y2], t]
+
+--- where a zoom animation's view stands at `t` (0 to 1, eased already)
+--- of its way from one view to another: the picture scaled evenly from
+--- the one to the other about the point both keep where it is, as a
+--- browser moves a CSS transform (Leaflet's zoom animation)
+fn zoom_between[lat0, lng0, zoom0, lat1, lng1, zoom1, t]
+    if t gte 1.0
+        return Spot[lat1, lng1, zoom1, true]
+    a = geo.project[lat0, lng0, zoom0]
+    b = geo.project[lat1, lng1, zoom0]
+    s1 = geo.zoom_scale[zoom1, zoom0]
+    s = 1.0 + t * (s1 - 1.0)
+    k = t
+    if abs[s1 - 1.0] gt 0.000000000001
+        k = (1.0 - 1.0 / s) / (1.0 - 1.0 / s1)
+    p = geo.unproject[a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, zoom0]
+    Spot[p.lat, p.lng, zoom0 + ln[s] / 0.6931471805599453, false]
+
+test a_flight_ends_exactly_where_it_was_sent[]
+    v = geo.seen[51.5, -0.1, 10.0, 800.0, 600.0]
+    f = flight[v, 48.85, 2.35, 12.0, 0.0]
+    f.duration gt 1000.0
+    at_end = flight_at[f, f.duration + 1.0]
+    at_end.done
+    at_end.lat eq 48.85
+    at_end.lng eq 2.35
+    at_end.zoom eq 12.0
+    halfway = flight_at[f, f.duration / 2.0]
+    halfway.zoom lt 10.0
+
+test a_flight_of_a_given_length_takes_it[]
+    v = geo.seen[0.0, 0.0, 1.0, 640.0, 480.0]
+    f = flight[v, 20.0, 20.0, 4.0, 2.0]
+    f.duration eq 2000.0
+
+test the_wheel_zooms_a_whole_level_when_zooms_snap[]
+    wheel_step[50.0, 9.0, 1.0, 0.0, 18.0, 60.0] eq 1.0
+    wheel_step[-50.0, 9.0, 1.0, 0.0, 18.0, 60.0] eq -1.0
+    wheel_step[50.0, 18.0, 1.0, 0.0, 18.0, 60.0] eq 0.0
+    small = wheel_step[4.0, 9.0, 0.0, 0.0, 18.0, 60.0]
+    small gt 0.0
+    small lt 0.1
+
+test zooming_about_the_middle_keeps_the_middle_to_its_rounded_pixel[]
+    v = geo.seen[40.0, -74.0, 5.0, 800.0, 600.0]
+    p = zoom_around[v, 400.0, 300.0, 6.0]
+    a = geo.project[p.lat, p.lng, 5.0]
+    b = geo.project[40.0, -74.0, 5.0]
+    abs[a.x - b.x] lte 0.5
+    abs[a.y - b.y] lte 0.5
+
+test a_drag_that_stopped_throws_nothing[]
+    xs = [0.0, 100.0, 100.0, 100.0]
+    ys = [0.0, 0.0, 0.0, 0.0]
+    times = [1000.0, 1030.0, 1060.0, 1090.0]
+    t = throw_of[xs, ys, times, 1130.0]
+    t.seconds eq 0.0
+    moving = throw_of[[0.0, 10.0, 20.0], [0.0, 0.0, 0.0], [1000.0, 1016.0, 1032.0], 1040.0]
+    moving.dx eq -11.0
+
+test a_view_is_held_inside_its_box[]
+    b = geo.Bounds[40.0, -75.0, 41.0, -73.0]
+    p = held_inside[0.0, 0.0, 10.0, 800.0, 600.0, b]
+    p.lat gt 40.0
+    p.lat lt 41.0
+    q = held_inside[40.5, -74.0, 10.0, 800.0, 600.0, b]
+    q.lat eq 40.5
+    q.lng eq -74.0
+
+test easings_start_at_0_and_end_at_1[]
+    ease_out[0.0, 2.0] eq 0.0
+    ease_out[1.0, 5.0] eq 1.0
+    ease_out[0.5, 2.0] eq 0.75
+    bezier[0.0, 0.0, 0.0, 0.25, 1.0] eq 0.0
+    bezier[1.0, 0.0, 0.0, 0.25, 1.0] eq 1.0
+    abs[bezier[0.5, 0.42, 0.0, 0.58, 1.0] - 0.5] lt 0.000001
+    bezier[0.25, 0.0, 0.0, 0.25, 1.0] gt 0.5
+    --- (a power that is no short number is read back the same)
+    ease_out[0.3, 1.0 / 0.3] eq 1.0 - 0.7 ^ (1.0 / 0.3)
+    ease_out[0.3, 1.5] eq 1.0 - (1.0 - 0.3) ^ 1.5
+
+test a_zoom_animation_keeps_the_point_it_zooms_about[]
+    v = geo.seen[0.0, 0.0, 3.0, 800.0, 600.0]
+    to = zoom_around[v, 600.0, 300.0, 4.0]
+    fixed = geo.place_at[v, 600.0, 300.0]
+    mid = zoom_between[0.0, 0.0, 3.0, to.lat, to.lng, 4.0, 0.5]
+    p = geo.project[fixed.lat, fixed.lng, mid.zoom]
+    q = geo.project[mid.lat, mid.lng, mid.zoom]
+    abs[(p.x - q.x) - 200.0] lt 0.000001

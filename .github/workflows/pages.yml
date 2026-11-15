@@ -1,0 +1,67 @@
+# Lory's site, rendered by Crow (site/site.co) and published on GitHub Pages
+# (https://agncrow.github.io/lory/) on every push to main: the catalog and a
+# page for each area of components, the design, and every example built for
+# the web, running.
+#
+# As Crow's own pages workflow does, no step runs a JavaScript action: the
+# commit is fetched with git, Crow is built from its repository's main with
+# the runner's rustup (with the web target), and the rendered site is pushed
+# as the one commit of the `gh-pages` branch, which the repository's Pages
+# serve (Settings → Pages → Deploy from a branch: gh-pages, /).
+name: Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: The repository at this commit
+        run: |
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - name: Rust (the runner's rustup), with the web target
+        run: rustup toolchain install stable --profile minimal -t wasm32-unknown-unknown && rustup default stable
+      # Crow from its main, its home and binary under the runner's temporary
+      # folder (compiled programs link the source snapshot install.sh keeps)
+      - name: Crow, built from its repository's main
+        run: |
+          echo "CROW_HOME=$RUNNER_TEMP/crow-home" >> "$GITHUB_ENV"
+          echo "CARGO_INSTALL_ROOT=$RUNNER_TEMP/cargo" >> "$GITHUB_ENV"
+          export CROW_HOME="$RUNNER_TEMP/crow-home" CARGO_INSTALL_ROOT="$RUNNER_TEMP/cargo"
+          git clone -q --depth 1 https://github.com/agncrow/crow "$RUNNER_TEMP/crow"
+          (cd "$RUNNER_TEMP/crow" && ./install.sh --source --quick)
+          echo "$RUNNER_TEMP/cargo/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/cargo/bin/crow" -v
+      - name: Every example built for the web
+        run: |
+          for dir in examples/*/; do
+            echo "== $dir"
+            (cd "$dir" && crow build --target web main.co) || exit 1
+          done
+      - name: The site
+        run: |
+          crow run -i site/site.co
+          test -f site/out/index.html && test -f site/out/docs/components/README.html
+          n=$(find site/out/examples -name main.wasm | wc -l); echo "$n examples running"; test "$n" -ge 9
+      # the site as the one commit of gh-pages (no history kept: each push
+      # is the whole site), served as it is written (.nojekyll)
+      - name: Publish the site to the gh-pages branch
+        run: |
+          cd site/out
+          touch .nojekyll
+          git init -q
+          git checkout -q -b gh-pages
+          git add -A
+          git -c user.name="lory pages" -c user.email="lory-pages@users.noreply.github.com" commit -q -m "The site at $GITHUB_SHA"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push -q --force "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" gh-pages

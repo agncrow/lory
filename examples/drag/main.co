@@ -1,0 +1,200 @@
+--- Things dragged in Lory (lory.drag): lists reordered and items carried
+--- between them (by a grip, cloned from a palette, swapped, several at
+--- once, in a grid), a control thrown about, a stack of cards swiped away,
+--- rows of mail swiped to their actions, two pictures compared, a picture
+--- pinched and a honeycomb of icons dragged and zoomed. The lists' orders
+--- are the program's: it takes each drag's `end` into them.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.drag
+
+struct App [tab, lists, deck, mail, compare, done]
+
+fn fresh[]
+    lists = map['todo' = ['Write the brief', 'Draw the lists', 'Test the drop', 'Ship it'], 'doing' = ['Read SortableJS'], 'done' = _texts[], 'palette' = ['Red', 'Green', 'Blue'], 'canvas' = ['Ink'], 'board' = ['1', '2', '3', '4', '5', '6', '7', '8', '9'], 'picked' = ['Apples', 'Pears', 'Plums', 'Figs', 'Kiwis']]
+    App['Lists', lists, ['Ace', 'King', 'Queen', 'Jack'], ['From Ada', 'From Grace', 'From Alan'], 0.5, '']
+
+fn _texts[]
+    slice[[''], 0, 0]
+
+--- an item of a list, its words shown
+fn entry[id, words, grip]
+    kids = [gui.label[words]]
+    if grip
+        kids = [drag.grip[], gui.label[words]]
+    gui.item[id, kids]
+
+fn entries[ids, grip]
+    out = slice[[gui.space[0.0]], 0, 0]
+    for id in ids
+        out = push[out, entry[id, id, grip]]
+    out
+
+fn tile[id]
+    n = gui.panel[[gui.label[id], gui.space[24.0]], pad = 10.0]
+    n.id = id
+    n
+
+fn lists_tab[a]
+    l = a.lists
+    todo = drag.animated[drag.grouped[drag.list['todo', entries[l['todo'], false], gap = 4.0, tall = 160.0], 'tasks'], 150.0]
+    doing = drag.animated[drag.grouped[drag.list['doing', entries[l['doing'], false], gap = 4.0, tall = 160.0], 'tasks'], 150.0]
+    done = drag.spilled[drag.animated[drag.grouped[drag.list['done', entries[l['done'], false], gap = 4.0, tall = 160.0], 'tasks'], 150.0], 'remove']
+    palette = drag.unsorted[drag.grouped[drag.list['palette', entries[l['palette'], false], along = 'row', gap = 6.0], 'paint', pull = 'clone', take = 'no']]
+    canvas = drag.handled[drag.animated[drag.grouped[drag.list['canvas', entries[l['canvas'], true], gap = 4.0, tall = 120.0], 'paint'], 150.0]]
+    board = drag.animated[drag.list['board', _tiles[l['board']], along = 'grid', columns = 3, gap = 8.0], 150.0]
+    picked = drag.multiple[drag.animated[drag.list['picked', entries[l['picked'], false], gap = 4.0], 150.0]]
+    tasks = gui.row[[_titled['To do', todo], _titled['Doing', doing], _titled['Done (drop outside to remove)', done]], gap = 16.0]
+    paints = gui.row[[_titled['Palette (cloned)', palette], _titled['Canvas (by the grip)', canvas]], gap = 16.0]
+    gui.column[[tasks, paints, gui.row[[_titled['A grid', gui.sized[gui.column[[board]], 260.0]], _titled['Select several, drag them together', picked]], gap = 16.0]], gap = 16.0]
+
+fn _tiles[ids]
+    out = slice[[gui.space[0.0]], 0, 0]
+    for id in ids
+        out = push[out, tile[id]]
+    out
+
+fn _titled[words, n]
+    gui.sized[gui.column[[gui.label[words], n], gap = 6.0], 240.0]
+
+fn card[id]
+    n = gui.sized[gui.panel[[gui.heading[id], gui.note['Swipe me left or right.'], gui.space[140.0]]], 280.0]
+    n.id = id
+    n
+
+fn cards_tab[a]
+    kids = slice[[gui.space[0.0]], 0, 0]
+    for id in a.deck
+        kids = push[kids, card[id]]
+    deck = drag.cards['deck', kids]
+    if len[a.deck] eq 0
+        deck = gui.button['deal', 'Deal again']
+    mail = slice[[gui.space[0.0]], 0, 0]
+    for id in a.mail
+        row = drag.swiped['mail:`id`', gui.item['body:`id`', [gui.label[id], gui.space[28.0]]], [gui.button['archive:`id`', 'Archive'], gui.button['delete:`id`', 'Delete']]]
+        mail = push[mail, row]
+    gui.row[[gui.sized[gui.column[[gui.label['A stack of cards'], deck], gap = 8.0], 320.0], gui.sized[gui.column[[gui.label['Mail: swipe a row left'], gui.column[mail, gap = 4.0], gui.note['Done: `a.done`']], gap = 8.0], 360.0]], gap = 24.0]
+
+fn free_tab[a]
+    ball = gui.sized[gui.panel[[gui.label['Throw me'], gui.space[30.0]]], 120.0]
+    puck = gui.sized[gui.panel[[gui.label['Back home'], gui.space[30.0]]], 120.0]
+    rail = gui.sized[gui.panel[[gui.label['Along x or y'], gui.space[30.0]]], 120.0]
+    gui.column[[gui.note['Dragged and let go, each goes on at its speed, as Motion throws a drag.'], drag.free['ball', ball, left = -40.0, right = 500.0, top = -20.0, bottom = 160.0], drag.free['puck', puck, snap = true], drag.free['rail', rail, lock = true]], gap = 24.0]
+
+fn look_tab[a]
+    photo = gui.sized[gui.panel[[gui.heading['Pinch me'], gui.note['Two fingers, or Ctrl and the wheel.'], gui.space[160.0]]], 300.0]
+    gui.row[[gui.column[[gui.label['Compare'], drag.reveal['compare', a.compare, 360.0, 220.0, words = 'Before, After']], gap = 8.0], gui.sized[gui.column[[gui.label['Pinch'], drag.pinch['photo', photo, 260.0]], gap = 8.0], 320.0]], gap = 24.0]
+
+fn honey_tab[a]
+    icons = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt 19
+        icons = push[icons, gui.sized[gui.button['app`i`', '`i`'], 56.0]]
+        i = i + 1
+    gui.column[[gui.note['Drag the comb about; Ctrl and the wheel, or two fingers, zoom it.'], drag.honeycomb['home', icons, 520.0, 380.0, size = 56.0], gui.note['Opened: `a.done`']], gap = 12.0]
+
+fn page_of[a]
+    body = lists_tab[a]
+    if a.tab eq 'Cards and rows'
+        body = cards_tab[a]
+    if a.tab eq 'Free'
+        body = free_tab[a]
+    if a.tab eq 'Compare and pinch'
+        body = look_tab[a]
+    if a.tab eq 'Honeycomb'
+        body = honey_tab[a]
+    gui.column[[gui.tabs['tab', ['Lists', 'Cards and rows', 'Free', 'Compare and pinch', 'Honeycomb'], a.tab], body], gap = 16.0]
+
+fn without[xs, x]
+    out = _texts[]
+    for y in xs
+        if y ne x
+            out = push[out, y]
+    out
+
+fn applied[a, e]
+    if e.id eq 'tab'
+        a.tab = e.words
+    if e.id eq 'compare' and e.act eq 'change'
+        a.compare = e.num
+    if e.id eq 'deal'
+        a.deck = fresh[].deck
+    if starts[e.id, 'archive:'] or starts[e.id, 'delete:']
+        a.done = e.id
+    if starts[e.id, 'app'] and e.act eq 'press'
+        a.done = e.id
+    a
+
+fn told[a, t]
+    if t.act eq 'end'
+        a.lists = drag.after[a.lists, t]
+    if t.list eq 'deck' and t.act eq 'gone'
+        a.deck = without[a.deck, t.to]
+    if starts[t.list, 'mail:'] and t.act eq 'gone'
+        a.mail = without[a.mail, slice[t.list, 5, len[t.list]]]
+    if starts[t.list, 'mail:'] and t.act eq 'act'
+        a.done = t.to
+    a
+
+fn draw[frame]
+    a = recall['app', fresh[]]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    shown = drag.show[c, page_of[a]]
+    for e in shown.events
+        a = applied[a, e]
+    for t in shown.told
+        a = told[a, t]
+    remember['app', a]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+fn screen[t, given]
+    json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn pointer[on, x, y]
+    '[{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn frame_of[t, given]
+    c = lory.begin[screen[t, given]]
+    shown = drag.show[c, page_of[recall['app', fresh[]]]]
+    a = recall['app', fresh[]]
+    for e in shown.events
+        a = applied[a, e]
+    for t2 in shown.told
+        a = told[a, t2]
+    remember['app', a]
+    shown
+
+--- a task dragged from To do into Doing lands there, in the program's own
+--- lists
+test a_task_dragged_into_doing_lands_there[]
+    remember['app', fresh[]]
+    first = frame_of[0, '[]']
+    from = first.boxes['Write the brief']
+    to = first.boxes['Read SortableJS']
+    x = from[0] + 40.0
+    y = from[1] + 10.0
+    frame_of[50, pointer['down', x, y]]
+    frame_of[100, pointer['move', x, y + 4.0]]
+    frame_of[150, pointer['move', to[0] + 40.0, to[1] + to[3] - 4.0]]
+    frame_of[200, pointer['move', to[0] + 40.0, to[1] + to[3] - 4.0]]
+    frame_of[250, pointer['up', to[0] + 40.0, to[1] + to[3] - 4.0]]
+    a = recall['app', fresh[]]
+    a.lists['doing'] eq ['Read SortableJS', 'Write the brief']
+    a.lists['todo'] eq ['Draw the lists', 'Test the drop', 'Ship it']
+
+--- each tab draws, its drags in place
+test every_tab_draws[]
+    for tab in ['Lists', 'Cards and rows', 'Free', 'Compare and pinch', 'Honeycomb']
+        a = fresh[]
+        a.tab = tab
+        remember['app', a]
+        shown = frame_of[0, '[]']
+        len[shown.canvas.verts] gt 200
+    shown = frame_of[0, '[]']
+    'home' in shown.boxes
+    'app0' in shown.boxes

@@ -1,0 +1,2 @@
+name = 'lory_charts'
+deps = map[lory = '../../packages/lory', kite = '../../packages/kite']

@@ -1,0 +1,364 @@
+--- A map's tiles: which squares of 256 CSS pixels a view needs at the
+--- whole zoom nearest its own, their addresses from a template, and the
+--- images of them a map keeps — asked of the page once each, faded in
+--- as they come, and a coarser tile already in hand drawn where a finer
+--- one has not come yet.
+---
+--- Which tiles and what they are called is Leaflet's (1.9.4) behaviour
+--- (GridLayer and TileLayer: the tile zoom, the pixel bounds, the range,
+--- longitudes wrapped round the world, `{s}` chosen by the tile), held to
+--- what Leaflet answers in tests/map/reference.json.
+use math
+use lory
+use geo
+
+--- one tile a view needs: its column and row at its zoom as the view
+--- has them (a column past the world's edge where the view goes round
+--- it), its column brought into the world, its key (`x:y:z`, unwrapped,
+--- as Leaflet names it), its address, and where it is drawn: its top
+--- left and size in the view's CSS pixels
+struct Tile [x, y, z, wx, key, url, left, top, size]
+
+--- a layer of tiles: its address with `{z}`, `{x}`, `{y}` (and `{s}`,
+--- one of `subdomains` by the tile, `{r}`, `{-y}`), the words that credit
+--- its makers, the zooms it is shown at, the zooms its server has (a
+--- view zoomed past them scales the nearest), and the first of the page
+--- objects its images are held in (`slots` of them)
+struct Layer [template, subdomains, credit, lowest, highest, native_low, native_high, base, slots]
+
+--- the images a layer has asked for, one a slot: each one's address, its
+--- state (0 empty, 1 asked, 2 come, 3 failed), when it came or was
+--- asked (milliseconds), and when it was last drawn; each address's
+--- slot; the slots asked for in this frame, with whether each held an
+--- image before (whose texture the page lets go); and when tiles were
+--- last asked for, and at which of the layer's zooms
+struct Held [urls, states, since, used, slot_of, fresh, dropped, asked_at, asked_zoom]
+
+--- the layer of tiles at a template, credited to its makers, with
+--- Leaflet's defaults: zooms 0 to 18, subdomains `abc`, images in page
+--- objects 40000 to 40159
+fn layer[template, credit]
+    Layer[template, 'abc', credit, 0.0, 18.0, -1.0, -1.0, 40000, 160]
+
+--- OpenStreetMap's own tiles, credited as its licence asks (zoom 0 to 19)
+fn openstreetmap[]
+    t = layer['https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap contributors']
+    t.highest = 19.0
+    t
+
+--- no images held yet, for `slots` of them
+fn held_none[slots]
+    urls = []
+    states = []
+    since = []
+    used = []
+    for i in range[slots]
+        urls = push[urls, '']
+        states = push[states, 0]
+        since = push[since, 0.0]
+        used = push[used, -1.0]
+    Held[urls, states, since, used, map['' = -1], slice[[0], 0, 0], slice[[false], 0, 0], -1000000.0, -2.0]
+
+--- ---- which tiles ----
+
+--- the whole zoom tiles are drawn at for a view at `zoom`, or -1 where
+--- the layer is not shown at that zoom
+fn tile_zoom[t, zoom]
+    z = geo.js_round[zoom]
+    if z gt t.highest or z lt t.lowest
+        return -1.0
+    if t.native_low gte 0.0 and z lt t.native_low
+        return t.native_low
+    if t.native_high gte 0.0 and t.native_high lt z
+        return t.native_high
+    z
+
+--- the address of a tile: the template filled in for its column (in the
+--- world), row and zoom
+fn address[t, wx, y, z]
+    n = len[t.subdomains]
+    url = t.template
+    if n gt 0
+        i = abs[wx + y] % n
+        url = replace[url, '{s}', slice[t.subdomains, i, i + 1]]
+    last_row = int[geo.world[0.0 + z] / 256.0] - 1
+    url = replace[url, '{x}', '`wx`']
+    url = replace[url, '{y}', '`y`']
+    url = replace[url, '{z}', '`z`']
+    url = replace[url, '{-y}', '`last_row - y`']
+    replace[url, '{r}', '']
+
+--- the tiles a view of a place at `zoom`, `w` by `h` CSS pixels, needs
+--- from a layer, nearest its middle first, each where it is drawn in a
+--- view whose top left is the world's point (ox, oy) at that zoom
+fn tiles_for[t, lat, lng, zoom, w, h, ox, oy]
+    tiles_at[t, tile_zoom[t, zoom], lat, lng, zoom, w, h, ox, oy]
+
+--- the tiles of zoom `tz` (a whole zoom, or -1 for none) a view of a
+--- place at `zoom` needs: as `tiles_for`, the tiles' zoom given (a view
+--- moving to another zoom draws the tiles of the zoom it goes to)
+fn tiles_at[t, tz, lat, lng, zoom, w, h, ox, oy]
+    out = slice[[Tile[0, 0, 0, 0, '', '', 0.0, 0.0, 0.0]], 0, 0]
+    if tz lt 0.0
+        return out
+    scale = geo.zoom_scale[zoom, tz]
+    centre = geo.project[lat, lng, tz]
+    cx = geo.js_floor[centre.x]
+    cy = geo.js_floor[centre.y]
+    hw = w / (scale * 2.0)
+    hh = h / (scale * 2.0)
+    x0 = geo.js_floor[(cx - hw) / 256.0]
+    y0 = geo.js_floor[(cy - hh) / 256.0]
+    x1 = geo.js_ceil[(cx + hw) / 256.0] - 1.0
+    y1 = geo.js_ceil[(cy + hh) / 256.0] - 1.0
+    --- (the world's rows at this zoom, and its columns, which repeat)
+    k = geo.world[tz]
+    d = pi * geo.radius[]
+    u = 0.5 / (pi * geo.radius[])
+    top = k * ((0.0 - u) * d + 0.5)
+    foot = k * ((0.0 - u) * (0.0 - d) + 0.5)
+    first_row = geo.js_floor[min[top, foot] / 256.0]
+    last_row = geo.js_ceil[max[top, foot] / 256.0] - 1.0
+    west = geo.js_floor[geo.project[0.0, -180.0, tz].x / 256.0]
+    east = geo.js_ceil[geo.project[0.0, 180.0, tz].x / 256.0]
+    --- (where the tiles are drawn: the view's top left at the view's zoom,
+    --- a tile `size` pixels there)
+    size = 256.0 * scale
+    mid_x = (x0 + x1) / 2.0
+    mid_y = (y0 + y1) / 2.0
+    found = []
+    far = []
+    j = y0
+    while j lte y1
+        i = x0
+        while i lte x1
+            if j gte first_row and j lte last_row
+                wx = int[geo.wrap_number[i, west, east, false]]
+                key = '`int[i]`:`int[j]`:`int[tz]`'
+                url = address[t, wx, int[j], int[tz]]
+                found = push[found, Tile[int[i], int[j], int[tz], wx, key, url, i * size - ox, j * size - oy, size]]
+                dx = i - mid_x
+                dy = j - mid_y
+                far = push[far, sqrt[dx * dx + dy * dy]]
+            i = i + 1.0
+        j = j + 1.0
+    --- (nearest the middle first, as Leaflet queues them)
+    order = argsort[far]
+    for o in order
+        out = push[out, found[o]]
+    out
+
+--- ---- the images held ----
+
+--- the slot an address is held in, or -1
+fn slot_of[h, url]
+    if url in h.slot_of
+        return h.slot_of[url]
+    -1
+
+--- the images answered since the last frame taken in: each that came or
+--- failed, and each asked for so long ago (15 s) that it is given up
+fn heard[h, t, said, when]
+    for s in said
+        if s.what eq 'image' and s.id.ok
+            n = int[0.0 + s.id]
+            k = n - t.base
+            if k gte 0 and k lt t.slots
+                if h.states[k] eq 1 and '`s.url`' eq h.urls[k]
+                    h.states[k] = 2
+                    if s.failed.ok
+                        h.states[k] = 3
+                    h.since[k] = when
+    for k in range[t.slots]
+        if h.states[k] eq 1 and when - h.since[k] gt 15000.0
+            h.states[k] = 3
+            h.since[k] = when
+    h
+
+--- the slot a new image may take: an empty one, or else the one drawn
+--- least lately that is not on its way and was not drawn at `when`
+--- (none: -1)
+fn _free_slot[h, t, when]
+    k = 0
+    while k lt t.slots
+        if h.states[k] eq 0
+            return k
+        k = k + 1
+    best = -1
+    oldest = when
+    for i in range[t.slots]
+        if h.states[i] ne 1 and h.used[i] lt oldest
+            best = i
+            oldest = h.used[i]
+    best
+
+--- the tiles that are not held each given a free slot (the image that
+--- slot held let go), written down as asked for at `when`
+fn asked[h, t, tiles, when]
+    h.fresh = slice[[0], 0, 0]
+    h.dropped = slice[[false], 0, 0]
+    for tile in tiles
+        if slot_of[h, tile.url] lt 0
+            k = _free_slot[h, t, when]
+            if k gte 0
+                had = h.states[k] eq 2 or h.states[k] eq 3
+                if h.urls[k] ne ''
+                    h.slot_of[h.urls[k]] = -1
+                h.urls[k] = tile.url
+                h.states[k] = 1
+                h.since[k] = when
+                h.used[k] = when
+                h.slot_of[tile.url] = k
+                h.fresh = push[h.fresh, k]
+                h.dropped = push[h.dropped, had]
+    h
+
+--- nothing asked for in this frame (a view on the move asks for its
+--- tiles at most so often)
+fn nothing_asked[h]
+    h.fresh = slice[[0], 0, 0]
+    h.dropped = slice[[false], 0, 0]
+    h
+
+--- the page asked for the images `asked` wrote down: each slot's old
+--- texture deleted where it held one, and its new image loaded
+fn asks_for[c, h, t]
+    for i in range[len[h.fresh]]
+        k = h.fresh[i]
+        if h.dropped[i]
+            c = lory.ask[c, ['deleteTexture', '#`t.base + k`']]
+        c = lory.load_image[c, t.base + k, h.urls[k]]
+    c
+
+--- how opaque a tile that came at `since` is drawn at `when`: it fades
+--- in over a fifth of a second (Leaflet's fade)
+fn _opacity[since, when]
+    min[1.0, max[0.0, (when - since) / 200.0]]
+
+--- the tiles drawn into the view's box (left, top, CSS pixel `s`): first
+--- the coarser tiles held where a tile has not come or is still fading
+--- in (up to five zooms coarser), then the four of the next zoom in held
+--- from a zoom just left, then the tiles themselves
+fn draw_tiles[c, h, t, tiles, x, y, s, when]
+    behind = []
+    for tile in tiles
+        k = slot_of[h, tile.url]
+        whole = false
+        if k gte 0
+            whole = h.states[k] eq 2 and _opacity[h.since[k], when] gte 1.0
+        if not whole
+            behind = push[behind, tile]
+    --- (coarser tiles first, the coarsest at the bottom)
+    drawn_keys = map['' = true]
+    up = 5
+    while up gte 1
+        for tile in behind
+            if tile.z - up gte 0
+                f = 2.0 ^ up
+                px = geo.js_floor[tile.x / f]
+                py = geo.js_floor[tile.y / f]
+                pz = tile.z - up
+                key = '`0 + px`:`0 + py`:`pz`'
+                if not (key in drawn_keys)
+                    pwx = geo.wrap_number[px, 0.0, geo.world[0.0 + pz] / 256.0, false]
+                    url = address[t, int[pwx], int[py], pz]
+                    k = slot_of[h, url]
+                    if k gte 0
+                        if h.states[k] eq 2
+                            drawn_keys[key] = true
+                            size = tile.size * f
+                            left = tile.left - (tile.x - px * f) * tile.size
+                            top = tile.top - (tile.y - py * f) * tile.size
+                            c = lory.image[c, t.base + k, x + left * s, y + top * s, size * s, size * s]
+        up = up - 1
+    --- (finer tiles held from a zoom just left)
+    for tile in behind
+        for i in range[2]
+            for j in range[2]
+                cy = tile.y * 2 + j
+                cwx = tile.wx * 2 + i
+                url = address[t, cwx, cy, tile.z + 1]
+                k = slot_of[h, url]
+                if k gte 0
+                    if h.states[k] eq 2
+                        half = tile.size / 2.0
+                        c = lory.image[c, t.base + k, x + (tile.left + i * half) * s, y + (tile.top + j * half) * s, half * s, half * s]
+    for tile in tiles
+        k = slot_of[h, tile.url]
+        if k gte 0
+            if h.states[k] eq 2
+                c = _faded_image[c, t.base + k, x + tile.left * s, y + tile.top * s, tile.size * s, tile.size * s, _opacity[h.since[k], when]]
+    c
+
+--- an image drawn at an opacity: Lory's image drawn, and its vertices'
+--- opacity set (the shader multiplies the picture's by it)
+fn _faded_image[c, n, x, y, w, tall, a]
+    from = len[c.verts]
+    c = lory.image[c, n, x, y, w, tall]
+    if a lt 1.0
+        each = lory.floats[]
+        upto = len[c.verts]
+        k = from
+        while k lt upto
+            c.verts[k + 7] = a
+            k = k + each
+    c
+
+--- the slots the drawn tiles take marked as drawn at `when`, so the
+--- least lately drawn give way first
+fn drawn_at[h, tiles, when]
+    for tile in tiles
+        k = slot_of[h, tile.url]
+        if k gte 0
+            h.used[k] = when
+    h
+
+test a_tile_address_fills_in_its_template[]
+    t = layer['https://{s}.tiles.test/{z}/{x}/{y}.png', '']
+    address[t, 1, 2, 3] eq 'https://a.tiles.test/3/1/2.png'
+    address[t, 2, 2, 3] eq 'https://b.tiles.test/3/2/2.png'
+    o = openstreetmap[]
+    address[o, 4, 5, 6] eq 'https://tile.openstreetmap.org/6/4/5.png'
+    o.highest eq 19.0
+
+test the_whole_world_is_one_tile_at_zoom_0[]
+    t = layer['{z}/{x}/{y}', '']
+    tiles = tiles_for[t, 0.0, 0.0, 0.0, 256.0, 256.0, 0.0, 0.0]
+    len[tiles] eq 1
+    tiles[0].key eq '0:0:0'
+    tiles[0].url eq '0/0/0'
+
+test a_view_past_the_last_zoom_has_no_tiles[]
+    t = openstreetmap[]
+    len[tiles_for[t, 0.0, 0.0, 20.0, 800.0, 600.0, 0.0, 0.0]] eq 0
+    tile_zoom[t, 19.4] eq 19.0
+
+test the_tiles_wrap_round_the_world[]
+    t = layer['{z}/{x}/{y}', '']
+    tiles = tiles_for[t, 0.0, 179.9, 3.0, 800.0, 600.0, 0.0, 0.0]
+    keys_of = for tile in tiles
+        tile.key
+    '8:3:3' in keys_of
+    found = for tile in tiles
+        if tile.key eq '8:3:3'
+            tile.url
+        else
+            ''
+    '3/0/3' in found
+
+test an_image_is_asked_for_once_and_held_when_it_comes[]
+    t = layer['{z}/{x}/{y}', '']
+    h = held_none[t.slots]
+    tiles = tiles_for[t, 0.0, 0.0, 0.0, 256.0, 256.0, 0.0, 0.0]
+    h = asked[h, t, tiles, 100.0]
+    k = slot_of[h, '0/0/0']
+    k eq 0
+    h.states[k] eq 1
+    len[h.fresh] eq 1
+    again = asked[h, t, tiles, 120.0]
+    len[again.fresh] eq 0
+    said = json['[{"what": "image", "id": 40000, "url": "0/0/0", "width": 256, "height": 256}]']
+    h = heard[h, t, said, 150.0]
+    h.states[k] eq 2
+    _opacity[h.since[k], 250.0] eq 0.5
+    _opacity[h.since[k], 500.0] eq 1.0

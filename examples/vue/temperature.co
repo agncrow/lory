@@ -1,0 +1,108 @@
+--- Temperature Converter: Celsius and Fahrenheit, each worked out from
+--- the other when it is entered (Enter, or the focus leaving the field):
+--- `+value`, as a number field reads its text (none, or what is not a
+--- number, is 0), and the other written as JavaScript writes the number.
+use lory
+use lory.gui
+use common
+
+--- the two numbers; what each field shows; whether each was typed in
+--- since it was last entered; and the field being typed in ('' for none)
+struct Temperature [c, f, c_text, f_text, c_dirty, f_dirty, editing]
+
+fn fresh[]
+    Temperature[0.0, 32.0, '0', '32', false, false, '']
+
+fn ticked[s, c]
+    s
+
+fn controls[s, c, room]
+    gui.row[[gui.sized[gui.field['temperature-converter:celsius', s.c_text, kind = 'number'], 160.0], gui.text['Celsius ='], gui.sized[gui.field['temperature-converter:fahrenheit', s.f_text, kind = 'number'], 160.0], gui.text['Fahrenheit']], gap = 8.0]
+
+--- a number set as Vue sets a ref: only a different one is a change (and
+--- only a changed number is written into its field again)
+fn _same[a, b]
+    if a ne a and b ne b
+        return true
+    a eq b
+
+--- the field entered: its number read, the other worked out from it, and
+--- each field whose number changed shown anew
+fn entered[s, which]
+    if which eq 'celsius'
+        v = common.html_number[s.c_text]
+        nf = v * (9.0 / 5.0) + 32.0
+        if not _same[v, s.c]
+            s.c = v
+            s.c_text = common.js_number[v]
+        if not _same[nf, s.f]
+            s.f = nf
+            s.f_text = common.js_number[nf]
+        s.c_dirty = false
+        return s
+    v = common.html_number[s.f_text]
+    nc = (v - 32.0) * (5.0 / 9.0)
+    if not _same[v, s.f]
+        s.f = v
+        s.f_text = common.js_number[v]
+    if not _same[nc, s.c]
+        s.c = nc
+        s.c_text = common.js_number[nc]
+    s.f_dirty = false
+    s
+
+fn _id[which]
+    'temperature-converter:`which`'
+
+--- the field left: entered if it was typed in
+fn _left[s, which]
+    if which eq 'celsius' and s.c_dirty
+        return entered[s, which]
+    if which eq 'fahrenheit' and s.f_dirty
+        return entered[s, which]
+    s
+
+fn handled[s, shown, c]
+    was = s.editing
+    --- (the field typed in loses the focus to a press outside it or Tab:
+    --- what it holds is entered)
+    if was ne '' and common.left_box[c, common.box_of[shown, _id[was]]]
+        s = _left[s, was]
+        s.editing = ''
+    for which in ['celsius', 'fahrenheit']
+        if common.pressed_in[c, common.box_of[shown, _id[which]]]
+            s.editing = which
+    for ev in shown.events
+        if ev.id eq _id['celsius'] and ev.act eq 'edit'
+            s.c_text = ev.words
+            s.c_dirty = true
+            s.editing = 'celsius'
+        if ev.id eq _id['fahrenheit'] and ev.act eq 'edit'
+            s.f_text = ev.words
+            s.f_dirty = true
+            s.editing = 'fahrenheit'
+        if ev.act eq 'submit'
+            if ev.id eq _id['celsius']
+                before = s.c_text
+                s = _left[s, 'celsius']
+                if s.c_text ne before
+                    gui.focus[ev.id, s.c_text]
+            if ev.id eq _id['fahrenheit']
+                before = s.f_text
+                s = _left[s, 'fahrenheit']
+                if s.f_text ne before
+                    gui.focus[ev.id, s.f_text]
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['celsius'] = common.words_by[tree, _id['celsius']]
+    out['fahrenheit'] = common.words_by[tree, _id['fahrenheit']]
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

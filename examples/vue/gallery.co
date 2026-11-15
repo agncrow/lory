@@ -1,0 +1,541 @@
+--- The gallery of Vue's examples: a menu of the twenty in Vue's three
+--- groups (Basic, Practical and the 7 GUIs) beside the one chosen. Each
+--- example is a module of its own beside this one, with the same five
+--- functions: `fresh[]` (its state as it starts), `ticked[s, c]` (the
+--- state moved on by the frame's time and what the page answered, before
+--- it is drawn), `controls[s, c, room]` (its tree), `handled[s, shown,
+--- c]` (the state after what the reader did) and `seen[s, tree]` (what
+--- it shows, as the tests read it). Its state is kept under
+--- `vue.<name>` (`use memory`); choosing an example starts it afresh.
+use memory
+use lory
+use lory.gui
+use common
+use hello
+use handling
+use bindings
+use conditionals
+use inputs
+use grocery
+use editor
+use commits
+use datagrid
+use treeview
+use radar
+use dialog
+use transitions
+use counter
+use temperature
+use flights
+use timer
+use crud
+use circles
+use cells
+
+--- the example chosen, and how many times one was started (a request's
+--- name carries it, so an answer to one started before is told apart)
+struct Gallery [chosen, mounts]
+
+fn _fresh[]
+    Gallery['hello-world', 0]
+
+--- the examples' names, in the menu's order
+fn order[]
+    ['hello-world', 'handling-input', 'attribute-bindings', 'conditionals-and-loops', 'form-bindings', 'simple-component', 'markdown', 'fetching-data', 'grid', 'tree', 'svg', 'modal', 'list-transition', 'counter', 'temperature-converter', 'flight-booker', 'timer', 'crud', 'circle-drawer', 'cells']
+
+fn title_of[slug]
+    if slug eq 'hello-world'
+        return 'Hello World'
+    if slug eq 'handling-input'
+        return 'Handling User Input'
+    if slug eq 'attribute-bindings'
+        return 'Attribute Bindings'
+    if slug eq 'conditionals-and-loops'
+        return 'Conditionals and Loops'
+    if slug eq 'form-bindings'
+        return 'Form Bindings'
+    if slug eq 'simple-component'
+        return 'Simple Component'
+    if slug eq 'markdown'
+        return 'Markdown Editor'
+    if slug eq 'fetching-data'
+        return 'Fetching Data'
+    if slug eq 'grid'
+        return 'Grid with Sort and Filter'
+    if slug eq 'tree'
+        return 'Tree View'
+    if slug eq 'svg'
+        return 'SVG Graph'
+    if slug eq 'modal'
+        return 'Modal with Transitions'
+    if slug eq 'list-transition'
+        return 'List with Transitions'
+    if slug eq 'counter'
+        return 'Counter'
+    if slug eq 'temperature-converter'
+        return 'Temperature Converter'
+    if slug eq 'flight-booker'
+        return 'Flight Booker'
+    if slug eq 'timer'
+        return 'Timer'
+    if slug eq 'crud'
+        return 'CRUD'
+    if slug eq 'circle-drawer'
+        return 'Circle Drawer'
+    if slug eq 'cells'
+        return 'Cells'
+    slug
+
+fn note_of[slug]
+    if slug eq 'hello-world'
+        return 'A heading bound to the message the example holds.'
+    if slug eq 'handling-input'
+        return 'Buttons that change the message, and a link whose press is held back.'
+    if slug eq 'attribute-bindings'
+        return 'A title, a class and a style, each bound to a value a press changes.'
+    if slug eq 'conditionals-and-loops'
+        return 'A list drawn while it is shown and holds numbers, and words in its place.'
+    if slug eq 'form-bindings'
+        return 'Every kind of input bound to a value the page shows under it.'
+    if slug eq 'simple-component'
+        return 'A list whose entries are each drawn by a component of their own.'
+    if slug eq 'markdown'
+        return 'Markdown typed on the left, drawn on the right a tenth of a second after the typing stops.'
+    if slug eq 'fetching-data'
+        return 'The latest commits of Vue\'s core on the branch chosen, asked of GitHub.'
+    if slug eq 'grid'
+        return 'A table sorted by the column pressed and filtered by the words searched.'
+    if slug eq 'tree'
+        return 'Folders opened by a press; a double press makes an entry a folder.'
+    if slug eq 'svg'
+        return 'A polygon drawn from the stats, each moved by its slider.'
+    if slug eq 'modal'
+        return 'A dialog that fades and shrinks in over the dimmed page, and out again.'
+    if slug eq 'list-transition'
+        return 'Entries that slide in, fade out and move to their new places.'
+    if slug eq 'counter'
+        return 'A number and a button that counts it up.'
+    if slug eq 'temperature-converter'
+        return 'Celsius and Fahrenheit, each worked out from the other as it is entered.'
+    if slug eq 'flight-booker'
+        return 'A one-way or a return flight, booked only when its dates make sense.'
+    if slug eq 'timer'
+        return 'Time going by until the duration, which a slider sets.'
+    if slug eq 'crud'
+        return 'Names created, updated and deleted, filtered by the start of the surname.'
+    if slug eq 'circle-drawer'
+        return 'Circles drawn by a press, their radius set from a right press, undone and redone.'
+    if slug eq 'cells'
+        return 'A sheet whose cells hold numbers, words or formulas over other cells.'
+    ''
+
+fn group_of[slug]
+    if slug eq 'hello-world'
+        return 'Basic'
+    if slug eq 'handling-input'
+        return 'Basic'
+    if slug eq 'attribute-bindings'
+        return 'Basic'
+    if slug eq 'conditionals-and-loops'
+        return 'Basic'
+    if slug eq 'form-bindings'
+        return 'Basic'
+    if slug eq 'simple-component'
+        return 'Basic'
+    if slug eq 'markdown'
+        return 'Practical'
+    if slug eq 'fetching-data'
+        return 'Practical'
+    if slug eq 'grid'
+        return 'Practical'
+    if slug eq 'tree'
+        return 'Practical'
+    if slug eq 'svg'
+        return 'Practical'
+    if slug eq 'modal'
+        return 'Practical'
+    if slug eq 'list-transition'
+        return 'Practical'
+    if slug eq 'counter'
+        return '7 GUIs'
+    if slug eq 'temperature-converter'
+        return '7 GUIs'
+    if slug eq 'flight-booker'
+        return '7 GUIs'
+    if slug eq 'timer'
+        return '7 GUIs'
+    if slug eq 'crud'
+        return '7 GUIs'
+    if slug eq 'circle-drawer'
+        return '7 GUIs'
+    if slug eq 'cells'
+        return '7 GUIs'
+    ''
+
+--- whether the example scrolls what it holds itself (a sheet, an editor
+--- and its preview), so the page around it does not
+fn _scrolls_itself[slug]
+    slug in ['cells', '']
+
+--- ---- each example, by its name ----
+
+--- the example started: its state afresh, moved on to the frame
+fn _started[slug, c]
+    if slug eq 'hello-world'
+        remember['vue.hello-world', hello.ticked[hello.fresh[], c]]
+    if slug eq 'handling-input'
+        remember['vue.handling-input', handling.ticked[handling.fresh[], c]]
+    if slug eq 'attribute-bindings'
+        remember['vue.attribute-bindings', bindings.ticked[bindings.fresh[], c]]
+    if slug eq 'conditionals-and-loops'
+        remember['vue.conditionals-and-loops', conditionals.ticked[conditionals.fresh[], c]]
+    if slug eq 'form-bindings'
+        remember['vue.form-bindings', inputs.ticked[inputs.fresh[], c]]
+    if slug eq 'simple-component'
+        remember['vue.simple-component', grocery.ticked[grocery.fresh[], c]]
+    if slug eq 'markdown'
+        remember['vue.markdown', editor.ticked[editor.fresh[], c]]
+    if slug eq 'fetching-data'
+        g = recall['vue.gallery', _fresh[]]
+        remember['vue.fetching-data', commits.ticked[commits.fresh_at[g.mounts], c]]
+    if slug eq 'grid'
+        remember['vue.grid', datagrid.ticked[datagrid.fresh[], c]]
+    if slug eq 'tree'
+        remember['vue.tree', treeview.ticked[treeview.fresh[], c]]
+    if slug eq 'svg'
+        remember['vue.svg', radar.ticked[radar.fresh[], c]]
+    if slug eq 'modal'
+        remember['vue.modal', dialog.ticked[dialog.fresh[], c]]
+    if slug eq 'list-transition'
+        remember['vue.list-transition', transitions.ticked[transitions.fresh[], c]]
+    if slug eq 'counter'
+        remember['vue.counter', counter.ticked[counter.fresh[], c]]
+    if slug eq 'temperature-converter'
+        remember['vue.temperature-converter', temperature.ticked[temperature.fresh[], c]]
+    if slug eq 'flight-booker'
+        remember['vue.flight-booker', flights.ticked[flights.fresh_on[today_of[c]], c]]
+    if slug eq 'timer'
+        remember['vue.timer', timer.ticked[timer.fresh[], c]]
+    if slug eq 'crud'
+        remember['vue.crud', crud.ticked[crud.fresh[], c]]
+    if slug eq 'circle-drawer'
+        remember['vue.circle-drawer', circles.ticked[circles.fresh[], c]]
+    if slug eq 'cells'
+        remember['vue.cells', cells.ticked[cells.fresh[], c]]
+    slug
+
+--- the example's state moved on by the frame
+fn _ticked[slug, c]
+    if slug eq 'hello-world'
+        remember['vue.hello-world', hello.ticked[recall['vue.hello-world', hello.fresh[]], c]]
+    if slug eq 'handling-input'
+        remember['vue.handling-input', handling.ticked[recall['vue.handling-input', handling.fresh[]], c]]
+    if slug eq 'attribute-bindings'
+        remember['vue.attribute-bindings', bindings.ticked[recall['vue.attribute-bindings', bindings.fresh[]], c]]
+    if slug eq 'conditionals-and-loops'
+        remember['vue.conditionals-and-loops', conditionals.ticked[recall['vue.conditionals-and-loops', conditionals.fresh[]], c]]
+    if slug eq 'form-bindings'
+        remember['vue.form-bindings', inputs.ticked[recall['vue.form-bindings', inputs.fresh[]], c]]
+    if slug eq 'simple-component'
+        remember['vue.simple-component', grocery.ticked[recall['vue.simple-component', grocery.fresh[]], c]]
+    if slug eq 'markdown'
+        remember['vue.markdown', editor.ticked[recall['vue.markdown', editor.fresh[]], c]]
+    if slug eq 'fetching-data'
+        remember['vue.fetching-data', commits.ticked[recall['vue.fetching-data', commits.fresh_at[0]], c]]
+    if slug eq 'grid'
+        remember['vue.grid', datagrid.ticked[recall['vue.grid', datagrid.fresh[]], c]]
+    if slug eq 'tree'
+        remember['vue.tree', treeview.ticked[recall['vue.tree', treeview.fresh[]], c]]
+    if slug eq 'svg'
+        remember['vue.svg', radar.ticked[recall['vue.svg', radar.fresh[]], c]]
+    if slug eq 'modal'
+        remember['vue.modal', dialog.ticked[recall['vue.modal', dialog.fresh[]], c]]
+    if slug eq 'list-transition'
+        remember['vue.list-transition', transitions.ticked[recall['vue.list-transition', transitions.fresh[]], c]]
+    if slug eq 'counter'
+        remember['vue.counter', counter.ticked[recall['vue.counter', counter.fresh[]], c]]
+    if slug eq 'temperature-converter'
+        remember['vue.temperature-converter', temperature.ticked[recall['vue.temperature-converter', temperature.fresh[]], c]]
+    if slug eq 'flight-booker'
+        remember['vue.flight-booker', flights.ticked[recall['vue.flight-booker', flights.fresh_on['2026-01-01']], c]]
+    if slug eq 'timer'
+        remember['vue.timer', timer.ticked[recall['vue.timer', timer.fresh[]], c]]
+    if slug eq 'crud'
+        remember['vue.crud', crud.ticked[recall['vue.crud', crud.fresh[]], c]]
+    if slug eq 'circle-drawer'
+        remember['vue.circle-drawer', circles.ticked[recall['vue.circle-drawer', circles.fresh[]], c]]
+    if slug eq 'cells'
+        remember['vue.cells', cells.ticked[recall['vue.cells', cells.fresh[]], c]]
+    slug
+
+--- the example's tree
+fn _controls[slug, c, room]
+    if slug eq 'hello-world'
+        return hello.controls[recall['vue.hello-world', hello.fresh[]], c, room]
+    if slug eq 'handling-input'
+        return handling.controls[recall['vue.handling-input', handling.fresh[]], c, room]
+    if slug eq 'attribute-bindings'
+        return bindings.controls[recall['vue.attribute-bindings', bindings.fresh[]], c, room]
+    if slug eq 'conditionals-and-loops'
+        return conditionals.controls[recall['vue.conditionals-and-loops', conditionals.fresh[]], c, room]
+    if slug eq 'form-bindings'
+        return inputs.controls[recall['vue.form-bindings', inputs.fresh[]], c, room]
+    if slug eq 'simple-component'
+        return grocery.controls[recall['vue.simple-component', grocery.fresh[]], c, room]
+    if slug eq 'markdown'
+        return editor.controls[recall['vue.markdown', editor.fresh[]], c, room]
+    if slug eq 'fetching-data'
+        return commits.controls[recall['vue.fetching-data', commits.fresh_at[0]], c, room]
+    if slug eq 'grid'
+        return datagrid.controls[recall['vue.grid', datagrid.fresh[]], c, room]
+    if slug eq 'tree'
+        return treeview.controls[recall['vue.tree', treeview.fresh[]], c, room]
+    if slug eq 'svg'
+        return radar.controls[recall['vue.svg', radar.fresh[]], c, room]
+    if slug eq 'modal'
+        return dialog.controls[recall['vue.modal', dialog.fresh[]], c, room]
+    if slug eq 'list-transition'
+        return transitions.controls[recall['vue.list-transition', transitions.fresh[]], c, room]
+    if slug eq 'counter'
+        return counter.controls[recall['vue.counter', counter.fresh[]], c, room]
+    if slug eq 'temperature-converter'
+        return temperature.controls[recall['vue.temperature-converter', temperature.fresh[]], c, room]
+    if slug eq 'flight-booker'
+        return flights.controls[recall['vue.flight-booker', flights.fresh_on['2026-01-01']], c, room]
+    if slug eq 'timer'
+        return timer.controls[recall['vue.timer', timer.fresh[]], c, room]
+    if slug eq 'crud'
+        return crud.controls[recall['vue.crud', crud.fresh[]], c, room]
+    if slug eq 'circle-drawer'
+        return circles.controls[recall['vue.circle-drawer', circles.fresh[]], c, room]
+    if slug eq 'cells'
+        return cells.controls[recall['vue.cells', cells.fresh[]], c, room]
+    gui.space[0.0]
+
+--- the example's state after what the reader did
+fn _handled[slug, shown, c]
+    if slug eq 'hello-world'
+        remember['vue.hello-world', hello.handled[recall['vue.hello-world', hello.fresh[]], shown, c]]
+    if slug eq 'handling-input'
+        remember['vue.handling-input', handling.handled[recall['vue.handling-input', handling.fresh[]], shown, c]]
+    if slug eq 'attribute-bindings'
+        remember['vue.attribute-bindings', bindings.handled[recall['vue.attribute-bindings', bindings.fresh[]], shown, c]]
+    if slug eq 'conditionals-and-loops'
+        remember['vue.conditionals-and-loops', conditionals.handled[recall['vue.conditionals-and-loops', conditionals.fresh[]], shown, c]]
+    if slug eq 'form-bindings'
+        remember['vue.form-bindings', inputs.handled[recall['vue.form-bindings', inputs.fresh[]], shown, c]]
+    if slug eq 'simple-component'
+        remember['vue.simple-component', grocery.handled[recall['vue.simple-component', grocery.fresh[]], shown, c]]
+    if slug eq 'markdown'
+        remember['vue.markdown', editor.handled[recall['vue.markdown', editor.fresh[]], shown, c]]
+    if slug eq 'fetching-data'
+        remember['vue.fetching-data', commits.handled[recall['vue.fetching-data', commits.fresh_at[0]], shown, c]]
+    if slug eq 'grid'
+        remember['vue.grid', datagrid.handled[recall['vue.grid', datagrid.fresh[]], shown, c]]
+    if slug eq 'tree'
+        remember['vue.tree', treeview.handled[recall['vue.tree', treeview.fresh[]], shown, c]]
+    if slug eq 'svg'
+        remember['vue.svg', radar.handled[recall['vue.svg', radar.fresh[]], shown, c]]
+    if slug eq 'modal'
+        remember['vue.modal', dialog.handled[recall['vue.modal', dialog.fresh[]], shown, c]]
+    if slug eq 'list-transition'
+        remember['vue.list-transition', transitions.handled[recall['vue.list-transition', transitions.fresh[]], shown, c]]
+    if slug eq 'counter'
+        remember['vue.counter', counter.handled[recall['vue.counter', counter.fresh[]], shown, c]]
+    if slug eq 'temperature-converter'
+        remember['vue.temperature-converter', temperature.handled[recall['vue.temperature-converter', temperature.fresh[]], shown, c]]
+    if slug eq 'flight-booker'
+        remember['vue.flight-booker', flights.handled[recall['vue.flight-booker', flights.fresh_on['2026-01-01']], shown, c]]
+    if slug eq 'timer'
+        remember['vue.timer', timer.handled[recall['vue.timer', timer.fresh[]], shown, c]]
+    if slug eq 'crud'
+        remember['vue.crud', crud.handled[recall['vue.crud', crud.fresh[]], shown, c]]
+    if slug eq 'circle-drawer'
+        remember['vue.circle-drawer', circles.handled[recall['vue.circle-drawer', circles.fresh[]], shown, c]]
+    if slug eq 'cells'
+        remember['vue.cells', cells.handled[recall['vue.cells', cells.fresh[]], shown, c]]
+    slug
+
+--- what the example shows, read from its tree
+fn _seen[slug, tree]
+    if slug eq 'hello-world'
+        return hello.seen[recall['vue.hello-world', hello.fresh[]], tree]
+    if slug eq 'handling-input'
+        return handling.seen[recall['vue.handling-input', handling.fresh[]], tree]
+    if slug eq 'attribute-bindings'
+        return bindings.seen[recall['vue.attribute-bindings', bindings.fresh[]], tree]
+    if slug eq 'conditionals-and-loops'
+        return conditionals.seen[recall['vue.conditionals-and-loops', conditionals.fresh[]], tree]
+    if slug eq 'form-bindings'
+        return inputs.seen[recall['vue.form-bindings', inputs.fresh[]], tree]
+    if slug eq 'simple-component'
+        return grocery.seen[recall['vue.simple-component', grocery.fresh[]], tree]
+    if slug eq 'markdown'
+        return editor.seen[recall['vue.markdown', editor.fresh[]], tree]
+    if slug eq 'fetching-data'
+        return commits.seen[recall['vue.fetching-data', commits.fresh_at[0]], tree]
+    if slug eq 'grid'
+        return datagrid.seen[recall['vue.grid', datagrid.fresh[]], tree]
+    if slug eq 'tree'
+        return treeview.seen[recall['vue.tree', treeview.fresh[]], tree]
+    if slug eq 'svg'
+        return radar.seen[recall['vue.svg', radar.fresh[]], tree]
+    if slug eq 'modal'
+        return dialog.seen[recall['vue.modal', dialog.fresh[]], tree]
+    if slug eq 'list-transition'
+        return transitions.seen[recall['vue.list-transition', transitions.fresh[]], tree]
+    if slug eq 'counter'
+        return counter.seen[recall['vue.counter', counter.fresh[]], tree]
+    if slug eq 'temperature-converter'
+        return temperature.seen[recall['vue.temperature-converter', temperature.fresh[]], tree]
+    if slug eq 'flight-booker'
+        return flights.seen[recall['vue.flight-booker', flights.fresh_on['2026-01-01']], tree]
+    if slug eq 'timer'
+        return timer.seen[recall['vue.timer', timer.fresh[]], tree]
+    if slug eq 'crud'
+        return crud.seen[recall['vue.crud', crud.fresh[]], tree]
+    if slug eq 'circle-drawer'
+        return circles.seen[recall['vue.circle-drawer', circles.fresh[]], tree]
+    if slug eq 'cells'
+        return cells.seen[recall['vue.cells', cells.fresh[]], tree]
+    map['' = '']
+
+--- the requests the example asks to be sent, sent (Fetching Data's)
+fn _sent[slug, c]
+    if slug eq 'fetching-data'
+        s = recall['vue.fetching-data', commits.fresh_at[0]]
+        for ask in s.asks
+            c = lory.request[c, ask[0], 'GET', ask[1], '']
+        s.asks = slice[s.asks, 0, 0]
+        for address in s.copies
+            c = lory.copy[c, address]
+        s.copies = slice[s.copies, 0, 0]
+        remember['vue.fetching-data', s]
+    c
+
+--- the requests Fetching Data has sent, each its name and address
+fn asked[]
+    s = recall['vue.fetching-data', commits.fresh_at[0]]
+    s.sent
+
+--- ---- the page ----
+
+--- the day the Flight Booker starts from: the one given (a test's), or
+--- today's in UTC (Crow reads no machine's time zone, where Vue's page
+--- takes the reader's own day)
+struct Day [words]
+
+fn today_of[c]
+    given = recall['vue.today', Day['']]
+    if given.words ne ''
+        return given.words
+    t = '`now[]`'
+    slice[t, 0, 10]
+
+--- the day the Flight Booker starts from, given
+fn dated[day]
+    remember['vue.today', Day[day]]
+    day
+
+--- the example chosen
+fn chosen[]
+    recall['vue.gallery', _fresh[]].chosen
+
+--- the menu: the examples under their groups' names, the chosen one marked
+fn _menu[g]
+    rows = slice[[gui.space[0.0]], 0, 0]
+    group = ''
+    for slug in order[]
+        if group_of[slug] ne group
+            group = group_of[slug]
+            rows = push[rows, gui.note[group]]
+        rows = push[rows, gui.item['menu:`slug`', [gui.text[title_of[slug]]], chosen = slug eq g.chosen, words = slug]]
+    rows
+
+--- the room the page gives the chosen example, in CSS pixels
+fn _menu_wide[]
+    220.0
+
+fn _header_tall[]
+    74.0
+
+fn room_of[c]
+    s = lory.px[c]
+    wide = lory.width[c] / s - 48.0
+    tall = lory.height[c] / s - 48.0
+    body = max[320.0, wide - _menu_wide[] - 16.0]
+    common.Room[body - 40.0, max[200.0, tall - 40.0 - _header_tall[]]]
+
+--- the whole page: the menu, and beside it the chosen example under its
+--- title and a line on what it shows
+fn page_of[g, c]
+    s = lory.px[c]
+    tall = lory.height[c] / s - 48.0
+    room = room_of[c]
+    menu = gui.sized[gui.panel[[gui.scroll['menu', tall - 32.0, _menu[g]]], pad = 16.0], _menu_wide[]]
+    inner = _controls[g.chosen, c, room]
+    content = inner
+    if not _scrolls_itself[g.chosen]
+        content = gui.scroll['vue:body', room.tall, [inner]]
+    header = gui.column[[common.titled['', title_of[g.chosen], 20.0, c], gui.note[note_of[g.chosen]]], gap = 6.0]
+    body = gui.sized[gui.panel[[header, gui.divider[], content], gap = 12.0, pad = 20.0], room.wide + 40.0]
+    gui.row[[menu, body], gap = 16.0, align = 'start']
+
+--- the example's tree alone, as this frame would draw it
+fn example_of[c]
+    g = recall['vue.gallery', _fresh[]]
+    _controls[g.chosen, c, room_of[c]]
+
+--- the page's tree, as this frame would draw it
+fn tree_now[c]
+    page_of[recall['vue.gallery', _fresh[]], c]
+
+--- what the chosen example shows, as the tests read it
+fn seen_now[c]
+    g = recall['vue.gallery', _fresh[]]
+    _seen[g.chosen, _controls[g.chosen, c, room_of[c]]]
+
+--- the look the page is drawn in: Vue's examples' light page on a
+--- screen, the dark one in a headset (where light panels glare)
+fn look_of[c]
+    if c.xr
+        return gui.dark[]
+    gui.light[]
+
+--- the example of that name started, as a press on it in the menu starts
+--- it (its state afresh; the focus let go)
+fn start[slug, c]
+    g = recall['vue.gallery', _fresh[]]
+    g.chosen = slug
+    g.mounts = g.mounts + 1
+    remember['vue.gallery', g]
+    gui.unfocus[]
+    _started[slug, c]
+
+--- one frame: the chosen example moved on by the frame, the page drawn,
+--- and what the reader did answered (a press in the menu starts the
+--- example pressed)
+fn framed[frame]
+    c = lory.begin[frame]
+    g = recall['vue.gallery', _fresh[]]
+    _ticked[g.chosen, c]
+    look = look_of[c]
+    --- (in a headset that shows the room, nothing is drawn behind the
+    --- panels: the room is seen there)
+    if not lory.seen_through[c]
+        c = lory.clear[c, look.page]
+    tree = page_of[g, c]
+    shown = gui.show_at[c, tree, 24.0, 24.0, lory.width[c] / lory.px[c] - 48.0, look]
+    picked = ''
+    for ev in shown.events
+        if ev.act eq 'press' and starts[ev.id, 'menu:']
+            picked = slice[ev.id, 5, len[ev.id]]
+    if picked ne ''
+        if picked ne g.chosen
+            start[picked, shown.canvas]
+    else
+        _handled[g.chosen, shown, shown.canvas]
+    g = recall['vue.gallery', _fresh[]]
+    shown.canvas = _sent[g.chosen, shown.canvas]
+    shown
+

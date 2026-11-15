@@ -1,0 +1,384 @@
+--- Synths: Tone's instruments, each a patch of sources, filters and
+--- envelopes laid as Tone lays it, rendered note by note. `synth` is an
+--- oscillator under an envelope; `mono_synth` puts a lowpass between, its
+--- frequency swept by an envelope of its own; `fm_synth` and `am_synth`
+--- shape a carrier by a modulator, each with its envelope; `duo_synth` is
+--- two mono synths a fifth apart under one vibrato; `membrane_synth` is a
+--- drum, its pitch falling fast from octaves above; `metal_synth` is six
+--- inharmonic FM squares through a swept highpass; `noise_synth` is
+--- noise under an envelope; `pluck_synth` is a string plucked by a burst
+--- of noise in a comb (Karplus–Strong). Each has Tone's defaults.
+---
+--- A note is a `Hit`: when it starts, its pitch, how long it is held and
+--- how hard it is struck. `played` renders hits into one sound, each its
+--- own voice as Tone's PolySynth gives it one (up to 32 at once):
+---
+---     s = synth.fm_synth[]
+---     tune = synth.played[s, [synth.hit[0.0, sound.hz['C4'], 0.4, 1.0]], 22050.0]
+---
+--- A sampler plays recordings (sounds a program has made) at the nearest
+--- recorded pitch, faster or slower to reach the note asked.
+
+use math
+use sound
+use signal
+use envelope
+use source
+use filter
+
+--- a note to play: when it starts (seconds), its pitch (Hz), how long it
+--- is held before its release (seconds), and how hard it is struck (0 to
+--- 1)
+struct Hit [at, hz, duration, velocity]
+
+--- an instrument: which (`synth`, `mono`, `fm`, `am`, `duo`, `membrane`,
+--- `metal`, `noise`, `pluck`), its oscillator and envelope, its volume
+--- (dB), its filter and the envelope that sweeps it (from
+--- `base_frequency` up `octaves`, the envelope raised to `exponent`), an
+--- FM or AM pair's modulator ratio, depth, wave and envelope, a duo's
+--- vibrato depth (0 to 1) and rate, a drum's pitch fall (seconds) and
+--- octaves, a metal synth's resonance (Hz), a noise synth's noise, and a
+--- pluck's noise burst, dampening and release
+struct Synth [instrument, oscillator, envelope, volume, filter, filter_envelope, base_frequency, octaves, exponent, harmonicity, modulation_index, modulation, modulation_envelope, vibrato_amount, vibrato_rate, pitch_decay, resonance, noise_type, attack_noise, dampening, release_time]
+
+--- a recording a sampler plays: the MIDI note it sounds, and the sound
+struct Recording [midi, sound]
+
+--- a sampler: its recordings, its fade in and release (seconds), and
+--- its volume (dB)
+struct Sampler [recordings, attack, release, volume]
+
+--- a note starting at `at` seconds, of `hz`, held `duration` seconds, as
+--- hard as `velocity`
+fn hit[at, hz, duration, velocity]
+    Hit[0.0 + at, 0.0 + hz, 0.0 + duration, 0.0 + velocity]
+
+--- ---- the instruments, with Tone's defaults ----
+
+fn _base[instrument, wave, shape]
+    Synth[instrument, source.oscillator[wave], shape, 0.0, filter.filter['lowpass', 200.0], envelope.adsr[0.6, 0.2, 0.5, 2.0], 200.0, 3.0, 2.0, 3.0, 10.0, source.oscillator['square'], envelope.adsr[0.5, 0.0, 1.0, 0.5], 0.5, 5.0, 0.05, 4000.0, 'white', 1.0, 4000.0, 1.0]
+
+--- Tone's Synth: a triangle under an envelope of 5 ms up, 0.1 s down to
+--- 0.3, a second to die away
+fn synth[]
+    _base['synth', 'triangle', envelope.adsr[0.005, 0.1, 0.3, 1.0]]
+
+--- Tone's MonoSynth: a sawtooth through a lowpass swept from 200 Hz up
+--- three octaves by its own envelope (0.6 s up, held at half, 2 s down)
+fn mono_synth[]
+    _base['mono', 'sawtooth', envelope.adsr[0.005, 0.1, 0.9, 1.0]]
+
+--- Tone's FMSynth: a sine whose pitch a square three times as high moves,
+--- ten times the pitch deep, each under its own envelope
+fn fm_synth[]
+    s = _base['fm', 'sine', envelope.adsr[0.01, 0.01, 1.0, 0.5]]
+    s
+
+--- Tone's AMSynth: a sine whose loudness a square three times as high
+--- moves, each under its own envelope
+fn am_synth[]
+    _base['am', 'sine', envelope.adsr[0.01, 0.01, 1.0, 0.5]]
+
+--- Tone's DuoSynth: two mono synths, the second half again as high, both
+--- swaying 25 cents five times a second
+fn duo_synth[]
+    s = _base['duo', 'sawtooth', envelope.adsr[0.01, 0.0, 1.0, 0.5]]
+    s.filter_envelope = envelope.adsr[0.01, 0.0, 1.0, 0.5]
+    s.harmonicity = 1.5
+    s
+
+--- Tone's MembraneSynth: a sine falling from ten times its pitch in 50
+--- ms, struck sharply (an exponential attack of 1 ms), dying over 1.4 s
+fn membrane_synth[]
+    shape = envelope.curved[envelope.adsr[0.001, 0.4, 0.01, 1.4], 'exponential', 'exponential', 'exponential']
+    s = _base['membrane', 'sine', shape]
+    s.octaves = 10.0
+    s
+
+--- Tone's MetalSynth: six square FM pairs at inharmonic ratios, through a
+--- highpass from 4000 Hz up an octave and a half, under a 1.4 s decay
+fn metal_synth[]
+    s = _base['metal', 'square', envelope.adsr[0.001, 1.4, 0.0, 0.2]]
+    s.harmonicity = 5.1
+    s.modulation_index = 32.0
+    s.octaves = 1.5
+    s
+
+--- Tone's NoiseSynth: white noise under an envelope of 10 ms up and 0.1 s
+--- down to nothing
+fn noise_synth[]
+    _base['noise', 'sine', envelope.adsr[0.01, 0.1, 0.0, 1.0]]
+
+--- Tone's PluckSynth: a burst of pink noise a period long, rung in a comb
+--- of the note's period (fed back 0.7, damped above 4000 Hz), its ringing
+--- let go over a second when the note is released
+fn pluck_synth[]
+    s = _base['pluck', 'sine', envelope.adsr[0.0, 0.0, 1.0, 1.0]]
+    s.resonance = 0.7
+    s
+
+--- an instrument by Tone's name for it (`Synth`, `MonoSynth`, `FMSynth`,
+--- `AMSynth`, `DuoSynth`, `MembraneSynth`, `MetalSynth`, `NoiseSynth`,
+--- `PluckSynth`; a `Synth` for any other)
+fn named[name]
+    w = lower[trim[name]]
+    if w eq 'monosynth'
+        return mono_synth[]
+    if w eq 'fmsynth'
+        return fm_synth[]
+    if w eq 'amsynth'
+        return am_synth[]
+    if w eq 'duosynth'
+        return duo_synth[]
+    if w eq 'membranesynth'
+        return membrane_synth[]
+    if w eq 'metalsynth'
+        return metal_synth[]
+    if w eq 'noisesynth'
+        return noise_synth[]
+    if w eq 'plucksynth'
+        return pluck_synth[]
+    synth[]
+
+--- an instrument of another oscillator (Tone's type names: `square`,
+--- `fatsawtooth`, `pwm`, …)
+fn with_oscillator[s, wave]
+    s.oscillator = source.oscillator[wave]
+    s
+
+--- an instrument of another envelope
+fn with_envelope[s, shape]
+    s.envelope = shape
+    s
+
+--- an instrument this loud (dB)
+fn with_volume[s, db]
+    s.volume = 0.0 + db
+    s
+
+--- ---- one note ----
+
+--- how long a hit sounds: held, then its release
+fn sounds_for[s, h]
+    if s.instrument eq 'pluck'
+        return h.duration + s.release_time + 1.0 / h.hz
+    if s.instrument eq 'fm' or s.instrument eq 'am'
+        return h.duration + max[s.envelope.release, s.modulation_envelope.release]
+    h.duration + s.envelope.release
+
+--- an envelope's level at each of `n` samples of a hit (velocity given)
+fn _level[shape, h, velocity, n, rate]
+    p = envelope.attack_release[shape, 0.0, h.duration, velocity, rate]
+    signal.rendered[p, rate, 0.0, n]
+
+--- a mono synth's voice: its oscillator at these frequencies through its
+--- lowpass, swept by its filter envelope, under its envelope
+fn _mono_voice[s, freqs, h, n, rate]
+    sweep = _level[s.filter_envelope, h, 1.0, n, rate]
+    top = s.base_frequency * 2.0 ^ s.octaves
+    cutoff = s.base_frequency + (top - s.base_frequency) * signal.power[sweep, s.exponent]
+    heard = filter.swept[s.filter, source.rendered[s.oscillator, freqs, rate], cutoff, rate]
+    heard .* _level[s.envelope, h, h.velocity, n, rate]
+
+--- the samples of one hit, from its start through its release (its time
+--- `at` matters only to a duo's vibrato, which sways from time 0)
+fn voiced[s, h, rate]
+    n = sound.frames_in[rate, sounds_for[s, h]]
+    steady = zeros[n] + h.hz
+    gain = sound.gain_of[s.volume]
+    if s.instrument eq 'mono'
+        return _mono_voice[s, steady, h, n, rate] * gain
+    if s.instrument eq 'fm' or s.instrument eq 'am'
+        quiet = sound.gain_of[-10.0]
+        modulator = source.rendered[s.modulation, steady * s.harmonicity, rate] .* _level[s.modulation_envelope, h, h.velocity, n, rate] * quiet
+        level = _level[s.envelope, h, h.velocity, n, rate] * quiet
+        if s.instrument eq 'fm'
+            carrier = source.rendered[s.oscillator, steady + (steady * s.modulation_index) .* modulator, rate]
+            return carrier .* level * gain
+        carrier = source.rendered[s.oscillator, steady, rate] .* level
+        return carrier .* ((modulator + 1.0) * 0.5) * gain
+    if s.instrument eq 'duo'
+        t = h.at + (0.0 + range[n]) / rate
+        cents = 50.0 * sin[2.0 * pi * s.vibrato_rate * t] * s.vibrato_amount
+        sway = exp[cents * (ln[2.0] / 1200.0)]
+        first = _mono_voice[s, steady .* sway, h, n, rate]
+        second = _mono_voice[s, (steady * s.harmonicity) .* sway, h, n, rate]
+        return (first + second) * gain
+    if s.instrument eq 'membrane'
+        fall = signal.exponential_at[signal.set_at[signal.param[h.hz], h.hz * s.octaves, 0.0], h.hz, s.pitch_decay]
+        freqs = signal.rendered[fall, rate, 0.0, n]
+        return source.rendered[s.oscillator, freqs, rate] .* _level[s.envelope, h, h.velocity, n, rate] * gain
+    if s.instrument eq 'metal'
+        return _metal[s, h, n, rate] * gain
+    if s.instrument eq 'noise'
+        noise = source.noise_heard[s.noise_type, n, round[h.at * 1000.0] + 1]
+        return noise .* _level[s.envelope, h, h.velocity, n, rate] * gain
+    if s.instrument eq 'pluck'
+        return _plucked[s, h, n, rate] * gain
+    source.rendered[s.oscillator, steady, rate] .* _level[s.envelope, h, h.velocity, n, rate] * gain
+
+--- the six ratios a metal synth's oscillators stand at to its pitch
+fn _inharmonic[]
+    [1.0, 1.483, 1.932, 2.546, 2.63, 3.897]
+
+--- a metal synth's hit: its six FM squares summed, through a highpass
+--- (Q 0) swept from its resonance up its octaves by its envelope, under
+--- that envelope
+fn _metal[s, h, n, rate]
+    pair = source.with_modulation[source.oscillator['fmsquare'], s.harmonicity, s.modulation_index, 'square']
+    sum_of = zeros[n]
+    for ratio in _inharmonic[]
+        sum_of = sum_of + source.rendered[pair, zeros[n] + h.hz * ratio, rate]
+    level = _level[s.envelope, h, h.velocity, n, rate]
+    top = s.resonance * 2.0 ^ s.octaves
+    cutoff = s.resonance + (top - s.resonance) * level
+    pass = filter.with_q[filter.filter['highpass', s.resonance], 0.0]
+    filter.swept[pass, sum_of, cutoff, rate] .* level
+
+--- a pluck: a burst of pink noise as long as the note's period, through
+--- a lowpass at its dampening and a comb of its period, the comb's
+--- feedback falling to nothing over its release once let go. The comb is
+--- Tone's worklet, which holds its delay and feedback for each block of
+--- 128 samples at their values at the block's start, counting blocks from
+--- the start of the page's clock (taken here as the start of the render,
+--- time 0): in the block the note starts in, the delay is still its
+--- resting 0.1 s, so what the comb hears there sounds one period later
+--- than the rest. As Tone's, its one-pole lowpass runs away at a rate
+--- below π times its dampening (12.6 kHz for 4000 Hz): render plucks at
+--- 16 kHz or more
+fn _plucked[s, h, n, rate]
+    period = 1.0 / h.hz
+    burst = min[n, sound.frames_in[rate, period * s.attack_noise]]
+    noise = concat[source.noise_heard['pink', burst, round[h.at * 1000.0] + 7], zeros[n - burst]]
+    damped = filter.one_pole['lowpass', s.dampening, noise, rate]
+    d = int[floor[filter.single[period] * rate]] + 1
+    resting = int[floor[filter.single[0.1] * rate]] + 1
+    feedback = signal.rendered[signal.linear_to[signal.param[s.resonance], 0.0, s.release_time, h.duration], rate, 0.0, n]
+    first = round[h.at * rate]
+    line = zeros[n]
+    out = zeros[n]
+    i = 0
+    while i lt n
+        clock = first + i
+        block_start = clock - clock % 128
+        local = max[0, block_start - first]
+        delay = d
+        held = s.resonance
+        if block_start lt first
+            delay = resting
+        else
+            held = feedback[local]
+        heard = 0.0
+        if i - delay gte 0
+            heard = line[i - delay]
+        line[i] = damped[i] + held * heard
+        out[i] = heard
+        i = i + 1
+    out
+
+--- ---- many notes ----
+
+--- hits rendered into one sound at `rate`, each from its own time and each
+--- its own voice (a 33rd at once is dropped, as Tone's PolySynth drops it)
+fn played[s, hits, rate]
+    played_from[s, hits, 0.0, rate]
+
+--- hits rendered into a sound that starts at `from` seconds: a hit's
+--- samples before then are left out
+fn played_from[s, hits, from, rate]
+    end_at = from
+    for h in hits
+        end_at = max[end_at, h.at + sounds_for[s, h]]
+    total = sound.frames_in[rate, end_at - from]
+    out = zeros[total]
+    kept = slice[[0.0], 0, 0]
+    for h in hits
+        sounding = 0
+        for until in kept
+            if until gt h.at
+                sounding = sounding + 1
+        if sounding lt 32
+            kept = push[kept, h.at + sounds_for[s, h]]
+            piece = voiced[s, h, rate]
+            at = round[(h.at - from) * rate]
+            skip = 0
+            if at lt 0
+                skip = 0 - at
+                at = 0
+            k = min[len[piece] - skip, total - at]
+            if k gt 0
+                out = concat[concat[slice[out, 0, at], slice[out, at, at + k] + slice[piece, skip, skip + k]], slice[out, at + k, total]]
+    sound.mono[rate, out]
+
+--- ---- the sampler ----
+
+--- a sampler of recordings (Tone's Sampler: no fade in, a tenth of a
+--- second's release)
+fn sampler[recordings]
+    Sampler[recordings, 0.0, 0.1, 0.0]
+
+--- a recording of a sound at a note (`C4`)
+fn recording[words, s]
+    Recording[sound.midi[words], s]
+
+--- the recording nearest a MIDI note (the one above first, at a tie), and
+--- how many semitones the note is above it
+fn _nearest[sp, midi]
+    best = sp.recordings[0]
+    gap = 1000
+    for r in sp.recordings
+        d = midi - r.midi
+        if abs[d] lt abs[gap] or (abs[d] eq abs[gap] and d lt gap)
+            best = r
+            gap = d
+    best
+
+--- the samples of a sampler's hit: the nearest recording played faster or
+--- slower by the semitones between (2^(semitones/12)), as hard as the
+--- hit, released over its release time as an exponential approach
+fn sampled[sp, h, rate]
+    exact = sound.midi_exact[h.hz]
+    r = _nearest[sp, round[exact]]
+    pace = 2.0 ^ ((exact - r.midi) / 12.0)
+    p = source.at_pace[source.player[r.sound], pace]
+    whole = len[r.sound.left] / r.sound.rate / pace
+    held = min[h.duration, whole]
+    xs = source.played[p, 0.0, (held + sp.release * 3.0) * pace, rate]
+    level = signal.target_to[signal.param[h.velocity], 0.0, sp.release, held]
+    xs .* signal.rendered[level, rate, 0.0, len[xs]] * sound.gain_of[sp.volume]
+
+--- ---- tests ----
+
+test each_instrument_sounds_its_note[]
+    rate = 8000.0
+    h = hit[0.0, 220.0, 0.1, 1.0]
+    for name in ['Synth', 'MonoSynth', 'FMSynth', 'AMSynth', 'DuoSynth', 'MembraneSynth', 'NoiseSynth']
+        xs = voiced[named[name], h, rate]
+        len[xs] gt 800
+        max[abs[xs]] gt 0.01
+    plucked = voiced[pluck_synth[], hit[0.0, 220.0, 0.05, 1.0], 16000.0]
+    max[abs[plucked]] gt 0.01
+    max[abs[plucked]] lt 10.0
+    s = synth[]
+    xs = voiced[s, h, rate]
+    len[xs] eq 8800
+    abs[xs[8799]] lt 0.001
+
+test hits_are_mixed_at_their_times[]
+    s = synth[]
+    tune = played[s, [hit[0.0, 440.0, 0.05, 1.0], hit[0.5, 660.0, 0.05, 1.0]], 8000.0]
+    sound.duration_of[tune] eq 1.55
+    tune.left[0] eq 0.0
+    abs[tune.left[4000]] lt 0.000001
+    max[abs[slice[tune.left, 4000, 4100]]] gt 0.01
+    after = played_from[s, [hit[0.5, 660.0, 0.05, 1.0]], 0.25, 8000.0]
+    sound.duration_of[after] eq 1.3
+
+test a_sampler_plays_the_nearest_recording[]
+    rate = 8000.0
+    t = (0.0 + range[4000]) / rate
+    tone = sound.mono[rate, sin[2.0 * pi * sound.hz['C4'] * t]]
+    sp = sampler[[recording['C4', tone], recording['C5', tone]]]
+    xs = sampled[sp, hit[0.0, sound.hz['D4'], 0.2, 1.0], rate]
+    len[xs] gt 1600
+    max[abs[xs]] gt 0.9

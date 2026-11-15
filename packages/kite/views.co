@@ -436,7 +436,7 @@ fn _ind_color[k, ind, key]
 
 --- the colour (as CSS writes it) and the fill (`fill`, `stroke`) of a
 --- bar or circle figure at bar i, by its rule (klinecharts' figure styles)
-fn figure_look[k, ind, f, vals, i, bar_i, circle_i]
+fn figure_look[k, ind, f, vals, i, _bar_i, _circle_i]
     group = 'bars'
     if f.shape eq 'circle'
         group = 'circles'
@@ -477,7 +477,7 @@ fn figure_look[k, ind, f, vals, i, bar_i, circle_i]
 
 --- a line figure: the values joined bar to bar where both are there, in
 --- the indicator's line style of its place among the lines
-fn _figure_line[c, k, p, ind, f, vals, line_i]
+fn _figure_line[c, k, p, ind, _f, vals, line_i]
     n = int[store.num[k, 'indicator.lines.count']]
     at = 'lines.`line_i % max[1, n]`'
     color = _ind_color[k, ind, '`at`.color']

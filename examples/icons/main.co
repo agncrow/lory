@@ -1,0 +1,237 @@
+--- Every icon Lory draws, by name: each at 24 and at 15 pixels with its
+--- name under it, on Lory's light look and on its dark one, side by side.
+--- The wheel, the arrow and page keys, a drag, or a headset's thumbstick
+--- scroll the sheet. Above it, a chevron turned in steps shows
+--- `icons.turned`, which turns a section's chevron as it opens.
+use sys
+use math
+use memory
+use lory
+use lory.gui
+use lory.icons
+
+--- where the sheet is scrolled to, in the drawing's pixels from its top,
+--- and the height a drag holding it was last at (-1 when none is)
+struct Sheet [scroll, held]
+
+--- the sheet as it opens: at its top, and not held
+fn fresh[]
+    Sheet[0.0, -1.0]
+
+--- how the sheet is laid out on a page, in the drawing's pixels (`s` of
+--- them to a CSS pixel): its margin, the band at its top, a half's width,
+--- a cell's width and height, the cells across a half and the rows down
+--- it, and how tall the sheet is
+struct Layout [s, margin, band, half, cell_w, cell_h, cols, rows, tall]
+
+--- the layout of `count` names on the canvas's page: two halves side by
+--- side, each as many cells across as fit, a cell as wide as the longest
+--- name and a little more
+fn laid[c, every]
+    s = lory.px[c]
+    margin = 16.0 * s
+    band = 104.0 * s
+    half = floor[(lory.width[c] - 3.0 * margin) / 2.0]
+    widest = 0.0
+    for n in every
+        widest = max[widest, lory.measure[c, n, 11.0 * s]]
+    cell_w = max[ceil[widest + 20.0 * s], 120.0 * s]
+    cols = max[1, int[floor[(half - 24.0 * s) / cell_w]]]
+    rows = int[ceil[(0.0 + len[every]) / cols]]
+    cell_h = 60.0 * s
+    tall = band + 48.0 * s + rows * cell_h + 2.0 * margin
+    Layout[s, margin, band, half, cell_w, cell_h, cols, rows, tall]
+
+--- how far the sheet scrolls: until its foot is the page's
+fn most[l, c]
+    max[0.0, l.tall - lory.height[c]]
+
+--- where cell i stands from the top left of its half's grid
+fn place[l, i]
+    [(i % l.cols) * l.cell_w, floor[(0.0 + i) / l.cols] * l.cell_h]
+
+--- the sheet after the frame's input: the wheel (or a headset's stick,
+--- which Lory turns into the wheel) turns it, the arrows step it, Page Up
+--- and Page Down page it, Home and End go to its ends, and a press dragged
+--- carries it; it stays between its top and `furthest`
+fn scrolled[sheet, c, furthest]
+    s = lory.px[c]
+    step = 40.0 * s
+    page = lory.height[c] - 80.0 * s
+    for ev in lory.events[c]
+        if ev.on eq 'wheel'
+            sheet.scroll = sheet.scroll + ev.dy * s
+        if ev.on eq 'key'
+            if ev.key eq 'ArrowDown'
+                sheet.scroll = sheet.scroll + step
+            if ev.key eq 'ArrowUp'
+                sheet.scroll = sheet.scroll - step
+            if ev.key eq 'PageDown' or ev.key eq ' '
+                sheet.scroll = sheet.scroll + page
+            if ev.key eq 'PageUp'
+                sheet.scroll = sheet.scroll - page
+            if ev.key eq 'Home'
+                sheet.scroll = 0.0
+            if ev.key eq 'End'
+                sheet.scroll = furthest
+        if ev.on eq 'down'
+            sheet.held = ev.y
+        if ev.on eq 'move' and sheet.held gte 0.0
+            sheet.scroll = sheet.scroll - (ev.y - sheet.held)
+            sheet.held = ev.y
+        if ev.on eq 'up' or ev.on eq 'leave'
+            sheet.held = -1.0
+    sheet.scroll = min[max[sheet.scroll, 0.0], furthest]
+    sheet
+
+--- a cell: the icon at 24 pixels and at 15 beside it, its name under them
+fn cell[c, l, name, x, y, look]
+    s = l.s
+    c = icons.draw[c, name, x + 10.0 * s, y + 8.0 * s, 24.0 * s, look.ink]
+    c = icons.draw[c, name, x + 46.0 * s, y + 12.0 * s, 15.0 * s, look.ink]
+    lory.text[c, x + 10.0 * s, y + 38.0 * s, name, 11.0 * s, look.muted]
+
+--- one half of the sheet from (x, y): its ground in the look's panel
+--- colour, its title, and a cell for every name, drawn only in the rows
+--- the page shows
+fn half[c, l, every, x, y, look, title]
+    s = l.s
+    ground = l.tall - l.band - l.margin
+    c = lory.round_rect[c, x, y, l.half, ground, 12.0 * s, look.panel]
+    c = lory.round_outline[c, x, y, l.half, ground, 12.0 * s, 1.0 * s, look.edge]
+    c = lory.text[c, x + 18.0 * s, y + 16.0 * s, title, 13.0 * s, look.muted]
+    gx = x + floor[(l.half - l.cols * l.cell_w) / 2.0]
+    gy = y + 48.0 * s
+    first = max[0, int[floor[(0.0 - gy) / l.cell_h]]]
+    last = min[l.rows - 1, int[floor[(lory.height[c] - gy) / l.cell_h]]]
+    r = first
+    while r lte last
+        for k in range[l.cols]
+            i = r * l.cols + k
+            if i lt len[every]
+                at = place[l, i]
+                c = cell[c, l, every[i], gx + at[0], gy + at[1], look]
+        r = r + 1
+    c
+
+--- the canvas with the sheet of `every` name drawn on it, scrolled as the
+--- sheet is: a band saying what it is, then the light half and the dark
+fn drawn_sheet[c, sheet, l, every]
+    s = l.s
+    dark = gui.dark[]
+    top = 0.0 - floor[sheet.scroll + 0.5]
+    c = lory.clear[c, dark.page]
+    x = l.margin
+    y = top + l.margin
+    c = lory.text[c, x, y, 'Every icon Lory draws', 20.0 * s, dark.ink]
+    c = lory.text[c, x, y + 30.0 * s, '`len[every]` names, each at 24 and at 15 pixels, on the light look and the dark. Scroll with the wheel, the keys, a drag, or the thumbstick in a headset.', 13.0 * s, dark.muted]
+    label = 'icons.turned, a chevron by eighths of a turn:'
+    c = lory.text[c, x, y + 64.0 * s, label, 13.0 * s, dark.muted]
+    after = x + floor[lory.measure[c, label, 13.0 * s] + 12.0 * s]
+    for k in range[5]
+        c = icons.turned[c, 'chevron-down', after + 32.0 * k * s, y + 60.0 * s, 24.0 * s, dark.ink, 45.0 * k]
+    c = half[c, l, every, l.margin, top + l.band, gui.light[], 'Light']
+    half[c, l, every, 2.0 * l.margin + l.half, top + l.band, dark, 'Dark']
+
+fn draw[frame]
+    c = lory.begin[frame]
+    every = icons.names[]
+    l = laid[c, every]
+    sheet = scrolled[recall['sheet', fresh[]], c, most[l, c]]
+    remember['sheet', sheet]
+    lory.end[drawn_sheet[c, sheet, l, every]]
+
+sys.frames[draw]
+
+--- ---- tests ----
+
+--- a page's frame, `w` by `h`, with the input given (a JSON list)
+fn screen[w, h, given]
+    json['{"t": 0, "width": `w`, "height": `h`, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": `w`, "height": `h`, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+--- a headset's frame `t` milliseconds in, its right hand's ray on the
+--- page's middle and its stick pushed `forward` (-1 away, 1 back)
+fn headset[t, forward]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    json['{"t": `t`, "width": 1600, "height": 900, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 800, "height": 900, "projection": `unit`, "camera": `unit`}, {"eye": "right", "x": 800, "y": 0, "width": 800, "height": 900, "projection": `unit`, "camera": `unit`}], "input": [], "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0.05, `forward`]}], "said": []}']
+
+--- the vertices every icon makes at 24 pixels and at 15
+fn icons_made[every]
+    n = 0
+    for name in every
+        n = n + len[icons.draw[lory.begin[screen[400, 300, '[]']], name, 0.0, 0.0, 24.0, lory.black[]].verts]
+        n = n + len[icons.draw[lory.begin[screen[400, 300, '[]']], name, 0.0, 0.0, 15.0, lory.black[]].verts]
+    n
+
+--- the sheet after one frame of input on a page 900 by 700, from `from`
+fn after[from, given]
+    c = lory.begin[screen[900, 700, given]]
+    l = laid[c, icons.names[]]
+    scrolled[from, c, most[l, c]].scroll
+
+test the_cells_fit_their_halves_and_the_longest_name_its_cell[]
+    every = icons.names[]
+    c = lory.begin[screen[1200, 800, '[]']]
+    l = laid[c, every]
+    l.cols gte 3
+    l.rows * l.cols gte len[every] and (l.rows - 1) * l.cols lt len[every]
+    l.cols * l.cell_w lte l.half - 24.0
+    widest = 0.0
+    for n in every
+        widest = max[widest, lory.measure[c, n, 11.0]]
+    widest + 20.0 lte l.cell_w
+    --- (the last cell, at the grid's foot, is within the half's ground)
+    foot = place[l, len[every] - 1]
+    l.band + 48.0 + foot[1] + l.cell_h lte l.tall - l.margin
+    --- (a narrow page, a phone's, still lays a column a half)
+    laid[lory.begin[screen[320, 640, '[]']], every].cols eq 1
+
+test a_page_that_shows_the_whole_sheet_draws_every_icon_twice_in_each_look[]
+    every = icons.names[]
+    c = lory.begin[screen[1200, 12000, '[]']]
+    l = laid[c, every]
+    l.tall lte 12000.0
+    bare = len[drawn_sheet[c, fresh[], laid[c, slice[[''], 0, 0]], slice[[''], 0, 0]].verts]
+    whole = len[drawn_sheet[c, fresh[], l, every].verts]
+    --- (words are not drawn without the page's atlas, so the rest is icons)
+    whole - bare eq 2 * icons_made[every]
+
+test a_short_page_draws_only_the_rows_it_shows[]
+    every = icons.names[]
+    tall = lory.begin[screen[1200, 12000, '[]']]
+    short = lory.begin[screen[1200, 700, '[]']]
+    l = laid[short, every]
+    shown = len[drawn_sheet[short, fresh[], l, every].verts]
+    shown lt len[drawn_sheet[tall, fresh[], laid[tall, every], every].verts] / 4
+    --- (scrolled to its end, the last row is on the page)
+    sheet = Sheet[most[l, short], -1.0]
+    foot = place[l, len[every] - 1]
+    bottom = 0.0 - sheet.scroll + l.band + 48.0 + foot[1] + l.cell_h
+    bottom gt 0.0 and bottom lte 700.0
+    len[drawn_sheet[short, sheet, l, every].verts] gt 0
+
+test the_wheel_keys_and_a_drag_scroll_the_sheet_between_its_ends[]
+    c = lory.begin[screen[900, 700, '[]']]
+    furthest = most[laid[c, icons.names[]], c]
+    furthest gt 1000.0
+    after[fresh[], '[{"type": "wheel", "x": 100, "y": 100, "dx": 0, "dy": 300}]'] eq 300.0
+    after[Sheet[200.0, -1.0], '[{"type": "wheel", "x": 100, "y": 100, "dx": 0, "dy": -1000}]'] eq 0.0
+    after[fresh[], '[{"type": "wheel", "x": 100, "y": 100, "dx": 0, "dy": 1000000}]'] eq furthest
+    after[fresh[], '[{"type": "key", "key": "ArrowDown", "code": "ArrowDown"}, {"type": "key", "key": "ArrowDown", "code": "ArrowDown"}]'] eq 80.0
+    after[fresh[], '[{"type": "key", "key": "PageDown", "code": "PageDown"}]'] eq 620.0
+    after[fresh[], '[{"type": "key", "key": "End", "code": "End"}]'] eq furthest
+    after[Sheet[500.0, -1.0], '[{"type": "key", "key": "Home", "code": "Home"}]'] eq 0.0
+    after[Sheet[500.0, -1.0], '[{"type": "down", "device": "mouse", "id": 1, "x": 100, "y": 400, "button": 0}, {"type": "move", "device": "mouse", "id": 1, "x": 100, "y": 300, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": 100, "y": 300, "button": 0}]'] eq 600.0
+
+test in_a_headset_the_thumbstick_pulled_back_scrolls_the_sheet_down[]
+    --- (the first frame ended, so the next has a time step)
+    first = lory.begin[headset[1000, 0]]
+    lory.width[first] eq 1000.0 and lory.height[first] eq 560.0
+    every = icons.names[]
+    l = laid[first, every]
+    lory.end[drawn_sheet[first, fresh[], l, every]] gt 0
+    pulled = lory.begin[headset[1050, 1]]
+    moved = scrolled[fresh[], pulled, most[l, pulled]]
+    moved.scroll gt 0.0
+    pushed = lory.begin[headset[1100, -1]]
+    scrolled[moved, pushed, most[l, pushed]].scroll lt moved.scroll

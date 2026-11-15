@@ -1,0 +1,723 @@
+--- Kite's charts (`use kite.charts`): Chart.js's charts, drawn with Lory.
+---
+--- A chart is a view over data. A program makes one each frame (a kind,
+--- labels, datasets, axes, a legend, titles and a tooltip; or a Chart.js
+--- configuration read with `of`) and hands it to be drawn into a box of
+--- the canvas: as a control in gui's tree (`drawn`, painted by
+--- `painter`), or straight onto the canvas (`shown_at`). Between frames
+--- Kite keeps, under the chart's id, what Chart.js keeps in its chart: the
+--- datasets and values the legend has hidden, the marks on their way where
+--- the data changed (moving as Chart.js animates them), what the pointer
+--- was over and the place the arrow keys have reached. It tells the
+--- program what the reader did, as gui's events of the chart's id:
+---
+--- - `hover`: the marks under the pointer changed; `words` names them
+---   (`hits_of` reads them), `num` is the first one's place (-1: none).
+--- - `press`: a press let go on the chart; the marks under it as above.
+--- - `legend`: a legend item was pressed and its dataset (or, in a pie, a
+---   doughnut or a polar area, its value) hidden or shown again; `words`
+---   is the item's text, `num` the dataset's (or the value's) place.
+--- - `current`: the arrow keys moved to another place (`num`), as a
+---   sparkline tells its current index.
+---
+--- Its parts: charts_model (the records and the small rules every part
+--- shares), charts_json (a Chart.js configuration read), charts_scales and
+--- charts_time (the axes), charts_layout (the boxes round the area),
+--- charts_marks (where each bar, point and arc stands), charts_hits (what
+--- the pointer finds, the tooltip, the legend's clicks), charts_motion
+--- (animations), charts_decimation (long lines thinned) and charts_paint
+--- (the drawing).
+---
+--- Kite reimplements the behaviour of Chart.js (Copyright the Chart.js
+--- contributors, MIT licence); see charts_model.co.
+use math
+use memory
+use lory
+use lory.gui
+use charts_model
+use charts_json
+use charts_scales
+use charts_layout
+use charts_marks
+use charts_hits
+use charts_motion
+use charts_decimation
+use charts_paint
+
+--- ---- making a chart ----
+
+--- a chart of `kind` (bar, line, scatter, bubble, pie, doughnut,
+--- polarArea, radar) named `id`, over `labels`, of no datasets yet: its
+--- axes, legend, tooltip, interaction and animation are Chart.js's for
+--- that kind
+fn chart_of[id, kind, labels]
+    charts_model.chart_of[id, kind, labels]
+
+--- a dataset of `kind` ('' for the chart's own) named `label`, holding
+--- the values `ys` (nan where there is none), placed by the chart's labels
+fn dataset[kind, label, ys]
+    charts_model.dataset[kind, label, ys]
+
+--- a dataset of points standing at `xs` along an axis of numbers or times
+--- (a scatter's, or a line's), holding `ys`
+fn points[kind, label, xs, ys]
+    s = charts_model.dataset[kind, label, ys]
+    s.xs = xs
+    s
+
+--- a bubble chart's dataset: bubbles at (`xs`, `ys`), each `rs` pixels in
+--- radius
+fn bubbles[label, xs, ys, rs]
+    s = charts_model.dataset['bubble', label, ys]
+    s.xs = xs
+    s.rs = rs
+    s
+
+--- a floating bar chart's dataset: each bar from its start to its end
+fn floating[label, starts_at, ends_at]
+    s = charts_model.dataset['bar', label, ends_at]
+    s.starts = starts_at
+    s
+
+--- the chart with a dataset added after its others
+fn with_set[ch, s]
+    ch.sets = push[ch.sets, s]
+    ch
+
+--- an axis of `kind` (linear, logarithmic, category, time, timeseries,
+--- radialLinear) of that id, running `way` (x, y or r), on its side (left,
+--- right, top, bottom, chartArea)
+fn axis[id, kind, way, position]
+    charts_model.axis_of[id, kind, way, position]
+
+--- the chart with the axis of that id set to `a` (added where it has
+--- none)
+fn with_axis[ch, a]
+    k = charts_model.axis_at[ch, a.id]
+    if k lt 0
+        ch.axes = push[ch.axes, a]
+        return ch
+    all_axes = ch.axes
+    all_axes[k] = a
+    ch.axes = all_axes
+    ch
+
+--- the chart with a title of those lines, shown
+fn titled[ch, lines]
+    h = ch.title
+    h.shown = len[lines] gt 0
+    h.lines = lines
+    ch.title = h
+    ch
+
+--- the chart with a subtitle of those lines, shown
+fn subtitled[ch, lines]
+    h = ch.subtitle
+    h.shown = len[lines] gt 0
+    h.lines = lines
+    ch.subtitle = h
+    ch
+
+--- the chart read from a Chart.js configuration, JSON's text: its
+--- `type`, its `data` (labels and datasets) and its `options` (text that
+--- is not JSON gives a bar chart of nothing)
+fn of[id, config]
+    value = json[config]
+    if not value.ok
+        return charts_model.chart_of[id, 'bar', slice[[''], 0, 0]]
+    charts_json.chart_from[id, value]
+
+--- ---- laying it out and asking it ----
+
+--- the chart laid in a box `width` by `height` (CSS pixels), its long
+--- lines thinned first where it decimates: its area, its boxes, its axes
+--- and its legend (words measured as Lory measures them before its atlas
+--- is made: `laid_with` takes a pen)
+fn laid[ch, width, height]
+    laid_with[ch, width, height, charts_model.plain_pen[]]
+
+--- the chart laid, its words measured with `pen` (`charts_model.pen_of`)
+fn laid_with[ch, width, height, pen]
+    charts_layout.laid_out[charts_decimation.decimated[ch, width], width, height, pen]
+
+--- each dataset's marks (bars, points, arcs) where the laid chart puts
+--- them: what is drawn, found and moved
+fn marks_of[ch, at]
+    charts_marks.marked[charts_decimation.decimated[ch, at.width], at, false]
+
+--- the marks the chart's own interaction (`mode`, `intersect`, `axis`)
+--- finds at (x, y): those drawn as under the pointer
+fn found[ch, at, layers, x, y]
+    charts_hits.hovered[charts_decimation.decimated[ch, at.width], at, layers, x, y]
+
+--- the marks an interaction `mode` finds at (x, y): 'index', 'dataset',
+--- 'point', 'nearest', 'x' or 'y'; only those under it where `intersect`;
+--- distance measured along `way` ('x', 'y', 'xy', 'r'; '' the mode's own)
+fn picked[ch, at, layers, x, y, mode, intersect, way]
+    charts_hits.picked[charts_decimation.decimated[ch, at.width], at, layers, x, y, mode, intersect, way]
+
+--- the tooltip with the pointer at (x, y): whether it shows, its title
+--- and lines, its box and its caret
+fn tooltip[ch, at, layers, x, y]
+    charts_hits.told[charts_decimation.decimated[ch, at.width], at, layers, x, y, charts_model.plain_pen[]]
+
+--- the chart as a press on its legend at (x, y) leaves it: the item's
+--- dataset (or value) hidden, or shown again
+fn legend_pressed[ch, at, x, y]
+    charts_hits.toggled[ch, at, charts_hits.legend_at[at, x, y]]
+
+--- the marks named in an event's words (`hover`, `press`): each its
+--- dataset's place and its own
+fn hits_of[words]
+    out = slice[[charts_hits.Hit[0, 0]], 0, 0]
+    parts = split[words, ' ']
+    i = 0
+    while i lt len[parts]
+        pair = split[parts[i], ':']
+        if len[pair] eq 2
+            d = int[pair[0]]
+            j = int[pair[1]]
+            if d.ok and j.ok
+                out = push[out, charts_hits.Hit[0 + d, 0 + j]]
+        i = i + 1
+    out
+
+--- the words naming marks: `dataset:place` each, apart by spaces
+fn hits_words[hits]
+    out = ''
+    i = 0
+    while i lt len[hits]
+        h = hits[i]
+        if i gt 0
+            out = '`out` '
+        out = '`out``h.set`:`h.index`'
+        i = i + 1
+    out
+
+--- ---- what Kite keeps between frames ----
+
+--- what Kite keeps of a chart between frames: the datasets the legend has
+--- turned from what the program says (hidden where it says shown, and
+--- shown where it says hidden), the values a pie's legend has hidden, its
+--- marks' motion, the size it was last laid at, whether it has been laid
+--- again since its first (Chart.js lays a chart again at each update),
+--- the marks the pointer was over (their words), the place the arrow keys
+--- have reached (-1: none) and how many frames it has been drawn
+struct Kept [turned, points_hidden, motion, width, height, laid_before, over, current, frames]
+
+fn _fresh[]
+    still = charts_marks.no_layers[]
+    Kept[slice[[false], 0, 0], charts_model.no_numbers[], charts_motion.Motion[still, still, 0.0, 0.0, 'linear'], 0.0, 0.0, false, '', -1, 0]
+
+fn _kept_key[id]
+    'kite.charts/`id`/kept'
+
+fn _chart_key[id]
+    'kite.charts/`id`'
+
+--- what Kite keeps of the chart of that id
+fn kept_of[id]
+    recall[_kept_key[id], _fresh[]]
+
+--- the chart of that id forgotten: drawn next as if for the first time
+--- (its legend's choices dropped, its marks growing in again)
+fn forget[id]
+    remember[_kept_key[id], _fresh[]]
+
+--- the chart as Kite draws it: with what its legend has hidden or shown
+--- again, and laid as Chart.js lays a chart it has updated
+fn held_of[ch]
+    _held_applied[ch, kept_of[ch.id]]
+
+fn _held_applied[ch0, kept]
+    ch = ch0
+    d = 0
+    while d lt len[ch.sets] and d lt len[kept.turned]
+        if kept.turned[d]
+            s = ch.sets[d]
+            s.hidden = not s.hidden
+            all_sets = ch.sets
+            all_sets[d] = s
+            ch.sets = all_sets
+        d = d + 1
+    for v in kept.points_hidden
+        if not charts_model.point_hidden[ch, int[v]]
+            ch.hidden_points = push[ch.hidden_points, v]
+    ch.laid_before = ch.laid_before or kept.laid_before
+    ch
+
+--- what is kept once a legend item is pressed: its dataset turned, or
+--- (where the chart's arcs are its values) its value hidden or shown
+fn _toggled_kept[kept0, ch, it]
+    kept = kept0
+    kept.laid_before = true
+    if charts_model.arcs_kind[ch.form]
+        if _has_place[kept.points_hidden, it.index]
+            left = charts_model.no_numbers[]
+            for v in kept.points_hidden
+                if int[v] ne it.index
+                    left = push[left, v]
+            kept.points_hidden = left
+        else
+            kept.points_hidden = push[kept.points_hidden, 0.0 + it.index]
+        return kept
+    turned = kept.turned
+    while len[turned] lt len[ch.sets]
+        turned = push[turned, false]
+    if it.set gte 0 and it.set lt len[turned]
+        turned[it.set] = not turned[it.set]
+    kept.turned = turned
+    kept
+
+fn _has_place[vs, i]
+    for v in vs
+        if int[v] eq i
+            return true
+    false
+
+--- ---- drawing it ----
+
+--- what drawing a chart for a frame answers: the canvas drawn on, and
+--- what the reader did (gui's events, of the chart's id)
+struct Painted [canvas, events]
+
+--- the chart as a control of gui's tree, `wide` by `tall` CSS pixels
+--- (`wide` 0: as wide as its column), drawn by `painter` from the chart
+--- kept under its id this frame
+fn drawn[ch, wide, tall]
+    remember[_chart_key[ch.id], ch]
+    gui.drawn[ch.id, 0.0, wide, tall, painter]
+
+--- the painter of a chart in gui's tree: it draws the chart `drawn` kept
+--- under the control's id, and tells what the reader did to it
+fn painter[d0]
+    d = d0
+    ch = recall[_chart_key[d.id], charts_model.chart_of[d.id, 'bar', slice[[''], 0, 0]]]
+    pointed = d.hover or d.down or d.pressed
+    at_x = _pointed_at[pointed, d.px, d.s]
+    at_y = _pointed_at[pointed, d.py, d.s]
+    --- (a slice worked out in a branch is taken as one that may fail, and
+    --- a painter answers only what cannot: so it is worked out before)
+    unkeyed = slice[[''], 0, 0]
+    keyed = d.keys
+    if not d.focused
+        keyed = unkeyed
+    p = _frame[d.c, ch, d.x, d.y, d.w, d.h, d.s, at_x, at_y, d.pressed, keyed]
+    --- (a painter answers a plain Drawn: gui's field holds no other kind)
+    if not p.ok
+        return d0
+    d.c = p.canvas
+    i = 0
+    while i lt len[p.events]
+        ev = p.events[i]
+        d = _told[d, ev]
+        i = i + 1
+    d
+
+--- whether (px, py) is in the box at (x, y), `w` by `h`
+fn _inside[px, py, x, y, w, h]
+    px gte x and px lte x + w and py gte y and py lte y + h
+
+--- where on a chart, in CSS pixels, the pointer is, from `at` canvas
+--- pixels into its box (nan: it is neither over the chart nor pressing it)
+fn _pointed_at[pointed, at, s]
+    if not pointed
+        return nan
+    at / s
+
+--- `d` with the event `ev` told; its words and number are read as what
+--- cannot have failed (none, and nan, where they did), since a painter
+--- answers only that
+fn _told[d, ev]
+    act = ev.act
+    if not act.ok
+        return d
+    words = ev.words
+    if not words.ok
+        return gui.tell[d, act, '', nan]
+    num = ev.num
+    if not num.ok
+        return gui.tell[d, act, words, nan]
+    gui.tell[d, act, words, num]
+
+--- the chart drawn straight onto the canvas in the box at (x, y), `w` by
+--- `h` of the canvas's pixels: the pointer over it found, a press let go
+--- on it told
+fn shown_at[c, ch, x, y, w, h]
+    s = lory.px[c]
+    px = lory.pointer_x[c]
+    py = lory.pointer_y[c]
+    pointed = lory.pointing[c] and _inside[px, py, x, y, w, h]
+    pressed = false
+    events = lory.events[c]
+    i = 0
+    while i lt len[events]
+        ev = events[i]
+        if ev.on eq 'up' and _inside[ev.x, ev.y, x, y, w, h]
+            pressed = true
+            pointed = true
+            px = ev.x
+            py = ev.y
+        i = i + 1
+    at_x = _pointed_at[pointed, px - x, s]
+    at_y = _pointed_at[pointed, py - y, s]
+    p = _frame[c, ch, x, y, w, h, s, at_x, at_y, pressed, slice[[''], 0, 0]]
+    if not p.ok
+        return Painted[c, slice[[gui.Event['', '', '', 0.0]], 0, 0]]
+    p
+
+--- one frame of a chart: laid in its box, a press on its legend applied,
+--- its marks moved on toward where its data puts them, those under the
+--- pointer (or at the place the arrow keys reached) found and its tooltip
+--- shown, all drawn; what the reader did told; what is kept, kept
+fn _frame[c, ch0, x, y, w, h, s, at_x, at_y, pressed, keyed]
+    key = _kept_key[ch0.id]
+    kept = recall[key, _fresh[]]
+    told = slice[[gui.Event['', '', '', 0.0]], 0, 0]
+    width = w / s
+    height = h / s
+    pen = charts_model.pen_of[c, map['' = 0.0]]
+    at_ms = lory.time[c] * 1000.0
+    pointed = at_x eq at_x and at_y eq at_y
+    ch = charts_decimation.decimated[_held_applied[ch0, kept], width]
+    at = charts_layout.laid_out[ch, width, height, pen]
+    if pressed and pointed
+        k = charts_hits.legend_at[at, at_x, at_y]
+        if k gte 0
+            it = at.legend.items[k]
+            kept = _toggled_kept[kept, ch, it]
+            place = it.set
+            if charts_model.arcs_kind[ch.form]
+                place = it.index
+            told = push[told, gui.Event[ch0.id, 'legend', it.text, 0.0 + place]]
+            pressed = false
+            ch = charts_decimation.decimated[_held_applied[ch0, kept], width]
+            at = charts_layout.laid_out[ch, width, height, pen]
+    target = charts_marks.marked[ch, at, false]
+    motion = kept.motion
+    if kept.frames eq 0
+        motion = charts_motion.set_out[target, target, at_ms, 0.0, ch.easing]
+        if ch.animated and ch.duration gt 0.0
+            motion = charts_motion.set_out[charts_marks.marked[ch, at, true], target, at_ms, ch.duration, ch.easing]
+    else if width ne kept.width or height ne kept.height
+        kept.laid_before = true
+        motion = charts_motion.set_out[target, target, at_ms, 0.0, ch.easing]
+    else if not _same_layers[kept.motion.to, target]
+        if not kept.laid_before
+            kept.laid_before = true
+            ch.laid_before = true
+            at = charts_layout.laid_out[ch, width, height, pen]
+            target = charts_marks.marked[ch, at, false]
+        motion = charts_motion.set_out[target, target, at_ms, 0.0, ch.easing]
+        if ch.animated and ch.duration gt 0.0
+            now_at = charts_motion.moving[ch, at, kept.motion, at_ms]
+            took = ch.duration
+            if not charts_motion.arrived[kept.motion, at_ms]
+                took = max[kept.motion.duration - (at_ms - kept.motion.start), ch.duration]
+            motion = charts_motion.set_out[now_at, target, at_ms, took, ch.easing]
+    layers = target
+    if not charts_motion.arrived[motion, at_ms]
+        layers = charts_motion.moving[ch, at, motion, at_ms]
+    current = _keyed_to[kept.current, keyed, len[ch.labels], target]
+    if current ne kept.current
+        told = push[told, gui.Event[ch0.id, 'current', '', 0.0 + current]]
+    if pointed
+        current = -1
+    hits = slice[[charts_hits.Hit[0, 0]], 0, 0]
+    tip = charts_hits.Told[false, hits, slice[[''], 0, 0], slice[[''], 0, 0], nan, nan, nan, nan, nan, nan, '', '']
+    if pointed
+        hits = charts_hits.hovered[ch, at, layers, at_x, at_y]
+        tip = charts_hits.told[ch, at, layers, at_x, at_y, pen]
+    else if current gte 0
+        spot = _spot_of[ch, layers, current]
+        if spot[0] eq spot[0]
+            hits = charts_hits.picked[ch, at, layers, spot[0], spot[1], 'index', false, '']
+            tip = charts_hits.told[ch, at, layers, spot[0], spot[1], pen]
+    words = hits_words[hits]
+    first = _first_place[hits]
+    if words ne kept.over
+        told = push[told, gui.Event[ch0.id, 'hover', words, first]]
+    if pressed and pointed and charts_hits.chart_in_area[ch, at, at_x, at_y]
+        told = push[told, gui.Event[ch0.id, 'press', words, first]]
+    drawn_on = charts_paint.painted[c, ch, at, layers, hits, tip, charts_paint.Place[x, y, s]]
+    kept.motion = motion
+    kept.width = width
+    kept.height = height
+    kept.over = words
+    kept.current = current
+    kept.frames = kept.frames + 1
+    remember[key, kept]
+    Painted[drawn_on, told]
+
+--- the place of the first of the marks found (-1: none)
+fn _first_place[hits]
+    if len[hits] eq 0
+        return -1.0
+    0.0 + hits[0].index
+
+--- the place the arrow keys reach from `from` (-1: none yet): the next
+--- or the one before, the first or the last (Home, End), kept among the
+--- chart's places; the place the pointer left where no key is pressed
+fn _keyed_to[from, keyed, labels, layers]
+    n = labels
+    for layer in layers
+        n = max[n, len[layer.marks]]
+    at = from
+    i = 0
+    while i lt len[keyed]
+        k = keyed[i]
+        if k eq 'ArrowRight' or k eq 'ArrowDown'
+            at = min[at + 1, n - 1]
+        else if k eq 'ArrowLeft' or k eq 'ArrowUp'
+            at = max[at - 1, 0]
+        else if k eq 'Home'
+            at = 0
+        else if k eq 'End'
+            at = n - 1
+        else if k eq 'Escape'
+            at = -1
+        i = i + 1
+    at
+
+--- where the mark at that place of the first shown dataset stands (nan
+--- where none does): the place the arrow keys reached, pointed at
+fn _spot_of[ch, layers, place]
+    order = charts_model.sorted_sets[ch, true]
+    for d in order
+        if d lt len[layers] and place lt len[layers[d].marks]
+            m = layers[d].marks[place]
+            if charts_model.finite[m.x] and charts_model.finite[m.y]
+                at = charts_hits.centre_of[ch, m]
+                return [at[0], at[1]]
+    [nan, nan]
+
+--- whether two charts' marks stand alike: as many, each of the same
+--- numbers and colours (none alike to none)
+fn _same_layers[a, b]
+    if len[a] ne len[b]
+        return false
+    d = 0
+    while d lt len[a]
+        ma = a[d].marks
+        mb = b[d].marks
+        if len[ma] ne len[mb] or a[d].first ne b[d].first or a[d].count ne b[d].count
+            return false
+        j = 0
+        while j lt len[ma]
+            if not _same_mark[ma[j], mb[j]]
+                return false
+            j = j + 1
+        d = d + 1
+    true
+
+fn _same_mark[a, b]
+    same = _same[a.x, b.x] and _same[a.y, b.y] and _same[a.base, b.base] and _same[a.width, b.width] and _same[a.height, b.height] and _same[a.radius, b.radius]
+    same = same and _same[a.start_angle, b.start_angle] and _same[a.end_angle, b.end_angle] and _same[a.inner, b.inner] and _same[a.outer, b.outer] and _same[a.circumference, b.circumference] and a.skip eq b.skip
+    same and _same_color[a.fill, b.fill] and _same_color[a.edge, b.edge]
+
+fn _same[a, b]
+    a eq b or (a ne a and b ne b)
+
+fn _same_color[a, b]
+    a.r eq b.r and a.g eq b.g and a.b eq b.b and a.a eq b.a
+
+--- ---- sparklines ----
+
+--- a sparkline (Vuetify's): a small chart of `ys` with no axes, legend
+--- or tooltip, inset 8 pixels: a line ('trend') or bars ('bar'); its line
+--- curved through its points without overshooting them (`smooth`) and
+--- filled down to its foot (`filled`), in `color`; the pointer over it
+--- finds the place nearest across, as do the arrow keys
+fn sparkline[id, ys, kind, smooth, filled, color]
+    form = 'line'
+    if kind eq 'bar'
+        form = 'bar'
+    labels = slice[[''], 0, 0]
+    i = 0
+    while i lt len[ys]
+        labels = push[labels, str[i + 1]]
+        i = i + 1
+    ch = charts_model.chart_of[id, form, labels]
+    s = charts_model.dataset[form, '', ys]
+    s.edges = [color]
+    s.fills = [charts_model.fade_of[color]]
+    s.point_radius = 0.0
+    s.hover_radius = 4.0
+    s.hit_radius = 8.0
+    s.monotone = smooth
+    if form eq 'line'
+        s.edge_width = 2.0
+        if filled
+            s.fill = 'start'
+    else
+        s.fills = [color]
+        s.category_percentage = 0.9
+    ch.sets = [s]
+    k = 0
+    while k lt len[ch.axes]
+        a = ch.axes[k]
+        a.display = false
+        all_axes = ch.axes
+        all_axes[k] = a
+        ch.axes = all_axes
+        k = k + 1
+    l = ch.legend
+    l.shown = false
+    ch.legend = l
+    t = ch.tip
+    t.shown = false
+    ch.tip = t
+    ch.mode = 'index'
+    ch.intersect = false
+    ch.padding = [8.0, 8.0, 8.0, 8.0]
+    ch.duration = 2000.0
+    ch
+
+--- ---- truths ----
+
+test events_name_their_marks_as_dataset_and_place[]
+    hits = hits_of['0:2 1:2']
+    len[hits] eq 2
+    hits[1].set eq 1
+    hits[1].index eq 2
+    hits_words[hits] eq '0:2 1:2'
+    len[hits_of['']] eq 0
+    len[hits_of['x:y']] eq 0
+
+test a_chart_is_made_of_its_parts[]
+    ch = chart_of['sales', 'bar', ['Jan', 'Feb', 'Mar']]
+    ch = with_set[ch, dataset['', 'This year', [3.0, 5.0, 2.0]]]
+    ch = with_set[ch, floating['Range', [1.0, 2.0, 0.5], [4.0, 6.0, 3.0]]]
+    len[ch.sets] eq 2
+    ch.sets[1].starts[0] eq 1.0
+    ch = with_axis[ch, axis['y2', 'linear', 'y', 'right']]
+    len[ch.axes] eq 3
+    ch = titled[ch, ['Sales']]
+    ch.title.shown
+    at = laid[ch, 400.0, 300.0]
+    layers = marks_of[ch, at]
+    len[layers] eq 2
+    len[layers[0].marks] eq 3
+    layers[0].marks[0].what eq 'bar'
+
+test the_legend_turns_a_dataset_and_a_pie_hides_a_value[]
+    ch = chart_of['t', 'line', ['a', 'b']]
+    ch = with_set[with_set[ch, dataset['', 'one', [1.0, 2.0]]], dataset['', 'two', [2.0, 1.0]]]
+    at = laid[ch, 400.0, 300.0]
+    it = at.legend.items[1]
+    kept = _toggled_kept[_fresh[], ch, it]
+    kept.turned[1]
+    not kept.turned[0]
+    _held_applied[ch, kept].sets[1].hidden
+    _held_applied[ch, kept].laid_before
+    again = _toggled_kept[kept, ch, it]
+    not _held_applied[ch, again].sets[1].hidden
+    pie = with_set[chart_of['p', 'pie', ['a', 'b', 'c']], dataset['', 'v', [1.0, 1.0, 2.0]]]
+    slice_item = laid[pie, 300.0, 300.0].legend.items[2]
+    hidden = _toggled_kept[_fresh[], pie, slice_item]
+    charts_model.point_hidden[_held_applied[pie, hidden], 2]
+
+test the_arrow_keys_move_along_the_places[]
+    layers = charts_marks.no_layers[]
+    _keyed_to[-1, ['ArrowRight'], 5, layers] eq 0
+    _keyed_to[0, ['ArrowLeft'], 5, layers] eq 0
+    _keyed_to[2, ['End'], 5, layers] eq 4
+    _keyed_to[4, ['ArrowRight', 'ArrowRight'], 5, layers] eq 4
+    _keyed_to[3, ['Escape'], 5, layers] eq -1
+
+test marks_alike_are_alike_and_a_moved_one_is_not[]
+    ch = with_set[chart_of['m', 'bar', ['a', 'b']], dataset['', 'x', [1.0, 2.0]]]
+    at = laid[ch, 300.0, 200.0]
+    one = marks_of[ch, at]
+    _same_layers[one, one]
+    moved = with_set[chart_of['m', 'bar', ['a', 'b']], dataset['', 'x', [1.0, 3.0]]]
+    not _same_layers[one, marks_of[moved, laid[moved, 300.0, 200.0]]]
+
+test a_chart_is_read_from_a_chart_js_configuration[]
+    ch = of['c', '{"type": "line", "data": {"labels": ["a", "b"], "datasets": [{"label": "x", "data": [1, 2], "tension": 0.4}]}, "options": {"indexAxis": "y"}}']
+    ch.form eq 'line'
+    len[ch.labels] eq 2
+    ch.sets[0].tension eq 0.4
+    ch.index_axis eq 'y'
+    of['d', 'not json'].form eq 'bar'
+    len[of['d', 'not json'].sets] eq 0
+
+test a_sparkline_is_a_bare_small_chart[]
+    sp = sparkline['spark', [1.0, 4.0, 2.0, 5.0], 'trend', true, true, lory.hex['#3b7dd8']]
+    not sp.legend.shown
+    not sp.tip.shown
+    not sp.axes[0].display
+    sp.sets[0].monotone
+    sp.sets[0].fill eq 'start'
+    at = laid[sp, 200.0, 60.0]
+    at.area[0] eq 8.0
+    bars = sparkline['spark', [1.0, 4.0], 'bar', false, false, lory.hex['#3b7dd8']]
+    bars.sets[0].form eq 'bar'
+
+--- a frame 640 by 480 as the page hands one, with the input given and
+--- the pointers standing (JSON lists), at `t` seconds
+fn _frame_at[t, given, pointers]
+    json['{"t": `t`, "width": 640, "height": 480, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 640, "height": 480, "projection": [], "camera": []}], "input": `given`, "pointers": `pointers`, "controllers": [], "said": []}']
+
+--- a mouse's press and release at a place, and the mouse standing there
+fn _press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _standing[x, y]
+    '[{"x": `x`, "y": `y`, "down": false}]'
+
+fn _two_sets[]
+    ch = chart_of['g', 'bar', ['a', 'b', 'c']]
+    with_set[with_set[ch, dataset['', 'one', [1.0, 2.0, 3.0]]], dataset['', 'two', [2.0, 1.0, 2.0]]]
+
+test a_chart_in_gui_s_tree_is_drawn_and_tells_what_the_reader_did[]
+    forget['g']
+    tree = gui.column[[drawn[_two_sets[], 400.0, 300.0]]]
+    first = gui.show[lory.begin[_frame_at[0.0, '[]', '[]']], tree]
+    box = first.boxes['g']
+    len[first.canvas.verts] gt 1000
+    len[first.events] eq 0
+    kept_of['g'].frames eq 1
+    at = laid[_two_sets[], 400.0, 300.0]
+    hb = at.legend.hits[1]
+    x = box[0] + hb[0] + 5.0
+    y = box[1] + hb[1] + 5.0
+    pressed = gui.show[lory.begin[_frame_at[0.1, _press_at[x, y], _standing[x, y]]], tree]
+    legend = pressed.events[0]
+    legend.id eq 'g'
+    legend.act eq 'legend'
+    legend.words eq 'two'
+    legend.num eq 1.0
+    kept_of['g'].turned[1]
+    held_of[_two_sets[]].sets[1].hidden
+    layers = marks_of[held_of[_two_sets[]], laid[held_of[_two_sets[]], 400.0, 300.0]]
+    bar = layers[0].marks[2]
+    bx = box[0] + bar.x
+    by = box[1] + (bar.y + bar.base) / 2.0
+    over = gui.show[lory.begin[_frame_at[5.0, '[]', _standing[bx, by]]], tree]
+    told = over.events[len[over.events] - 1]
+    told.act eq 'hover'
+    told.words eq '0:2'
+    told.num eq 2.0
+    clicked = gui.show[lory.begin[_frame_at[5.1, _press_at[bx, by], _standing[bx, by]]], tree]
+    clicked.events[len[clicked.events] - 1].act eq 'press'
+    clicked.events[len[clicked.events] - 1].words eq '0:2'
+
+test a_chart_shown_straight_on_the_canvas_tells_the_same[]
+    forget['s']
+    ch = with_set[chart_of['s', 'bar', ['a', 'b']], dataset['', 'x', [1.0, 2.0]]]
+    first = shown_at[lory.begin[_frame_at[0.0, '[]', '[]']], ch, 20.0, 30.0, 300.0, 200.0]
+    len[first.events] eq 0
+    len[first.canvas.verts] gt 100
+    bar = marks_of[ch, laid[ch, 300.0, 200.0]][0].marks[1]
+    bx = 20.0 + bar.x
+    by = 30.0 + (bar.y + bar.base) / 2.0
+    over = shown_at[lory.begin[_frame_at[1.5, '[]', _standing[bx, by]]], ch, 20.0, 30.0, 300.0, 200.0]
+    over.events[0].act eq 'hover'
+    over.events[0].words eq '0:1'
+    over.events[0].num eq 1.0
+    clicked = shown_at[lory.begin[_frame_at[1.6, _press_at[bx, by], _standing[bx, by]]], ch, 20.0, 30.0, 300.0, 200.0]
+    clicked.events[len[clicked.events] - 1].act eq 'press'
+    away = shown_at[lory.begin[_frame_at[1.7, '[]', _standing[5.0, 5.0]]], ch, 20.0, 30.0, 300.0, 200.0]
+    away.events[0].act eq 'hover'
+    away.events[0].words eq ''

@@ -68,7 +68,6 @@ fn lines[xs, ys]
 
 --- bars' pyramid: the bars, then each level half the last
 fn bars[ts, o, h, l, c, v]
-    n = len[ts]
     first = Bars[ts, o, h, l, c, v]
     levels = [first]
     at = first

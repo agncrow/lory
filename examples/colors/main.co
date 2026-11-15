@@ -1,0 +1,643 @@
+--- Lory's colours (`use lory.colors`): every scale it makes, in light and
+--- in dark, each row with the contrast its two text steps have on its step
+--- 2 (APCA's Lc, which Radix promises at 60 for step 11 and 90 for step
+--- 12), and a theme made of an accent and a gray picked here, shown as a
+--- few controls drawn in a look made from the theme's tokens. The pointer
+--- over a swatch says what it is; a press on a scale's name makes it the
+--- theme's accent (or, for a gray, its gray).
+use sys
+use memory
+use lory
+use lory.gui
+use lory.colors
+
+--- what the reader has picked and done: the family of accents the second
+--- select offers, the accent, the gray ('auto': the one Radix Themes pairs
+--- with the accent), the appearance, the controls' values, whether alpha
+--- steps are shown over a checkerboard, and how many times the button was
+--- pressed
+struct App [family, accent, gray, appearance, name, volume, loud, checker, presses]
+
+--- the app as it opens: indigo with the gray paired with it, in light
+fn fresh[]
+    App['blues', 'indigo', 'auto', 'light', 'Ada', 0.4, false, false, 0]
+
+--- ---- the theme ----
+
+--- Radix's families of accents, as its page of scales groups them (the
+--- gray family's one accent is gray itself, which Radix Themes takes as an
+--- accent too)
+fn families[]
+    ['gray', 'warm', 'reds', 'blues', 'greens']
+
+--- the accents of a family, in Radix's order
+fn family_accents[family]
+    if family eq 'warm'
+        return ['gold', 'bronze', 'brown', 'yellow', 'amber', 'orange']
+    if family eq 'reds'
+        return ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum']
+    if family eq 'blues'
+        return ['purple', 'violet', 'iris', 'indigo', 'blue', 'cyan']
+    if family eq 'greens'
+        return ['teal', 'jade', 'green', 'grass', 'lime', 'mint', 'sky']
+    ['gray']
+
+--- the family an accent belongs to
+fn family_of[accent]
+    all_families = families[]
+    i = 0
+    while i lt len[all_families]
+        if accent in family_accents[all_families[i]]
+            return all_families[i]
+        i = i + 1
+    'gray'
+
+--- the grays a theme may take: the one paired with its accent, or any
+fn grays[]
+    concat[['auto'], colors.gray_names[]]
+
+--- the gray a theme of the app's uses
+fn gray_in_use[a]
+    if a.gray eq 'auto'
+        return colors.gray_for[a.accent]
+    a.gray
+
+--- gui's look made from a theme's tokens: the page and a panel, the
+--- strong edge (a control's border), text and quieter text, the accent's
+--- solid fill and the text on it, a field's ground, a hovered and a pressed
+--- control's ground, the focus ring, the text colours of danger, success
+--- and a warning (gui writes words in them), the overlay under a dialog,
+--- and a raised layer's shadow
+fn look_of[t]
+    gui.Look[t.page, t.panel, t.edge_strong, t.ink, t.muted, t.accent, t.on_accent, t.field, t.hover, t.press, t.focus, t.danger_text, t.success_text, t.warning_text, t.overlay, t.shadow]
+
+--- the theme's controls, with what the pointer is over said under them
+fn preview_of[a, said]
+    picks = gui.grid[[gui.label['Family'], gui.label['Accent'], gui.select['family', families[], a.family], gui.select['accent', family_accents[a.family], a.accent], gui.label['Gray'], gui.label['Appearance'], gui.select['gray', grays[], a.gray], gui.tabs['appearance', ['light', 'dark'], a.appearance]], columns = 2]
+    pressing = gui.row[[gui.button['press', 'Press me'], gui.text['pressed `a.presses` times', 13.0, 'muted']]]
+    roles = 'Steps 1-2 are backgrounds, 3-5 controls, 6-8 borders, 9-10 solid fills and 11-12 text.'
+    gui.panel[[gui.heading['A theme'], gui.note['Drawn in a look made from its tokens.'], picks, gui.field['name', a.name, hint = 'Your name'], gui.slider['volume', a.volume, 0.0, 1.0], gui.toggle['loud', 'Loud', a.loud], gui.checkbox['checker', 'Alpha steps on checkers', a.checker], pressing, gui.drawn['', 0.0, 0.0, 54.0, status_chips], gui.divider[], gui.text[said[0], 13.0, 'ink'], gui.text[said[1], 13.0, 'muted'], gui.text[said[2], 13.0, 'muted'], gui.note[roles]]]
+
+--- the app after a reader's event: a family chosen brings its first
+--- accent
+fn applied[a, e]
+    if e.id eq 'family' and e.act eq 'choose'
+        a.family = e.words
+        a.accent = family_accents[e.words][0]
+    if e.id eq 'accent' and e.act eq 'choose'
+        a.accent = e.words
+    if e.id eq 'gray' and e.act eq 'choose'
+        a.gray = e.words
+    if e.id eq 'appearance' and e.act eq 'choose'
+        a.appearance = e.words
+    if e.id eq 'name' and e.act eq 'edit'
+        a.name = e.words
+    if e.id eq 'volume' and e.act eq 'change'
+        a.volume = e.num
+    if e.id eq 'loud' and e.act eq 'toggle'
+        a.loud = e.num gt 0.5
+    if e.id eq 'checker' and e.act eq 'toggle'
+        a.checker = e.num gt 0.5
+    if e.id eq 'press' and e.act eq 'press'
+        a.presses = a.presses + 1
+    a
+
+--- the app after a press on a scale's name: a gray becomes the theme's
+--- gray, an accent its accent (and the accent select's family follows)
+fn named[a, name]
+    if name in colors.gray_names[]
+        a.gray = name
+        return a
+    a.accent = name
+    a.family = family_of[name]
+    a
+
+--- ---- the statuses, drawn in the tree's pass ----
+
+--- the four statuses as chips, solid above and soft below, in the colours
+--- the theme's tokens give them (kept in memory for their painter, which
+--- sees only its `Drawn`)
+struct Chips [names, solids, ons, softs, texts]
+
+--- the chips of a theme
+fn chips_of[t]
+    Chips[['danger', 'success', 'warning', 'info'], [t.danger, t.success, t.warning, t.info], [t.on_danger, t.on_success, t.on_warning, t.on_info], [t.danger_soft, t.success_soft, t.warning_soft, t.info_soft], [t.danger_text, t.success_text, t.warning_text, t.info_text]]
+
+--- no chips yet (what memory holds before a frame keeps any)
+fn _no_chips[]
+    no_colors = slice[[lory.Color[0.0, 0.0, 0.0, 1.0]], 0, 0]
+    Chips[slice[[''], 0, 0], no_colors, no_colors, no_colors, no_colors]
+
+--- the chips' painter: four side by side, each solid above and soft
+--- below, its status's name written on it
+fn status_chips[d]
+    k = recall['lory_colors.chips', _no_chips[]]
+    c = d.c
+    s = d.s
+    gap = 6.0 * s
+    w = (d.w - 3.0 * gap) / 4.0
+    h = 24.0 * s
+    i = 0
+    while i lt len[k.names]
+        x = d.x + (0.0 + i) * (w + gap)
+        c = lory.round_rect[c, x, d.y, w, h, 6.0 * s, k.solids[i]]
+        c = lory.text_centered[c, x + w / 2.0, d.y + h / 2.0, k.names[i], 12.0 * s, k.ons[i]]
+        c = lory.round_rect[c, x, d.y + h + gap, w, h, 6.0 * s, k.softs[i]]
+        c = lory.text_centered[c, x + w / 2.0, d.y + h + gap + h / 2.0, k.names[i], 12.0 * s, k.texts[i]]
+        i = i + 1
+    d.c = c
+    d
+
+--- ---- the swatches ----
+
+--- every swatch, made once and kept: the scales' names, each scale's
+--- twelve steps in light and in dark (solid, and translucent over the
+--- page), the contrast of steps 11 and 12 on step 2 in each (APCA's Lc,
+--- unsigned), and the black and white overlays
+struct Swatches [made, names, light, dark, light_alpha, dark_alpha, light_lc, dark_lc, blacks, whites]
+
+--- the swatches before they are made
+fn _unmade[]
+    no_scales = slice[[[lory.Color[0.0, 0.0, 0.0, 1.0]]], 0, 0]
+    no_pairs = slice[[[0.0, 0.0]], 0, 0]
+    no_steps = slice[[lory.Color[0.0, 0.0, 0.0, 1.0]], 0, 0]
+    Swatches[false, slice[[''], 0, 0], no_scales, no_scales, no_scales, no_scales, no_pairs, no_pairs, no_steps, no_steps]
+
+--- the contrast of a scale's step 11 and step 12 as text on its step 2
+fn text_contrast[steps]
+    [abs[colors.apca[steps[10], steps[1]]], abs[colors.apca[steps[11], steps[1]]]]
+
+--- every swatch made: each scale's steps, solid and translucent, in
+--- both appearances, and its text steps' contrast
+fn swatches_made[]
+    sw = _unmade[]
+    sw.names = colors.scale_names[]
+    light = sw.light
+    dark = sw.dark
+    light_alpha = sw.light_alpha
+    dark_alpha = sw.dark_alpha
+    light_lc = sw.light_lc
+    dark_lc = sw.dark_lc
+    i = 0
+    while i lt len[sw.names]
+        name = sw.names[i]
+        lit = colors.scale[name, 'light']
+        unlit = colors.scale[name, 'dark']
+        light = push[light, lit]
+        dark = push[dark, unlit]
+        light_alpha = push[light_alpha, colors.alpha_scale[name, 'light']]
+        dark_alpha = push[dark_alpha, colors.alpha_scale[name, 'dark']]
+        light_lc = push[light_lc, text_contrast[lit]]
+        dark_lc = push[dark_lc, text_contrast[unlit]]
+        i = i + 1
+    Swatches[true, sw.names, light, dark, light_alpha, dark_alpha, light_lc, dark_lc, colors.black_overlay[], colors.white_overlay[]]
+
+--- the swatches, made on the first frame and kept in memory after
+fn swatches[]
+    sw = recall['lory_colors.swatches', _unmade[]]
+    if not sw.made
+        sw = swatches_made[]
+        remember['lory_colors.swatches', sw]
+    sw
+
+--- where the two cards of swatches stand: their top left in the
+--- drawing's pixels, and `u`, the drawing's pixels in one of their units
+--- (a CSS pixel, or less where the window is too small for the cards)
+struct Grid [x, y, u]
+
+--- the cards' measures, in units: where they start (after the theme's
+--- column), a card's width and height and the gap between the two, the
+--- room inside a card's edge, the height of a card's title and of its
+--- header of steps, a row's height, the column of names, a swatch's
+--- stride (it is a unit narrower, and two units shorter than a row), and a
+--- column of contrast numbers
+fn _left[]
+    348.0
+
+fn _top[]
+    24.0
+
+fn _card_w[]
+    414.0
+
+fn _card_h[]
+    680.0
+
+fn _card_gap[]
+    16.0
+
+fn _cards_w[]
+    2.0 * _card_w[] + _card_gap[]
+
+fn _inset[]
+    12.0
+
+fn _title_h[]
+    26.0
+
+fn _head_h[]
+    16.0
+
+fn _row_h[]
+    19.0
+
+fn _name_w[]
+    58.0
+
+fn _cell[]
+    22.0
+
+fn _lc_w[]
+    30.0
+
+--- where the cards stand on a canvas: they start after the theme's
+--- column, at their size where the window holds them and smaller where it
+--- does not (never below 0.3 of it)
+fn grid_of[c]
+    s = lory.px[c]
+    wide = lory.width[c] / s
+    tall = lory.height[c] / s
+    k = min[1.0, min[(wide - _left[] - 24.0) / _cards_w[], (tall - _top[] - 24.0) / _card_h[]]]
+    Grid[_left[] * s, _top[] * s, max[k, 0.3] * s]
+
+--- a card's left edge (0 the light card, 1 the dark one)
+fn card_x[g, which]
+    g.x + (0.0 + which) * (_card_w[] + _card_gap[]) * g.u
+
+--- the top of a row: 0 to 30 the scales, 31 the overlays (a little lower)
+fn row_y[g, row]
+    y = g.y + (_inset[] + _title_h[] + _head_h[] + (0.0 + row) * _row_h[]) * g.u
+    if row gte 31
+        y = y + 6.0 * g.u
+    y
+
+--- the left of a step's swatch (`place` 0 to 11)
+fn swatch_x[g, which, place]
+    card_x[g, which] + (_inset[] + _name_w[] + (0.0 + place) * _cell[]) * g.u
+
+--- what the pointer is over: a card (0 light, 1 dark; -1 none), a row (0
+--- to 30 the scales, 31 the overlays) and a step's place (0 to 11), or the
+--- row's name (`place` -1)
+struct Spot [card, row, place]
+
+fn spot_at[g, x, y]
+    nowhere = Spot[-1, -1, -1]
+    ly = (y - row_y[g, 0]) / g.u
+    row = -1
+    if ly gte 0.0 and ly lt 31.0 * _row_h[]
+        row = int[ly / _row_h[]]
+    if ly gte 31.0 * _row_h[] + 6.0 and ly lt 32.0 * _row_h[] + 6.0
+        row = 31
+    lx = (x - g.x) / g.u
+    side = -1
+    if lx gte 0.0 and lx lt _card_w[]
+        side = 0
+    if lx gte _card_w[] + _card_gap[] and lx lt _cards_w[]
+        side = 1
+        lx = lx - _card_w[] - _card_gap[]
+    if row lt 0 or side lt 0
+        return nowhere
+    ix = lx - _inset[] - _name_w[]
+    if ix gte 0.0 and ix lt 12.0 * _cell[]
+        return Spot[side, row, int[ix / _cell[]]]
+    if ix lt 0.0 and lx gte _inset[]
+        return Spot[side, row, -1]
+    nowhere
+
+--- the role Radix gives a step (its place, 0 to 11), in a few words
+fn role_of[place]
+    roles = ['the app background', 'a subtle background', 'a control background', 'a control hovered', 'a control pressed or chosen', 'a subtle border', 'a control border', 'a strong border and focus ring', 'a solid fill', 'a solid fill hovered', 'quiet text', 'text']
+    roles[place]
+
+--- three lines saying what the pointer is over
+fn said_of[sw, spot]
+    if spot.card lt 0
+        return ['Point at a swatch to read it.', 'Press a scale name to theme with it.', '']
+    look = 'light'
+    rows = sw.light
+    alphas = sw.light_alpha
+    if spot.card eq 1
+        look = 'dark'
+        rows = sw.dark
+        alphas = sw.dark_alpha
+    if spot.row eq 31
+        overlay = sw.blacks
+        what = 'black'
+        if spot.card eq 1
+            overlay = sw.whites
+            what = 'white'
+        if spot.place lt 0
+            return ['The `what` overlay: `what` at rising', 'opacity, the same in light and dark.', '']
+        o = overlay[spot.place]
+        return ['`what` overlay `spot.place + 1`', colors.hex_alpha_of[o], 'Opacity `fmt[o.a, decimals = 3]`']
+    name = sw.names[spot.row]
+    if spot.place lt 0
+        if name in colors.gray_names[]
+            return ['`name` in `look`, a gray.', 'Press to make it the theme\'s gray.', '']
+        return ['`name` in `look`, an accent.', 'Press to make it the theme\'s accent.', '']
+    k = spot.place
+    steps = rows[spot.row]
+    lc = colors.apca[steps[k], steps[1]]
+    ratio = colors.contrast_ratio[steps[k], steps[1]]
+    ['`name` `k + 1` in `look`: `role_of[k]`', '`colors.hex_of[steps[k]]`, as alpha `colors.hex_alpha_of[alphas[spot.row][k]]`', 'On its step 2: Lc `fmt[lc, decimals = 1]`, `fmt[ratio, decimals = 2]`:1']
+
+--- a checkerboard of four squares under a translucent swatch
+fn checkers[c, x, y, w, h, look]
+    one = lory.Color[1.0, 1.0, 1.0, 1.0]
+    other = lory.Color[0.78, 0.78, 0.78, 1.0]
+    if look eq 'dark'
+        one = lory.Color[0.06, 0.06, 0.06, 1.0]
+        other = lory.Color[0.3, 0.3, 0.3, 1.0]
+    hw = w / 2.0
+    hh = h / 2.0
+    c = lory.rect[c, x, y, hw, hh, one]
+    c = lory.rect[c, x + hw, y, w - hw, hh, other]
+    c = lory.rect[c, x, y + hh, hw, h - hh, other]
+    lory.rect[c, x + hw, y + hh, w - hw, h - hh, one]
+
+--- the colour a contrast number is written in: the card's text where it
+--- keeps Radix's promise, its red where it falls short
+fn kept_color[value, promise, ink, look]
+    if value gte promise
+        return ink
+    colors.step['red', look, 11]
+
+--- one card: its page, title and header, a row for each scale (its name,
+--- marked where the theme uses it, its twelve steps and the contrast of
+--- its text steps) and the overlays' row, with the swatch the pointer is
+--- over outlined
+fn card[c, g, sw, which, a, spot]
+    u = g.u
+    look = 'light'
+    heading_words = 'Light'
+    rows = sw.light
+    alphas = sw.light_alpha
+    lcs = sw.light_lc
+    overlay = sw.blacks
+    overlay_name = 'black'
+    if which eq 1
+        look = 'dark'
+        heading_words = 'Dark'
+        rows = sw.dark
+        alphas = sw.dark_alpha
+        lcs = sw.dark_lc
+        overlay = sw.whites
+        overlay_name = 'white'
+    names = sw.names
+    ink = colors.step['gray', look, 12]
+    muted = colors.step['gray', look, 11]
+    x0 = card_x[g, which]
+    c = lory.round_rect[c, x0, g.y, _card_w[] * u, _card_h[] * u, 10.0 * u, colors.page_of[look]]
+    c = lory.round_outline[c, x0, g.y, _card_w[] * u, _card_h[] * u, 10.0 * u, 1.0 * u, colors.step['gray', look, 6]]
+    c = lory.text[c, x0 + _inset[] * u, g.y + (_inset[] + 2.0) * u, heading_words, 15.0 * u, ink]
+    lc_x = x0 + (_inset[] + _name_w[] + 12.0 * _cell[] + 8.0) * u
+    c = lory.text_right[c, lc_x + 2.0 * _lc_w[] * u, g.y + (_inset[] + 5.0) * u, 'APCA Lc on step 2', 11.0 * u, muted]
+    head_y = g.y + (_inset[] + _title_h[]) * u
+    j = 0
+    while j lt 12
+        c = lory.text_centered[c, swatch_x[g, which, j] + (_cell[] - 1.0) / 2.0 * u, head_y + 7.0 * u, str[j + 1], 10.0 * u, muted]
+        j = j + 1
+    c = lory.text_right[c, lc_x + (_lc_w[] - 2.0) * u, head_y + 1.0 * u, '11', 10.0 * u, muted]
+    c = lory.text_right[c, lc_x + (2.0 * _lc_w[] - 2.0) * u, head_y + 1.0 * u, '12', 10.0 * u, muted]
+    accent = a.accent
+    gray = gray_in_use[a]
+    lift = (_row_h[] * u - lory.line_height[c, 11.0 * u]) / 2.0
+    r = 0
+    while r lt 32
+        y = row_y[g, r]
+        steps = overlay
+        shown = overlay
+        name = overlay_name
+        if r lt 31
+            steps = rows[r]
+            shown = steps
+            if a.checker
+                shown = alphas[r]
+            name = names[r]
+        name_color = muted
+        if spot.card eq which and spot.row eq r
+            name_color = ink
+        if name eq accent or name eq gray
+            c = lory.circle[c, x0 + (_inset[] + 2.5) * u, y + _row_h[] / 2.0 * u - 1.0 * u, 2.5 * u, steps[8]]
+        c = lory.text[c, x0 + (_inset[] + 8.0) * u, y + lift - 1.0 * u, name, 11.0 * u, name_color]
+        j = 0
+        while j lt 12
+            sx = swatch_x[g, which, j]
+            if a.checker or r eq 31
+                c = checkers[c, sx, y, (_cell[] - 1.0) * u, (_row_h[] - 1.0) * u, look]
+            c = lory.rect[c, sx, y, (_cell[] - 1.0) * u, (_row_h[] - 1.0) * u, shown[j]]
+            j = j + 1
+        if r lt 31
+            pair = lcs[r]
+            c = lory.text_right[c, lc_x + (_lc_w[] - 2.0) * u, y + lift - 1.0 * u, str[int[pair[0]]], 11.0 * u, kept_color[pair[0], 60.0, ink, look]]
+            c = lory.text_right[c, lc_x + (2.0 * _lc_w[] - 2.0) * u, y + lift - 1.0 * u, str[int[pair[1]]], 11.0 * u, kept_color[pair[1], 90.0, ink, look]]
+        r = r + 1
+    if spot.card eq which and spot.place gte 0
+        c = lory.outline[c, swatch_x[g, which, spot.place] - 2.0 * u, row_y[g, spot.row] - 2.0 * u, (_cell[] + 3.0) * u, (_row_h[] + 3.0) * u, 1.5 * u, ink]
+    c
+
+--- ---- a frame ----
+
+--- what a frame drew: the canvas, the app after the reader's doings, what
+--- the pointer was over, and the boxes of the theme's controls
+struct Painted [canvas, app, spot, boxes]
+
+fn painted[c, a]
+    t = colors.theme[a.accent, a.gray, a.appearance]
+    sw = swatches[]
+    g = grid_of[c]
+    spot = Spot[-1, -1, -1]
+    if lory.pointing[c]
+        spot = spot_at[g, lory.pointer_x[c], lory.pointer_y[c]]
+    c = lory.clear[c, t.page]
+    c = card[c, g, sw, 0, a, spot]
+    c = card[c, g, sw, 1, a, spot]
+    remember['lory_colors.chips', chips_of[t]]
+    shown = gui.show_at[c, preview_of[a, said_of[sw, spot]], 24.0, 24.0, 300.0, look_of[t]]
+    told = shown.events
+    i = 0
+    while i lt len[told]
+        a = applied[a, told[i]]
+        i = i + 1
+    --- (a press on a scale's name: a release over one)
+    given = lory.events[shown.canvas]
+    i = 0
+    while i lt len[given]
+        e = given[i]
+        if e.on eq 'up'
+            let_go = spot_at[g, e.x, e.y]
+            if let_go.card gte 0 and let_go.row lt 31 and let_go.place lt 0
+                a = named[a, sw.names[let_go.row]]
+        i = i + 1
+    Painted[shown.canvas, a, spot, shown.boxes]
+
+--- the page's frame: the app recalled, drawn and answered, and kept
+fn draw[frame]
+    a = recall['lory_colors.app', fresh[]]
+    p = painted[lory.begin[frame], a]
+    remember['lory_colors.app', p.app]
+    lory.end[p.canvas]
+
+sys.frames[draw]
+
+--- ---- tests: frames as a page hands them ----
+
+--- a frame 900 by 700 as the page hands it, with the input given and the
+--- pointers standing (JSON lists)
+fn screen[given, pointers]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": `pointers`, "controllers": [], "said": []}']
+
+--- a press and release of the mouse at a place, and the mouse standing
+--- there
+fn _press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _standing[x, y]
+    '[{"x": `x`, "y": `y`, "down": false}]'
+
+--- a first frame, after a press on nothing (gui keeps its focus and open
+--- layers between test blocks)
+fn _first[a]
+    gui.unfocus[]
+    painted[lory.begin[screen[_press_at[899.0, 699.0], '[]']], a]
+
+--- a scale's row
+fn _row_of[name]
+    names = colors.scale_names[]
+    i = 0
+    while i lt len[names]
+        if names[i] eq name
+            return i
+        i = i + 1
+    -1
+
+--- whether a box was drawn with its top left at (x, y) in a colour
+fn _drawn_at[c, x, y, color]
+    vs = c.verts
+    i = 0
+    while i + 16 lte len[vs]
+        if vs[i] eq x and vs[i + 1] eq y and vs[i + 4] eq color.r and vs[i + 5] eq color.g and vs[i + 6] eq color.b and vs[i + 7] eq color.a
+            return true
+        i = i + 16
+    false
+
+test the_first_frame_shows_the_theme_and_every_swatch[]
+    p = _first[fresh[]]
+    'family' in p.boxes
+    'accent' in p.boxes
+    'gray' in p.boxes
+    'appearance' in p.boxes
+    'press' in p.boxes
+    g = grid_of[p.canvas]
+    blue = _row_of['blue']
+    _drawn_at[p.canvas, swatch_x[g, 0, 8], row_y[g, blue], colors.step['blue', 'light', 9]]
+    _drawn_at[p.canvas, swatch_x[g, 1, 11], row_y[g, _row_of['indigo']], colors.step['indigo', 'dark', 12]]
+    _drawn_at[p.canvas, swatch_x[g, 0, 0], row_y[g, _row_of['gray']], colors.step['gray', 'light', 1]]
+    _drawn_at[p.canvas, swatch_x[g, 1, 11], row_y[g, 31], colors.white_overlay[][11]]
+    _drawn_at[p.canvas, swatch_x[g, 0, 4], row_y[g, 31], colors.black_overlay[][4]]
+
+test every_row_keeps_the_contrast_radix_promises[]
+    sw = swatches[]
+    len[sw.names] eq 31
+    short = 0
+    i = 0
+    while i lt 31
+        if sw.light_lc[i][0] lt 60.0 or sw.light_lc[i][1] lt 90.0 or sw.dark_lc[i][0] lt 60.0 or sw.dark_lc[i][1] lt 90.0
+            short = short + 1
+        i = i + 1
+    short eq 0
+
+test a_family_chosen_brings_its_accents[]
+    a = applied[fresh[], gui.Event['family', 'choose', 'greens', 4.0]]
+    a.family eq 'greens'
+    a.accent eq 'teal'
+    b = applied[a, gui.Event['accent', 'choose', 'grass', 3.0]]
+    b.accent eq 'grass'
+    family_of['grass'] eq 'greens'
+    family_of['gold'] eq 'warm'
+    family_of['gray'] eq 'gray'
+    c = applied[applied[b, gui.Event['gray', 'choose', 'sand', 6.0]], gui.Event['appearance', 'choose', 'dark', 1.0]]
+    c.gray eq 'sand'
+    c.appearance eq 'dark'
+
+test the_family_select_opens_and_chooses[]
+    first = _first[fresh[]]
+    b = first.boxes['family']
+    x = b[0] + 10.0
+    y = b[1] + 10.0
+    opened = painted[lory.begin[screen[_press_at[x, y], _standing[x, y]]], first.app]
+    --- (its choices stand 4 pixels under it, 32 high each after 4 of room:
+    --- the fifth, greens, is pressed in its middle)
+    middle = b[1] + b[3] + 4.0 + 4.0 + 32.0 * 4.0 + 16.0
+    chosen = painted[lory.begin[screen[_press_at[x, middle], _standing[x, middle]]], opened.app]
+    chosen.app.family eq 'greens'
+    chosen.app.accent eq 'teal'
+
+test a_press_on_a_scale_name_themes_with_it[]
+    first = _first[fresh[]]
+    g = grid_of[first.canvas]
+    x = card_x[g, 0] + (_inset[] + 10.0) * g.u
+    y = row_y[g, _row_of['grass']] + 6.0 * g.u
+    p = painted[lory.begin[screen[_press_at[x, y], _standing[x, y]]], first.app]
+    p.app.accent eq 'grass'
+    p.app.family eq 'greens'
+    x2 = card_x[g, 1] + (_inset[] + 10.0) * g.u
+    y2 = row_y[g, _row_of['sand']] + 6.0 * g.u
+    q = painted[lory.begin[screen[_press_at[x2, y2], _standing[x2, y2]]], p.app]
+    q.app.gray eq 'sand'
+    q.app.accent eq 'grass'
+
+test the_pointer_over_a_swatch_says_what_it_is[]
+    first = _first[fresh[]]
+    g = grid_of[first.canvas]
+    blue = _row_of['blue']
+    x = swatch_x[g, 0, 8] + 5.0
+    y = row_y[g, blue] + 5.0
+    p = painted[lory.begin[screen['[]', _standing[x, y]]], first.app]
+    p.spot.card eq 0
+    p.spot.row eq blue
+    p.spot.place eq 8
+    lines = said_of[swatches[], p.spot]
+    lines[0] eq 'blue 9 in light: a solid fill'
+    solid = colors.hex_of[colors.step['blue', 'light', 9]]
+    translucent = colors.hex_alpha_of[colors.alpha_scale['blue', 'light'][8]]
+    lines[1] eq '`solid`, as alpha `translucent`'
+    overlay_spot = spot_at[g, swatch_x[g, 1, 0] + 5.0, row_y[g, 31] + 5.0]
+    said_of[swatches[], overlay_spot][0] eq 'white overlay 1'
+    named_spot = spot_at[g, card_x[g, 1] + (_inset[] + 10.0) * g.u, row_y[g, _row_of['mauve']] + 5.0]
+    named_spot.place eq -1
+    said_of[swatches[], named_spot][1] eq 'Press to make it the theme\'s gray.'
+    spot_at[g, 2.0, 2.0].card eq -1
+
+test alpha_steps_are_drawn_over_checkers_when_asked[]
+    a = fresh[]
+    a.checker = true
+    p = _first[a]
+    g = grid_of[p.canvas]
+    blue = _row_of['blue']
+    _drawn_at[p.canvas, swatch_x[g, 0, 8], row_y[g, blue], colors.alpha_scale['blue', 'light'][8]]
+    not _drawn_at[p.canvas, swatch_x[g, 0, 8], row_y[g, blue], colors.step['blue', 'light', 9]]
+    checked = applied[fresh[], gui.Event['checker', 'toggle', '', 1.0]]
+    checked.checker
+
+test the_look_is_made_from_the_tokens[]
+    t = colors.theme['crimson', 'auto', 'dark']
+    k = look_of[t]
+    colors.hex_of[k.page] eq colors.hex_of[t.page]
+    colors.hex_of[k.accent] eq colors.hex_of[colors.step['crimson', 'dark', 9]]
+    colors.hex_of[k.on_accent] eq '#ffffff'
+    colors.hex_of[k.ink] eq colors.hex_of[colors.step['mauve', 'dark', 12]]
+    colors.hex_of[k.danger] eq colors.hex_of[t.danger_text]
+    colors.hex_of[k.focus] eq colors.hex_of[colors.step['crimson', 'dark', 8]]
+    k.scrim.a eq t.overlay.a
+    k.shadow.a eq t.shadow.a
+
+test the_controls_answer_as_the_controls_example_does[]
+    a = applied[fresh[], gui.Event['name', 'edit', 'Ada!', 0.0]]
+    a.name eq 'Ada!'
+    a = applied[a, gui.Event['volume', 'change', '', 0.75]]
+    a.volume eq 0.75
+    a = applied[a, gui.Event['loud', 'toggle', '', 1.0]]
+    a.loud
+    a = applied[applied[a, gui.Event['press', 'press', '', 0.0]], gui.Event['press', 'press', '', 0.0]]
+    a.presses eq 2

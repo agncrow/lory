@@ -1,0 +1,523 @@
+--- Lory's motion (`use lory.motion`), drawn by Lory: a gallery of easing
+--- curves, a spring tuned with sliders, a grid staggered from where it is
+--- pressed, and a timeline played, paused, sought and reversed. The
+--- program's state is a record kept in process memory between frames;
+--- each animation's clock is motion's, kept under the animation's id. In
+--- a headset the page is 1000 by 560 on a panel: one column, scrolled by
+--- the thumbstick, its controls pressed by the ray.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.motion
+
+--- what the program holds between frames: the easing shown large, the
+--- spring's stiffness, damping and mass, whether the ball is sent to the
+--- far end, where the grid's wave starts and the frame time it started
+struct App [easing, stiffness, damping, mass, sent, origin, since]
+
+fn fresh[]
+    App['outElastic(1, .3)', 170.0, 12.0, 1.0, false, 'center', 0.0]
+
+--- the easings of the gallery, each spelt as its library spells it
+fn gallery[]
+    ['inQuad', 'outCubic', 'inOutQuart', 'outExpo', 'inOutSine', 'outCirc', 'outBack', 'inOutBack(2)', 'outElastic(1, .3)', 'outBounce', 'steps(6)', 'easeInOut', 'backOut', 'anticipate', 'ease-in-out-back', 'spring(1, 120, 9, 0)']
+
+--- what the select offers: easings named with their numbers
+fn named[]
+    ['linear', 'outElastic(1, .3)', 'inOutElastic(1.5, .4)', 'cubic-bezier(.68,-.55,.265,1.55)', 'cubicBezier(.6,-.28,.735,.045)', 'steps(5, jump-both)', 'linear(0, 0.6 30%, 0.2 60%, 1)', 'irregular(12, 1, 7)', 'spring(1, 80, 6, 0)', 'springBounce(.5, 600)']
+
+--- the timeline: four children placed as anime.js places them
+fn track[]
+    tl = motion.timeline[]
+    tl = motion.timeline_add[tl, 'slide', 900.0, '']
+    tl = motion.timeline_add[tl, 'grow', 700.0, '-=300']
+    tl = motion.timeline_label[tl, 'turn', '+=100']
+    tl = motion.timeline_add[tl, 'spin', 800.0, 'turn']
+    tl = motion.timeline_add[tl, 'fade', 600.0, '<<+=200']
+    tl
+
+--- the names of the timeline's children, top to bottom
+fn children[]
+    ['slide', 'grow', 'spin', 'fade']
+
+--- the easing each child of the timeline moves by
+fn child_ease[name]
+    if name eq 'slide'
+        return 'outExpo'
+    if name eq 'grow'
+        return 'outBack'
+    if name eq 'spin'
+        return 'inOutSine'
+    'linear'
+
+--- the clock the timeline plays on: as long as the timeline, once
+fn clock_of[tl]
+    total = motion.timeline_duration[tl]
+    motion.tween_of[0.0, total, total, 'linear']
+
+--- where the dot of an easing's curve stands: across it in 1.4 s, then
+--- held for 0.6 s
+fn phase_at[at]
+    min[1.0, motion.wrapped[at, 0.0, 2000.0] / 1400.0]
+
+--- ---- painters: each sees only its `Drawn`, and what it needs besides
+--- comes in its words, its number or the program's record in memory ----
+
+--- the height in the box of an easing's value (from -0.3 to 1.3, so an
+--- overshoot shows)
+fn _plot_y[top, tall, v]
+    top + tall * (1.3 - v) / 1.6
+
+--- an easing's curve across a box, its value at `phase` marked
+fn _curve_drawn[c, look, x, y, w, h, s, name, phase, line_w]
+    easing = motion.ease[name]
+    xs = []
+    ys = []
+    for i in range[0]
+        xs = push[xs, 0.0]
+        ys = push[ys, 0.0]
+    i = 0
+    while i lte 60
+        t = float[i] / 60.0
+        xs = push[xs, x + w * t]
+        ys = push[ys, _plot_y[y, h, motion.eased[easing, t]]]
+        i = i + 1
+    c = lory.line[c, x, _plot_y[y, h, 0.0], x + w, _plot_y[y, h, 0.0], 1.0 * s, look.edge]
+    c = lory.line[c, x, _plot_y[y, h, 1.0], x + w, _plot_y[y, h, 1.0], 1.0 * s, look.edge]
+    c = lory.path[c, xs, ys, line_w, look.accent]
+    v = motion.eased[easing, phase]
+    c = lory.circle[c, x + w * phase, _plot_y[y, h, v], 2.5 * line_w, look.ink]
+    c
+
+--- the easing named in the control's words, large, with a square beside
+--- it that moves by it
+fn curve_painter[d]
+    c = d.c
+    look = d.look
+    s = d.s
+    pad = 12.0 * s
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * s, look.field]
+    side = 44.0 * s
+    w = d.w - 3.0 * pad - side
+    h = d.h - 2.0 * pad
+    c = _curve_drawn[c, look, d.x + pad, d.y + pad, w, h, s, d.words, d.num, 2.0 * s]
+    v = motion.ease_at[d.words, d.num]
+    rail = d.x + d.w - pad - side / 2.0
+    c = lory.line[c, rail, _plot_y[d.y + pad, h, 0.0], rail, _plot_y[d.y + pad, h, 1.0], 2.0 * s, look.edge]
+    c = lory.round_rect[c, rail - side / 4.0, _plot_y[d.y + pad, h, v] - side / 4.0, side / 2.0, side / 2.0, 4.0 * s, look.accent]
+    c = lory.text[c, d.x + pad, d.y + d.h - pad - 14.0 * s, d.words, 13.0 * s, look.muted]
+    d.c = c
+    d
+
+--- an easing of the gallery, small, chosen when pressed
+fn thumb_painter[d]
+    c = d.c
+    look = d.look
+    s = d.s
+    ground = look.field
+    if d.hover
+        ground = look.hover
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 6.0 * s, ground]
+    pad = 6.0 * s
+    c = _curve_drawn[c, look, d.x + pad, d.y + pad, d.w - 2.0 * pad, d.h - 2.0 * pad - 12.0 * s, s, d.words, d.num, 1.5 * s]
+    c = lory.text[c, d.x + pad, d.y + d.h - 14.0 * s, d.words, 10.0 * s, look.muted]
+    if d.pressed
+        d = gui.tell[d, 'press', d.words, 0.0]
+    d.c = c
+    d
+
+--- the ball on its track, at the spring's value, and under it how the
+--- spring tuned by the sliders moves from 0 to 1 and where it rests;
+--- pressed, it sends the ball to its other end
+fn ball_painter[d]
+    a = recall['motion example', fresh[]]
+    sp = motion.spring[a.stiffness, a.damping, a.mass]
+    c = d.c
+    look = d.look
+    s = d.s
+    pad = 16.0 * s
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * s, look.field]
+    left = d.x + pad * 2.0
+    right = d.x + d.w - pad * 2.0
+    rail = d.y + 30.0 * s
+    c = lory.round_rect[c, left, rail - 3.0 * s, right - left, 6.0 * s, 3.0 * s, look.edge]
+    c = lory.circle[c, left + (right - left) * d.num, rail, 13.0 * s, look.accent]
+    top = d.y + 62.0 * s
+    tall = d.h - 62.0 * s - pad
+    xs = []
+    ys = []
+    for i in range[0]
+        xs = push[xs, 0.0]
+        ys = push[ys, 0.0]
+    rests = -1.0
+    i = 0
+    while i lte 90
+        ms = float[i] * 1500.0 / 90.0
+        at = motion.spring_sample[sp, 0.0, 1.0, 0.0, ms]
+        xs = push[xs, d.x + pad + (d.w - 2.0 * pad) * float[i] / 90.0]
+        ys = push[ys, _plot_y[top, tall, at.value]]
+        if at.done and rests lt 0.0
+            rests = ms
+        i = i + 1
+    c = lory.line[c, d.x + pad, _plot_y[top, tall, 1.0], d.x + d.w - pad, _plot_y[top, tall, 1.0], 1.0 * s, look.edge]
+    c = lory.line[c, d.x + pad, _plot_y[top, tall, 0.0], d.x + d.w - pad, _plot_y[top, tall, 0.0], 1.0 * s, look.edge]
+    c = lory.path[c, xs, ys, 2.0 * s, look.accent]
+    words = 'not at rest within 1.5 s'
+    if rests gte 0.0
+        mark = d.x + pad + (d.w - 2.0 * pad) * rests / 1500.0
+        c = lory.line[c, mark, top, mark, top + tall, 1.0 * s, look.success]
+        words = 'at rest after `fmt[rests, decimals = 0]` ms'
+    c = lory.text[c, d.x + pad, top + tall - 14.0 * s, words, 12.0 * s, look.muted]
+    if d.pressed
+        d = gui.tell[d, 'press', '', 0.0]
+    d.c = c
+    d
+
+--- the grid's columns and rows
+fn columns[]
+    10
+
+fn rows[]
+    6
+
+--- the dots, each lifting and lighting when its stagger has waited (the
+--- wave starts where the control's words say, `num` ms ago); pressed, the
+--- wave starts again from the dot pressed
+fn dots_painter[d]
+    st = motion.stagger_grid[motion.stagger[60.0], columns[], rows[]]
+    st.origin = d.words
+    st.seed = 7
+    count = columns[] * rows[]
+    delays = motion.staggers[st, count]
+    cell_w = d.w / float[columns[]]
+    cell_h = d.h / float[rows[]]
+    r = min[cell_w, cell_h] * 0.3
+    c = d.c
+    look = d.look
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * d.s, look.field]
+    i = 0
+    while i lt count
+        q = min[1.0, max[0.0, (d.num - delays[i]) / 700.0]]
+        lift = motion.ease_at['inOutSine', 1.0 - abs[2.0 * q - 1.0]]
+        cx = d.x + cell_w * (float[i % columns[]] + 0.5)
+        cy = d.y + cell_h * (float[floor[float[i] / float[columns[]]]] + 0.5)
+        c = lory.circle[c, cx, cy - lift * 5.0 * d.s, r * (0.55 + 0.45 * lift), lory.mix[look.edge, look.accent, lift]]
+        i = i + 1
+    if d.pressed
+        col = min[columns[] - 1, max[0, int[d.px / cell_w]]]
+        row_at = min[rows[] - 1, max[0, int[d.py / cell_h]]]
+        d = gui.tell[d, 'press', '', float[row_at * columns[] + col]]
+    d.c = c
+    d
+
+--- the timeline as bars in time, each child's dot moving along its bar by
+--- its easing while it plays, the label marked, and the playhead at `num`
+--- ms
+fn track_painter[d]
+    tl = track[]
+    total = motion.timeline_duration[tl]
+    c = d.c
+    look = d.look
+    s = d.s
+    pad = 14.0 * s
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * s, look.field]
+    left = d.x + 64.0 * s
+    wide = d.w - 64.0 * s - pad
+    tall = (d.h - 2.0 * pad) / 4.0
+    turn = left + wide * motion.label_at[tl, 'turn'] / total
+    c = lory.line[c, turn, d.y + pad / 2.0, turn, d.y + d.h - pad / 2.0, 1.0 * s, look.warning]
+    i = 0
+    names = children[]
+    while i lt len[names]
+        name = names[i]
+        child = motion.child_of[tl, name]
+        mid = d.y + pad + tall * (float[i] + 0.5)
+        c = lory.text[c, d.x + pad, mid - 8.0 * s, name, 12.0 * s, look.muted]
+        x0 = left + wide * (child.offset + child.delay) / total
+        x1 = left + wide * (child.offset + child.delay + child.total) / total
+        c = lory.round_rect[c, x0, mid + 7.0 * s, x1 - x0, 4.0 * s, 2.0 * s, look.edge]
+        head = motion.child_playhead[tl, name, d.num]
+        p = motion.ease_at[child_ease[name], head.progress]
+        tone = look.accent
+        if name eq 'fade'
+            tone = lory.fade[look.accent, 0.15 + 0.85 * head.progress]
+        size = 6.0 * s
+        if name eq 'grow'
+            size = (3.0 + 6.0 * max[0.0, p]) * s
+        c = lory.circle[c, x0 + (x1 - x0) * p, mid - 2.0 * s, size, tone]
+        i = i + 1
+    at = left + wide * min[1.0, max[0.0, d.num / total]]
+    c = lory.line[c, at, d.y + pad / 2.0, at, d.y + d.h - pad / 2.0, 2.0 * s, look.ink]
+    d.c = c
+    d
+
+--- ---- the view ----
+
+fn thumbs_of[phase]
+    names = gallery[]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt len[names]
+        out = push[out, gui.drawn['thumb:`i`', phase, 0.0, 64.0, thumb_painter, words = names[i]]]
+        i = i + 1
+    out
+
+fn easings_of[a, phase]
+    gui.panel[[gui.heading['Easings'], gui.note['anime.js, Motion, CSS and AOS easings, each named by its text. Press a curve, or pick one.'], gui.select['easing', named[], a.easing], gui.drawn['curve', phase, 0.0, 180.0, curve_painter, words = a.easing], gui.grid[thumbs_of[phase], columns = 4, gap = 8.0]]]
+
+fn spring_of[a, ball]
+    tuning = gui.row[[gui.sized[gui.column[[gui.label['Stiffness `fmt[a.stiffness, decimals = 0]`'], gui.slider['stiffness', a.stiffness, 10.0, 600.0, step = 1.0]]], 150.0], gui.sized[gui.column[[gui.label['Damping `fmt[a.damping, decimals = 1]`'], gui.slider['damping', a.damping, 0.0, 60.0, step = 0.5]]], 150.0], gui.sized[gui.column[[gui.label['Mass `fmt[a.mass, decimals = 1]`'], gui.slider['mass', a.mass, 0.1, 5.0, step = 0.1]]], 150.0]]]
+    gui.panel[[gui.heading['A spring'], gui.note['Press the track to send the ball to its other end: sent again on its way, it keeps its speed.'], gui.drawn['ball', ball, 0.0, 220.0, ball_painter], tuning]]
+
+fn stagger_of[a, at]
+    chosen = a.origin
+    if not (chosen in ['first', 'center', 'last', 'random'])
+        chosen = 'dot `a.origin`'
+    gui.panel[[gui.heading['A staggered grid'], gui.note['Each dot waits its stagger, 60 ms a step from where the wave starts. Press a dot to start it there.'], gui.select['origin', ['first', 'center', 'last', 'random'], chosen], gui.drawn['dots', at - a.since, 0.0, 200.0, dots_painter, words = a.origin]]]
+
+fn timeline_of[head, total]
+    buttons = gui.row[[gui.button['play', 'Play'], gui.button['pause', 'Pause'], gui.button['reverse', 'Reverse'], gui.button['restart', 'Restart']]]
+    gui.panel[[gui.heading['A timeline'], gui.note['slide, then grow 300 ms before its end, a label 100 ms after, spin at the label, fade 200 ms after spin starts.'], gui.drawn['track', head.time, 0.0, 150.0, track_painter], buttons, gui.column[[gui.slider['seek', head.time, 0.0, total]], align = 'stretch'], gui.note['`fmt[head.time, decimals = 0]` of `fmt[total, decimals = 0]` ms']]]
+
+fn view_of[a, at, ball, head, total, wide, tall]
+    phase = phase_at[at]
+    panels = [easings_of[a, phase], spring_of[a, ball], stagger_of[a, at], timeline_of[head, total]]
+    across = 1
+    if wide gte 980.0
+        across = 2
+    page = gui.column[[gui.heading['lory.motion'], gui.grid[panels, columns = across, gap = 16.0]], gap = 12.0]
+    gui.scroll['page', tall, [page]]
+
+--- ---- what the reader did ----
+
+fn applied[a, e, c, k, at]
+    if e.id eq 'easing' and e.act eq 'choose'
+        a.easing = e.words
+    if starts[e.id, 'thumb:'] and e.act eq 'press'
+        a.easing = e.words
+    if e.id eq 'stiffness' and e.act eq 'change'
+        a.stiffness = e.num
+    if e.id eq 'damping' and e.act eq 'change'
+        a.damping = e.num
+    if e.id eq 'mass' and e.act eq 'change'
+        a.mass = e.num
+    if e.id eq 'ball' and e.act eq 'press'
+        a.sent = not a.sent
+    if e.id eq 'origin' and e.act eq 'choose'
+        a.origin = e.words
+        a.since = at
+    if e.id eq 'dots' and e.act eq 'press'
+        a.origin = str[int[e.num]]
+        a.since = at
+    if e.id in ['play', 'pause', 'reverse', 'restart'] and e.act eq 'press'
+        motion.control[c, 'timeline', k, e.id, 0.0]
+    if e.id eq 'seek' and e.act eq 'change'
+        --- (the slider shows the playhead; a clock turned to run back shows
+        --- its duration less its own time, as anime.js's does)
+        to = e.num
+        if motion.clock_at[c, 'timeline'].turned
+            to = k.duration - e.num
+        motion.control[c, 'timeline', k, 'seek', to]
+    a
+
+--- one frame: the program's record recalled, the animations run to the
+--- frame's time, the page shown and what the reader did applied to the
+--- record; the page as shown, for `draw` to end (and a test to read)
+fn framed[frame]
+    a = recall['motion example', fresh[]]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    at = lory.time[c]
+    if at - a.since gt 2400.0
+        a.since = at
+    goal = 0.0
+    if a.sent
+        goal = 1.0
+    ball = motion.spring_to[c, 'ball', goal, motion.spring[a.stiffness, a.damping, a.mass]]
+    tl = track[]
+    k = clock_of[tl]
+    head = motion.run_state[c, 'timeline', k]
+    remember['motion example', a]
+    s = lory.px[c]
+    shown = gui.show[c, view_of[a, at, ball, head, motion.timeline_duration[tl], lory.width[c] / s - 48.0, lory.height[c] / s - 48.0]]
+    for e in shown.events
+        a = applied[a, e, shown.canvas, k, at]
+    remember['motion example', a]
+    shown
+
+fn draw[frame]
+    shown = framed[frame]
+    --- (a page that drives this example, as tests/motion/browser.py does,
+    --- asks where its controls are by telling it 'boxes')
+    if asked_where[shown.canvas]
+        log[encode[shown.boxes]]
+    lory.end[shown.canvas]
+
+--- whether the page told the program 'boxes' this frame
+fn asked_where[c]
+    asked = false
+    for ev in lory.events[c]
+        if ev.on eq 'told' and ev.words eq 'boxes'
+            asked = true
+    asked
+
+sys.frames[draw]
+
+--- ---- tests: frames as the page hands them ----
+
+fn screen[ms, given]
+    json['{"t": `ms`, "width": 1200, "height": 1400, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1200, "height": 1400, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn shown_at[ms, given, a]
+    c = lory.begin[screen[ms, given]]
+    tl = track[]
+    head = motion.run_state[c, 'test timeline', clock_of[tl]]
+    gui.show[c, view_of[a, ms, 0.0, head, motion.timeline_duration[tl], 1152.0, 1352.0]]
+
+test every_part_is_laid_out[]
+    gui.unfocus[]
+    first = shown_at[0.0, press_at[1199.0, 1399.0], fresh[]]
+    'ball' in first.boxes
+    'dots' in first.boxes
+    'play' in first.boxes
+    'seek' in first.boxes
+    'thumb:0' in first.boxes
+    'thumb:15' in first.boxes
+    'curve' in first.boxes
+    'track' in first.boxes
+
+test a_page_that_asks_is_told_where_the_controls_are[]
+    asked_where[lory.begin[screen[0.0, '[{"type": "told", "text": "boxes"}]']]]
+    not asked_where[lory.begin[screen[0.0, '[{"type": "told", "text": "other"}]']]]
+    not asked_where[lory.begin[screen[0.0, '[]']]]
+
+test a_curve_pressed_is_the_easing_shown_large[]
+    gui.unfocus[]
+    first = shown_at[0.0, press_at[1199.0, 1399.0], fresh[]]
+    b = first.boxes['thumb:3']
+    pressed = shown_at[0.0, press_at[b[0] + 5.0, b[1] + 5.0], fresh[]]
+    picked = fresh[]
+    for e in pressed.events
+        picked = applied[picked, e, lory.begin[screen[0.0, '[]']], clock_of[track[]], 0.0]
+    picked.easing eq 'outExpo'
+
+test a_dot_pressed_starts_the_wave_there[]
+    gui.unfocus[]
+    first = shown_at[0.0, press_at[1199.0, 1399.0], fresh[]]
+    b = first.boxes['dots']
+    pressed = shown_at[500.0, press_at[b[0] + 2.0, b[1] + 2.0], fresh[]]
+    started = fresh[]
+    for e in pressed.events
+        started = applied[started, e, lory.begin[screen[500.0, '[]']], clock_of[track[]], 500.0]
+    started.origin eq '0'
+    started.since eq 500.0
+
+test the_timeline_lays_its_children_as_anime_does[]
+    tl = track[]
+    motion.child_of[tl, 'grow'].offset eq 600.0
+    motion.label_at[tl, 'turn'] eq 1400.0
+    motion.child_of[tl, 'spin'].offset eq 1400.0
+    motion.child_of[tl, 'fade'].offset eq 1600.0
+    motion.timeline_duration[tl] eq 2200.0
+
+test the_timelines_buttons_pause_and_reverse_its_clock[]
+    k = clock_of[track[]]
+    c = lory.begin[screen[0.0, '[]']]
+    motion.run_state[c, 'timeline', k].time eq 0.0
+    c = lory.begin[screen[1000.0, '[]']]
+    motion.run_state[c, 'timeline', k].time eq 1000.0
+    fresh_app = applied[fresh[], gui.Event['pause', 'press', '', 0.0], c, k, 1000.0]
+    c = lory.begin[screen[1500.0, '[]']]
+    motion.run_state[c, 'timeline', k].time eq 1000.0
+    fresh_app = applied[fresh_app, gui.Event['reverse', 'press', '', 0.0], c, k, 1500.0]
+    c = lory.begin[screen[1700.0, '[]']]
+    motion.run_state[c, 'timeline', k].time eq 800.0
+    fresh_app = applied[fresh_app, gui.Event['seek', 'change', '', 2000.0], c, k, 1700.0]
+    motion.run_state[c, 'timeline', k].time eq 2000.0
+
+--- ---- tests: in a headset ----
+
+--- a headset's frame at `ms`, as the page hands it: the page is 1000 by
+--- 560 there, on a panel 2 m wide standing 1.5 m ahead with its top 1.8 m
+--- up (a page pixel is 2 mm); the right hand's ray, from 1.25 m up, aimed
+--- at the page's point (x, y), its thumbstick pushed `forward` (1 is all
+--- the way toward the reader), the input given, and what is seen behind
+--- the drawing (`opaque`, or `alpha-blend` where the room is seen through
+--- it)
+fn headset_at[ms, x, y, forward, given, behind]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    way = encode[[(0.002 * x - 1.0) / 1.5, (0.55 - 0.002 * y) / 1.5, -1.0]]
+    json['{"t": `ms`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "blend": "`behind`", "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}, {"eye": "right", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": `way`, "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, `forward`]}], "said": []}']
+
+--- the trigger pulled and let go: a press where the ray points
+fn trigger[]
+    '[{"type": "down", "device": "ray", "id": "right"}, {"type": "up", "device": "ray", "id": "right"}]'
+
+--- the colour a frame's calls clear it to
+fn cleared[calls]
+    for call in calls
+        if call[0] eq 'clearColor'
+            return call
+    ['none']
+
+--- in a headset the page lays its panels in one column, and the ray
+--- aimed at a curve of the gallery, its trigger pulled, shows it large
+test in_a_headset_the_ray_presses_a_curve_to_show_it_large[]
+    gui.unfocus[]
+    remember['motion example', fresh[]]
+    first = framed[headset_at[0.0, 995.0, 555.0, 0.0, trigger[], 'opaque']]
+    lory.end[first.canvas]
+    curve = first.boxes['curve']
+    ball = first.boxes['ball']
+    ball[0] eq curve[0]
+    ball[1] gt curve[1] + curve[3]
+    b = first.boxes['thumb:3']
+    pressed = framed[headset_at[100.0, b[0] + b[2] / 2.0, b[1] + b[3] / 2.0, 0.0, trigger[], 'opaque']]
+    lory.end[pressed.canvas]
+    recall['motion example', fresh[]].easing eq 'outExpo'
+
+--- in a headset the thumbstick pushed toward the reader turns the page
+--- down to the timeline, 120 pixels a tenth of a second, and the ray
+--- pressing its Pause stops its clock where it stands
+test in_a_headset_the_thumbstick_turns_to_the_timeline_and_the_ray_pauses_it[]
+    gui.unfocus[]
+    remember['motion example', fresh[]]
+    k = clock_of[track[]]
+    motion.control[lory.begin[headset_at[10000.0, 500.0, 275.0, 0.0, '[]', 'opaque']], 'timeline', k, 'restart', 0.0]
+    first = framed[headset_at[10000.0, 500.0, 275.0, 0.0, '[]', 'opaque']]
+    lory.end[first.canvas]
+    ms = 10000.0
+    shown = first
+    while shown.boxes['pause'][1] + shown.boxes['pause'][3] gt 530.0 and ms lt 14000.0
+        ms = ms + 100.0
+        shown = framed[headset_at[ms, 500.0, 275.0, 1.0, '[]', 'opaque']]
+        lory.end[shown.canvas]
+    turned = first.boxes['track'][1] - shown.boxes['track'][1]
+    turned gt 500.0
+    ms lt 14000.0
+    b = shown.boxes['pause']
+    b[1] gte 24.0
+    ms = ms + 100.0
+    pressed = framed[headset_at[ms, b[0] + b[2] / 2.0, b[1] + b[3] / 2.0, 0.0, trigger[], 'opaque']]
+    lory.end[pressed.canvas]
+    later_on = lory.begin[headset_at[ms + 400.0, 500.0, 275.0, 0.0, '[]', 'opaque']]
+    motion.clock_at[later_on, 'timeline'].paused
+    stood = motion.run_state[later_on, 'timeline', k].time
+    abs[stood - (ms - 10000.0)] lt 0.001
+
+--- in a headset that shows the room through the drawing, the frame is
+--- cleared to nothing, so only the panels stand in the room; in the
+--- headset's own world, to the page's colour
+test in_a_headset_that_shows_the_room_the_page_has_no_backdrop[]
+    seen = framed[headset_at[20000.0, 500.0, 275.0, 0.0, '[]', 'alpha-blend']]
+    lory.seen_through[seen.canvas]
+    cleared[lory.batch[seen.canvas]] eq ['clearColor', str[0.0], str[0.0], str[0.0], str[0.0]]
+    len[seen.canvas.verts] gt 0
+    own = framed[headset_at[20100.0, 500.0, 275.0, 0.0, '[]', 'opaque']]
+    not lory.seen_through[own.canvas]
+    page = gui.dark[].page
+    cleared[lory.batch[own.canvas]] eq ['clearColor', str[page.r], str[page.g], str[page.b], str[page.a]]

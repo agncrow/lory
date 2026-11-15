@@ -1,0 +1,52 @@
+--- Every icon lory.icons draws, written out, to diff the interpreter's run
+--- against the compiled program's (tests/modes.sh). Each name is drawn at
+--- 15 pixels from a whole pixel, at 24 from a fraction of one, at 13.7
+--- turned a twelfth round, and at 20 flipped (one name horizontally, the
+--- next vertically), and each drawing's vertices are summed to a line of
+--- numbers written exactly: one line a name; then a loader spinning at
+--- five times.
+use lory
+use lory.icons
+
+--- a canvas 400 by 300 with nothing drawn on it
+fn _a_canvas[]
+    lory.begin[json['{"t": 0, "width": 400, "height": 300, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 400, "height": 300, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+
+--- a drawing's vertices summed: how many there are, then each of their 16
+--- numbers summed over them, weighed by where the vertex comes (so two
+--- drawings that differ in a place, a corner's number, a colour, a kind
+--- or an order differ here), written as exactly as a number is kept
+fn _summed[v]
+    n = len[v] / 16
+    sums = for k in range[16]
+        0.0
+    i = 0
+    while i lt n
+        weight = 1.0 + i % 17
+        for k in range[16]
+            sums[k] = sums[k] + v[16 * i + k] * weight
+        i = i + 1
+    words = for k in range[16]
+        str[sums[k]]
+    line = join[words, ' ']
+    '`n` `line`'
+
+ink = lory.rgba[0.1, 0.2, 0.3, 1.0]
+every = icons.names[]
+k = 0
+for name in every
+    a = icons.draw[_a_canvas[], name, 0.0, 0.0, 15.0, ink].verts
+    b = icons.draw[_a_canvas[], name, 10.25, 7.5, 24.0, ink].verts
+    t = icons.turned[_a_canvas[], name, 3.0, 4.0, 13.7, ink, 30.0].verts
+    way = 'horizontally'
+    if k % 2 eq 1
+        way = 'vertically'
+    f = icons.flipped[_a_canvas[], name, 1.5, 2.0, 20.0, ink, way].verts
+    log['`name`: `_summed[a]` | `_summed[b]` | `_summed[t]` | `_summed[f]`']
+    k = k + 1
+for t in [0.0, 500.0, 1234.5, 4250.0, 99999.0]
+    spun = icons.spinning[_a_canvas[], 'loader', 5.0, 6.0, 16.0, ink, t].verts
+    log['loader spinning at `t` ms: `_summed[spun]`']
+close = icons.known['close']
+none = icons.known['no-such-icon']
+log['`len[every]` names; close known `close`, no-such-icon known `none`']

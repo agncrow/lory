@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lory Studio</title>
+<link rel="stylesheet" href="studio.css">
+</head>
+<body>
+<header>
+  <strong>Lory Studio</strong>
+  <form id="go">
+    <input id="at" spellcheck="false" autocomplete="off" placeholder="a page of this site to try: /room/index.html?at=/reports">
+    <button>Open</button>
+  </form>
+  <span id="status">no page open</span>
+</header>
+<main>
+  <section id="stage">
+    <div id="hold">
+      <div id="view" tabindex="0">
+        <iframe id="page" title="the page being tried"></iframe>
+        <canvas id="seen"></canvas>
+        <canvas id="marks"></canvas>
+        <div id="pad"></div>
+      </div>
+    </div>
+    <p id="keys">In the headset the pointer aims the right hand (with Shift, the left) and a click is its trigger · a right-drag turns the head · W A S D walk, Q E lower and raise it · the arrows are the right thumbstick, the wheel its up and down · G grips · 1 and 2 are A and B · an Alt-drag measures an angle · R puts the head back · Space stops the frames</p>
+  </section>
+  <aside>
+    <details open>
+      <summary>Headset</summary>
+      <div class="row">
+        <button id="enter" disabled>Enter VR</button>
+        <button id="enter_ar" disabled title="Into the headset with the room seen through the drawing">Enter AR</button>
+        <button id="leave" disabled>Leave</button>
+        <select id="eye" title="Which eye is shown"><option value="left">Left eye</option><option value="right">Right eye</option><option value="both">Both eyes</option></select>
+        <button id="pause" title="Stop the frames, or let them run">Pause</button>
+        <button id="reset" title="Put the head and the hands back">Reset</button>
+      </div>
+      <pre id="pose"></pre>
+    </details>
+    <details open>
+      <summary>Measure</summary>
+      <div class="row">
+        <label><input type="checkbox" id="cone" checked> centre of view</label>
+        <label><input type="checkbox" id="grid"> 10° grid</label>
+        <label><input type="checkbox" id="sizes" checked> sizes</label>
+        <label><input type="checkbox" id="calls"> count calls</label>
+      </div>
+      <pre id="cost"></pre>
+      <pre id="ruler">Alt-drag across the picture to measure an angle.</pre>
+      <pre id="things"></pre>
+    </details>
+    <details>
+      <summary>Walk</summary>
+      <p class="hint">A walk is a list of steps: poses, presses, checks, measures and pictures. Paste one here; <code>studio.py walk</code> runs the same from a shell and holds its pictures to the ones kept.</p>
+      <textarea id="walk" spellcheck="false">{"name": "a first look", "steps": [
+  {"do": "enter"},
+  {"do": "wait", "ms": 600},
+  {"do": "shot", "name": "ahead"},
+  {"do": "head", "turn": 35},
+  {"do": "shot", "name": "to the right"},
+  {"do": "cost", "frames": 120}
+]}</textarea>
+      <div class="row"><button id="run" disabled>Run the walk</button><span id="walked"></span></div>
+      <div id="results"></div>
+    </details>
+    <details>
+      <summary>Recording</summary>
+      <p class="hint">What a headset did, frame by frame — taken from a real one over the cable, or kept of this made-up one — played back here.</p>
+      <div class="row">
+        <button id="keep" disabled>Keep what I do</button>
+        <button id="play" disabled>Play</button>
+        <button id="save" disabled>Save</button>
+        <label class="file">Load<input type="file" id="load" accept="application/json,.json"></label>
+      </div>
+      <pre id="kept">no recording is held</pre>
+    </details>
+    <details id="device">
+      <summary>The real headset</summary>
+      <p class="hint">Over the cable, through the helper: <code>python3 studio.py serve</code></p>
+      <div class="row">
+        <button id="d-open" disabled>Open this page there</button>
+        <button id="d-rec" disabled>Record</button>
+        <button id="d-take" disabled>Take the recording</button>
+        <button id="d-follow" disabled title="This made-up headset moves as the real one does">Follow</button>
+        <button id="d-mirror" disabled title="Pictures of what the headset's display shows">Mirror</button>
+      </div>
+      <pre id="d-state">the helper is not running</pre>
+      <canvas id="d-shot"></canvas>
+    </details>
+  </aside>
+</main>
+<script src="headset.js"></script>
+<script src="walk.js"></script>
+<script src="studio.js"></script>
+</body>
+</html>

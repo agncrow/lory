@@ -1,0 +1,397 @@
+--- Solid's official examples (solid-site's own), built in Lory: a menu
+--- of them down the side and the one chosen beside it. Each is a part of
+--- this folder (counter.co, todos.co, ...) that knows only Lory: its
+--- state made `fresh`, moved on `before` a frame is drawn, drawn as a
+--- `tree`, and moved by what the reader did `after`. Choosing an example
+--- starts it again, as a page opened anew would (the todos keep their
+--- list in process memory, so it is there again). The page is light or
+--- dark at the switch under the menu. Async Resource's askings go out by
+--- `lory.request` and its answers come back in `lory.said`; the form's
+--- "Done" is logged as the example logs it. In a headset the page is a
+--- panel: its controls pressed by the ray, the sketch drawn on by the ray
+--- moving over it, and a field typed into on the keyboard drawn under it.
+---
+--- tests/solid/parity.co holds every part to what Solid's example shows
+--- (tests/solid/reference.json); docs/examples/solid.md says what each
+--- shows and what is held.
+use sys
+use memory
+use lory
+use lory.gui
+use counter
+use todos
+use forms
+use animations
+use context
+use clock
+use sketch
+use scoreboard
+use resource
+use suspense
+use routing
+use store
+use styled
+
+--- the example chosen, the page's look, and each example's state
+struct App [chosen, dark, counter, todos, forms, animations, context, clock, sketch, scoreboard, resource, suspense, routing, store, styled]
+
+--- an example of the menu: its part's name, its title and what it shows
+struct Example [name, title, about]
+
+fn examples[]
+    [Example['counter', 'Counter', 'A count moved by a timer, a signal and its effect.'], Example['todos', 'Simple Todos', 'A list of todos added, done, retitled and taken away: the JSX, template-literal and hyperscript examples in one.'], Example['forms', 'Form Validation', 'A sign-up form checked as it is typed and when it is sent, one check waiting on a made-up server.'], Example['animations', 'CSS Animations', 'Transitions in and out, a switch between two, and a list whose items come, go and move.'], Example['context', 'Context', 'A theme provided to the page and changed from below.'], Example['clock', 'Clock', 'An analogue clock redrawn every frame.'], Example['sketch', 'Etch A Sketch', 'A grid painted where the pointer goes, each cell fading back.'], Example['scoreboard', 'Scoreboard', 'Players sorted by score, the rows gliding to their places.'], Example['resource', 'Async Resource', 'A person asked of swapi.dev as the number is typed.'], Example['suspense', 'Suspense Transitions', 'Tabs whose pages wait for their content while the old page stays.'], Example['routing', 'Simple Routing', 'Pages chosen by the address after the #.'], Example['store', 'Counter Store with Context', 'A count provided from above, read and moved two components down.'], Example['styled', 'Styled JSX', 'Buttons styled by their state, logged in and out.']]
+
+fn fresh_app[at]
+    App['counter', false, counter.fresh[at], todos.fresh[at], forms.fresh[at], animations.fresh[at], context.fresh[at], clock.fresh[at], sketch.fresh[at], scoreboard.fresh[at], resource.fresh[at], suspense.fresh[at], routing.fresh[at], store.fresh[at], styled.fresh[at]]
+
+--- the chosen example started again at `at`
+fn started[a, name, at]
+    a.chosen = name
+    if name eq 'counter'
+        a.counter = counter.fresh[at]
+    if name eq 'todos'
+        a.todos = todos.fresh[at]
+    if name eq 'forms'
+        a.forms = forms.fresh[at]
+    if name eq 'animations'
+        a.animations = animations.fresh[at]
+    if name eq 'context'
+        a.context = context.fresh[at]
+    if name eq 'clock'
+        a.clock = clock.fresh[at]
+    if name eq 'sketch'
+        a.sketch = sketch.themed[sketch.fresh[at], a.dark]
+    if name eq 'scoreboard'
+        a.scoreboard = scoreboard.fresh[at]
+    if name eq 'resource'
+        a.resource = resource.fresh[at]
+    if name eq 'suspense'
+        a.suspense = suspense.fresh[at]
+    if name eq 'routing'
+        a.routing = routing.fresh[at]
+    if name eq 'store'
+        a.store = store.fresh[at]
+    if name eq 'styled'
+        a.styled = styled.fresh[at]
+    a
+
+--- the chosen example moved on to the frame's time
+fn moved_on[a, at]
+    n = a.chosen
+    if n eq 'counter'
+        a.counter = counter.before[a.counter, at]
+    if n eq 'todos'
+        a.todos = todos.before[a.todos, at]
+    if n eq 'forms'
+        a.forms = forms.before[a.forms, at]
+    if n eq 'animations'
+        a.animations = animations.before[a.animations, at]
+    if n eq 'context'
+        a.context = context.before[a.context, at]
+    if n eq 'clock'
+        a.clock = clock.before[a.clock, at]
+    if n eq 'sketch'
+        a.sketch = sketch.before[a.sketch, at]
+    if n eq 'scoreboard'
+        a.scoreboard = scoreboard.before[a.scoreboard, at]
+    if n eq 'resource'
+        a.resource = resource.before[a.resource, at]
+    if n eq 'suspense'
+        a.suspense = suspense.before[a.suspense, at]
+    if n eq 'routing'
+        a.routing = routing.before[a.routing, at]
+    if n eq 'store'
+        a.store = store.before[a.store, at]
+    if n eq 'styled'
+        a.styled = styled.before[a.styled, at]
+    a
+
+--- the chosen example's tree
+fn part_tree[a, at]
+    n = a.chosen
+    d = a.dark
+    if n eq 'todos'
+        return todos.tree[a.todos, at, d]
+    if n eq 'forms'
+        return forms.tree[a.forms, at, d]
+    if n eq 'animations'
+        return animations.tree[a.animations, at, d]
+    if n eq 'context'
+        return context.tree[a.context, at, d]
+    if n eq 'clock'
+        return clock.tree[a.clock, at, d]
+    if n eq 'sketch'
+        return sketch.tree[a.sketch, at, d]
+    if n eq 'scoreboard'
+        return scoreboard.tree[a.scoreboard, at, d]
+    if n eq 'resource'
+        return resource.tree[a.resource, at, d]
+    if n eq 'suspense'
+        return suspense.tree[a.suspense, at, d]
+    if n eq 'routing'
+        return routing.tree[a.routing, at, d]
+    if n eq 'store'
+        return store.tree[a.store, at, d]
+    if n eq 'styled'
+        return styled.tree[a.styled, at, d]
+    counter.tree[a.counter, at, d]
+
+--- what the reader did taken up by the chosen example
+fn part_after[a, shown, at]
+    n = a.chosen
+    if n eq 'counter'
+        a.counter = counter.after[a.counter, shown, at]
+    if n eq 'todos'
+        a.todos = todos.after[a.todos, shown, at]
+    if n eq 'forms'
+        a.forms = forms.after[a.forms, shown, at]
+    if n eq 'animations'
+        a.animations = animations.after[a.animations, shown, at]
+    if n eq 'context'
+        a.context = context.after[a.context, shown, at]
+    if n eq 'clock'
+        a.clock = clock.after[a.clock, shown, at]
+    if n eq 'sketch'
+        a.sketch = sketch.after[a.sketch, shown, at]
+    if n eq 'scoreboard'
+        a.scoreboard = scoreboard.after[a.scoreboard, shown, at]
+    if n eq 'resource'
+        a.resource = resource.after[a.resource, shown, at]
+    if n eq 'suspense'
+        a.suspense = suspense.after[a.suspense, shown, at]
+    if n eq 'routing'
+        a.routing = routing.after[a.routing, shown, at]
+    if n eq 'store'
+        a.store = store.after[a.store, shown, at]
+    if n eq 'styled'
+        a.styled = styled.after[a.styled, shown, at]
+    a
+
+fn _chosen_example[a]
+    out = for e in examples[]
+        if e.name eq a.chosen
+            e
+    out[0]
+
+--- ---- the page ----
+
+--- the menu: one entry an example, the one chosen marked; along the top
+--- where the page is narrow
+fn menu_of[a, narrow]
+    entries = for e in examples[]
+        gui.item['menu:`e.name`', [gui.text[e.title, size = 14.0]], chosen = e.name eq a.chosen, words = e.name]
+    theme = 'Dark page'
+    if a.dark
+        theme = 'Light page'
+    if narrow
+        return gui.column[[gui.roving['menu', entries, along = 'row', gap = 4.0], gui.button['theme', theme]], gap = 8.0]
+    gui.sized[gui.column[[gui.heading['Solid'], gui.roving['menu', entries], gui.button['theme', theme]], gap = 10.0], 220.0]
+
+fn page_of[a, at, wide, tall]
+    narrow = wide lt 760.0
+    e = _chosen_example[a]
+    pane_tall = tall
+    if narrow
+        pane_tall = tall - 120.0
+    pane = gui.scroll['pane', pane_tall, [gui.column[[gui.heading[e.title], gui.note[e.about], part_tree[a, at]], gap = 12.0]]]
+    if narrow
+        return gui.column[[menu_of[a, true], pane], gap = 12.0]
+    gui.row[[menu_of[a, false], pane], gap = 24.0]
+
+fn _look[a]
+    if a.dark
+        return gui.dark[]
+    gui.light[]
+
+--- the menu's and the switch's presses
+fn applied[a, e, at]
+    if starts[e.id, 'menu:'] and e.act eq 'press'
+        gui.unfocus[]
+        a = started[a, slice[e.id, 5, len[e.id]], at]
+    if e.id eq 'theme' and e.act eq 'press'
+        a.dark = not a.dark
+        a.sketch = sketch.themed[a.sketch, a.dark]
+    a
+
+--- one frame: the record recalled, the chosen example moved on, its
+--- answers taken up, the page shown, what the reader did applied, and the
+--- example's askings and logging done; the page as shown, for `draw` to
+--- end (and a test to read)
+fn framed[frame]
+    a = recall['solid examples', fresh_app[0.0]]
+    c = lory.begin[frame]
+    look = _look[a]
+    c = lory.clear[c, look.page]
+    at = lory.time[c]
+    a = moved_on[a, at]
+    if a.chosen eq 'resource'
+        a.resource = resource.heard[a.resource, lory.said[c]]
+    s = lory.px[c]
+    wide = lory.width[c] / s - 48.0
+    tall = lory.height[c] / s - 48.0
+    done = len[a.forms.logged]
+    shown = gui.show_at[c, page_of[a, at, wide, tall], 24.0, 24.0, wide, look]
+    a = part_after[a, shown, at]
+    for e in shown.events
+        a = applied[a, e, at]
+    c = shown.canvas
+    if a.chosen eq 'resource'
+        for ask in a.resource.asks
+            c = lory.request[c, ask.id, 'GET', ask.url, '']
+    if a.chosen eq 'forms'
+        for line in slice[a.forms.logged, min[done, len[a.forms.logged]], len[a.forms.logged]]
+            log[line]
+    shown.canvas = c
+    remember['solid examples', a]
+    shown
+
+fn draw[frame]
+    shown = framed[frame]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+--- ---- tests: frames as the page hands them ----
+
+fn screen[ms, given]
+    json['{"t": `ms`, "width": 1200, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1200, "height": 900, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _middle_press[b]
+    press_at[b[0] + b[2] / 2.0, b[1] + b[3] / 2.0]
+
+--- the example of that name chosen from the menu, on a fresh record
+fn _opened[name, ms]
+    gui.unfocus[]
+    remember['solid examples', fresh_app[0.0]]
+    first = framed[screen[ms, '[]']]
+    lory.end[first.canvas]
+    chose = framed[screen[ms + 16.0, _middle_press[first.boxes['menu:`name`']]]]
+    lory.end[chose.canvas]
+    shown = framed[screen[ms + 32.0, '[]']]
+    lory.end[shown.canvas]
+    shown
+
+test every_example_is_in_the_menu_and_opens[]
+    for e in examples[]
+        shown = _opened[e.name, 0.0]
+        recall['solid examples', fresh_app[0.0]].chosen eq e.name
+        len[shown.boxes] gt len[examples[]]
+
+test the_clock_stands_as_wide_as_its_pane[]
+    shown = _opened['clock', 0.0]
+    'pane' in shown.boxes
+    len[shown.canvas.verts] gt 0
+
+test the_switch_turns_the_page_dark_and_the_sketch_with_it[]
+    shown = _opened['sketch', 0.0]
+    pressed = framed[screen[64.0, _middle_press[shown.boxes['theme']]]]
+    lory.end[pressed.canvas]
+    a = recall['solid examples', fresh_app[0.0]]
+    a.dark
+    a.sketch.dark
+
+test the_resource_asks_by_the_page_and_shows_its_answer[]
+    shown = _opened['resource', 0.0]
+    b = shown.boxes['resource.id']
+    x = b[0] + b[2] - 4.0
+    y = b[1] + b[3] / 2.0
+    typed = framed[screen[64.0, '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "text", "text": "1"}]']]
+    lory.end[typed.canvas]
+    asks = for call in typed.canvas.asks
+        if call[0] eq '@request'
+            call
+    len[asks] eq 1
+    asks[0][3] eq '=https://swapi.dev/api/people/1/'
+    a = recall['solid examples', fresh_app[0.0]]
+    id = a.resource.latest
+    body = encode['{"name":"Luke Skywalker"}']
+    answered = framed[json['{"t": 400, "width": 1200, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1200, "height": 900, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": [{"what": "answer", "id": `encode[id]`, "status": 200, "body": `body`}]}']]
+    lory.end[answered.canvas]
+    recall['solid examples', fresh_app[0.0]].resource.shown eq '{\n  "name": "Luke Skywalker"\n}'
+
+--- ---- tests: in a headset ----
+
+--- a headset's frame at `ms`, as the page hands it: the page is 1000 by
+--- 560 there, on a panel 2 m wide standing 1.5 m ahead with its top 1.8 m
+--- up (a page pixel is 2 mm); the right hand's ray, from 1.25 m up, aimed
+--- at the page's point (x, y), and the input given
+fn headset_at[ms, x, y, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    way = encode[[(0.002 * x - 1.0) / 1.5, (0.55 - 0.002 * y) / 1.5, -1.0]]
+    json['{"t": `ms`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "blend": "opaque", "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}, {"eye": "right", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": `way`, "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']
+
+fn trigger[]
+    '[{"type": "down", "device": "ray", "id": "right"}, {"type": "up", "device": "ray", "id": "right"}]'
+
+fn _pulled[]
+    '[{"type": "down", "device": "ray", "id": "right"}]'
+
+fn _let_go[]
+    '[{"type": "up", "device": "ray", "id": "right"}]'
+
+fn _ray_frame[ms, x, y, given]
+    shown = framed[headset_at[ms, x, y, given]]
+    lory.end[shown.canvas]
+    shown
+
+--- the example chosen in a headset: the ray aimed at its menu entry and
+--- the trigger pulled
+fn _opened_in_headset[name, ms]
+    gui.unfocus[]
+    remember['solid examples', fresh_app[0.0]]
+    first = _ray_frame[ms, 995.0, 555.0, '[]']
+    b = first.boxes['menu:`name`']
+    _ray_frame[ms + 16.0, b[0] + b[2] / 2.0, b[1] + b[3] / 2.0, trigger[]]
+    _ray_frame[ms + 32.0, 995.0, 555.0, '[]']
+
+--- in a headset the counter store's "+" pressed by the ray moves the
+--- count every reader of it shows
+test in_a_headset_the_ray_presses_the_stores_plus[]
+    shown = _opened_in_headset['store', 0.0]
+    recall['solid examples', fresh_app[0.0]].chosen eq 'store'
+    b = shown.boxes['store.more']
+    _ray_frame[100.0, b[0] + b[2] / 2.0, b[1] + b[3] / 2.0, trigger[]]
+    recall['solid examples', fresh_app[0.0]].store.count eq 8
+
+--- in a headset the ray moved across the sketch, its trigger held,
+--- paints each cell it crosses
+test in_a_headset_the_ray_draws_on_the_sketch[]
+    shown = _opened_in_headset['sketch', 0.0]
+    b = shown.boxes['sketch.grid']
+    size = b[2] / 10.0
+    y = b[1] + size / 2.0
+    _ray_frame[100.0, b[0] + size / 2.0, y, _pulled[]]
+    _ray_frame[116.0, b[0] + size * 1.5, y, '[]']
+    _ray_frame[132.0, b[0] + size * 2.5, y, '[]']
+    _ray_frame[148.0, b[0] + size * 3.5, y, _let_go[]]
+    s = recall['solid examples', fresh_app[0.0]].sketch
+    cells = for p in s.paints
+        p.cell
+    0 in cells
+    1 in cells
+    2 in cells
+    3 in cells
+
+--- in a headset a todo is typed on the keyboard drawn under the page
+--- and added by its Enter key
+test in_a_headset_a_todo_is_typed_on_the_drawn_keyboard[]
+    todos.cleared[]
+    shown = _opened_in_headset['todos', 0.0]
+    b = shown.boxes['todos.new']
+    focused = _ray_frame[100.0, b[0] + b[2] - 4.0, b[1] + b[3] / 2.0, trigger[]]
+    ms = 116.0
+    for face in ['h', 'i', '⏎']
+        board = gui.keys_of[focused.canvas, false]
+        k = board[0]
+        for key in board
+            if key.face eq face
+                k = key
+        _ray_frame[ms, k.x + k.w / 2.0, k.y + k.h / 2.0, trigger[]]
+        ms = ms + 16.0
+    rows = recall['solid examples', fresh_app[0.0]].todos.rows
+    len[rows] eq 1
+    rows[0].title eq 'hi'
+    todos.cleared[]

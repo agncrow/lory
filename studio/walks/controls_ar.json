@@ -1,0 +1,13 @@
+{"name": "the controls example, in a headset that shows the room",
+ "note": "Lory's controls (examples/controls) entered with the room seen through the drawing (WebXR's immersive-ar): the frame is cleared to nothing, so the room is seen around the panel, and the panel's controls are pressed as in VR. Build it first: (cd examples/controls && crow build --target web main.co), with a crow from 2026-11-14 on (its page enters AR).",
+ "build": "../../examples/controls/main_web",
+ "at": "/index.html",
+ "steps": [
+  {"do": "enter", "ar": true},
+  {"do": "wait", "frames": 20},
+  {"do": "check", "js": "sim.state.frames >= 20 && sim.state.mode === 'immersive-ar'", "says": "the program draws a headset's frames, the room seen through them"},
+  {"do": "check", "js": "(() => { const d = sim.shoot('left', 200).getContext('2d').getImageData(3, 3, 1, 1).data; return d[0] > 80 && d[1] > 90 && d[2] > 100; })()", "says": "the room is seen where the frame draws nothing"},
+  {"do": "check", "js": "(() => { const d = sim.shoot('left', 200).getContext('2d').getImageData(60, 100, 1, 1).data; return d[0] < 60 && d[1] < 60 && d[2] < 70; })()", "says": "the panel is drawn over the room, not seen through"},
+  {"do": "shot", "name": "the panel over the room"},
+  {"do": "leave"}
+ ]}

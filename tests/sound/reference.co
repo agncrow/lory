@@ -1,0 +1,330 @@
+--- Lory's sound package held to Tone.js's own answers. reference.json is
+--- what Tone.js 15.1.22 computed in headless Chrome (reference.py ran it,
+--- reference.js is its page): its time and pitch notation, its envelopes'
+--- and parameters' values, the times its transport fired events at, and
+--- patches it rendered offline at 16 kHz, measured there as
+--- sound.analysis measures Lory's renders here. Exact math is held to
+--- 1e-9 of each number (a value's last digits wait on the order of a
+--- product's factors and on each library's `pow`); renders are held by
+--- their measures, each within the tolerance its test names and
+--- docs/components/sound.md justifies. Run from the repository's root:
+--- `crow test tests/sound/reference.co`.
+use sound
+use sound.signal
+use sound.envelope
+use sound.transport
+
+
+fn _reference[]
+    json[read['tests/sound/reference.json']]
+
+--- whether two numbers agree to `share` of the larger (or both are 0)
+fn _agrees[a, b, share]
+    if a eq b
+        return true
+    abs[a - b] lte share * max[abs[a], abs[b]]
+
+fn _floats[j]
+    out = for x in j
+        0.0 + x
+    out
+
+fn _words[j]
+    out = for x in j
+        '`x`'
+    out
+
+--- ---- notation ----
+
+test time_notation_is_tones_to_the_last_digits[]
+    j = _reference[]
+    wrong = []
+    for c in j.time
+        words = '`c.words`'
+        t = sound.metered[0.0 + c.bpm, 0.0 + c.signature]
+        s = sound.seconds_after[words, t, 0.0 + c.now]
+        if not _agrees[s, 0.0 + c.seconds, 0.000000001]
+            wrong = push[wrong, '`words` at `c.bpm`: Tone `c.seconds` s, Lory `s`']
+        ticks = s / (60.0 / t.bpm) * t.ppq
+        if not _agrees[ticks, 0.0 + c.ticks, 0.000000001]
+            wrong = push[wrong, '`words` at `c.bpm`: Tone `c.ticks` ticks, Lory `ticks`']
+        if c.ticks_seconds.ok
+            read_as_ticks = sound.seconds_of_ticks[sound.ticks[words, t], t]
+            if not _agrees[read_as_ticks, 0.0 + c.ticks_seconds, 0.000000001]
+                wrong = push[wrong, '`words` as Ticks at `c.bpm`: Tone `c.ticks_seconds`, Lory `read_as_ticks`']
+    len[j.time] eq 148
+    wrong eq slice[[''], 0, 0]
+
+test positions_notes_and_quantizing_are_tones[]
+    j = _reference[]
+    wrong = []
+    for c in j.bars
+        t = sound.metered[0.0 + c.bpm, 0.0 + c.signature]
+        shown = sound.bars_beats[0.0 + c.seconds, t]
+        if shown ne '`c.shown`'
+            wrong = push[wrong, 'bars of `c.seconds` at `c.bpm`/`c.signature`: Tone `c.shown`, Lory `shown`']
+    for c in j.notation
+        t = sound.metered[0.0 + c.bpm, 0.0 + c.signature]
+        named = sound.notation_of[0.0 + c.seconds, t]
+        if named ne '`c.notation`'
+            wrong = push[wrong, 'notation of `c.seconds` at `c.bpm`: Tone `c.notation`, Lory `named`']
+    for c in j.quantized
+        t = sound.metered[0.0 + c.bpm, 0.0 + c.signature]
+        q = sound.quantized[0.0 + c.seconds, '`c.subdivision`', t, 0.0 + c.percent]
+        if not _agrees[q, 0.0 + c.quantized, 0.000000001]
+            wrong = push[wrong, 'quantized `c.seconds` to `c.subdivision`: Tone `c.quantized`, Lory `q`']
+    len[j.bars] + len[j.notation] + len[j.quantized] eq 84
+    wrong eq slice[[''], 0, 0]
+
+test pitch_notation_is_tones_to_the_last_digits[]
+    j = _reference[]
+    p = j.pitch
+    wrong = []
+    differs = []
+    for c in p.words
+        words = '`c.words`'
+        f = sound.hz[words]
+        if not c.hz.ok
+            differs = push[differs, words]
+        else
+            if not _agrees[f, 0.0 + c.hz, 0.000000001]
+                wrong = push[wrong, '`words`: Tone `c.hz` Hz, Lory `f`']
+            if sound.midi[words] ne 0 + c.midi
+                wrong = push[wrong, '`words`: Tone MIDI `c.midi`, Lory `sound.midi[words]`']
+    for c in p.names
+        if sound.note_name[0.0 + c.hz] ne '`c.name`'
+            wrong = push[wrong, '`c.hz` Hz: Tone `c.name`, Lory `sound.note_name[0.0 + c.hz]`']
+        if sound.midi_of_hz[0.0 + c.hz] ne 0 + c.midi
+            wrong = push[wrong, '`c.hz` Hz: Tone MIDI `c.midi`']
+    for c in p.midis
+        if not _agrees[sound.hz_of_midi[0.0 + c.midi], 0.0 + c.hz, 0.000000001]
+            wrong = push[wrong, 'MIDI `c.midi`: Tone `c.hz`']
+        if not _agrees[sound.hz_of_midi[0.0 + c.midi], 0.0 + c.mtof, 0.000000001]
+            wrong = push[wrong, 'mtof `c.midi`: Tone `c.mtof`']
+    for c in p.transposed
+        f = sound.transposed[sound.hz['`c.words`'], 0.0 + c.semitones]
+        if not _agrees[f, 0.0 + c.hz, 0.000000001]
+            wrong = push[wrong, '`c.words` moved `c.semitones`: Tone `c.hz`, Lory `f`']
+    chord = sound.harmonized[sound.hz['C4'], [0.0, 4.0, 7.0, 11.0]]
+    i = 0
+    for f in p.chord
+        if not _agrees[chord[i], 0.0 + f, 0.000000001]
+            wrong = push[wrong, 'chord note `i`: Tone `f`, Lory `chord[i]`']
+        i = i + 1
+    for c in p.levels
+        if not _agrees[sound.gain_of[0.0 + c.db], 0.0 + c.gain, 0.000000001]
+            wrong = push[wrong, '`c.db` dB: Tone `c.gain`']
+    for c in p.gains
+        if not _agrees[sound.db_of[0.0 + c.gain], 0.0 + c.db, 0.000000001]
+            wrong = push[wrong, 'gain `c.gain`: Tone `c.db` dB']
+    wrong eq slice[[''], 0, 0]
+    differs eq ['60midi', '69.5midi']
+    sound.hz['60midi'] eq sound.hz_of_midi[60.0]
+
+--- ---- envelopes and parameters ----
+
+--- an envelope of Tone's options (its defaults where a case names none)
+fn _envelope_of[o]
+    shape = envelope.envelope[]
+    if o.attack.ok
+        shape.attack = 0.0 + o.attack
+    if o.decay.ok
+        shape.decay = 0.0 + o.decay
+    if o.sustain.ok
+        shape.sustain = 0.0 + o.sustain
+    if o.release.ok
+        shape.release = 0.0 + o.release
+    if o.attackCurve.ok
+        shape.attack_curve = '`o.attackCurve`'
+    if o.decayCurve.ok
+        shape.decay_curve = '`o.decayCurve`'
+    if o.releaseCurve.ok
+        shape.release_curve = '`o.releaseCurve`'
+    shape
+
+--- the values a parameter's case takes at Tone's times (`rendered` false)
+--- or at the samples Tone's render holds there (`rendered` true), and
+--- where they differ from Tone's by more than `share` of its largest
+fn _differences[name, p, c, rate, share]
+    biggest = 0.000001
+    for v in c.values
+        biggest = max[biggest, abs[0.0 + v]]
+    out = slice[[''], 0, 0]
+    i = 0
+    for at in c.grid
+        t = 0.0 + at
+        mine = signal.value_at[p, t]
+        if abs[mine - c.values[i]] gt 0.000000001 * biggest
+            out = push[out, '`name` at `t`: Tone `c.values[i]`, Lory `mine`']
+        frame = 0.0 + min[round[t * rate], round[1.25 * rate] - 1]
+        heard = signal.value_at[p, frame / rate]
+        if abs[heard - c.rendered[i]] gt share * biggest
+            out = push[out, '`name` rendered at `t`: Tone `c.rendered[i]`, Lory `heard`']
+        i = i + 1
+    out
+
+test envelopes_are_tones_number_for_number[]
+    j = _reference[]
+    rate = 0.0 + j.rate
+    wrong = []
+    for c in j.envelopes
+        shape = _envelope_of[c.options]
+        p = envelope.silent[]
+        for trigger in c.triggers
+            if '`trigger[0]`' eq 'attack'
+                p = envelope.attacked[shape, p, 0.0 + trigger[1], 0.0 + trigger[2], rate]
+            else
+                p = envelope.released[shape, p, 0.0 + trigger[1], rate]
+        share = 0.000001
+        if find['`c.name`', 'pressed again'].ok
+            share = 0.001
+        wrong = concat[wrong, _differences['`c.name`', p, c, rate, share]]
+    len[j.envelopes] eq 17
+    wrong eq slice[[''], 0, 0]
+
+test parameters_are_tones_number_for_number[]
+    j = _reference[]
+    rate = 0.0 + j.rate
+    wrong = []
+    for c in j.ramps
+        units = 'number'
+        if c.units.ok
+            units = '`c.units`'
+        p = signal.param[0.0 + c.initial]
+        for op in c.ops
+            how = '`op[0]`'
+            if how eq 'linearRampTo'
+                p = signal.linear_to[p, 0.0 + op[1], 0.0 + op[2], 0.0 + op[3]]
+            if how eq 'exponentialRampTo'
+                p = signal.exponential_to[p, 0.0 + op[1], 0.0 + op[2], 0.0 + op[3]]
+            if how eq 'targetRampTo'
+                p = signal.target_to[p, 0.0 + op[1], 0.0 + op[2], 0.0 + op[3]]
+            if how eq 'rampTo'
+                p = signal.ramp_to[p, 0.0 + op[1], 0.0 + op[2], 0.0 + op[3], units]
+            if how eq 'setValueAtTime'
+                p = signal.set_at[p, 0.0 + op[1], 0.0 + op[2]]
+            if how eq 'linearRampToValueAtTime'
+                p = signal.linear_at[p, 0.0 + op[1], 0.0 + op[2]]
+            if how eq 'exponentialRampToValueAtTime'
+                p = signal.exponential_at[p, 0.0 + op[1], 0.0 + op[2]]
+            if how eq 'setTargetAtTime'
+                p = signal.target_at[p, 0.0 + op[1], 0.0 + op[2], 0.0 + op[3]]
+            if how eq 'setValueCurveAtTime'
+                p = signal.curve_at[p, _floats[op[1]], 0.0 + op[2], 0.0 + op[3], 0.0 + op[4]]
+            if how eq 'cancelAndHoldAtTime'
+                p = signal.held_at[p, 0.0 + op[1]]
+            if how eq 'cancelScheduledValues'
+                p = signal.cancelled[p, 0.0 + op[1]]
+            if how eq 'exponentialApproachValueAtTime'
+                p = signal.approach_at[p, 0.0 + op[1], 0.0 + op[2], 0.0 + op[3]]
+        wrong = concat[wrong, _differences['`c.name`', p, c, rate, 0.001]]
+    len[j.ramps] eq 10
+    wrong eq slice[[''], 0, 0]
+
+--- ---- the transport ----
+
+--- the transport a case names: its tempo, meter, swing and loop
+fn _transport_of[c]
+    bpm = 120.0
+    if c.bpm.ok
+        bpm = 0.0 + c.bpm
+    tr = transport.transport[bpm]
+    if c.signature.ok
+        tr = transport.in_meter[tr, 0.0 + c.signature]
+    if c.swing.ok
+        subdivision = '8n'
+        if c.swingSubdivision.ok
+            subdivision = '`c.swingSubdivision`'
+        tr = transport.swung[tr, 0.0 + c.swing, subdivision]
+    if c.loop.ok
+        tr = transport.looping[tr, '`c.loopStart`', '`c.loopEnd`']
+    index = 0
+    for ev in c.events
+        kind = '`ev[0]`'
+        if kind eq 'once'
+            tr = transport.once[tr, index, '`ev[1]`', '']
+        if kind eq 'repeat'
+            duration = ''
+            if len[ev] gt 3
+                duration = '`ev[3]`'
+            tr = transport.every[tr, index, '`ev[1]`', '`ev[2]`', duration]
+        if kind eq 'loop'
+            iterations = 0
+            rate = 1.0
+            if len[ev] gt 3
+                if ev[3].ok
+                    iterations = 0 + ev[3]
+            if len[ev] gt 4
+                rate = 0.0 + ev[4]
+            tr = transport.loop[tr, index, '`ev[1]`', '`ev[2]`', iterations, rate]
+        if kind eq 'sequence'
+            tr = transport.sequence[tr, index, '`c.steps[index]`', '`ev[2]`', '`ev[3]`']
+        if kind eq 'part'
+            notes = for n in ev[1]
+                transport.note_at['`n[0]`', '`n[1]`']
+            loop_end = '1m'
+            if len[ev] gt 4
+                loop_end = '`ev[4]`'
+            tr = transport.part[tr, index, notes, '`ev[2]`', '`ev[3]`' eq 'true', loop_end]
+        if kind eq 'pattern'
+            tr = transport.pattern[tr, index, _words[ev[1]], '`ev[2]`', '`ev[3]`', '`ev[4]`']
+        index = index + 1
+    tr
+
+--- whether firing `a` comes before `b`: earlier, or at one time on an
+--- earlier track
+fn _before[a, b]
+    if abs[a.time - b.time] gt 0.000000001
+        return a.time lt b.time
+    a.track lt b.track
+
+--- firings in order of time and then track
+fn _ordered[xs]
+    out = slice[[transport.Fired[0.0, 0, '', 0]], 0, 0]
+    for f in xs
+        i = len[out]
+        while i gt 0 and _before[f, out[i - 1]]
+            i = i - 1
+        out = concat[push[slice[out, 0, i], f], slice[out, i, len[out]]]
+    out
+
+--- Tone's firings, in order, a firing that repeats the one before it
+--- within a nanosecond (Tone fires a once-event twice where its tick lands
+--- on the edge of an offline render's block) counted once
+fn _tones[c]
+    given = for f in c.fired
+        value = ''
+        if f[2].ok
+            value = '`f[2]`'
+        transport.Fired[0.0 + f[0], 0 + f[1], value, 0]
+    out = slice[[transport.Fired[0.0, 0, '', 0]], 0, 0]
+    for f in _ordered[given]
+        twice = false
+        for g in out
+            if g.track eq f.track and g.value eq f.value and abs[g.time - f.time] lt 0.000000001
+                twice = true
+        if not twice
+            out = push[out, f]
+    out
+
+test the_transport_fires_what_tone_fires_when_it_fires_it[]
+    j = _reference[]
+    wrong = []
+    held = 0
+    for c in j.schedules
+        theirs = _tones[c]
+        mine = _ordered[transport.fired[_transport_of[c], 0.0, 0.0 + c.duration]]
+        if len[mine] ne len[theirs]
+            wrong = push[wrong, '`c.name`: Tone fired `len[theirs]`, Lory `len[mine]`']
+        else
+            i = 0
+            while i lt len[mine]
+                a = mine[i]
+                b = theirs[i]
+                if abs[a.time - b.time] gt 0.000000001 or a.track ne b.track or a.value ne b.value
+                    wrong = push[wrong, '`c.name` [`i`]: Tone `b.time` `b.track` `b.value`, Lory `a.time` `a.track` `a.value`']
+                i = i + 1
+            held = held + len[mine]
+    len[j.schedules] eq 16
+    wrong eq slice[[''], 0, 0]
+    held eq 169

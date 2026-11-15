@@ -3,15 +3,15 @@
 --- the two): a frame read as the page hands it, shapes and text drawn and
 --- the calls the page would be handed counted; a form whose controls
 --- answer a press and typing; a chart of bars with its ticks; a scene of
---- meshes seen through a camera that orbits; a game's clock, collisions
---- and sparks. Nothing here needs a page: what a frame would paint is read
---- back with `lory.batch`, as a test reads it.
+--- meshes seen through a camera that orbits; a frame ended. Nothing here
+--- needs a page: what a frame would paint is read back with `lory.batch`,
+--- as a test reads it. (A game's clock, collisions and sparks are the game
+--- package's, packages/game, and its example shows them.)
 use math
 use lory
 use gui
 use plot
 use space
-use game
 
 --- a frame as the page hands it, `t` milliseconds in: its size, its view
 --- and the input given (a JSON list of events)
@@ -99,10 +99,30 @@ for ev in lory.events[wheeled]
 
 log['--- the controls']
 
-struct Form [name, presses, loud, volume]
+struct Form [name, presses, loud, volume, stars]
+
+--- a control the program draws: as many of its dots filled as its value,
+--- set by a press on one (or a drag along them) and moved by the arrows
+--- once it has the focus
+fn dots[d]
+    step = 28.0 * d.s
+    if d.down
+        d.num = max[1.0, min[d.hi, int[d.px / step] + 1.0]]
+    for k in d.keys
+        if k eq 'ArrowLeft'
+            d.num = max[0.0, d.num - 1.0]
+        if k eq 'ArrowRight'
+            d.num = min[d.hi, d.num + 1.0]
+    for i in range[int[d.hi]]
+        cx = d.x + i * step + 10.0 * d.s
+        if i lt d.num
+            d.c = lory.circle[d.c, cx, d.y + d.h / 2.0, 10.0 * d.s, d.look.accent]
+        else
+            d.c = lory.ring[d.c, cx, d.y + d.h / 2.0, 10.0 * d.s, 2.0 * d.s, d.look.muted]
+    d
 
 fn form_of[f]
-    gui.panel[[gui.heading['A form'], gui.label['Your name'], gui.field['name', f.name], gui.slider['volume', f.volume, 0.0, 1.0], gui.toggle['loud', 'Loud', f.loud], gui.row[[gui.button['press', 'Press me'], gui.label['pressed `f.presses` times']]]]]
+    gui.panel[[gui.heading['A form'], gui.label['Your name'], gui.field['name', f.name], gui.slider['volume', f.volume, 0.0, 1.0], gui.toggle['loud', 'Loud', f.loud], gui.drawn['stars', f.stars, 136.0, 28.0, dots, hi = 5], gui.row[[gui.button['press', 'Press me'], gui.label['pressed `f.presses` times']]]]]
 
 fn applied[f, ev]
     if ev.id eq 'name' and ev.act eq 'edit'
@@ -113,9 +133,11 @@ fn applied[f, ev]
         f.loud = ev.num gt 0.5
     if ev.id eq 'press'
         f.presses = f.presses + 1
+    if ev.id eq 'stars'
+        f.stars = int[ev.num]
     f
 
-f = Form['Ada', 0, false, 0.4]
+f = Form['Ada', 0, false, 0.4, 2]
 first = gui.show[lory.begin[screen[0, press_at[1.0, 1.0]]], form_of[f]]
 b = first.boxes['press']
 log['the form is `drawn[first.canvas]` vertices; its button stands at `b[0]`, `b[1]`, `b[2]` wide']
@@ -133,6 +155,14 @@ toggled = gui.show[lory.begin[screen[48, press_at[t[0] + 5.0, t[1] + 5.0]]], for
 for happened in toggled.events
     f = applied[f, happened]
 log['a press on the toggle: loud is `f.loud`']
+dots_at = first.boxes['stars']
+rated = gui.show[lory.begin[screen[64, press_at[dots_at[0] + 3.5 * 28.0, dots_at[1] + 10.0]]], form_of[f]]
+for happened in rated.events
+    f = applied[f, happened]
+arrowed = gui.show[lory.begin[screen[80, '[{"type": "key", "key": "ArrowLeft", "code": "ArrowLeft"}]']], form_of[f]]
+for happened in arrowed.events
+    f = applied[f, happened]
+log['a press on the fourth of the dots the program draws, then the left arrow: `f.stars` of 5, drawn in `drawn[arrowed.canvas]` vertices']
 
 --- ---- a chart ----
 
@@ -233,27 +263,11 @@ dragged = space.orbit[lory.begin[screen[16, '[{"type": "down", "device": "mouse"
 moved = space.orbit[lory.begin[screen[32, '[{"type": "move", "device": "mouse", "id": "1", "x": 200, "y": 100}]']], 'turned', [0.0, 0.0, 0.0], 5.0]
 log['a drag to the right turns the orbit: its yaw from `two[dragged.yaw]` to `two[moved.yaw]`']
 
---- ---- a game ----
+--- ---- a frame ended ----
 
-log['--- a game']
+log['--- a frame ended']
 c = lory.begin[screen[0, '[]']]
+c = lory.tone[c, 880.0, 0.12, 'triangle', 0.15]
+log['a sound asked of the page with the frame: `len[c.asks]` call']
 calls = lory.end[c]
 log['a frame ended: `calls` calls handed to the page (outside a browser, to no one)']
-c = lory.begin[screen[40, '[]']]
-steps = game.steps[c, 'play', 120.0]
-calls = lory.end[c]
-c = lory.begin[screen[60, '[]']]
-again = game.steps[c, 'play', 120.0]
-log['a frame 40 ms after it steps a game at 120 a second `steps` times, one 20 ms later `again` times (what was left carried)']
-log['circles meet: `game.circles_meet[0.0, 0.0, 1.0, 1.5, 0.0, 1.0]`, `game.circles_meet[0.0, 0.0, 1.0, 2.5, 0.0, 1.0]`; boxes: `game.boxes_meet[0.0, 0.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0]`; a circle and a box: `game.circle_meets_box[3.0, 1.0, 0.5, 0.0, 0.0, 2.0, 2.0]`']
-log['10 moved toward 20 at a rate of 2 for a second: `two[game.toward[10.0, 20.0, 2.0, 1.0]]`; 7 clamped to 0..5: `game.clamp[7.0, 0.0, 5.0]`']
-seed[7]
-sparks = game.burst[[], 100.0, 100.0, 40, 200.0, lory.hex['#ffd43b']]
-log['a burst of `len[sparks]` sparks']
-for i in range[30]
-    sparks = game.moved[sparks, 1.0 / 60.0, 400.0]
-log['half a second later `len[sparks]` are left']
-c = game.drawn[c, sparks, 3.0]
-log['drawn as `drawn[c]` vertices']
-c = game.sound[c, 'pick']
-log['a sound asked of the page: `len[c.asks]` call']

@@ -1,0 +1,700 @@
+--- A map's shapes: GeoJSON read into features — points, lines and
+--- polygons with their holes, one or many to a feature, Features and
+--- FeatureCollections and collections of geometries — each drawn in a
+--- style (Leaflet's Path options: a stroke's colour, width, opacity and
+--- dashes, a fill's colour and opacity, a point's radius), a style that
+--- may be read from a feature's properties (steps of a number: a
+--- choropleth), filled by triangles cut once (by Lory's earcut, in
+--- `lory.geometry`), and found under a pointer.
+---
+--- A feature's places are kept as they were read and as points of the
+--- world's picture at zoom 0 (CSS pixels, 256 across the world), so a
+--- frame draws it by scaling and shifting alone.
+use math
+use lory
+use lory.geometry
+use lory.icons
+use geo
+
+--- how a shape is drawn: its stroke (whether it has one, its colour,
+--- width in CSS pixels, opacity, and dashes: so many pixels drawn, so
+--- many left; none: 0), its fill (whether a polygon or a circle is
+--- filled, the colour, the opacity), a point's radius, and whether a
+--- point is drawn as a circle of that radius (`circles`) rather than as
+--- a marker
+--- (and a marker's own picture: its page object, -1 for none, its size
+--- and the point of it that stands on the place, in CSS pixels; or the
+--- name of one of Lory's icons it is drawn as, and the icon's colour; with
+--- neither, it is Lory's pin)
+struct Style [stroke, color, weight, opacity, dash_on, dash_off, fill, fill_color, fill_opacity, radius, circles, icon, icon_w, icon_h, icon_x, icon_y, glyph, glyph_color]
+
+--- one piece of a shape: a `point`, a `line` or a `polygon` (its outer
+--- ring first, its holes after), its places, those places as points of
+--- the world's picture at zoom 0, where each ring starts among them, and
+--- a polygon's triangles (three indexes into its points each)
+struct Piece [form, lats, lngs, xs, ys, ring_at, triangles]
+
+--- a feature of a layer: its id, the layer's name, its pieces, the box
+--- of places it covers, its properties (each as words, and those that are
+--- numbers as numbers), its style, and the words of its popup and its
+--- tooltip (none: '')
+--- (and a circle's radius in metres: a `circle` piece is its middle)
+struct Feature [id, layer, pieces, south, west, north, east, words, numbers, style, popup, tooltip, metres]
+
+--- ---- styles ----
+
+--- Leaflet's own style for a path: a blue stroke 3 pixels wide, a fill of
+--- the same blue at a fifth of its opacity where a polygon or circle is
+--- filled, points drawn as markers (a circle's radius 10)
+fn style[]
+    blue = lory.hex['#3388ff']
+    Style[true, blue, 3.0, 1.0, 0.0, 0.0, true, blue, 0.2, 10.0, false, -1, 25.0, 41.0, 12.0, 41.0, '', blue]
+
+--- the style with its stroke `color` (`#rrggbb`) and `weight` pixels wide
+fn stroke[s, color, weight]
+    s.stroke = weight gt 0.0
+    s.color = lory.hex[color]
+    s.weight = weight
+    s
+
+--- the style with its stroke drawn `opacity` (0 to 1) opaque
+fn stroke_opacity[s, opacity]
+    s.opacity = opacity
+    s
+
+--- the style with its stroke dashed: `on` pixels drawn, `off` left
+fn dashes[s, on, off]
+    s.dash_on = on
+    s.dash_off = off
+    s
+
+--- the style with polygons and circles filled with `color` at `opacity`
+fn filled[s, color, opacity]
+    s.fill = true
+    s.fill_color = lory.hex[color]
+    s.fill_opacity = opacity
+    s
+
+--- the style with nothing filled
+fn unfilled[s]
+    s.fill = false
+    s
+
+--- the style with points drawn as circles `radius` pixels across
+fn circles[s, radius]
+    s.circles = true
+    s.radius = radius
+    s
+
+--- the style with points drawn as markers of a picture of the page's
+--- (object `n`, loaded by `lory.load_image`), `w` by `h` CSS pixels, the
+--- point (x, y) of it standing on the place
+fn icon[s, n, w, h, x, y]
+    s.circles = false
+    s.icon = n
+    s.glyph = ''
+    s.icon_w = w
+    s.icon_h = h
+    s.icon_x = x
+    s.icon_y = y
+    s
+
+--- the style with points drawn as markers of one of Lory's icons
+--- (`lory.icons`) by name, `size` CSS pixels square, in `color`
+--- (`#rrggbb`): a pin (map-pin, sewing-pin or drawing-pin, or the filled
+--- form of each) with its point on the place, any other icon with its
+--- middle there
+fn glyph[s, name, size, color]
+    s.circles = false
+    s.icon = -1
+    s.glyph = name
+    s.glyph_color = lory.hex[color]
+    s.icon_w = size
+    s.icon_h = size
+    s.icon_x = size / 2.0
+    s.icon_y = size / 2.0
+    --- (each pin's point is at 13.5 of the icon's 15 units down)
+    if replace[name, '_', '-'] in ['map-pin', 'map-pin-filled', 'sewing-pin', 'sewing-pin-filled', 'drawing-pin', 'drawing-pin-filled']
+        s.icon_y = size * 13.5 / 15.0
+    s
+
+--- ---- reading GeoJSON ----
+
+fn _no_pieces[]
+    slice[[Piece['', [0.0], [0.0], [0.0], [0.0], [0], [0]]], 0, 0]
+
+fn _no_features[]
+    slice[[Feature['', '', _no_pieces[], 0.0, 0.0, 0.0, 0.0, map['' = ''], map['' = 0.0], style[], '', '', 0.0]], 0, 0]
+
+--- no features: a list to add features to
+fn no_features[]
+    _no_features[]
+
+--- a list of places read from GeoJSON's positions (longitude first),
+--- the closing place of a ring left off where it repeats the first
+fn _ring[positions, closed]
+    lats = []
+    lngs = []
+    for p in positions
+        lngs = push[lngs, 0.0 + p[0]]
+        lats = push[lats, 0.0 + p[1]]
+    n = len[lats]
+    if closed and n gte 2 and geo.same_place[lats[0], lngs[0], lats[n - 1], lngs[n - 1]]
+        lats = slice[lats, 0, n - 1]
+        lngs = slice[lngs, 0, n - 1]
+    [lats, lngs]
+
+--- a piece made of rings of places: their points at zoom 0, where each
+--- ring starts, and a polygon's triangles
+fn _piece[form, rings]
+    lats = []
+    lngs = []
+    ring_at = []
+    for r in rings
+        ring_at = push[ring_at, len[lats]]
+        for i in range[len[r[0]]]
+            lats = push[lats, r[0][i]]
+            lngs = push[lngs, r[1][i]]
+    xs = []
+    ys = []
+    for i in range[len[lats]]
+        p = geo.project[lats[i], lngs[i], 0.0]
+        xs = push[xs, p.x]
+        ys = push[ys, p.y]
+    triangles = []
+    if form eq 'polygon'
+        triangles = triangulate[xs, ys, ring_at]
+    else
+        triangles = slice[[0], 0, 0]
+    Piece[form, lats, lngs, xs, ys, ring_at, triangles]
+
+--- the pieces of a GeoJSON geometry: each point of a MultiPoint, each
+--- line of a MultiLineString, each polygon of a MultiPolygon, and every
+--- piece of every geometry of a GeometryCollection
+fn pieces_of[g]
+    out = _no_pieces[]
+    if not g.ok
+        return out
+    kind_of = '`g.type`'
+    if kind_of eq 'Point'
+        out = push[out, _piece['point', [_ring[[g.coordinates], false]]]]
+    if kind_of eq 'MultiPoint'
+        for p in g.coordinates
+            out = push[out, _piece['point', [_ring[[p], false]]]]
+    if kind_of eq 'LineString'
+        out = push[out, _piece['line', [_ring[g.coordinates, false]]]]
+    if kind_of eq 'MultiLineString'
+        for line_of in g.coordinates
+            out = push[out, _piece['line', [_ring[line_of, false]]]]
+    if kind_of eq 'Polygon'
+        rings = for r in g.coordinates
+            _ring[r, true]
+        out = push[out, _piece['polygon', rings]]
+    if kind_of eq 'MultiPolygon'
+        for poly in g.coordinates
+            rings = for r in poly
+                _ring[r, true]
+            out = push[out, _piece['polygon', rings]]
+    if kind_of eq 'GeometryCollection'
+        for each in g.geometries
+            for p in pieces_of[each]
+                out = push[out, p]
+    out
+
+--- a feature of a layer from its pieces and properties, `n` its place
+--- in the layer (its id where the GeoJSON gives none)
+fn _feature[layer, n, id, pieces, props, s]
+    words = map['' = '']
+    numbers = map['' = 0.0]
+    if props.ok
+        for k in keys[props]
+            v = props[k]
+            if v.ok
+                words[k] = '`v`'
+                f = float['`v`']
+                if f.ok
+                    numbers[k] = 0.0 + f
+    south = 90.0
+    north = -90.0
+    west = 180.0
+    east = -180.0
+    for p in pieces
+        for i in range[len[p.lats]]
+            south = min[south, p.lats[i]]
+            north = max[north, p.lats[i]]
+            west = min[west, p.lngs[i]]
+            east = max[east, p.lngs[i]]
+    name = id
+    if name eq ''
+        name = '`layer`.`n`'
+    Feature[name, layer, pieces, south, west, north, east, words, numbers, s, '', '', 0.0]
+
+--- the features of GeoJSON text, as a layer named `layer` in a style:
+--- a FeatureCollection's features, one Feature, or a bare geometry as a
+--- feature of its own (a feature's id is its GeoJSON id, or the layer's
+--- name and its place: `parks.2`)
+fn read_geojson[layer, words, s]
+    j = json[words]
+    out = _no_features[]
+    if not j.ok
+        return out
+    kind_of = '`j.type`'
+    if kind_of eq 'FeatureCollection'
+        for i in range[len[j.features]]
+            f = j.features[i]
+            id = ''
+            if f.id.ok
+                id = '`f.id`'
+            out = push[out, _feature[layer, i, id, pieces_of[f.geometry], f.properties, s]]
+        return out
+    if kind_of eq 'Feature'
+        id = ''
+        if j.id.ok
+            id = '`j.id`'
+        out = push[out, _feature[layer, 0, id, pieces_of[j.geometry], j.properties, s]]
+        return out
+    out = push[out, _feature[layer, 0, '', pieces_of[j], j.nothing, s]]
+    out
+
+--- ---- styles from properties ----
+
+--- each feature's fill coloured by a number among its properties, in
+--- steps: `base` below the first of `stops`, and from each stop on, the
+--- colour beside it (a choropleth; features without the number keep
+--- their colour)
+fn fill_steps[features, property, base, stops, colors]
+    out = _no_features[]
+    for f in features
+        if property in f.numbers
+            v = f.numbers[property]
+            chosen = base
+            for i in range[len[stops]]
+                if v gte stops[i]
+                    chosen = colors[i]
+            f.style.fill_color = lory.hex[chosen]
+        out = push[out, f]
+    out
+
+--- each feature's fill coloured by a word among its properties: the
+--- colour beside the first of `choices` it is, `otherwise` if none
+fn fill_match[features, property, choices, colors, otherwise]
+    out = _no_features[]
+    for f in features
+        chosen = otherwise
+        if property in f.words
+            v = f.words[property]
+            k = len[choices] - 1
+            while k gte 0
+                if choices[k] eq v
+                    chosen = colors[k]
+                k = k - 1
+        f.style.fill_color = lory.hex[chosen]
+        out = push[out, f]
+    out
+
+--- ---- cutting polygons into triangles ----
+
+--- the indexes of a ring's points from `from` up to `upto`, each point
+--- the same as the one before it left out
+fn _kept[xs, ys, from, upto]
+    kept = []
+    for i in range[upto - from]
+        v = from + i
+        n = len[kept]
+        if n eq 0 or xs[v] ne xs[kept[n - 1]] or ys[v] ne ys[kept[n - 1]]
+            kept = push[kept, v]
+    kept
+
+--- a ring's points as a path is handed them: x and y of each in turn
+fn _flat[xs, ys, ring]
+    out = []
+    for v in ring
+        out = push[push[out, xs[v]], ys[v]]
+    out
+
+--- the index of a point at (x, y), looked for among them all
+fn _found[xs, ys, x, y]
+    for i in range[len[xs]]
+        if xs[i] eq x and ys[i] eq y
+            return i
+    0
+
+--- a polygon with holes cut into triangles: three indexes into its points
+--- each. Its rings (each starting where `ring_at` says, the outer one
+--- first) are cut by Lory's earcut, as `lory.geometry` cuts a shape and
+--- three.js and Mapbox's fills are cut: each hole bridged into the outer
+--- ring, then ears cut off in turn. The shape's corners are its rings'
+--- points, each ring turned the way earcut wants it, so each is found
+--- again among the points: in turn, forwards or backwards, or else by
+--- where it is.
+fn triangulate[xs, ys, ring_at]
+    out = slice[[0], 0, 0]
+    rings = []
+    for r in range[len[ring_at]]
+        from = ring_at[r]
+        upto = len[xs]
+        if r + 1 lt len[ring_at]
+            upto = ring_at[r + 1]
+        ring = _kept[xs, ys, from, upto]
+        if len[ring] gte 3
+            rings = push[rings, ring]
+    if len[rings] eq 0
+        return out
+    o = geometry.outline[geometry.path_through[_flat[xs, ys, rings[0]]]]
+    for r in range[len[rings] - 1]
+        o = geometry.holed[o, geometry.path_through[_flat[xs, ys, rings[r + 1]]]]
+    g = geometry.shape[o, 1]
+    guess = []
+    k = 0
+    for ring in rings
+        n = len[ring]
+        size = n
+        if n gt 2 and xs[ring[n - 1]] eq xs[ring[0]] and ys[ring[n - 1]] eq ys[ring[0]]
+            size = n - 1
+        forwards = 3 * k + 1 lt len[g.positions] and g.positions[3 * k] eq xs[ring[0]] and g.positions[3 * k + 1] eq ys[ring[0]]
+        for j in range[size]
+            if forwards
+                guess = push[guess, ring[j]]
+            else
+                guess = push[guess, ring[n - 1 - j]]
+        k = k + size
+    at = []
+    for q in range[len[g.positions] / 3]
+        x = g.positions[3 * q]
+        y = g.positions[3 * q + 1]
+        v = -1
+        if q lt len[guess]
+            v = guess[q]
+        if v lt 0 or xs[v] ne x or ys[v] ne y
+            v = _found[xs, ys, x, y]
+        at = push[at, v]
+    for t in g.indices
+        out = push[out, at[t]]
+    out
+
+--- ---- finding a feature under the pointer ----
+
+--- whether a point of the world's picture at zoom 0 is inside the
+--- polygon piece (its holes outside: each ring's edges counted, odd is
+--- inside)
+fn _inside[p, x, y]
+    inside = false
+    for r in range[len[p.ring_at]]
+        from = p.ring_at[r]
+        upto = len[p.xs]
+        if r + 1 lt len[p.ring_at]
+            upto = p.ring_at[r + 1]
+        n = upto - from
+        for k in range[n]
+            i = from + k
+            j = from + (k + n - 1) % n
+            if (p.ys[i] gt y) ne (p.ys[j] gt y)
+                cut = (p.xs[j] - p.xs[i]) * (y - p.ys[i]) / (p.ys[j] - p.ys[i]) + p.xs[i]
+                if x lt cut
+                    inside = not inside
+    inside
+
+--- the distance from a point to the nearest edge of a piece's rings or
+--- line, in its own units
+fn _edge_distance[p, x, y, closed]
+    best = inf
+    for r in range[len[p.ring_at]]
+        from = p.ring_at[r]
+        upto = len[p.xs]
+        if r + 1 lt len[p.ring_at]
+            upto = p.ring_at[r + 1]
+        n = upto - from
+        edges = n - 1
+        if closed
+            edges = n
+        for k in range[edges]
+            i = from + k
+            j = from + (k + 1) % n
+            d = geo.segment_distance_squared[x, y, p.xs[i], p.ys[i], p.xs[j], p.ys[j]]
+            best = min[best, d]
+        if n eq 1
+            dx = x - p.xs[from]
+            dy = y - p.ys[from]
+            best = min[best, dx * dx + dy * dy]
+    sqrt[best]
+
+--- whether a feature is under the point (x, y) of the world's picture at
+--- zoom 0, `per` of its units a CSS pixel there: inside a filled polygon,
+--- within its stroke's half width of an edge or a line, inside a circle,
+--- or on a marker: in its picture's or its icon's box, or on Lory's pin
+--- (25 by 41 pixels above its place)
+fn hits[f, x, y, per]
+    s = f.style
+    reach = 0.0
+    if s.stroke
+        reach = s.weight / 2.0
+    for p in f.pieces
+        if p.form eq 'circle'
+            dx = (x - p.xs[0]) / per
+            dy = (y - p.ys[0]) / per
+            z = geo.zoom_of[256.0 / per]
+            r = geo.circle_radius[p.lats[0], p.lngs[0], f.metres, z]
+            if r.x gt 0.0 and r.y gt 0.0
+                q = (dx / (r.x + reach)) * (dx / (r.x + reach)) + (dy / (r.y + reach)) * (dy / (r.y + reach))
+                if q lte 1.0 and (s.fill or q gte ((r.x - reach) / (r.x + reach)) * ((r.x - reach) / (r.x + reach)))
+                    return true
+        if p.form eq 'polygon'
+            if s.fill and _inside[p, x, y]
+                return true
+            if s.stroke and _edge_distance[p, x, y, true] lte reach * per
+                return true
+        if p.form eq 'line'
+            if _edge_distance[p, x, y, false] lte max[reach, 1.0] * per
+                return true
+        if p.form eq 'point'
+            dx = (x - p.xs[0]) / per
+            dy = (y - p.ys[0]) / per
+            if s.circles
+                if dx * dx + dy * dy lte (s.radius + reach) * (s.radius + reach)
+                    return true
+            else
+                if dx gte 0.0 - s.icon_x and dx lte s.icon_w - s.icon_x and dy gte 0.0 - s.icon_y and dy lte s.icon_h - s.icon_y
+                    return true
+    false
+
+--- ---- drawing ----
+
+--- a marker's pin with its point at (x, y) of the canvas, `s` canvas
+--- pixels a CSS pixel: a round head over a point, a light dot in the
+--- head, a shadow under the point (25 by 41 CSS pixels, as Leaflet's
+--- marker stands)
+fn pin[c, x, y, s, color]
+    c = lory.round_rect[c, x - 7.0 * s, y - 2.5 * s, 14.0 * s, 5.0 * s, 2.5 * s, lory.rgba[0.0, 0.0, 0.0, 0.22]]
+    r = 11.5 * s
+    hy = y - 29.0 * s
+    edge = lory.mix[color, lory.black[], 0.25]
+    c = lory.triangle[c, x - r * 0.86, hy + r * 0.5, x + r * 0.86, hy + r * 0.5, x, y, edge]
+    c = lory.circle[c, x, hy, r, edge]
+    inner = r - 1.2 * s
+    c = lory.triangle[c, x - inner * 0.86, hy + inner * 0.5, x + inner * 0.86, hy + inner * 0.5, x, y - 1.6 * s, color]
+    c = lory.circle[c, x, hy, inner, color]
+    lory.circle[c, x, hy, 4.5 * s, lory.white[]]
+
+--- the lines through screen points xs and ys drawn in a style, closed
+--- back to the first where `closed`, `s` canvas pixels a CSS pixel
+fn _stroke_path[c, xs, ys, st, s, closed]
+    if not st.stroke or len[xs] lt 2
+        return c
+    px = xs
+    py = ys
+    if closed
+        px = push[px, xs[0]]
+        py = push[py, ys[0]]
+    color = lory.fade[st.color, st.opacity]
+    w = st.weight * s
+    if st.dash_on gt 0.0
+        return lory.dashed_path[c, px, py, w, color, st.dash_on * s, st.dash_off * s]
+    c = lory.path[c, px, py, w, color]
+    --- (round joins, as Leaflet's lines have, where the line is opaque)
+    if w gte 2.0 and st.opacity gte 1.0
+        for i in range[len[px]]
+            c = lory.circle[c, px[i], py[i], w / 2.0, color]
+    c
+
+--- a feature drawn in the view: its polygons filled and stroked, lines
+--- stroked, circles of metres as the ellipses Web Mercator makes of them,
+--- points as circles or markers (`k` the view's scale against zoom 0,
+--- `zoom` its zoom, its top left (ox, oy) in its zoom's pixels, drawn in
+--- the box at (bx, by) with `s` canvas pixels a CSS pixel; `lit` while
+--- the pointer is over it, and `points` for its points alone, which a
+--- map draws over every other shape)
+fn draw_feature[c, f, k, zoom, ox, oy, bx, by, s, lit, points]
+    st = f.style
+    if lit
+        st.weight = st.weight + 2.0
+        st.fill_opacity = min[1.0, st.fill_opacity + 0.2]
+    for p in f.pieces
+        n = len[p.xs]
+        sx = []
+        sy = []
+        if (p.form eq 'point') eq points
+            for i in range[n]
+                sx = push[sx, bx + (p.xs[i] * k - ox) * s]
+                sy = push[sy, by + (p.ys[i] * k - oy) * s]
+        if p.form eq 'circle' and not points
+            r = geo.circle_radius[p.lats[0], p.lngs[0], f.metres, zoom]
+            ex = []
+            ey = []
+            for i in range[48]
+                a = 2.0 * pi * i / 48.0
+                ex = push[ex, sx[0] + r.x * s * cos[a]]
+                ey = push[ey, sy[0] + r.y * s * sin[a]]
+            if st.fill
+                color = lory.fade[st.fill_color, st.fill_opacity]
+                for i in range[48]
+                    c = lory.triangle[c, sx[0], sy[0], ex[i], ey[i], ex[(i + 1) % 48], ey[(i + 1) % 48], color]
+            c = _stroke_path[c, ex, ey, st, s, true]
+        if p.form eq 'polygon' and not points
+            if st.fill
+                color = lory.fade[st.fill_color, st.fill_opacity]
+                t = p.triangles
+                m = len[t] / 3
+                for q in range[m]
+                    a = t[q * 3]
+                    b = t[q * 3 + 1]
+                    d = t[q * 3 + 2]
+                    c = lory.triangle[c, sx[a], sy[a], sx[b], sy[b], sx[d], sy[d], color]
+            for r in range[len[p.ring_at]]
+                from = p.ring_at[r]
+                upto = n
+                if r + 1 lt len[p.ring_at]
+                    upto = p.ring_at[r + 1]
+                c = _stroke_path[c, slice[sx, from, upto], slice[sy, from, upto], st, s, true]
+        if p.form eq 'line' and not points
+            c = _stroke_path[c, sx, sy, st, s, false]
+        if p.form eq 'point' and points
+            if st.circles
+                if st.fill
+                    c = lory.circle[c, sx[0], sy[0], st.radius * s, lory.fade[st.fill_color, st.fill_opacity]]
+                if st.stroke
+                    c = lory.ring[c, sx[0], sy[0], st.radius * s + st.weight * s / 2.0, st.weight * s, lory.fade[st.color, st.opacity]]
+            else
+                if st.glyph ne ''
+                    c = icons.draw[c, st.glyph, sx[0] - st.icon_x * s, sy[0] - st.icon_y * s, st.icon_w * s, st.glyph_color]
+                else if st.icon gte 0
+                    c = lory.image[c, st.icon, sx[0] - st.icon_x * s, sy[0] - st.icon_y * s, st.icon_w * s, st.icon_h * s]
+                else
+                    c = pin[c, sx[0], sy[0], s, lory.hex['#2f7ed8']]
+    c
+
+--- whether any of a feature's box shows in a view: its zoom-0 box
+--- scaled by `k`, against the view's pixels from (ox, oy), `w` by `h`
+fn shows[f, k, ox, oy, w, h]
+    a = geo.project[f.north, f.west, 0.0]
+    b = geo.project[f.south, f.east, 0.0]
+    pad = 50.0
+    a.x * k - ox lt w + pad and b.x * k - ox gt 0.0 - pad and a.y * k - oy lt h + pad and b.y * k - oy gt 0.0 - pad
+
+--- a circle `metres` across its radius about a place, in a style
+fn circle_of[layer, id, lat, lng, metres, s]
+    pieces = _no_pieces[]
+    pieces = push[pieces, _piece['circle', [_ring[json['[[`lng`, `lat`]]'], false]]]]
+    f = _feature[layer, 0, id, pieces, json['{}'], s]
+    f.metres = metres
+    f
+
+--- a marker at a place, in a style (Lory's pin, or the style's picture
+--- or icon)
+fn marker_of[layer, id, lat, lng, s]
+    pieces = _no_pieces[]
+    pieces = push[pieces, _piece['point', [_ring[json['[[`lng`, `lat`]]'], false]]]]
+    _feature[layer, 0, id, pieces, json['{}'], s]
+
+--- the middle of a feature where its popup or tooltip points: a point's
+--- place, the middle of a line, the middle of a polygon's outer ring
+--- (Leaflet's getCenter)
+fn middle_of[f]
+    if len[f.pieces] eq 0
+        return geo.Place[0.0, 0.0]
+    p = f.pieces[0]
+    if p.form eq 'point' or p.form eq 'circle'
+        return geo.Place[p.lats[0], p.lngs[0]]
+    if p.form eq 'line'
+        return geo.line_middle[p.lats, p.lngs]
+    upto = len[p.lats]
+    if len[p.ring_at] gt 1
+        upto = p.ring_at[1]
+    geo.polygon_middle[slice[p.lats, 0, upto], slice[p.lngs, 0, upto]]
+
+test a_square_is_cut_into_two_triangles[]
+    xs = [0.0, 10.0, 10.0, 0.0]
+    ys = [0.0, 0.0, 10.0, 10.0]
+    t = triangulate[xs, ys, [0]]
+    len[t] eq 6
+
+test a_square_with_a_hole_is_cut_round_the_hole[]
+    xs = [0.0, 10.0, 10.0, 0.0, 3.0, 3.0, 7.0, 7.0]
+    ys = [0.0, 0.0, 10.0, 10.0, 3.0, 7.0, 7.0, 3.0]
+    t = triangulate[xs, ys, [0, 4]]
+    len[t] eq 24
+    --- (the triangles cover the square less the hole: 100 - 16)
+    area = 0.0
+    for q in range[len[t] / 3]
+        a = t[q * 3]
+        b = t[q * 3 + 1]
+        d = t[q * 3 + 2]
+        area = area + abs[(xs[b] - xs[a]) * (ys[d] - ys[a]) - (ys[b] - ys[a]) * (xs[d] - xs[a])] / 2.0
+    abs[area - 84.0] lt 0.000001
+
+test a_concave_polygon_keeps_its_notch_unfilled[]
+    xs = [0.0, 10.0, 10.0, 5.0, 0.0]
+    ys = [0.0, 0.0, 10.0, 4.0, 10.0]
+    t = triangulate[xs, ys, [0]]
+    len[t] eq 9
+    area = 0.0
+    for q in range[len[t] / 3]
+        a = t[q * 3]
+        b = t[q * 3 + 1]
+        d = t[q * 3 + 2]
+        area = area + abs[(xs[b] - xs[a]) * (ys[d] - ys[a]) - (ys[b] - ys[a]) * (xs[d] - xs[a])] / 2.0
+    abs[area - 70.0] lt 0.000001
+
+--- (a ring of 240 corners, a star with deep notches, is cut whole: its
+--- triangles cover its area exactly, as many as earcut cuts any polygon)
+test a_ring_of_many_corners_is_cut_whole[]
+    xs = []
+    ys = []
+    for i in range[240]
+        a = 2.0 * pi * i / 240.0
+        r = 100.0
+        if i % 2 eq 1
+            r = 30.0
+        xs = push[xs, r * cos[a]]
+        ys = push[ys, r * sin[a]]
+    t = triangulate[xs, ys, [0]]
+    len[t] eq 3 * 238
+    area = 0.0
+    for q in range[len[t] / 3]
+        a = t[q * 3]
+        b = t[q * 3 + 1]
+        d = t[q * 3 + 2]
+        area = area + abs[(xs[b] - xs[a]) * (ys[d] - ys[a]) - (ys[b] - ys[a]) * (xs[d] - xs[a])] / 2.0
+    ring = 0.0
+    for i in range[240]
+        j = (i + 1) % 240
+        ring = ring + xs[i] * ys[j] - xs[j] * ys[i]
+    abs[area - abs[ring] / 2.0] lt 0.000001 * abs[ring]
+
+test every_geometry_is_read[]
+    words = '{"type": "FeatureCollection", "features": [{"type": "Feature", "id": "a", "properties": {"name": "A", "pop": 120}, "geometry": {"type": "Point", "coordinates": [2.35, 48.85]}}, {"type": "Feature", "properties": {}, "geometry": {"type": "MultiLineString", "coordinates": [[[0, 0], [1, 1]], [[2, 2], [3, 3], [4, 2]]]}}, {"type": "Feature", "properties": {"kind": "lake"}, "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], [[3, 3], [3, 7], [7, 7], [7, 3], [3, 3]]]}}, {"type": "Feature", "properties": null, "geometry": {"type": "GeometryCollection", "geometries": [{"type": "MultiPoint", "coordinates": [[1, 1], [2, 2]]}, {"type": "MultiPolygon", "coordinates": [[[[0, 0], [1, 0], [1, 1], [0, 0]]]]}]}}]}'
+    fs = read_geojson['demo', words, style[]]
+    len[fs] eq 4
+    fs[0].id eq 'a'
+    fs[0].words['name'] eq 'A'
+    fs[0].numbers['pop'] eq 120.0
+    fs[0].pieces[0].lats[0] eq 48.85
+    fs[1].id eq 'demo.1'
+    len[fs[1].pieces] eq 2
+    fs[1].pieces[1].form eq 'line'
+    p = fs[2].pieces[0]
+    p.form eq 'polygon'
+    len[p.lats] eq 8
+    len[p.ring_at] eq 2
+    len[p.triangles] eq 24
+    len[fs[3].pieces] eq 3
+    fs[2].east eq 10.0
+
+test a_point_inside_a_hole_is_not_on_the_polygon[]
+    words = '{"type": "Polygon", "coordinates": [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], [[3, 3], [3, 7], [7, 7], [7, 3], [3, 3]]]}'
+    f = read_geojson['lake', words, style[]][0]
+    inside = geo.project[1.0, 1.0, 0.0]
+    hole = geo.project[5.0, 5.0, 0.0]
+    away = geo.project[20.0, 20.0, 0.0]
+    hits[f, inside.x, inside.y, 0.0001]
+    not hits[f, hole.x, hole.y, 0.0001]
+    not hits[f, away.x, away.y, 0.0001]
+
+test a_choropleth_colours_by_steps_of_a_number[]
+    words = '{"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"density": 5}, "geometry": {"type": "Point", "coordinates": [0, 0]}}, {"type": "Feature", "properties": {"density": 60}, "geometry": {"type": "Point", "coordinates": [1, 1]}}]}'
+    fs = read_geojson['states', words, style[]]
+    fs = fill_steps[fs, 'density', '#ffeda0', [10.0, 50.0], ['#feb24c', '#f03b20']]
+    fs[0].style.fill_color.r eq 1.0
+    abs[fs[1].style.fill_color.g - 59.0 / 255.0] lt 0.000001
+    named = fill_match[fs, 'density', ['5'], ['#000000'], '#ffffff']
+    named[0].style.fill_color.r eq 0.0
+    named[1].style.fill_color.r eq 1.0

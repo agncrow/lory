@@ -1,0 +1,3500 @@
+--- 3D model files read and written: OBJ (with its MTL's materials), STL
+--- (text and binary), PLY (text and binary), XYZ and PCD point clouds,
+--- VTK's legacy text and OFF read into `lory.geometry`'s geometries, and
+--- OBJ, STL, PLY and glTF 2.0 written from them, as three.js's loaders read
+--- them and its exporters write them.
+---
+---     use lory.models
+---
+---     m = models.read_obj[obj_words, mtl_words]
+---     if not models.readable[m]
+---         log[m.failure]
+---     pieces = models.pieces_of[m]
+---     c = models.meshed[c, 'model', pieces]       (once, when it is read)
+---     c = models.drawn[c, 'model', pieces, models.strands_of[m], lory.identity[]]
+---     written = models.ply_text[m]
+---
+--- A model is its parts in the file's order: each a name, how it is drawn
+--- (a mesh of triangles, lines or points), its geometry (positions,
+--- normals, uvs, indices and groups, as `lory.geometry` holds them), its
+--- colours (three numbers a vertex, in linear light, as three holds them)
+--- and its materials (one a group, or one for the whole). A file that cannot
+--- be read is a model whose `failure` says why; a reader never stops the
+--- program.
+---
+--- lory.models reimplements, in Crow, the loaders and exporters of
+--- three.js, Copyright 2010-2026 three.js authors, licensed under the MIT
+--- License (https://github.com/mrdoob/three.js). No source of theirs is
+--- included: what three 0.187.0's OBJLoader, MTLLoader, STLLoader,
+--- PLYLoader, XYZLoader, PCDLoader, VTKLoader and its OBJ, STL, PLY and
+--- glTF exporters do was read and written anew, and tests/models/reference.co
+--- holds Lory to what three answers and writes for the same files and
+--- geometries.
+use sys
+use bits
+use lory
+use space
+use geometry
+
+--- ---- what a model is ----
+
+--- a model: its parts in order, the material libraries its file names
+--- (an OBJ's `mtllib`s, for the program to fetch), and why it could not be
+--- read ('' where it was)
+struct Model [parts, libraries, failure]
+
+--- a part of a model: its name, how it is drawn (`mesh`, `lines` or
+--- `points`), its geometry, its colours (three numbers a vertex in linear
+--- light, as three holds them, or none), and its materials (one a group of
+--- its geometry, or one for the whole where it has no groups)
+struct Part [name, form, geometry, colors, materials]
+
+--- what a part is drawn in: its name, its colour, its highlight's colour
+--- and its glow (three numbers each, in linear light), how sharp its
+--- highlight is, how opaque it is (0 to 1) and whether it is drawn
+--- blended, whether its normals are smoothed across its faces, and the
+--- file of the picture drawn on it ('' for none)
+struct Material [name, color, specular, emissive, shininess, opacity, transparent, smooth, texture]
+
+--- three numbers as a list (a list written out is a tensor; this is a
+--- list grown by `push`, as the geometry's lists are). Each is a float
+--- given as it is (adding 0.0 would make a negative zero a positive one)
+fn _three[a, b, c]
+    push[push[push[[], a], b], c]
+
+--- a material of a name, as three makes one with nothing said of it: white,
+--- its highlight a dark grey (three's 0x111111), no glow, shininess 30,
+--- opaque, smooth, with no picture
+fn plain_material[name]
+    grey = _linear[17.0 / 255.0]
+    Material[name, _three[1.0, 1.0, 1.0], _three[grey, grey, grey], _three[0.0, 0.0, 0.0], 30.0, 1.0, false, true, '']
+
+--- a material of a name in a colour (three numbers in linear light)
+fn colored_material[name, rgb]
+    m = plain_material[name]
+    m.color = _three[rgb[0], rgb[1], rgb[2]]
+    m
+
+--- a model of no parts, that could not be read for the reason given
+fn _failed[why]
+    Model[slice[[_no_part[]], 0, 0], slice[[''], 0, 0], why]
+
+fn _no_part[]
+    Part['', 'mesh', geometry.Geometry[[], [], [], [], []], [], [plain_material['']]]
+
+--- a model of the parts, read whole
+fn _model_of[parts]
+    Model[parts, slice[[''], 0, 0], '']
+
+--- a model of one geometry: a mesh named `name`, without colours, in one
+--- plain material (its groups, if it has them, all drawn in it)
+fn mesh_model[g, name = '']
+    _model_of[[mesh_part[g, name]]]
+
+--- a part of a geometry, drawn as a mesh in a plain material
+fn mesh_part[g, name = '']
+    Part[name, 'mesh', g, [], [plain_material['']]]
+
+--- whether the model was read (its failure is '')
+fn readable[m]
+    m.failure eq ''
+
+--- how many vertices a model's parts hold in all
+fn vertex_total[m]
+    n = 0
+    for p in m.parts
+        n = n + _vertices_in[p.geometry]
+    n
+
+--- how many vertices a geometry holds (its length read where it cannot
+--- fail, so the count is a plain number to write into words)
+fn _vertices_in[g]
+    k = len[g.positions]
+    if not k.ok
+        return 0
+    whole = k / 3
+    if not whole.ok
+        return 0
+    whole
+
+--- ---- numbers as JavaScript reads and writes them ----
+
+fn _infinity[]
+    1.0 / 0.0
+
+fn _nan[]
+    0.0 / 0.0
+
+--- whether a number is not a number
+fn _is_nan[x]
+    x ne x
+
+--- whether a number is a number and finite
+fn _finite[x]
+    not (_is_nan[x] or x eq _infinity[] or x eq 0.0 - _infinity[])
+
+--- a number as JavaScript writes it (Number's toString, and JSON's): the
+--- fewest digits that read back as it, written out between a millionth and
+--- 10^21 and with an exponent outside, a whole number without a point,
+--- either zero as `0`
+fn number_text[x]
+    if _is_nan[x]
+        return 'NaN'
+    if x eq _infinity[]
+        return 'Infinity'
+    if x eq 0.0 - _infinity[]
+        return '-Infinity'
+    if x eq 0.0
+        return '0'
+    --- (Crow writes the same fewest digits, never with an exponent)
+    shown = str[x]
+    minus = ''
+    if starts[shown, '-']
+        minus = '-'
+        shown = slice[shown, 1, len[shown]]
+    halves = split[shown, '.']
+    whole = halves[0]
+    after = ''
+    if len[halves] gt 1
+        after = halves[1]
+    digits = ''
+    point = 0
+    if whole ne '0'
+        point = len[whole]
+        digits = '`whole``after`'
+    else
+        zeros = _leading_zeros[after]
+        point = 0 - zeros
+        digits = slice[after, zeros, len[after]]
+    digits = _without_trailing_zeros[digits]
+    k = len[digits]
+    if k lte point and point lte 21
+        padding = repeat['0', point - k]
+        return '`minus``digits``padding`'
+    if 0 lt point and point lte 21
+        return '`minus``slice[digits, 0, point]`.`slice[digits, point, k]`'
+    if -6 lt point and point lte 0
+        padding = repeat['0', 0 - point]
+        return '`minus`0.`padding``digits`'
+    power = point - 1
+    mark = '+'
+    if power lt 0
+        mark = '-'
+    lead = slice[digits, 0, 1]
+    if k eq 1
+        return '`minus``lead`e`mark``abs[power]`'
+    '`minus``lead`.`slice[digits, 1, k]`e`mark``abs[power]`'
+
+--- how many zeros a run of digits begins with
+fn _leading_zeros[digits]
+    i = 0
+    while i lt len[digits] and slice[digits, i, i + 1] eq '0'
+        i = i + 1
+    i
+
+--- digits with the zeros at their end taken off
+fn _without_trailing_zeros[digits]
+    k = len[digits]
+    while k gt 1 and slice[digits, k - 1, k] eq '0'
+        k = k - 1
+    slice[digits, 0, k]
+
+--- JavaScript's white space, as its `\s`, `trim` and `parseFloat` take it,
+--- as a regular expression's class of characters
+fn _space_class[]
+    '[\t\n\x0B\x0C\r \xA0\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]'
+
+--- the number at the start of the words as JavaScript's parseFloat reads
+--- it: space before it skipped, the longest number there read (`Infinity`
+--- spelled out), and not a number where there is none
+fn js_float[words]
+    x = float[words]
+    if not x.ok
+        return _float_prefix[words]
+    if not _finite[x]
+        return _float_prefix[words]
+    x
+
+--- the longest number at the start of the words (after space), as
+--- parseFloat finds it
+fn _float_prefix[words]
+    cls = _space_class[]
+    found = find[words, '^`cls`*([+-]?(Infinity|[0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?))']
+    if not found.ok
+        return _nan[]
+    number = '`found.groups[1]`'
+    if 'Infinity' in number
+        if starts[number, '-']
+            return 0.0 - _infinity[]
+        return _infinity[]
+    x = float[number]
+    if not x.ok
+        return _nan[]
+    x
+
+--- the whole number at the start of the words as JavaScript's parseInt
+--- reads it in tens (a float: not a number where there is none)
+fn js_int[words]
+    n = int[words]
+    if not n.ok
+        return _int_prefix[words, false]
+    0.0 + n
+
+--- the whole number at the start of the words as parseInt reads it with
+--- no base named: in sixteens after `0x`, in tens otherwise
+fn _js_int_any[words]
+    n = int[words]
+    if not n.ok
+        return _int_prefix[words, true]
+    0.0 + n
+
+fn _int_prefix[words, sixteens]
+    cls = _space_class[]
+    if sixteens
+        hexed = find[words, '^`cls`*([+-]?)0[xX]([0-9a-fA-F]+)']
+        if hexed.ok
+            digits = '`hexed.groups[2]`'
+            value = 0.0
+            for ch in split[digits, '']
+                value = value * 16.0 + _hex_value[ch]
+            signed = '`hexed.groups[1]`'
+            if signed eq '-'
+                return 0.0 - value
+            return value
+    found = find[words, '^`cls`*([+-]?[0-9]+)']
+    if not found.ok
+        return _nan[]
+    number = '`found.groups[1]`'
+    x = float[number]
+    if not x.ok
+        return _nan[]
+    x
+
+fn _hex_value[ch]
+    0.0 + _place_of['0123456789abcdef', lower[ch]]
+
+--- where a character first stands in the words (-1 where it does not)
+fn _place_of[words, ch]
+    pieces = split[words, ch]
+    if len[pieces] lt 2
+        return -1
+    len[pieces[0]]
+
+--- a number rounded as JavaScript's Math.round rounds it: to the nearest
+--- whole number, a half up
+fn _js_round[x]
+    if not _finite[x]
+        return x
+    f = 0.0 + floor[x]
+    if x - f gte 0.5
+        return f + 1.0
+    f
+
+--- a number cut toward zero to a whole number and wrapped into 0 to 255,
+--- as a Uint8Array keeps a number it is given
+fn _byte_of[x]
+    if not _finite[x]
+        return 0
+    whole = floor[abs[x]]
+    if x lt 0.0
+        whole = 0 - whole
+    (whole % 256 + 256) % 256
+
+--- a number as single precision keeps it (as three's Float32Arrays do)
+fn single[x]
+    sys.ieee[sys.ieee[0.0 + x, 4, true], 0, 4, true]
+
+--- the numbers of a list as single precision keeps them
+fn singles[xs]
+    if len[xs] eq 0
+        return xs
+    sys.float_values[sys.float_bytes[xs, 4, true], 0, len[xs], 4, true]
+
+--- ---- colours ----
+
+--- a colour's part in sRGB taken into linear light, as three's
+--- SRGBToLinear takes it
+fn _linear[c]
+    if c lt 0.04045
+        return c * 0.0773993808
+    (c * 0.9478672986 + 0.0521327014) ^ 2.4
+
+--- a colour's part in linear light taken into sRGB, as three's
+--- LinearToSRGB takes it
+fn _srgb[c]
+    if c lt 0.0031308
+        return c * 12.92
+    1.055 * (c ^ 0.41666) - 0.055
+
+--- a colour in sRGB (three numbers 0 to 1) in linear light, as three
+--- keeps a colour it is given
+fn linear_color[r, g, b]
+    _three[_linear[r], _linear[g], _linear[b]]
+
+--- a colour in linear light (three numbers) as Lory draws one: in sRGB
+fn shown_color[rgb]
+    lory.Color[_srgb[rgb[0]], _srgb[rgb[1]], _srgb[rgb[2]], 1.0]
+
+--- ---- text as JavaScript reads it ----
+
+--- the text without the byte-order mark it may begin with (a TextDecoder
+--- drops it)
+fn _without_bom[t]
+    if starts[t, char[65279]]
+        return slice[t, 1, len[t]]
+    t
+
+--- the pieces of the text between its runs of space, as JavaScript's
+--- `split(/\s+/)` makes them: an empty piece first where it begins with
+--- space and last where it ends with it, and one empty piece of no text
+fn js_fields[t]
+    if t eq ''
+        return ['']
+    cls = _space_class[]
+    s = sub[t, cls, ' ']
+    pieces = split[s, ' ']
+    kept = slice[[''], 0, 0]
+    if starts[s, ' ']
+        kept = push[kept, '']
+    for p in pieces
+        if p ne ''
+            kept = push[kept, p]
+    if ends[s, ' ']
+        kept = push[kept, '']
+    kept
+
+--- whether the text begins with JavaScript's space
+fn _space_first[t]
+    if t eq ''
+        return false
+    matches[slice[t, 0, 1], _space_class[]]
+
+--- whether the text ends with JavaScript's space
+fn _space_last[t]
+    if t eq ''
+        return false
+    matches[slice[t, len[t] - 1, len[t]], _space_class[]]
+
+--- the text with the space at its start taken off (JavaScript's trimStart)
+fn _trim_start[t]
+    if not _space_first[t]
+        return t
+    cls = _space_class[]
+    cut = sub[t, '^`cls`+', '']
+    '`cut`'
+
+--- the text with the space at both ends taken off (JavaScript's trim)
+fn _js_trim[t]
+    if not (_space_first[t] or _space_last[t])
+        return t
+    cls = _space_class[]
+    cut = sub[t, '^`cls`+|`cls`+$', '']
+    '`cut`'
+
+--- the piece at `k` of a split, or '' past its end
+fn _piece[pieces, k]
+    if k lt len[pieces]
+        return pieces[k]
+    ''
+
+--- the number in a list at a place that may be no place (not a number,
+--- before the start or past the end): not a number there, as JavaScript
+--- reads `undefined` into a Float32Array
+fn _at[xs, place]
+    if _is_nan[place] or place lt 0.0 or place gte 0.0 + len[xs]
+        return _nan[]
+    xs[floor[place]]
+
+--- a direction of length one, as three's Vector3 normalizes one (a
+--- direction of no length, or not a number, divided by one)
+fn _unit3[x, y, z]
+    l = sqrt[x * x + y * y + z * z]
+    if not (l gt 0.0)
+        l = 1.0
+    k = 1.0 / l
+    _three[x * k, y * k, z * k]
+
+--- ---- MTL ----
+
+--- what an MTL file says of one material, as three's MTLLoader keeps it:
+--- its name, and its properties' keys (lower case) in the order they
+--- first come, each with the last value said of it
+struct _Said [name, keys, words]
+
+--- the materials of an MTL file, in the order it names them. Each line's
+--- first word (in lower case) is a property, the rest its value: `Kd`,
+--- `Ks` and `Ke` the colour, highlight and glow (in sRGB, taken into
+--- linear light), `Ns` the shininess, `d` the opacity (blended where it is
+--- below 1), `Tr` the transparency (one less the opacity), `map_Kd` the
+--- picture (`map_d` makes it blended); a material named again is begun
+--- afresh where it first stood. Its other maps are not kept
+fn read_mtl[words]
+    t = _without_bom[words]
+    said = slice[[_Said['', slice[[''], 0, 0], slice[[''], 0, 0]]], 0, 0]
+    current = -1
+    for raw in split[t, '\n']
+        line = _js_trim[raw]
+        if line ne '' and not starts[line, '#']
+            space_at = _place_of[line, ' ']
+            key = line
+            value = ''
+            if space_at gte 0
+                key = slice[line, 0, space_at]
+                value = _js_trim[slice[line, space_at + 1, len[line]]]
+            key = lower[key]
+            if key eq 'newmtl'
+                fresh = _Said[value, slice[[''], 0, 0], slice[[''], 0, 0]]
+                found = -1
+                for i in range[len[said]]
+                    if said[i].name eq value
+                        found = i
+                if found gte 0
+                    said[found] = fresh
+                    current = found
+                else
+                    said = push[said, fresh]
+                    current = len[said] - 1
+            else if current gte 0
+                said[current] = _said_more[said[current], key, value]
+    out = slice[[plain_material['']], 0, 0]
+    for s in said
+        out = push[out, _material_of[s]]
+    out
+
+--- what is said of a material with one more property: a key said again
+--- keeps its place and takes the new value
+fn _said_more[s, key, value]
+    found = -1
+    for i in range[len[s.keys]]
+        if s.keys[i] eq key
+            found = i
+    if found gte 0
+        s.words[found] = value
+        return s
+    s.keys = push[s.keys, key]
+    s.words = push[s.words, value]
+    s
+
+--- the material what is said of it makes, as three's MaterialCreator
+--- makes one: each property in the order its key first came
+fn _material_of[s]
+    m = plain_material[s.name]
+    for i in range[len[s.keys]]
+        m = _material_set[m, s.keys[i], s.words[i]]
+    m
+
+--- a material with one MTL property set, as three's MaterialCreator sets
+--- it (a colour's three numbers are read even where none are given: they
+--- are then not numbers)
+fn _material_set[m, key, value]
+    if key eq 'kd' or key eq 'ks' or key eq 'ke'
+        parts = js_fields[value]
+        rgb = linear_color[js_float[_piece[parts, 0]], js_float[_piece[parts, 1]], js_float[_piece[parts, 2]]]
+        if key eq 'kd'
+            m.color = rgb
+        else if key eq 'ks'
+            m.specular = rgb
+        else
+            m.emissive = rgb
+        return m
+    if value eq ''
+        return m
+    if key eq 'ns'
+        m.shininess = js_float[value]
+        return m
+    if key eq 'd'
+        n = js_float[value]
+        if n lt 1.0
+            m.opacity = n
+            m.transparent = true
+        return m
+    if key eq 'tr'
+        n = js_float[value]
+        if n gt 0.0
+            m.opacity = 1.0 - n
+            m.transparent = true
+        return m
+    if key eq 'map_kd'
+        m.texture = _texture_file[value]
+        return m
+    if key eq 'map_d'
+        m.transparent = true
+    m
+
+--- a picture's file from an MTL map's value: its options (`-bm`, `-mm`,
+--- `-s`, `-o` and their numbers) taken out, the rest its name
+fn _texture_file[value]
+    items = js_fields[value]
+    items = _without_option[items, '-bm', 2]
+    items = _without_option[items, '-mm', 3]
+    items = _without_option[items, '-s', 4]
+    items = _without_option[items, '-o', 4]
+    _js_trim[join[items, ' ']]
+
+--- the items without an option and the items after it (`count` in all)
+fn _without_option[items, option, count]
+    at = -1
+    i = 0
+    while i lt len[items] and at lt 0
+        if items[i] eq option
+            at = i
+        i = i + 1
+    if at lt 0
+        return items
+    kept = slice[[''], 0, 0]
+    for k in range[len[items]]
+        if k lt at or k gte at + count
+            kept = push[kept, items[k]]
+    kept
+
+--- the material of a name among an MTL's (a plain one where it names none)
+fn _material_named[known, name]
+    found = plain_material[name]
+    for m in known
+        if m.name eq name
+            found = m
+    found
+
+--- ---- OBJ ----
+
+--- a material's use in an object of an OBJ file (a `usemtl`): its name,
+--- whether it is smoothed, where its faces start and end (in vertices,
+--- -1 while it is open) and how many vertices it holds, and whether the
+--- object took it from the object before
+struct _Use [name, smooth, start, upto, count, inherited]
+
+--- an object of an OBJ file as it is read: its name, whether an `o` or `g`
+--- named it, how it is drawn, its vertices' positions, normals, colours
+--- and uvs, whether a face gave uvs, the materials it uses, and whether it
+--- is smoothed
+struct _Obj [name, declared, form, positions, normals, colors, uvs, has_uvs, uses, smooth]
+
+fn _no_use[]
+    _Use['', true, 0, -1, -1, false]
+
+fn _object_started[name, declared]
+    _Obj[name, declared, 'mesh', [], [], [], [], false, slice[[_no_use[]], 0, 0], true]
+
+--- the model of an OBJ file, as three's OBJLoader reads it, its materials
+--- from the MTL file's text (none given: plain materials, flat where `s`
+--- turns smoothing off). Each object (`o`, `g`) is a part: a mesh of its
+--- faces (each fanned into triangles from its first corner, normals
+--- worked out where a face gives none), or lines (`l`) or points (`p`)
+--- where it has them. Vertex colours (`v x y z r g b`) are taken into
+--- linear light; each `usemtl` within an object is a group of its own. A
+--- file of vertices alone is one part of points
+fn read_obj[words, mtl = '']
+    t = _without_bom[words]
+    if '\r\n' in t
+        t = replace[t, '\r\n', '\n']
+    if '\\\n' in t
+        t = replace[t, '\\\n', '']
+    vs = []
+    vc = []
+    colored = [true]
+    colored = pop[colored]
+    vn = []
+    vt = []
+    libraries = slice[[''], 0, 0]
+    done = slice[[_object_started['', false]], 0, 0]
+    cur = _object_started['', false]
+    for raw in split[t, '\n']
+        line = _trim_start[raw]
+        first = slice[line, 0, 1]
+        if line eq '' or first eq '#'
+            first = ''
+        if first eq 'v'
+            data = js_fields[line]
+            if data[0] eq 'v'
+                vs = push[vs, js_float[_piece[data, 1]]]
+                vs = push[vs, js_float[_piece[data, 2]]]
+                vs = push[vs, js_float[_piece[data, 3]]]
+                if len[data] gte 7
+                    vc = push[vc, _linear[js_float[data[4]]]]
+                    vc = push[vc, _linear[js_float[data[5]]]]
+                    vc = push[vc, _linear[js_float[data[6]]]]
+                    colored = push[colored, true]
+                else
+                    vc = push[vc, _nan[]]
+                    vc = push[vc, _nan[]]
+                    vc = push[vc, _nan[]]
+                    colored = push[colored, false]
+            else if data[0] eq 'vn'
+                vn = push[vn, js_float[_piece[data, 1]]]
+                vn = push[vn, js_float[_piece[data, 2]]]
+                vn = push[vn, js_float[_piece[data, 3]]]
+            else if data[0] eq 'vt'
+                vt = push[vt, js_float[_piece[data, 1]]]
+                vt = push[vt, js_float[_piece[data, 2]]]
+        else if first eq 'f'
+            corners = _corners[_js_trim[slice[line, 1, len[line]]]]
+            j = 1
+            while j + 1 lt len[corners]
+                cur = _face_added[cur, vs, vc, colored, vn, vt, corners[0], corners[j], corners[j + 1]]
+                j = j + 1
+        else if first eq 'l'
+            cur = _line_added[cur, vs, vt, line]
+        else if first eq 'p'
+            cur = _points_added[cur, vs, vc, colored, line]
+        else if first eq 'o' or first eq 'g'
+            name = _object_name[line]
+            if not cur.declared
+                cur.name = name
+                cur.declared = true
+            else
+                before = _no_use[]
+                if len[cur.uses] gt 0
+                    before = cur.uses[len[cur.uses] - 1]
+                cur = _uses_closed[cur, true]
+                done = push[done, cur]
+                cur = _object_started[name, true]
+                if before.name ne ''
+                    u = _no_use[]
+                    u.name = before.name
+                    u.smooth = before.smooth
+                    u.inherited = true
+                    cur.uses = push[cur.uses, u]
+        else if starts[line, 'usemtl ']
+            cur = _material_started[cur, _js_trim[slice[line, 7, len[line]]]]
+        else if starts[line, 'mtllib ']
+            libraries = push[libraries, _js_trim[slice[line, 7, len[line]]]]
+        else if first eq 's' and not starts[line, 'usemap ']
+            pieces = split[line, ' ']
+            smooth = true
+            if len[pieces] gt 1
+                said = lower[_js_trim[pieces[1]]]
+                smooth = said ne '0' and said ne 'off'
+            cur.smooth = smooth
+            n = len[cur.uses]
+            if n gt 0
+                last = cur.uses[n - 1]
+                last.smooth = smooth
+                cur.uses[n - 1] = last
+    cur = _uses_closed[cur, true]
+    done = push[done, cur]
+    known = slice[[plain_material['']], 0, 0]
+    with_mtl = mtl ne ''
+    if with_mtl
+        known = read_mtl[mtl]
+    parts = slice[[_no_part[]], 0, 0]
+    if not (len[done] eq 1 and len[done[0].positions] eq 0)
+        for o in done
+            if len[o.positions] gt 0
+                parts = push[parts, _obj_part[o, known, with_mtl]]
+    else if len[vs] gt 0
+        colors = []
+        if len[vc] gt 0 and colored[0]
+            colors = vc
+        parts = push[parts, Part['', 'points', geometry.Geometry[vs, [], [], [], []], colors, [plain_material['']]]]
+    Model[parts, libraries, '']
+
+--- the corners of a face's line (after its `f`): each word that is not
+--- empty split at its slashes into the vertex's, the uv's and the normal's
+--- indices
+fn _corners[rest]
+    out = slice[[slice[[''], 0, 0]], 0, 0]
+    for w in js_fields[rest]
+        if w ne ''
+            out = push[out, split[w, '/']]
+    out
+
+--- an object's name from its `o` or `g` line: what follows the letter,
+--- to the line's end (a return or a line separator ends it), trimmed
+fn _object_name[line]
+    rest = _trim_start[slice[line, 1, len[line]]]
+    found = find[rest, '^[^\r\x{2028}\x{2029}]*']
+    if not found.ok
+        return ''
+    kept = '`found.groups[0]`'
+    _js_trim[kept]
+
+--- the place of a vertex's first number in a list of `width` numbers a
+--- vertex, as three reads an OBJ index: counted from 1, or back from the
+--- end when below 0 (not a number where it is none)
+fn _obj_place[words, length, width]
+    n = js_int[words]
+    if n gte 0.0
+        return (n - 1.0) * width
+    (n + length / width) * width
+
+--- a face's triangle added to the object, three's way: its corners'
+--- positions and colours (a colour only for a vertex that has one), its
+--- normals given or worked out from its corners, its uvs given or zeros
+fn _face_added[o, vs, vc, colored, vn, vt, ca, cb, cc]
+    count = 0.0 + len[vs]
+    ia = _obj_place[_piece[ca, 0], count, 3.0]
+    ib = _obj_place[_piece[cb, 0], count, 3.0]
+    ic = _obj_place[_piece[cc, 0], count, 3.0]
+    o.positions = push[o.positions, _at[vs, ia]]
+    o.positions = push[o.positions, _at[vs, ia + 1.0]]
+    o.positions = push[o.positions, _at[vs, ia + 2.0]]
+    o.positions = push[o.positions, _at[vs, ib]]
+    o.positions = push[o.positions, _at[vs, ib + 1.0]]
+    o.positions = push[o.positions, _at[vs, ib + 2.0]]
+    o.positions = push[o.positions, _at[vs, ic]]
+    o.positions = push[o.positions, _at[vs, ic + 1.0]]
+    o.positions = push[o.positions, _at[vs, ic + 2.0]]
+    if _has_color[colored, ia]
+        o.colors = push[o.colors, vc[floor[ia]]]
+        o.colors = push[o.colors, vc[floor[ia] + 1]]
+        o.colors = push[o.colors, vc[floor[ia] + 2]]
+    if _has_color[colored, ib]
+        o.colors = push[o.colors, vc[floor[ib]]]
+        o.colors = push[o.colors, vc[floor[ib] + 1]]
+        o.colors = push[o.colors, vc[floor[ib] + 2]]
+    if _has_color[colored, ic]
+        o.colors = push[o.colors, vc[floor[ic]]]
+        o.colors = push[o.colors, vc[floor[ic] + 1]]
+        o.colors = push[o.colors, vc[floor[ic] + 2]]
+    na = _piece[ca, 2]
+    if na ne ''
+        n_count = 0.0 + len[vn]
+        pa = _obj_place[na, n_count, 3.0]
+        pb = _obj_place[_piece[cb, 2], n_count, 3.0]
+        pc = _obj_place[_piece[cc, 2], n_count, 3.0]
+        o.normals = push[o.normals, _at[vn, pa]]
+        o.normals = push[o.normals, _at[vn, pa + 1.0]]
+        o.normals = push[o.normals, _at[vn, pa + 2.0]]
+        o.normals = push[o.normals, _at[vn, pb]]
+        o.normals = push[o.normals, _at[vn, pb + 1.0]]
+        o.normals = push[o.normals, _at[vn, pb + 2.0]]
+        o.normals = push[o.normals, _at[vn, pc]]
+        o.normals = push[o.normals, _at[vn, pc + 1.0]]
+        o.normals = push[o.normals, _at[vn, pc + 2.0]]
+    else
+        d = _face_normal[_at[vs, ia], _at[vs, ia + 1.0], _at[vs, ia + 2.0], _at[vs, ib], _at[vs, ib + 1.0], _at[vs, ib + 2.0], _at[vs, ic], _at[vs, ic + 1.0], _at[vs, ic + 2.0]]
+        o.normals = push[o.normals, d[0]]
+        o.normals = push[o.normals, d[1]]
+        o.normals = push[o.normals, d[2]]
+        o.normals = push[o.normals, d[0]]
+        o.normals = push[o.normals, d[1]]
+        o.normals = push[o.normals, d[2]]
+        o.normals = push[o.normals, d[0]]
+        o.normals = push[o.normals, d[1]]
+        o.normals = push[o.normals, d[2]]
+    ua = _piece[ca, 1]
+    if ua ne ''
+        t_count = 0.0 + len[vt]
+        qa = _obj_place[ua, t_count, 2.0]
+        qb = _obj_place[_piece[cb, 1], t_count, 2.0]
+        qc = _obj_place[_piece[cc, 1], t_count, 2.0]
+        o.uvs = push[o.uvs, _at[vt, qa]]
+        o.uvs = push[o.uvs, _at[vt, qa + 1.0]]
+        o.uvs = push[o.uvs, _at[vt, qb]]
+        o.uvs = push[o.uvs, _at[vt, qb + 1.0]]
+        o.uvs = push[o.uvs, _at[vt, qc]]
+        o.uvs = push[o.uvs, _at[vt, qc + 1.0]]
+        o.has_uvs = true
+    else
+        o.uvs = push[o.uvs, 0.0]
+        o.uvs = push[o.uvs, 0.0]
+        o.uvs = push[o.uvs, 0.0]
+        o.uvs = push[o.uvs, 0.0]
+        o.uvs = push[o.uvs, 0.0]
+        o.uvs = push[o.uvs, 0.0]
+    o
+
+--- whether the vertex at a place has a colour of its own
+fn _has_color[colored, place]
+    if _is_nan[place] or place lt 0.0
+        return false
+    k = floor[place] / 3
+    k lt len[colored] and colored[k]
+
+--- the normal of a triangle from its corners, as three works one out for
+--- a face that gives none: (c - b) × (a - b), made of length one
+fn _face_normal[ax, ay, az, bx, by, bz, cx, cy, cz]
+    ux = cx - bx
+    uy = cy - by
+    uz = cz - bz
+    wx = ax - bx
+    wy = ay - by
+    wz = az - bz
+    _unit3[uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx]
+
+--- an `l` line's segments added to the object (it is then drawn as lines):
+--- each two vertices in turn, and the uvs it names the same way
+fn _line_added[o, vs, vt, line]
+    items = js_fields[_js_trim[slice[line, 1, len[line]]]]
+    corners = slice[[''], 0, 0]
+    uvs = slice[[''], 0, 0]
+    if '/' in line
+        for w in items
+            pieces = split[w, '/']
+            if _piece[pieces, 0] ne ''
+                corners = push[corners, pieces[0]]
+            if len[pieces] lt 2
+                uvs = push[uvs, '']
+            else if pieces[1] ne ''
+                uvs = push[uvs, pieces[1]]
+    else
+        corners = items
+    o.form = 'lines'
+    count = 0.0 + len[vs]
+    k = 0
+    while k + 1 lt len[corners]
+        pa = _obj_place[corners[k], count, 3.0]
+        pb = _obj_place[corners[k + 1], count, 3.0]
+        o.positions = push[o.positions, _at[vs, pa]]
+        o.positions = push[o.positions, _at[vs, pa + 1.0]]
+        o.positions = push[o.positions, _at[vs, pa + 2.0]]
+        o.positions = push[o.positions, _at[vs, pb]]
+        o.positions = push[o.positions, _at[vs, pb + 1.0]]
+        o.positions = push[o.positions, _at[vs, pb + 2.0]]
+        k = k + 1
+    t_count = 0.0 + len[vt]
+    k = 0
+    while k + 1 lt len[uvs]
+        qa = _obj_place[uvs[k], t_count, 2.0]
+        qb = _obj_place[uvs[k + 1], t_count, 2.0]
+        o.uvs = push[o.uvs, _at[vt, qa]]
+        o.uvs = push[o.uvs, _at[vt, qa + 1.0]]
+        o.uvs = push[o.uvs, _at[vt, qb]]
+        o.uvs = push[o.uvs, _at[vt, qb + 1.0]]
+        k = k + 1
+    o
+
+--- a `p` line's points added to the object (it is then drawn as points)
+fn _points_added[o, vs, vc, colored, line]
+    o.form = 'points'
+    count = 0.0 + len[vs]
+    for w in js_fields[_js_trim[slice[line, 1, len[line]]]]
+        place = _obj_place[w, count, 3.0]
+        o.positions = push[o.positions, _at[vs, place]]
+        o.positions = push[o.positions, _at[vs, place + 1.0]]
+        o.positions = push[o.positions, _at[vs, place + 2.0]]
+        if _has_color[colored, place]
+            o.colors = push[o.colors, vc[floor[place]]]
+            o.colors = push[o.colors, vc[floor[place] + 1]]
+            o.colors = push[o.colors, vc[floor[place] + 2]]
+    o
+
+--- an object's materials with the last one closed where it is open (it
+--- ends at the object's last vertex); at the object's end, those that
+--- hold no faces are let go (one is kept, a plain one where none is left)
+fn _uses_closed[o, at_end]
+    uses = o.uses
+    n = len[uses]
+    if n gt 0 and uses[n - 1].upto eq -1
+        last = uses[n - 1]
+        last.upto = len[o.positions] / 3
+        last.count = last.upto - last.start
+        last.inherited = false
+        uses[n - 1] = last
+    if at_end and len[uses] gt 1
+        kept = slice[[_no_use[]], 0, 0]
+        for u in uses
+            if u.count gt 0
+                kept = push[kept, u]
+        uses = kept
+    if at_end and len[uses] eq 0
+        u = _no_use[]
+        u.smooth = o.smooth
+        uses = push[uses, u]
+    o.uses = uses
+    o
+
+--- a `usemtl`: the object's open material closed, and let go where it
+--- holds no faces or was only taken from the object before; the new one
+--- starts where it ended
+fn _material_started[o, name]
+    o = _uses_closed[o, false]
+    n = len[o.uses]
+    u = _no_use[]
+    u.name = name
+    u.smooth = o.smooth
+    if n gt 0
+        previous = o.uses[n - 1]
+        u.smooth = previous.smooth
+        u.start = previous.upto
+        if previous.inherited or previous.count lte 0
+            o.uses = pop[o.uses]
+    o.uses = push[o.uses, u]
+    o
+
+--- an OBJ object as a part of the model: its geometry (normals where its
+--- faces gave or made them, uvs where a face named them), its colours,
+--- and a material for each `usemtl` (a group each where there are more
+--- than one)
+fn _obj_part[o, known, with_mtl]
+    uvs = []
+    if o.has_uvs
+        uvs = o.uvs
+    materials = slice[[plain_material['']], 0, 0]
+    groups = []
+    for u in o.uses
+        m = plain_material[u.name]
+        if with_mtl
+            m = _material_named[known, u.name]
+            --- (three draws lines in a material of their own, which keeps
+            --- the MTL's colour but not its picture)
+            if o.form eq 'lines'
+                m.texture = ''
+        else
+            m.smooth = u.smooth
+        materials = push[materials, m]
+    if len[o.uses] gt 1
+        for i in range[len[o.uses]]
+            groups = push[groups, o.uses[i].start]
+            groups = push[groups, o.uses[i].count]
+            groups = push[groups, i]
+    Part[o.name, o.form, geometry.Geometry[o.positions, o.normals, uvs, [], groups], o.colors, materials]
+
+--- ---- bytes ----
+
+--- the text bytes spell in UTF-8 (a run that spells none read as the
+--- replacement character, as a TextDecoder reads it), without the
+--- byte-order mark it may begin with
+fn _decoded[data]
+    _without_bom[sys.text[data, char[65533]]]
+
+--- the bytes as Latin-1 spells them, a character a byte (how three reads
+--- a header of PLY and PCD), from `from` up to `upto`
+fn _latin[data, from, upto]
+    out = ''
+    i = from
+    while i lt upto
+        out = '`out``char[sys.byte[data, i]]`'
+        i = i + 1
+    out
+
+--- whether the bytes hold the word at a place
+fn _bytes_say[data, at, word]
+    w = sys.bytes[word]
+    if at lt 0 or at + len[w] gt len[data]
+        return false
+    sys.slice[data, at, at + len[w]] eq w
+
+--- ---- STL ----
+
+--- the model of an STL file (its bytes), as three's STLLoader reads it:
+--- binary where its length is what its count of triangles needs, or where
+--- none of its first five bytes begins `solid`; text otherwise. Binary:
+--- each triangle's normal on its three corners, and where the header says
+--- `COLOR=`, each triangle's colour (five bits each of its 15, or the
+--- header's colour where its top bit is set) in linear light. Text: each
+--- `solid` a group, its name its material's; each facet's normal on its
+--- corners (a facet that gives none keeps the one before). A file too short
+--- for a binary header is read as text (three stops on it)
+fn read_stl[data]
+    n = len[data]
+    if n lt 84
+        return _stl_text[_decoded[data]]
+    faces = sys.unpack[data, 80, 4, little = true, signed = false]
+    if 84 + faces * 50 eq n
+        return _stl_binary[data, faces]
+    for off in range[5]
+        if _bytes_say[data, off, 'solid']
+            return _stl_text[_decoded[data]]
+    _stl_binary[data, faces]
+
+--- a binary STL's triangles
+fn _stl_binary[data, faces]
+    need = 84 + faces * 50
+    if len[data] lt need
+        return _failed['the STL file says it holds `faces` triangles, which take `need` bytes; it has `len[data]`']
+    colored = false
+    base = _three[0.0, 0.0, 0.0]
+    for at in range[71]
+        if _bytes_say[data, at, 'COLOR=']
+            colored = true
+            base = _three[sys.byte[data, at + 6] / 255.0, sys.byte[data, at + 7] / 255.0, sys.byte[data, at + 8] / 255.0]
+    positions = []
+    normals = []
+    colors = []
+    for face in range[faces]
+        begun = 84 + face * 50
+        xs = sys.float_values[data, begun, 12, 4, true]
+        rgb = base
+        if colored
+            packed = sys.unpack[data, begun + 48, 2, little = true, signed = false]
+            if bitand[packed, 32768] eq 0
+                rgb = _three[bitand[packed, 31] / 31.0, bitand[shift[packed, -5], 31] / 31.0, bitand[shift[packed, -10], 31] / 31.0]
+        lit = linear_color[rgb[0], rgb[1], rgb[2]]
+        for k in [3, 6, 9]
+            positions = push[positions, xs[k]]
+            positions = push[positions, xs[k + 1]]
+            positions = push[positions, xs[k + 2]]
+            normals = push[normals, xs[0]]
+            normals = push[normals, xs[1]]
+            normals = push[normals, xs[2]]
+            if colored
+                colors = push[colors, lit[0]]
+                colors = push[colors, lit[1]]
+                colors = push[colors, lit[2]]
+    _model_of[[Part['', 'mesh', geometry.Geometry[positions, normals, [], [], []], colors, [plain_material['']]]]]
+
+--- the texts of each match of three's `/open([\s\S]*?)end/g` in the text,
+--- where the closing word is the opening one after `end` (as `endsolid`
+--- closes `solid`): the opening word's first place before each closing
+--- word, or the one inside the closing word itself
+fn _spans[t, opening, closing]
+    pieces = split[t, closing]
+    out = slice[[''], 0, 0]
+    n = len[pieces] - 1
+    k = 0
+    while k lt n
+        piece = pieces[k]
+        at = _place_of[piece, opening]
+        if at gte 0
+            rest = slice[piece, at, len[piece]]
+            out = push[out, '`rest``closing`']
+            k = k + 1
+        else if k + 1 lt n
+            inside = pieces[k + 1]
+            out = push[out, '`opening``inside``closing`']
+            k = k + 2
+        else
+            k = n
+    out
+
+--- three numbers after each match of a word in a text, in order, as
+--- three's text STL pattern finds them (a number may be empty: then it is
+--- not one)
+fn _after_word[t, word]
+    cls = _space_class[]
+    number = '`cls`+([+-]?[0-9]*(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?)'
+    pattern = '(?s)^(.*?)(`word``number``number``number`)'
+    out = []
+    rest = t
+    going = true
+    while going
+        found = find[rest, pattern]
+        if not found.ok
+            going = false
+        else
+            before = '`found.groups[1]`'
+            whole = '`found.groups[2]`'
+            out = push[out, js_float['`found.groups[3]`']]
+            out = push[out, js_float['`found.groups[4]`']]
+            out = push[out, js_float['`found.groups[5]`']]
+            rest = slice[rest, len[before] + len[whole], len[rest]]
+    out
+
+--- a text STL's solids
+fn _stl_text[t]
+    cls = _space_class[]
+    positions = []
+    normals = []
+    groups = []
+    materials = slice[[plain_material['']], 0, 0]
+    normal = _three[0.0, 0.0, 0.0]
+    vertices = 0
+    solids = _spans[t, 'solid', 'endsolid']
+    for i in range[len[solids]]
+        s = solids[i]
+        first = vertices
+        named = find[s, 'solid`cls`([^\n\r\x{2028}\x{2029}]+)']
+        name = ''
+        if named.ok
+            name = '`named.groups[1]`'
+        materials = push[materials, plain_material[name]]
+        for f in _spans[s, 'facet', 'endfacet']
+            given = _after_word[f, 'normal']
+            k = 0
+            while k + 2 lt len[given]
+                normal = _three[given[k], given[k + 1], given[k + 2]]
+                k = k + 3
+            corners = _after_word[f, 'vertex']
+            k = 0
+            while k + 2 lt len[corners]
+                positions = push[positions, corners[k]]
+                positions = push[positions, corners[k + 1]]
+                positions = push[positions, corners[k + 2]]
+                normals = push[normals, normal[0]]
+                normals = push[normals, normal[1]]
+                normals = push[normals, normal[2]]
+                vertices = vertices + 1
+                k = k + 3
+        groups = push[groups, first]
+        groups = push[groups, vertices - first]
+        groups = push[groups, i]
+    if len[materials] eq 0
+        materials = push[materials, plain_material['']]
+    _model_of[[Part['', 'mesh', geometry.Geometry[positions, normals, [], [], groups], [], materials]]]
+
+--- ---- typed numbers, as three's typed arrays keep them ----
+
+--- whether a PLY type is one of floats
+fn _float_type[form]
+    form eq 'float' or form eq 'float32' or form eq 'double' or form eq 'float64'
+
+--- the PLY type three keeps a property's numbers as ('' where three has no
+--- array for it)
+fn _typed_as[form]
+    if form eq 'char' or form eq 'int8'
+        return 'int8'
+    if form eq 'uchar' or form eq 'uint8'
+        return 'uint8'
+    if form eq 'short' or form eq 'int16'
+        return 'int16'
+    if form eq 'ushort' or form eq 'uint16'
+        return 'uint16'
+    if form eq 'int' or form eq 'int32'
+        return 'int32'
+    if form eq 'uint' or form eq 'uint32'
+        return 'uint32'
+    if form eq 'float' or form eq 'float32'
+        return 'float32'
+    if form eq 'double' or form eq 'float64'
+        return 'float64'
+    ''
+
+--- a number as a typed array of the type keeps it: a float as it is
+--- (single precision is the drawing's), a whole number cut toward zero
+--- and wrapped into the type's range (not a number, or none, as 0)
+fn _kept_as[x, typed]
+    if typed eq 'float32' or typed eq 'float64' or typed eq ''
+        return x
+    if not _finite[x]
+        return 0.0
+    whole = floor[abs[x]]
+    if x lt 0.0
+        whole = 0 - whole
+    span = 4294967296
+    if typed eq 'int8' or typed eq 'uint8'
+        span = 256
+    else if typed eq 'int16' or typed eq 'uint16'
+        span = 65536
+    w = (whole % span + span) % span
+    if (typed eq 'int8' or typed eq 'int16' or typed eq 'int32') and w gte span / 2
+        w = w - span
+    0.0 + w
+
+--- a kept number as the drawing reads it where the array is normalized:
+--- a whole type's number over its largest (a signed one no less than -1)
+fn _normal_of[x, typed]
+    if typed eq 'uint8'
+        return x / 255.0
+    if typed eq 'uint16'
+        return x / 65535.0
+    if typed eq 'uint32'
+        return x / 4294967295.0
+    if typed eq 'int8'
+        return max[x / 127.0, -1.0]
+    if typed eq 'int16'
+        return max[x / 32767.0, -1.0]
+    if typed eq 'int32'
+        return max[x / 2147483647.0, -1.0]
+    x
+
+--- ---- PLY ----
+
+--- a property of a PLY element: its name, its type (`list` for a list),
+--- and a list's count's and items' types
+struct _Property [name, form, count_form, item_form]
+
+--- an element of a PLY header: its name, how many it counts, its properties
+struct _Element [name, count, properties]
+
+--- a PLY header as three reads it: its format, its elements, how many
+--- bytes it takes, and what stops it being read ('' where nothing does)
+struct _Header [format, elements, length, failure]
+
+--- where each of the vertex's values three reads stands among its
+--- properties (-1 where none does), and each one's type
+struct _Plan [x, y, z, nx, ny, nz, s, t, r, g, b, coords, position_form, normal_form, uv_form, color_form, coords_form]
+
+--- one element as it is read: each property's number (not a number for a
+--- list), the items of its `vertex_indices` list, of its `vertex_index`
+--- list and of its `texcoord` list, how far the reading went, and whether
+--- the element was whole
+struct _Row [numbers, corners, alt, coords, upto, whole]
+
+--- the model of a PLY file (its bytes), as three's PLYLoader reads it: its
+--- header's elements in order, in text or in binary (either byte order),
+--- the vertices' positions, normals, uvs (`s`/`u`, `t`/`v`) and colours
+--- (`red`, `green`, `blue`), each kept as its type keeps it, the colours
+--- in linear light; each face of three corners a triangle and of four two
+--- (faces of more are left out, as three leaves them). Faces' texture
+--- coordinates or colours make every triangle's corners their own. A part
+--- of points where it has no faces
+fn read_ply[data]
+    h = _ply_header[data]
+    if h.failure ne ''
+        return _failed[h.failure]
+    if h.format eq 'ascii'
+        return _ply_read[data, h, true]
+    _ply_read[data, h, false]
+
+--- a PLY file's header, as three finds it: its lines to the one that is
+--- `end_header`, each byte a character
+fn _ply_header[data]
+    n = len[data]
+    i = 0
+    line = ''
+    lines = slice[[''], 0, 0]
+    going = true
+    while going and i lt n
+        b = sys.byte[data, i]
+        i = i + 1
+        if b ne 10 and b ne 13
+            line = '`line``char[b]`'
+        else
+            if line eq 'end_header'
+                going = false
+            if line ne ''
+                lines = push[lines, line]
+                line = ''
+    if _bytes_say[data, 0, 'ply\r\n']
+        i = i + 1
+    joined = join[lines, '\r']
+    joined = '`joined`\r'
+    found = find[joined, '(?s)^ply(.*)end_header(\r\n|\r|\n)']
+    words = ''
+    if found.ok
+        words = '`found.groups[1]`'
+    elements = slice[[_Element['', 0, slice[[_Property['', '', '', '']], 0, 0]]], 0, 0]
+    format = ''
+    current = _Element['', -1, slice[[_Property['', '', '', '']], 0, 0]]
+    for raw in split[words, '\r']
+        said = _js_trim[raw]
+        if said ne ''
+            said_words = js_fields[said]
+            head_word = said_words[0]
+            if head_word eq 'format'
+                format = _piece[said_words, 1]
+            else if head_word eq 'element'
+                if current.count gte 0
+                    elements = push[elements, current]
+                counted = _js_int_any[_piece[said_words, 2]]
+                count = 0
+                if _finite[counted] and counted gt 0.0
+                    count = floor[counted]
+                current = _Element[_piece[said_words, 1], count, slice[[_Property['', '', '', '']], 0, 0]]
+            else if head_word eq 'property'
+                if current.count lt 0
+                    return _Header['', elements, i, 'the PLY header names a property before any element']
+                form = _piece[said_words, 1]
+                if form eq 'list'
+                    current.properties = push[current.properties, _Property[_piece[said_words, 4], 'list', _piece[said_words, 2], _piece[said_words, 3]]]
+                else
+                    current.properties = push[current.properties, _Property[_piece[said_words, 2], form, '', '']]
+    if current.count gte 0
+        elements = push[elements, current]
+    _Header[format, elements, i, '']
+
+--- where a property of one of the names (the first name that has one)
+--- stands among the properties, or -1
+fn _property_at[properties, names]
+    for name in names
+        for i in range[len[properties]]
+            if properties[i].name eq name
+                return i
+    -1
+
+--- the type of the property at a place, or the one three takes where none
+--- stands there
+fn _form_at[properties, at, otherwise]
+    if at lt 0
+        return otherwise
+    properties[at].form
+
+--- where the vertex's values three reads stand among an element's
+--- properties
+fn _plan_of[properties]
+    x = _property_at[properties, ['x', 'px', 'posx']]
+    nx = _property_at[properties, ['nx', 'normalx']]
+    s = _property_at[properties, ['s', 'u', 'texture_u', 'tx']]
+    r = _property_at[properties, ['red', 'diffuse_red', 'r', 'diffuse_r']]
+    coords = _property_at[properties, ['texcoord']]
+    coords_form = 'float32'
+    if coords gte 0
+        coords_form = properties[coords].item_form
+    _Plan[x, _property_at[properties, ['y', 'py', 'posy']], _property_at[properties, ['z', 'pz', 'posz']], nx, _property_at[properties, ['ny', 'normaly']], _property_at[properties, ['nz', 'normalz']], s, _property_at[properties, ['t', 'v', 'texture_v', 'ty']], r, _property_at[properties, ['green', 'diffuse_green', 'g', 'diffuse_g']], _property_at[properties, ['blue', 'diffuse_blue', 'b', 'diffuse_b']], coords, _form_at[properties, x, 'float32'], _form_at[properties, nx, 'float32'], _form_at[properties, s, 'float32'], _form_at[properties, r, 'uchar'], coords_form]
+
+--- an element's row read from the text's words at `at`: each property's
+--- number as its type reads it (parseInt for whole types, parseFloat for
+--- floats, not a number for a type three does not know), a list's items
+--- after its count; not whole where the words end first
+fn _text_row[words, at, properties, first_list, second_list, coords_at]
+    numbers = []
+    corners = []
+    alt = []
+    coords = []
+    i = at
+    for k in range[len[properties]]
+        p = properties[k]
+        if i gte len[words]
+            return _Row[numbers, corners, alt, coords, i, false]
+        if p.form eq 'list'
+            n = _text_number[words[i], p.count_form]
+            i = i + 1
+            numbers = push[numbers, _nan[]]
+            j = 0.0
+            while j lt n
+                if i gte len[words]
+                    return _Row[numbers, corners, alt, coords, i, false]
+                item = _text_number[words[i], p.item_form]
+                i = i + 1
+                if k eq first_list
+                    corners = push[corners, item]
+                if k eq second_list
+                    alt = push[alt, item]
+                if k eq coords_at
+                    coords = push[coords, item]
+                j = j + 1.0
+        else
+            numbers = push[numbers, _text_number[words[i], p.form]]
+            i = i + 1
+    _Row[numbers, corners, alt, coords, i, true]
+
+--- a word of a PLY text as three reads it for a property's type
+fn _text_number[w, form]
+    typed = _typed_as[form]
+    if typed eq ''
+        return _nan[]
+    if _float_type[form]
+        return js_float[w]
+    _js_int_any[w]
+
+--- how many bytes a number of the type takes (0 for a type three does not
+--- read)
+fn _width_of[typed]
+    if typed eq 'int8' or typed eq 'uint8'
+        return 1
+    if typed eq 'int16' or typed eq 'uint16'
+        return 2
+    if typed eq 'float64'
+        return 8
+    if typed eq ''
+        return 0
+    4
+
+--- a number of the type read from the bytes at a place
+fn _binary_number[data, at, typed, little]
+    if typed eq 'float32'
+        return sys.ieee[data, at, 4, little]
+    if typed eq 'float64'
+        return sys.ieee[data, at, 8, little]
+    signed = typed eq 'int8' or typed eq 'int16' or typed eq 'int32'
+    0.0 + sys.unpack[data, at, _width_of[typed], little = little, signed = signed]
+
+--- an element's row read from the bytes at `at` (not whole where the bytes
+--- end first, or a type three does not read is met: `upto` is then -1)
+fn _binary_row[data, at, properties, little, first_list, second_list, coords_at]
+    numbers = []
+    corners = []
+    alt = []
+    coords = []
+    i = at
+    n_bytes = len[data]
+    for k in range[len[properties]]
+        p = properties[k]
+        if p.form eq 'list'
+            counted = _typed_as[p.count_form]
+            items = _typed_as[p.item_form]
+            w = _width_of[counted]
+            if w eq 0 or _width_of[items] eq 0
+                return _Row[numbers, corners, alt, coords, -1, false]
+            if i + w gt n_bytes
+                return _Row[numbers, corners, alt, coords, i, false]
+            n = _binary_number[data, i, counted, little]
+            i = i + w
+            numbers = push[numbers, _nan[]]
+            wi = _width_of[items]
+            j = 0.0
+            while j lt n
+                if i + wi gt n_bytes
+                    return _Row[numbers, corners, alt, coords, i, false]
+                item = _binary_number[data, i, items, little]
+                i = i + wi
+                if k eq first_list
+                    corners = push[corners, item]
+                if k eq second_list
+                    alt = push[alt, item]
+                if k eq coords_at
+                    coords = push[coords, item]
+                j = j + 1.0
+        else
+            typed = _typed_as[p.form]
+            w = _width_of[typed]
+            if w eq 0
+                return _Row[numbers, corners, alt, coords, -1, false]
+            if i + w gt n_bytes
+                return _Row[numbers, corners, alt, coords, i, false]
+            numbers = push[numbers, _binary_number[data, i, typed, little]]
+            i = i + w
+    _Row[numbers, corners, alt, coords, i, true]
+
+--- where a list property of a name stands (-1 where none does, or it is
+--- no list)
+fn _list_at[properties, name]
+    for i in range[len[properties]]
+        if properties[i].name eq name and properties[i].form eq 'list'
+            return i
+    -1
+
+--- the value of a property of a name in a row, or not a number
+fn _named_number[properties, row, name]
+    out = _nan[]
+    for i in range[len[properties]]
+        if properties[i].name eq name and i lt len[row.numbers]
+            out = row.numbers[i]
+    out
+
+--- what three's PLYLoader gathers from the elements before it makes the
+--- geometry: the vertices' positions, normals, uvs and colours, the
+--- triangles' corners, the faces' uvs and colours, the vertices' plan
+--- (the last element named `vertex`), the faces', and what stops it
+struct _Gathered [positions, normals, uvs, colors, indices, face_uvs, face_colors, vertex_plan, face_plan, has_face, failure]
+
+--- a PLY file's elements read, in text or in binary
+fn _ply_read[data, h, as_text]
+    little = h.format eq 'binary_little_endian'
+    words = slice[[''], 0, 0]
+    if as_text
+        t = _decoded[data]
+        cls = _space_class[]
+        found = find[t, '(?s)end_header(`cls`.*)$']
+        if found.ok
+            body = _js_trim['`found.groups[1]`']
+            if body ne ''
+                words = js_fields[body]
+    no_plan = _plan_of[slice[[_Property['', '', '', '']], 0, 0]]
+    gathered = _Gathered[[], [], [], [], [], [], [], no_plan, no_plan, false, '']
+    at = 0
+    if not as_text
+        at = h.length
+    stopped = false
+    e = 0
+    while e lt len[h.elements] and not stopped
+        element = h.elements[e]
+        properties = element.properties
+        plan = _plan_of[properties]
+        if element.name eq 'vertex'
+            gathered.vertex_plan = plan
+        if element.name eq 'face'
+            gathered.face_plan = plan
+            gathered.has_face = true
+        first_list = _list_at[properties, 'vertex_indices']
+        second_list = _list_at[properties, 'vertex_index']
+        coords_at = _list_at[properties, 'texcoord']
+        j = 0
+        while j lt element.count and not stopped
+            row = _Row[[], [], [], [], 0, false]
+            if as_text
+                row = _text_row[words, at, properties, first_list, second_list, coords_at]
+            else
+                row = _binary_row[data, at, properties, little, first_list, second_list, coords_at]
+            if not row.whole
+                if as_text
+                    stopped = true
+                else if row.upto lt 0
+                    return _failed['the PLY file\'s element `element.name` has a property of a type three does not read']
+                else
+                    return _failed['the PLY file ends inside its element `element.name` (number `j`)']
+            else
+                at = row.upto
+                if element.name eq 'vertex'
+                    gathered = _vertex_gathered[gathered, plan, row]
+                else if element.name eq 'face'
+                    gathered = _face_gathered[gathered, plan, properties, row]
+                    if gathered.failure ne ''
+                        return _failed[gathered.failure]
+            j = j + 1
+        e = e + 1
+    _ply_model[gathered]
+
+--- a vertex's values gathered, as three's PLYLoader gathers them: a
+--- colour taken into linear light, and a whole type's colour rounded back
+--- to its whole number
+fn _vertex_gathered[gathered, plan, row]
+    v = row.numbers
+    if plan.x gte 0 and plan.y gte 0 and plan.z gte 0
+        gathered.positions = push[gathered.positions, v[plan.x]]
+        gathered.positions = push[gathered.positions, v[plan.y]]
+        gathered.positions = push[gathered.positions, v[plan.z]]
+    if plan.nx gte 0 and plan.ny gte 0 and plan.nz gte 0
+        gathered.normals = push[gathered.normals, v[plan.nx]]
+        gathered.normals = push[gathered.normals, v[plan.ny]]
+        gathered.normals = push[gathered.normals, v[plan.nz]]
+    if plan.s gte 0 and plan.t gte 0
+        gathered.uvs = push[gathered.uvs, v[plan.s]]
+        gathered.uvs = push[gathered.uvs, v[plan.t]]
+    if plan.r gte 0 and plan.g gte 0 and plan.b gte 0
+        scale = _color_scale[plan.color_form]
+        lit = linear_color[v[plan.r] * scale, v[plan.g] * scale, v[plan.b] * scale]
+        back = 1.0 / scale
+        floats = _float_type[plan.color_form]
+        for k in range[3]
+            c = lit[k]
+            if not floats
+                c = _js_round[c * back]
+            gathered.colors = push[gathered.colors, c]
+    gathered
+
+--- how three scales a colour of a type into 0 to 1
+fn _color_scale[form]
+    if form eq 'uchar' or form eq 'uint8'
+        return 1.0 / 255.0
+    if form eq 'ushort' or form eq 'uint16'
+        return 1.0 / 65535.0
+    if _float_type[form]
+        return 1.0
+    1.0 / 255.0
+
+--- a face gathered, as three's PLYLoader gathers one: three corners one
+--- triangle, four two (its uvs where its texture coordinates are six or
+--- eight numbers), more none; its colour on each corner of its triangles
+fn _face_gathered[gathered, plan, properties, row]
+    corners = row.corners
+    listed = false
+    first = _property_named[properties, 'vertex_indices']
+    second = _property_named[properties, 'vertex_index']
+    if first gte 0 and properties[first].form eq 'list'
+        listed = true
+    else
+        use_second = first lt 0
+        if first gte 0
+            v = row.numbers[first]
+            use_second = _is_nan[v] or v eq 0.0
+        if use_second
+            if second lt 0
+                gathered.failure = 'the PLY file\'s faces name no vertex_indices'
+                return gathered
+            if properties[second].form eq 'list'
+                corners = row.alt
+                listed = true
+    n = 0
+    if listed
+        n = len[corners]
+    coords = row.coords
+    if n eq 3
+        gathered.indices = push[gathered.indices, corners[0]]
+        gathered.indices = push[gathered.indices, corners[1]]
+        gathered.indices = push[gathered.indices, corners[2]]
+        if len[coords] eq 6
+            for k in range[6]
+                gathered.face_uvs = push[gathered.face_uvs, coords[k]]
+    else if n eq 4
+        for k in [0, 1, 2, 0, 2, 3]
+            gathered.indices = push[gathered.indices, corners[k]]
+        if len[coords] eq 8
+            for k in [0, 1, 2, 3, 4, 5, 0, 1, 4, 5, 6, 7]
+                gathered.face_uvs = push[gathered.face_uvs, coords[k]]
+    if plan.r gte 0 and plan.g gte 0 and plan.b gte 0
+        v = row.numbers
+        scale = _color_scale[plan.color_form]
+        lit = linear_color[v[plan.r] * scale, v[plan.g] * scale, v[plan.b] * scale]
+        back = 1.0 / scale
+        times = 3
+        if n eq 4
+            times = 6
+        for k in range[times]
+            gathered.face_colors = push[gathered.face_colors, lit[0] * back]
+            gathered.face_colors = push[gathered.face_colors, lit[1] * back]
+            gathered.face_colors = push[gathered.face_colors, lit[2] * back]
+    gathered
+
+--- where a property of a name stands (-1 where none does)
+fn _property_named[properties, name]
+    for i in range[len[properties]]
+        if properties[i].name eq name
+            return i
+    -1
+
+--- numbers as a typed array of the type keeps them
+fn _all_kept_as[xs, typed]
+    if typed eq 'float32' or typed eq 'float64'
+        return xs
+    out = []
+    for x in xs
+        out = push[out, _kept_as[x, typed]]
+    out
+
+--- kept numbers as the drawing reads them where the array is normalized
+fn _all_normal_of[xs, typed]
+    out = []
+    for x in xs
+        out = push[out, _normal_of[x, typed]]
+    out
+
+--- a triangle's corners as three's index keeps them: in 16 bits, or 32
+--- where one reaches 65535
+fn _index_kept[indices]
+    wide = false
+    for i in indices
+        if i gte 65535.0
+            wide = true
+    typed = 'uint16'
+    if wide
+        typed = 'uint32'
+    out = slice[[0], 0, 0]
+    for i in indices
+        out = push[out, floor[_kept_as[i, typed]]]
+    out
+
+--- an attribute's numbers made each triangle corner's own, as three's
+--- toNonIndexed makes them (a corner past the numbers is not a number, or
+--- 0 in a whole type)
+fn _unindexed[xs, size, indices, typed]
+    out = []
+    missing = _nan[]
+    if not (typed eq 'float32' or typed eq 'float64')
+        missing = 0.0
+    for i in indices
+        for j in range[size]
+            k = i * size + j
+            if k lt len[xs]
+                out = push[out, xs[k]]
+            else
+                out = push[out, missing]
+    out
+
+--- the geometry three's PLYLoader makes of what it gathered
+fn _ply_model[gathered]
+    vp = gathered.vertex_plan
+    position_typed = _typed_as[vp.position_form]
+    if position_typed eq ''
+        return _failed['three keeps no array of the PLY type `vp.position_form` (the positions\')']
+    positions = _all_kept_as[gathered.positions, position_typed]
+    normals = []
+    if len[gathered.normals] gt 0
+        typed = _typed_as[vp.normal_form]
+        if typed eq ''
+            return _failed['three keeps no array of the PLY type `vp.normal_form` (the normals\')']
+        normals = _all_kept_as[gathered.normals, typed]
+    uvs = []
+    if len[gathered.uvs] gt 0
+        typed = _typed_as[vp.uv_form]
+        if typed eq ''
+            return _failed['three keeps no array of the PLY type `vp.uv_form` (the uvs\')']
+        uvs = _all_kept_as[gathered.uvs, typed]
+    colors = []
+    color_typed = 'float32'
+    if len[gathered.colors] gt 0
+        color_typed = _typed_as[vp.color_form]
+        if color_typed eq ''
+            return _failed['three keeps no array of the PLY type `vp.color_form` (the colours\')']
+        colors = _all_kept_as[gathered.colors, color_typed]
+    indices = _index_kept[gathered.indices]
+    expanded = false
+    if len[gathered.face_uvs] gt 0 or len[gathered.face_colors] gt 0
+        if len[indices] gt 0
+            expanded = true
+            positions = _unindexed[positions, 3, indices, position_typed]
+            if len[normals] gt 0
+                normals = _unindexed[normals, 3, indices, _typed_as[vp.normal_form]]
+            if len[uvs] gt 0
+                uvs = _unindexed[uvs, 2, indices, _typed_as[vp.uv_form]]
+            if len[colors] gt 0
+                colors = _unindexed[colors, 3, indices, color_typed]
+            indices = slice[[0], 0, 0]
+        fp = gathered.face_plan
+        if len[gathered.face_uvs] gt 0
+            typed = _typed_as[fp.coords_form]
+            if typed eq ''
+                return _failed['three keeps no array of the PLY type `fp.coords_form` (the faces\' texture coordinates\')']
+            uvs = _all_kept_as[gathered.face_uvs, typed]
+        if len[gathered.face_colors] gt 0
+            color_typed = _typed_as[fp.color_form]
+            if color_typed eq ''
+                return _failed['three keeps no array of the PLY type `fp.color_form` (the faces\' colours\')']
+            colors = _all_kept_as[gathered.face_colors, color_typed]
+    if not _float_type[color_typed]
+        colors = _all_normal_of[colors, color_typed]
+    form = 'points'
+    if len[indices] gt 0 or expanded
+        form = 'mesh'
+    _model_of[[Part['', form, geometry.Geometry[positions, normals, uvs, indices, []], colors, [plain_material['']]]]]
+
+--- ---- XYZ ----
+
+--- the points of an XYZ file, as three's XYZLoader reads them: each line
+--- of three numbers a point, of six a point and its colour (0 to 255, in
+--- sRGB, taken into linear light); lines beginning `#` and lines of other
+--- counts are passed over
+fn read_xyz[words]
+    positions = []
+    colors = []
+    for raw in split[words, '\n']
+        line = _js_trim[raw]
+        if not starts[line, '#']
+            items = js_fields[line]
+            if len[items] eq 3 or len[items] eq 6
+                positions = push[positions, js_float[items[0]]]
+                positions = push[positions, js_float[items[1]]]
+                positions = push[positions, js_float[items[2]]]
+            if len[items] eq 6
+                lit = linear_color[js_float[items[3]] / 255.0, js_float[items[4]] / 255.0, js_float[items[5]] / 255.0]
+                colors = push[colors, lit[0]]
+                colors = push[colors, lit[1]]
+                colors = push[colors, lit[2]]
+    _model_of[[Part['', 'points', geometry.Geometry[positions, [], [], [], []], colors, [plain_material['']]]]]
+
+--- ---- PCD ----
+
+--- a PCD header as three reads it: its fields, their sizes, types and
+--- counts, how many points, how its data is written, how many bytes the
+--- header takes, each field's first place among the fields and its offset
+--- (the last field of a name's), how many bytes a point's row takes, and
+--- what stops it being read
+struct _Cloud [fields, sizes, types, counts, points, data, length, offsets, row, has_types, has_sizes, failure]
+
+--- the points of a PCD file (its bytes), as three's PCDLoader reads them:
+--- its data in text, binary or LZF-compressed binary; `x y z` the
+--- positions, `normal_x normal_y normal_z` the normals, `rgb` the colours
+--- (a float's bits holding red, green and blue, in sRGB, taken into linear
+--- light). Its `intensity` and `label` are not kept
+fn read_pcd[data]
+    h = _pcd_header[data]
+    if h.failure ne ''
+        return _failed[h.failure]
+    if h.data eq 'ascii'
+        return _pcd_text[data, h]
+    if h.data eq 'binary'
+        return _pcd_binary[data, h, h.length, false]
+    if h.data eq 'binary_compressed'
+        if h.length + 8 gt len[data]
+            return _failed['the PCD file ends before its compressed data\'s sizes']
+        packed = sys.unpack[data, h.length, 4, little = true, signed = false]
+        size = sys.unpack[data, h.length + 4, 4, little = true, signed = false]
+        if h.length + 8 + packed gt len[data]
+            return _failed['the PCD file ends inside its compressed data']
+        unpacked = _lzf[sys.slice[data, h.length + 8, h.length + 8 + packed], size]
+        if len[unpacked] ne size
+            return _failed['the PCD file\'s compressed data is not LZF that three can read']
+        return _pcd_binary[unpacked, h, 0, true]
+    _model_of[[Part['', 'points', geometry.Geometry[[], [], [], [], []], [], [plain_material['']]]]]
+
+--- a PCD header: its bytes, each a character, to the end of the line that
+--- begins `data`
+fn _pcd_header[data]
+    none = slice[[''], 0, 0]
+    nothing = []
+    empty = _Cloud[none, nothing, none, nothing, 0.0, '', 0, map[x = 0], 0, false, false, '']
+    n = len[data]
+    i = 0
+    line = ''
+    head = ''
+    going = true
+    while going and i lt n
+        b = sys.byte[data, i]
+        i = i + 1
+        ch = char[b]
+        if b eq 10 or b eq 13
+            if starts[lower[_js_trim[line]], 'data']
+                going = false
+            line = ''
+        else
+            line = '`line``ch`'
+        head = '`head``ch`'
+    cls = _space_class[]
+    found = find[head, '(?si)^(.*?[\r\n])(DATA`cls`([^\t\n\x0B\x0C\r \xA0\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]*)`cls`)']
+    if not found.ok
+        empty.failure = 'the PCD file has no DATA line after its header'
+        return empty
+    before = '`found.groups[1]`'
+    if len[before] lt 2
+        empty.failure = 'the PCD file has no header before its DATA line'
+        return empty
+    whole = '`found.groups[2]`'
+    kind_of_data = '`found.groups[3]`'
+    length = len[before] + len[whole]
+    said = slice[head, 0, length]
+    lines = split[replace[said, '\r', '\n'], '\n']
+    fields = _pcd_words[lines, 'FIELDS']
+    types = _pcd_words[lines, 'TYPE']
+    sizes_said = _pcd_words[lines, 'SIZE']
+    counts_said = _pcd_words[lines, 'COUNT']
+    sizes = []
+    for w in sizes_said
+        sizes = push[sizes, js_int[w]]
+    counts = []
+    if len[counts_said] gt 0 or _pcd_has[lines, 'COUNT']
+        for w in counts_said
+            counts = push[counts, js_int[w]]
+    else
+        for f in fields
+            counts = push[counts, 1.0]
+    width = _js_int_any[_pcd_rest[lines, 'WIDTH']]
+    height = _js_int_any[_pcd_rest[lines, 'HEIGHT']]
+    points = width * height
+    if _pcd_has[lines, 'POINTS']
+        points = js_int[_pcd_rest[lines, 'POINTS']]
+    offsets = map[x = 0]
+    offsets = del[offsets, 'x']
+    total = 0.0
+    for k in range[len[fields]]
+        place = -2
+        if _finite[total]
+            place = floor[total]
+        offsets = set[offsets, fields[k], place]
+        if kind_of_data eq 'ascii'
+            total = total + _at[counts, 0.0 + k]
+        else
+            total = total + _at[sizes, 0.0 + k] * _at[counts, 0.0 + k]
+    row = 0
+    if kind_of_data ne 'ascii'
+        if not _finite[total]
+            empty.failure = 'the PCD header\'s SIZE and COUNT do not give each field a length, so its rows have none'
+            return empty
+        row = floor[total]
+    _Cloud[fields, sizes, types, counts, points, kind_of_data, length, offsets, row, _pcd_has[lines, 'TYPE'], _pcd_has[lines, 'SIZE'], '']
+
+--- whether a line of the PCD header begins with the word (any case) and a
+--- space
+fn _pcd_has[lines, word]
+    for line in lines
+        if starts[upper[line], '`word` '] and not starts[line, '#']
+            return true
+    false
+
+--- what follows the first line of the PCD header that begins with the
+--- word and a space
+fn _pcd_rest[lines, word]
+    out = ''
+    found = false
+    for line in lines
+        if not found and starts[upper[line], '`word` '] and not starts[line, '#']
+            out = slice[line, len[word] + 1, len[line]]
+            found = true
+    out
+
+--- the words after the first line of the PCD header that begins with the
+--- word, split at each space (as three splits them)
+fn _pcd_words[lines, word]
+    if not _pcd_has[lines, word]
+        return slice[[''], 0, 0]
+    split[_pcd_rest[lines, word], ' ']
+
+--- the word of a point's line at a place among its words ('' where there
+--- is none)
+fn _word_at[tokens, place]
+    if place lt 0 or place gte len[tokens]
+        return ''
+    tokens[place]
+
+--- a field's offset in the PCD header (-1 where it names no such field,
+--- -2 where the counts before it are not numbers)
+fn _pcd_offset[h, field]
+    if field in h.offsets
+        return h.offsets[field]
+    -1
+
+--- where a field first stands among the PCD header's fields (-1 where it
+--- does not)
+fn _pcd_index[h, field]
+    for i in range[len[h.fields]]
+        if h.fields[i] eq field
+            return i
+    -1
+
+--- a number as JavaScript's `>>` and `&` take it: cut to its whole number
+--- and wrapped into 32 bits, signed (not a number as 0)
+fn _int32_of[x]
+    if not _finite[x]
+        return 0
+    whole = floor[abs[x]]
+    if x lt 0.0
+        whole = 0 - whole
+    w = (whole % 4294967296 + 4294967296) % 4294967296
+    if w gte 2147483648
+        w = w - 4294967296
+    w
+
+--- a colour packed in a PCD's `rgb` (red, green and blue in the bits from
+--- the 16th, the 8th and the first, in sRGB) in linear light
+fn _packed_color[v]
+    linear_color[bitand[shift[v, -16], 255] / 255.0, bitand[shift[v, -8], 255] / 255.0, bitand[v, 255] / 255.0]
+
+--- the points of a PCD file's text
+fn _pcd_text[data, h]
+    t = _decoded[data]
+    body = slice[t, h.length, len[t]]
+    ox = _pcd_offset[h, 'x']
+    oy = _pcd_offset[h, 'y']
+    oz = _pcd_offset[h, 'z']
+    orgb = _pcd_offset[h, 'rgb']
+    onx = _pcd_offset[h, 'normal_x']
+    ony = _pcd_offset[h, 'normal_y']
+    onz = _pcd_offset[h, 'normal_z']
+    rgb_form = ''
+    if orgb ne -1
+        at = _pcd_index[h, 'rgb']
+        if not h.has_types
+            return _failed['the PCD header gives no TYPE for its rgb field']
+        rgb_form = _word_at[h.types, at]
+    positions = []
+    normals = []
+    colors = []
+    for raw in split[body, '\n']
+        if raw ne ''
+            tokens = js_fields[_js_trim[raw]]
+            if ox ne -1
+                positions = push[positions, js_float[_word_at[tokens, ox]]]
+                positions = push[positions, js_float[_word_at[tokens, oy]]]
+                positions = push[positions, js_float[_word_at[tokens, oz]]]
+            if orgb ne -1
+                f = js_float[_word_at[tokens, orgb]]
+                v = _int32_of[f]
+                if rgb_form eq 'F'
+                    v = sys.unpack[sys.ieee[f, 4, true], 0, 4, little = true, signed = true]
+                lit = _packed_color[v]
+                colors = push[colors, lit[0]]
+                colors = push[colors, lit[1]]
+                colors = push[colors, lit[2]]
+            if onx ne -1
+                normals = push[normals, js_float[_word_at[tokens, onx]]]
+                normals = push[normals, js_float[_word_at[tokens, ony]]]
+                normals = push[normals, js_float[_word_at[tokens, onz]]]
+    _model_of[[Part['', 'points', geometry.Geometry[positions, normals, [], [], []], colors, [plain_material['']]]]]
+
+--- a field's number read from a PCD's binary data at a place, as its type
+--- (`F`, `I` or `U`) and size say (not a number for a type three does not
+--- read); -1 as the place where it lies past the data
+fn _pcd_number[data, at, form, size]
+    if form eq 'F'
+        if size eq 8
+            return sys.ieee[data, at, 8, true]
+        return sys.ieee[data, at, 4, true]
+    if form eq 'I' or form eq 'U'
+        w = 4
+        if size eq 1 or size eq 2
+            w = size
+        return 0.0 + sys.unpack[data, at, w, little = true, signed = form eq 'I']
+    _nan[]
+
+--- how many bytes a field of the type and size takes when it is read
+fn _pcd_width[form, size]
+    if form eq 'F'
+        if size eq 8
+            return 8
+        return 4
+    if form eq 'I' or form eq 'U'
+        if size eq 1 or size eq 2
+            return size
+        return 4
+    0
+
+--- a field's number for a point: where its type and size say, or not a
+--- number (and whether the data holds it)
+struct _Read [value, held]
+
+fn _pcd_field[data, h, base, field, i, columns]
+    o = _pcd_offset[h, field]
+    k = _pcd_index[h, field]
+    if o lt 0 or k lt 0
+        return _Read[_nan[], true]
+    form = _word_at[h.types, k]
+    size = floor[_at[h.sizes, 0.0 + k]]
+    w = _pcd_width[form, size]
+    if w eq 0
+        return _Read[_nan[], true]
+    at = base + h.row * i + o
+    if columns
+        at = base + floor[h.points] * o + size * i
+    if at lt 0 or at + w gt len[data]
+        return _Read[_nan[], false]
+    _Read[_pcd_number[data, at, form, size], true]
+
+--- the points of a PCD file's binary data, a row a point (or a column a
+--- field, as its compressed data lies)
+fn _pcd_binary[data, h, base, columns]
+    if not h.has_types or not h.has_sizes
+        return _failed['the PCD header gives no TYPE or SIZE for its binary data']
+    if base gt len[data]
+        return _failed['the PCD file ends inside its header']
+    count = 0
+    if _finite[h.points] and h.points gt 0.0
+        count = floor[h.points]
+    has_x = _pcd_offset[h, 'x'] gte 0
+    orgb = _pcd_offset[h, 'rgb']
+    has_normals = _pcd_offset[h, 'normal_x'] gte 0
+    rgb_size = floor[_at[h.sizes, 0.0 + _pcd_index[h, 'rgb']]]
+    positions = []
+    normals = []
+    colors = []
+    i = 0
+    while i lt count
+        if has_x
+            for field in ['x', 'y', 'z']
+                got = _pcd_field[data, h, base, field, i, columns]
+                if not got.held
+                    return _failed['the PCD file ends inside its point `i`']
+                positions = push[positions, got.value]
+        if orgb gte 0
+            at = base + h.row * i + orgb
+            if columns
+                at = base + count * orgb + rgb_size * i
+            if at lt 0 or at + 3 gt len[data]
+                return _failed['the PCD file ends inside its point `i`']
+            lit = linear_color[sys.byte[data, at + 2] / 255.0, sys.byte[data, at + 1] / 255.0, sys.byte[data, at] / 255.0]
+            colors = push[colors, lit[0]]
+            colors = push[colors, lit[1]]
+            colors = push[colors, lit[2]]
+        if has_normals
+            for field in ['normal_x', 'normal_y', 'normal_z']
+                got = _pcd_field[data, h, base, field, i, columns]
+                if not got.held
+                    return _failed['the PCD file ends inside its point `i`']
+                normals = push[normals, got.value]
+        i = i + 1
+    _model_of[[Part['', 'points', geometry.Geometry[positions, normals, [], [], []], colors, [plain_material['']]]]]
+
+--- bytes made from LZF's (as a PCD's compressed data holds them), as many
+--- as `size`; bytes of another length where they are not LZF three reads
+fn _lzf[packed, size]
+    out = sys.bytes[size]
+    bad = sys.bytes[size + 1]
+    n = len[packed]
+    if n eq 0
+        return bad
+    ip = 0
+    op = 0
+    going = true
+    while going
+        ctrl = sys.byte[packed, ip]
+        ip = ip + 1
+        if ctrl lt 32
+            ctrl = ctrl + 1
+            if op + ctrl gt size or ip + ctrl gt n
+                return bad
+            for k in range[ctrl]
+                out = set[out, op + k, sys.byte[packed, ip + k]]
+            op = op + ctrl
+            ip = ip + ctrl
+        else
+            run = shift[ctrl, -5]
+            back = op - shift[bitand[ctrl, 31], 8] - 1
+            if ip gte n
+                return bad
+            if run eq 7
+                run = run + sys.byte[packed, ip]
+                ip = ip + 1
+                if ip gte n
+                    return bad
+            back = back - sys.byte[packed, ip]
+            ip = ip + 1
+            if op + run + 2 gt size or back lt 0 or back gte op
+                return bad
+            k = 0
+            while k lt run + 2
+                out = set[out, op, sys.byte[out, back]]
+                op = op + 1
+                back = back + 1
+                k = k + 1
+        going = ip lt n
+    out
+
+--- ---- VTK ----
+
+--- the model of a legacy VTK file's text (its bytes), as three's VTKLoader
+--- reads it: a POLYDATA's points, its polygons (each fanned from its first
+--- corner) and triangle strips, and from its point or cell data colours
+--- (`COLOR_SCALARS name 3`, in sRGB, taken into linear light) and normals.
+--- A colour a cell makes each triangle's corners their own (three takes
+--- its colour into linear light twice over). VTK's binary and XML forms
+--- are not read (a model that says so)
+fn read_vtk[data]
+    n = len[data]
+    head = _decoded[sys.slice[data, 0, min[250, n]]]
+    meta = split[head, '\n']
+    if 'xml' in meta[0]
+        return _failed['VTK\'s XML form is not read (Lory reads its legacy text)']
+    if len[meta] lt 3
+        return _failed['not a legacy VTK file: it has no third line to say ASCII']
+    if not ('ASCII' in meta[2])
+        return _failed['VTK\'s binary form is not read (Lory reads its legacy text)']
+    _vtk_text[_decoded[data]]
+
+--- whether a line of a VTK file begins with a word (not a digit, a point,
+--- a minus or space), so is no line of numbers
+fn _vtk_word[line]
+    if line eq ''
+        return false
+    not (slice[line, 0, 1] in '0123456789.-')
+
+--- the numbers of a line of a VTK file
+fn _vtk_floats[line]
+    out = []
+    for w in js_fields[line]
+        if w ne ''
+            out = push[out, js_float[w]]
+    out
+
+--- a legacy VTK file's text
+fn _vtk_text[t]
+    indices = []
+    positions = []
+    colors = []
+    normals = []
+    in_points = false
+    in_polygons = false
+    in_strips = false
+    in_point_data = false
+    in_cell_data = false
+    in_color = false
+    in_normals = false
+    connected = '^([0-9]+)[\t\n\x0B\x0C\r \xA0\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+([0-9\t\n\x0B\x0C\r \xA0\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]*)'
+    for raw in split[t, '\n']
+        line = _js_trim[raw]
+        if starts[line, 'DATASET']
+            dataset = _piece[split[line, ' '], 1]
+            if dataset ne 'POLYDATA'
+                return _failed['VTK\'s DATASET `dataset` is not read (Lory reads POLYDATA)']
+        else if in_points
+            if not _vtk_word[line]
+                numbers = _vtk_floats[line]
+                k = 0
+                while k + 2 lt len[numbers]
+                    positions = push[positions, numbers[k]]
+                    positions = push[positions, numbers[k + 1]]
+                    positions = push[positions, numbers[k + 2]]
+                    k = k + 3
+        else if in_polygons or in_strips
+            found = find[line, connected]
+            if found.ok
+                n = js_int['`found.groups[1]`']
+                inds = js_fields['`found.groups[2]`']
+                if n gte 3.0
+                    if in_polygons
+                        first = js_int[_piece[inds, 0]]
+                        j = 0
+                        while 0.0 + j lt n - 2.0
+                            indices = push[indices, first]
+                            indices = push[indices, js_int[_piece[inds, j + 1]]]
+                            indices = push[indices, js_int[_piece[inds, j + 2]]]
+                            j = j + 1
+                    else
+                        j = 0
+                        while 0.0 + j lt n - 2.0
+                            indices = push[indices, js_int[_piece[inds, j]]]
+                            if j % 2 eq 1
+                                indices = push[indices, js_int[_piece[inds, j + 2]]]
+                                indices = push[indices, js_int[_piece[inds, j + 1]]]
+                            else
+                                indices = push[indices, js_int[_piece[inds, j + 1]]]
+                                indices = push[indices, js_int[_piece[inds, j + 2]]]
+                            j = j + 1
+        else if in_point_data or in_cell_data
+            if (in_color or in_normals) and not _vtk_word[line]
+                numbers = _vtk_floats[line]
+                k = 0
+                while k + 2 lt len[numbers]
+                    if in_color
+                        lit = linear_color[numbers[k], numbers[k + 1], numbers[k + 2]]
+                        colors = push[colors, lit[0]]
+                        colors = push[colors, lit[1]]
+                        colors = push[colors, lit[2]]
+                    else
+                        normals = push[normals, numbers[k]]
+                        normals = push[normals, numbers[k + 1]]
+                        normals = push[normals, numbers[k + 2]]
+                    k = k + 3
+        if starts[line, 'POLYGONS ']
+            in_polygons = true
+            in_points = false
+            in_strips = false
+        else if starts[line, 'POINTS ']
+            in_polygons = false
+            in_points = true
+            in_strips = false
+        else if starts[line, 'TRIANGLE_STRIPS ']
+            in_polygons = false
+            in_points = false
+            in_strips = true
+        else if matches[line, '^POINT_DATA[ ]+[0-9]']
+            in_point_data = true
+            in_points = false
+            in_polygons = false
+            in_strips = false
+        else if matches[line, '^CELL_DATA[ ]+[0-9]']
+            in_cell_data = true
+            in_points = false
+            in_polygons = false
+            in_strips = false
+        else if matches[line, '^COLOR_SCALARS[ ]+[A-Za-z0-9_]+[ ]+3']
+            in_color = true
+            in_normals = false
+            in_points = false
+            in_polygons = false
+            in_strips = false
+        else if matches[line, '^NORMALS[ ]+[A-Za-z0-9_]+[ ]+[A-Za-z0-9_]']
+            in_normals = true
+            in_color = false
+            in_points = false
+            in_polygons = false
+            in_strips = false
+    index = _index_kept[indices]
+    kept_normals = []
+    if len[normals] eq len[positions]
+        kept_normals = normals
+    kept_colors = []
+    expanded = false
+    if len[colors] ne len[indices]
+        if len[colors] eq len[positions]
+            kept_colors = colors
+    else
+        expanded = true
+        positions = _unindexed[positions, 3, index, 'float32']
+        if len[kept_normals] gt 0
+            kept_normals = _unindexed[kept_normals, 3, index, 'float32']
+        k = 0
+        while k + 2 lt len[colors]
+            lit = linear_color[colors[k], colors[k + 1], colors[k + 2]]
+            for corner in range[3]
+                kept_colors = push[kept_colors, lit[0]]
+                kept_colors = push[kept_colors, lit[1]]
+                kept_colors = push[kept_colors, lit[2]]
+            k = k + 3
+        index = slice[[0], 0, 0]
+    form = 'points'
+    if len[index] gt 0 or (expanded and len[positions] gt 0)
+        form = 'mesh'
+    _model_of[[Part['', form, geometry.Geometry[positions, kept_normals, [], index, []], kept_colors, [plain_material['']]]]]
+
+--- ---- OFF ----
+
+--- the model of an OFF file (Lory's own reading: three has no OFF loader):
+--- `OFF` and its kin (`COFF` colours, `NOFF` normals, `STOFF` uvs, after
+--- each vertex's position), the counts of vertices and faces, a vertex a
+--- line, then a face a line — its count of corners, its corners (fanned
+--- into triangles from its first), and its colour where one follows.
+--- Colours of numbers above 1 are read as 0 to 255; all are in sRGB, taken
+--- into linear light. A face's colour makes its triangles' corners their
+--- own. `#` begins a comment
+fn read_off[words]
+    lines = slice[[''], 0, 0]
+    for raw in split[_without_bom[words], '\n']
+        line = raw
+        cut = _place_of[line, '#']
+        if cut gte 0
+            line = slice[line, 0, cut]
+        line = _js_trim[line]
+        if line ne ''
+            lines = push[lines, line]
+    if len[lines] eq 0
+        return _failed['an OFF file begins with OFF; this one is empty']
+    head = js_fields[lines[0]]
+    found = find[head[0], '^(ST)?(C)?(N)?(4)?(n)?OFF$']
+    if not found.ok
+        return _failed['an OFF file begins with OFF; this one begins \'`head[0]`\'']
+    keyword = head[0]
+    with_uvs = starts[keyword, 'ST']
+    with_colors = 'C' in keyword
+    with_normals = 'N' in keyword
+    counts = slice[head, 1, len[head]]
+    at = 1
+    if len[counts] eq 0 and len[lines] gt 1
+        counts = js_fields[lines[1]]
+        at = 2
+    if len[counts] lt 2
+        return _failed['the OFF file gives no counts of vertices and faces']
+    nv = js_int[counts[0]]
+    nf = js_int[counts[1]]
+    if not (_finite[nv] and _finite[nf]) or nv lt 0.0 or nf lt 0.0
+        return _failed['the OFF file\'s counts are not whole numbers']
+    vertices = floor[nv]
+    faces = floor[nf]
+    if at + vertices + faces gt len[lines]
+        return _failed['the OFF file counts `vertices` vertices and `faces` faces but holds `len[lines] - at` lines after its counts']
+    positions = []
+    normals = []
+    uvs = []
+    vertex_colors = []
+    for i in range[vertices]
+        v = _vtk_floats[lines[at + i]]
+        if len[v] lt 3
+            return _failed['the OFF file\'s vertex `i` gives fewer than three numbers']
+        positions = push[positions, v[0]]
+        positions = push[positions, v[1]]
+        positions = push[positions, v[2]]
+        k = 3
+        if with_normals
+            normals = push[normals, _at[v, 3.0]]
+            normals = push[normals, _at[v, 4.0]]
+            normals = push[normals, _at[v, 5.0]]
+            k = 6
+        if with_colors
+            rgb = _off_color[v, k]
+            vertex_colors = push[vertex_colors, rgb[0]]
+            vertex_colors = push[vertex_colors, rgb[1]]
+            vertex_colors = push[vertex_colors, rgb[2]]
+            k = k + 3
+            if len[v] - k eq 1 or len[v] - k eq 3
+                k = k + 1
+        if with_uvs
+            uvs = push[uvs, _at[v, 0.0 + k]]
+            uvs = push[uvs, _at[v, 0.0 + k + 1.0]]
+    indices = slice[[0], 0, 0]
+    face_colors = []
+    colored_faces = false
+    for f in range[faces]
+        v = _vtk_floats[lines[at + vertices + f]]
+        if len[v] eq 0
+            return _failed['the OFF file\'s face `f` is empty']
+        n = floor[_at[v, 0.0]]
+        if n lt 0 or len[v] lt n + 1
+            return _failed['the OFF file\'s face `f` counts `n` corners but names `len[v] - 1`']
+        for c in range[n]
+            k = v[c + 1]
+            if not _finite[k] or k lt 0.0 or k gte 0.0 + vertices
+                return _failed['the OFF file\'s face `f` names vertex `k`, past its `vertices` vertices']
+        rgb = _three[1.0, 1.0, 1.0]
+        if len[v] - n - 1 gte 3
+            rgb = _off_color[v, n + 1]
+            colored_faces = true
+        j = 1
+        while j + 1 lt n
+            indices = push[indices, floor[v[1]]]
+            indices = push[indices, floor[v[j + 1]]]
+            indices = push[indices, floor[v[j + 2]]]
+            for corner in range[3]
+                face_colors = push[face_colors, rgb[0]]
+                face_colors = push[face_colors, rgb[1]]
+                face_colors = push[face_colors, rgb[2]]
+            j = j + 1
+    if colored_faces
+        positions = _unindexed[positions, 3, indices, 'float32']
+        if len[normals] gt 0
+            normals = _unindexed[normals, 3, indices, 'float32']
+        if len[uvs] gt 0
+            uvs = _unindexed[uvs, 2, indices, 'float32']
+        g = geometry.Geometry[positions, normals, uvs, slice[[0], 0, 0], []]
+        return _model_of[[Part['', 'mesh', g, face_colors, [plain_material['']]]]]
+    form = 'mesh'
+    if faces eq 0
+        form = 'points'
+    _model_of[[Part['', form, geometry.Geometry[positions, normals, uvs, indices, []], vertex_colors, [plain_material['']]]]]
+
+--- an OFF colour from three numbers at a place (0 to 255 where one is
+--- above 1), in linear light
+fn _off_color[v, k]
+    r = _at[v, 0.0 + k]
+    g = _at[v, 0.0 + k + 1.0]
+    b = _at[v, 0.0 + k + 2.0]
+    if r gt 1.0 or g gt 1.0 or b gt 1.0
+        r = r / 255.0
+        g = g / 255.0
+        b = b / 255.0
+    linear_color[r, g, b]
+
+--- ---- any file ----
+
+--- the model of a file of a name (its extension says how it is read: obj,
+--- stl, ply, xyz, pcd, vtk, off), from its bytes; a model that says so
+--- where the extension is none of them
+fn model_of[name, data]
+    lowered = lower[name]
+    if ends[lowered, '.obj']
+        return read_obj[_decoded[data]]
+    if ends[lowered, '.stl']
+        return read_stl[data]
+    if ends[lowered, '.ply']
+        return read_ply[data]
+    if ends[lowered, '.xyz']
+        return read_xyz[_decoded[data]]
+    if ends[lowered, '.pcd']
+        return read_pcd[data]
+    if ends[lowered, '.vtk']
+        return read_vtk[data]
+    if ends[lowered, '.off']
+        return read_off[_decoded[data]]
+    _failed['\'`name`\' is no model file Lory reads (obj, stl, ply, xyz, pcd, vtk, off)']
+
+--- ---- writing ----
+
+--- Lory's writers write a model as three's exporters write the objects
+--- three reads it into: each number as three holds it, in single
+--- precision, placed by the identity's matrix and made unit as three's
+--- vectors do it, and written as JavaScript writes numbers
+
+--- a part's numbers at a vertex's place (three's, single precision; not
+--- numbers past its end)
+fn _triple_at[xs, i]
+    _three[_at[xs, 3.0 * i], _at[xs, 3.0 * i + 1.0], _at[xs, 3.0 * i + 2.0]]
+
+--- a position placed as three's exporters place it, through the identity's
+--- matrix as `applyMatrix4` multiplies (minus zero becomes zero; a number
+--- past the floats' range makes all three not numbers)
+fn _placed[v]
+    x = v[0]
+    y = v[1]
+    z = v[2]
+    w = 1.0 / (0.0 * x + 0.0 * y + 0.0 * z + 1.0)
+    _three[(1.0 * x + 0.0 * y + 0.0 * z + 0.0) * w, (0.0 * x + 1.0 * y + 0.0 * z + 0.0) * w, (0.0 * x + 0.0 * y + 1.0 * z + 0.0) * w]
+
+--- a normal as three's exporters turn one, through the identity's normal
+--- matrix as `applyMatrix3` multiplies, then made unit
+fn _turned[v]
+    x = v[0]
+    y = v[1]
+    z = v[2]
+    _unit3[1.0 * x + 0.0 * y + 0.0 * z, 0.0 * x + 1.0 * y + 0.0 * z, 0.0 * x + 0.0 * y + 1.0 * z]
+
+--- three numbers as JavaScript writes them, a space between
+fn _three_words[v]
+    a = number_text[v[0]]
+    b = number_text[v[1]]
+    c = number_text[v[2]]
+    '`a` `b` `c`'
+
+--- a colour of linear light in sRGB, as three's exporters write one
+fn _srgb_of[v]
+    _three[_srgb[v[0]], _srgb[v[1]], _srgb[v[2]]]
+
+--- how many vertices a part's positions hold (three's count)
+fn _vertices_of[p]
+    len[p.geometry.positions] / 3
+
+--- the corners of a part's triangles, three to a triangle: its indices, or
+--- its vertices in order
+fn _corners_of[g, vertices]
+    if len[g.indices] gt 0
+        return g.indices
+    out = []
+    i = 0
+    while i lt vertices
+        out = push[out, i]
+        out = push[out, i + 1]
+        out = push[out, i + 2]
+        i = i + 3
+    out
+
+--- an index of a part's (not a number past its end)
+fn _index_at[xs, place]
+    if place lt 0 or place gte len[xs]
+        return _nan[]
+    0.0 + xs[place]
+
+--- numbers as the bytes of their single-precision floats, one after
+--- another (little-endian where `little`)
+fn _float_chunk[xs, little]
+    b = sys.float_bytes[xs, 4, little]
+    if not b.ok
+        return sys.bytes[0]
+    b
+
+--- a whole number as `width` bytes (little-endian where `little`), the low
+--- bytes of its two's complement
+fn _whole_chunk[n, width, little]
+    b = sys.pack[n, width, little = little]
+    if not b.ok
+        return sys.bytes[0]
+    b
+
+--- ---- OBJ ----
+
+--- a corner of an OBJ face: its vertex, and its uv and normal where the
+--- part has them, each counted from 1 across the file (`k` counts from 1
+--- within the part)
+fn _corner_words[k, vertices_before, uvs_before, normals_before, has_uv, has_normal]
+    v = number_text[vertices_before + k]
+    if not has_uv and not has_normal
+        return v
+    t = ''
+    if has_uv
+        t = number_text[uvs_before + k]
+    n = ''
+    if has_normal
+        place = number_text[normals_before + k]
+        n = '/`place`'
+    '`v`/`t``n`'
+
+--- the model as OBJ text, as three's OBJExporter writes the objects:
+--- each part an object (`o` and its name); a mesh with one named material
+--- says it (`usemtl`), then its vertices (`v`, with its colour in sRGB
+--- where the part has colours), uvs (`vt`), normals (`vn`, made unit) and
+--- triangles (`f`, a corner's vertex, uv and normal); lines are `l` pairs
+--- of their vertices and points one `p` of them all. Materials are not
+--- written (three's exporter writes no MTL), nor a mesh's groups
+fn obj_text[m]
+    out = slice[[''], 0, 0]
+    vertices_before = 0.0
+    uvs_before = 0.0
+    normals_before = 0.0
+    for p in m.parts
+        g = p.geometry
+        ps = singles[g.positions]
+        cs = singles[p.colors]
+        vertices = _vertices_of[p]
+        out = push[out, 'o `p.name`']
+        if p.form eq 'mesh' and len[p.materials] eq 1
+            named = p.materials[0].name
+            if named ne ''
+                out = push[out, 'usemtl `named`']
+        has_colors = len[cs] gt 0 and p.form ne 'lines'
+        for i in range[vertices]
+            words = _three_words[_placed[_triple_at[ps, i]]]
+            if has_colors
+                shade = _three_words[_srgb_of[_triple_at[cs, i]]]
+                words = '`words` `shade`'
+            out = push[out, 'v `words`']
+        if p.form eq 'mesh'
+            us = singles[g.uvs]
+            ns = singles[g.normals]
+            uv_count = len[us] / 2
+            normal_count = len[ns] / 3
+            for i in range[uv_count]
+                u = number_text[us[2 * i]]
+                v = number_text[us[2 * i + 1]]
+                out = push[out, 'vt `u` `v`']
+            for i in range[normal_count]
+                turned = _three_words[_turned[_triple_at[ns, i]]]
+                out = push[out, 'vn `turned`']
+            corners = _corners_of[g, vertices]
+            k = 0
+            while k lt len[corners]
+                a = _corner_words[_index_at[corners, k] + 1.0, vertices_before, uvs_before, normals_before, uv_count gt 0, normal_count gt 0]
+                b = _corner_words[_index_at[corners, k + 1] + 1.0, vertices_before, uvs_before, normals_before, uv_count gt 0, normal_count gt 0]
+                c = _corner_words[_index_at[corners, k + 2] + 1.0, vertices_before, uvs_before, normals_before, uv_count gt 0, normal_count gt 0]
+                out = push[out, 'f `a` `b` `c`']
+                k = k + 3
+            uvs_before = uvs_before + uv_count
+            normals_before = normals_before + normal_count
+        else if p.form eq 'lines'
+            if len[g.indices] gt 0
+                k = 0
+                while k lt len[g.indices] - 1
+                    a = number_text[vertices_before + _index_at[g.indices, k] + 1.0]
+                    b = number_text[vertices_before + _index_at[g.indices, k + 1] + 1.0]
+                    out = push[out, 'l `a` `b`']
+                    k = k + 2
+            else
+                j = 1
+                while j lt vertices
+                    a = number_text[vertices_before + j]
+                    b = number_text[vertices_before + j + 1]
+                    out = push[out, 'l `a` `b`']
+                    j = j + 2
+        else if len[ps] gt 0
+            each = slice[[''], 0, 0]
+            for j in range[vertices]
+                place = number_text[vertices_before + j + 1]
+                each = push[each, '`place` ']
+            listed = join[each, '']
+            out = push[out, 'p `listed`']
+        vertices_before = vertices_before + vertices
+    if len[out] eq 0
+        return ''
+    whole = join[out, '\n']
+    '`whole`\n'
+
+--- ---- STL ----
+
+--- a triangle as three's STLExporter writes it: its normal (the turn from
+--- its second corner to its third and first, made unit twice over) and
+--- its corners, each placed
+struct _Facet [normal, a, b, c]
+
+fn _facet_of[ps, a, b, c]
+    va = _placed[_triple_at[ps, a]]
+    vb = _placed[_triple_at[ps, b]]
+    vc = _placed[_triple_at[ps, c]]
+    cb = _three[vc[0] - vb[0], vc[1] - vb[1], vc[2] - vb[2]]
+    ab = _three[va[0] - vb[0], va[1] - vb[1], va[2] - vb[2]]
+    turn = _unit3[cb[1] * ab[2] - cb[2] * ab[1], cb[2] * ab[0] - cb[0] * ab[2], cb[0] * ab[1] - cb[1] * ab[0]]
+    _Facet[_unit3[turn[0], turn[1], turn[2]], va, vb, vc]
+
+--- every triangle of the model's meshes, in order (its lines and points
+--- are not written: an STL holds triangles)
+fn _facets_of[m]
+    out = []
+    for p in m.parts
+        if p.form eq 'mesh'
+            ps = singles[p.geometry.positions]
+            corners = _corners_of[p.geometry, _vertices_of[p]]
+            k = 0
+            while k lt len[corners]
+                out = push[out, _facet_of[ps, _index_at[corners, k], _index_at[corners, k + 1], _index_at[corners, k + 2]]]
+                k = k + 3
+    out
+
+--- the model's meshes as STL text, as three's STLExporter writes them: a
+--- solid named `exported`, a facet a triangle
+fn stl_text[m]
+    out = ['solid exported']
+    for f in _facets_of[m]
+        normal = _three_words[f.normal]
+        a = _three_words[f.a]
+        b = _three_words[f.b]
+        c = _three_words[f.c]
+        out = push[out, '\tfacet normal `normal`']
+        out = push[out, '\t\touter loop']
+        out = push[out, '\t\t\tvertex `a`']
+        out = push[out, '\t\t\tvertex `b`']
+        out = push[out, '\t\t\tvertex `c`']
+        out = push[out, '\t\tendloop']
+        out = push[out, '\tendfacet']
+    out = push[out, 'endsolid exported']
+    whole = join[out, '\n']
+    '`whole`\n'
+
+--- the model's meshes as binary STL, as three's STLExporter writes them:
+--- 80 bytes of nothing, how many triangles, and each triangle's normal
+--- and corners in single precision (little-endian), with no colour
+fn stl_bytes[m]
+    facets = _facets_of[m]
+    out = concat[sys.bytes[80], _whole_chunk[len[facets], 4, true]]
+    zero = sys.bytes[2]
+    for f in facets
+        numbers = concat[concat[f.normal, f.a], concat[f.b, f.c]]
+        out = concat[out, _float_chunk[numbers, true]]
+        out = concat[out, zero]
+    out
+
+--- ---- PLY ----
+
+--- what three's PLYExporter writes of a model: its meshes and points (not
+--- its lines), how many vertices and triangles, whether each vertex has a
+--- normal, a uv and a colour (any part's having one gives every vertex
+--- one), and whether triangles are written (not where there are points)
+struct _Laid [parts, vertices, faces, normals, uvs, colors, triangles, whole]
+
+fn _laid_of[m]
+    parts = []
+    vertices = 0
+    faces = 0
+    normals = false
+    uvs = false
+    colors = false
+    triangles = true
+    whole = true
+    for p in m.parts
+        if len[p.geometry.positions] gt 0 and p.form ne 'lines'
+            parts = push[parts, p]
+            vertices = vertices + _vertices_of[p]
+            normals = normals or len[p.geometry.normals] gt 0
+            colors = colors or len[p.colors] gt 0
+            if p.form eq 'mesh'
+                uvs = uvs or len[p.geometry.uvs] gt 0
+                corners = _vertices_of[p]
+                if len[p.geometry.indices] gt 0
+                    corners = len[p.geometry.indices]
+                faces = faces + corners / 3
+                whole = whole and corners % 3 eq 0
+            else
+                triangles = false
+    _Laid[parts, vertices, faces, normals, uvs, colors, triangles, whole or not triangles]
+
+--- a PLY's header, as three's PLYExporter writes it: its format, its
+--- vertices' properties (all single precision) and its faces
+fn _ply_head[laid, format]
+    out = ['ply', 'format `format` 1.0', 'element vertex `laid.vertices`', 'property float x', 'property float y', 'property float z']
+    if laid.normals
+        out = concat[out, ['property float nx', 'property float ny', 'property float nz']]
+    if laid.uvs
+        out = concat[out, ['property float s', 'property float t']]
+    if laid.colors
+        out = concat[out, ['property float red', 'property float green', 'property float blue']]
+    if laid.triangles
+        out = concat[out, ['element face `laid.faces`', 'property list uchar int vertex_index']]
+    out = push[out, 'end_header']
+    whole = join[out, '\n']
+    '`whole`\n'
+
+--- a part's numbers in single precision, as three holds them: its
+--- positions, normals, uvs and colours
+struct _Held [positions, normals, uvs, colors]
+
+fn _held_of[p]
+    g = p.geometry
+    _Held[singles[g.positions], singles[g.normals], singles[g.uvs], singles[p.colors]]
+
+--- a vertex's numbers as three's PLYExporter writes them: its place, its
+--- normal (made unit, or none as 0 0 0), its uv (or 0 0) and its colour
+--- in sRGB (or white), each where the file has them
+fn _ply_numbers[laid, h, i]
+    out = _placed[_triple_at[h.positions, i]]
+    if laid.normals
+        if len[h.normals] gt 0
+            out = concat[out, _turned[_triple_at[h.normals, i]]]
+        else
+            out = concat[out, _three[0.0, 0.0, 0.0]]
+    if laid.uvs
+        if len[h.uvs] gt 0
+            out = push[out, _at[h.uvs, 2.0 * i]]
+            out = push[out, _at[h.uvs, 2.0 * i + 1.0]]
+        else
+            out = push[push[out, 0.0], 0.0]
+    if laid.colors
+        if len[h.colors] gt 0
+            out = concat[out, _srgb_of[_triple_at[h.colors, i]]]
+        else
+            out = concat[out, _three[1.0, 1.0, 1.0]]
+    out
+
+--- the triangles three's PLYExporter writes, each its three corners
+--- counted across the file
+fn _ply_triangles[laid]
+    out = []
+    written = 0
+    for p in laid.parts
+        vertices = _vertices_of[p]
+        corners = _corners_of[p.geometry, vertices]
+        k = 0
+        while k + 2 lt len[corners]
+            out = push[out, corners[k] + written]
+            out = push[out, corners[k + 1] + written]
+            out = push[out, corners[k + 2] + written]
+            k = k + 3
+        written = written + vertices
+    out
+
+--- the model as PLY text, as three's PLYExporter writes it: a line a
+--- vertex, then a line a triangle (`3` and its corners), and a blank line;
+--- nothing ('') where a mesh's corners are not whole triangles, as three
+--- writes none
+fn ply_text[m]
+    laid = _laid_of[m]
+    if not laid.whole
+        return ''
+    out = slice[[''], 0, 0]
+    for p in laid.parts
+        h = _held_of[p]
+        for i in range[_vertices_of[p]]
+            words = slice[[''], 0, 0]
+            for x in _ply_numbers[laid, h, i]
+                words = push[words, number_text[x]]
+            out = push[out, join[words, ' ']]
+    if laid.triangles
+        t = _ply_triangles[laid]
+        k = 0
+        while k + 2 lt len[t]
+            out = push[out, '3 `t[k]` `t[k + 1]` `t[k + 2]`']
+            k = k + 3
+    head = _ply_head[laid, 'ascii']
+    body = join[out, '\n']
+    if len[out] eq 0
+        return '`head`\n'
+    '`head``body`\n\n'
+
+--- the model as binary PLY, as three's PLYExporter writes it, big-endian
+--- unless `little`: each vertex's numbers in single precision, then each
+--- triangle as a byte 3 and its corners as 32-bit whole numbers; no bytes
+--- where a mesh's corners are not whole triangles
+fn ply_bytes[m, little = false]
+    laid = _laid_of[m]
+    if not laid.whole
+        return sys.bytes[0]
+    format = 'binary_big_endian'
+    if little
+        format = 'binary_little_endian'
+    out = sys.bytes[_ply_head[laid, format]]
+    for p in laid.parts
+        h = _held_of[p]
+        for i in range[_vertices_of[p]]
+            out = concat[out, _float_chunk[_ply_numbers[laid, h, i], little]]
+    if laid.triangles
+        t = _ply_triangles[laid]
+        k = 0
+        while k + 2 lt len[t]
+            out = push[out, 3]
+            out = concat[out, _whole_chunk[t[k], 4, little]]
+            out = concat[out, _whole_chunk[t[k + 1], 4, little]]
+            out = concat[out, _whole_chunk[t[k + 2], 4, little]]
+            k = k + 3
+    out
+
+--- ---- glTF ----
+
+--- a number as JSON.stringify writes it (not a number, or past the
+--- floats' range, as null)
+fn _json_number[x]
+    if not _finite[x]
+        return 'null'
+    number_text[x]
+
+--- a text as JSON.stringify writes it: in quotes, a quote, a backslash and
+--- the controls escaped
+fn _json_words[t]
+    out = slice[[''], 0, 0]
+    for ch in split[t, '']
+        n = code[ch]
+        if ch eq '"'
+            out = push[out, '\\"']
+        else if ch eq '\\'
+            out = push[out, '\\\\']
+        else if n eq 8
+            out = push[out, '\\b']
+        else if n eq 9
+            out = push[out, '\\t']
+        else if n eq 10
+            out = push[out, '\\n']
+        else if n eq 12
+            out = push[out, '\\f']
+        else if n eq 13
+            out = push[out, '\\r']
+        else if n lt 32
+            hex_digits = _hex4[n]
+            out = push[out, '\\u`hex_digits`']
+        else
+            out = push[out, ch]
+    inner = join[out, '']
+    '"`inner`"'
+
+--- a number below 65536 as four hexadecimal digits, lower case
+fn _hex4[n]
+    digits = '0123456789abcdef'
+    out = ''
+    for place in [4096, 256, 16, 1]
+        d = (n / place) % 16
+        digit = slice[digits, d, d + 1]
+        out = '`out``digit`'
+    out
+
+--- numbers as a JSON list
+fn _json_list[xs]
+    out = slice[[''], 0, 0]
+    for x in xs
+        out = push[out, _json_number[x]]
+    inner = join[out, ',']
+    '[`inner`]'
+
+--- the smaller of two numbers as JavaScript's Math.min answers (not a
+--- number where either is not one)
+fn _js_min[a, b]
+    if _is_nan[a] or _is_nan[b]
+        return _nan[]
+    if b lt a
+        return b
+    a
+
+--- the larger, as Math.max answers
+fn _js_max[a, b]
+    if _is_nan[a] or _is_nan[b]
+        return _nan[]
+    if b gt a
+        return b
+    a
+
+--- what three's GLTFExporter has written of a model so far: its buffer
+--- views, accessors, materials (and the materials they are, with whether
+--- their part has colours, to write each once), meshes and nodes as
+--- JSON, and the buffer's bytes
+struct _Gltf [views, accessors, materials, seen, colored, meshes, nodes, data]
+
+--- an accessor of a part's numbers (`size` to an item, from item `first`,
+--- `count` of them) and its buffer view, as three's exporter writes them:
+--- single-precision floats (component 5126) or whole numbers of 16 or 32
+--- bits (5123, 5125), each view's bytes padded to four, its least and
+--- greatest numbers
+fn _accessor_added[w, xs, size, component, first, count, target]
+    lo = []
+    hi = []
+    for a in range[size]
+        lo = push[lo, _infinity[]]
+        hi = push[hi, 0.0 - _infinity[]]
+    numbers = []
+    for i in range[count]
+        for a in range[size]
+            v = _at[xs, 0.0 + (first + i) * size + a]
+            numbers = push[numbers, v]
+            lo[a] = _js_min[lo[a], v]
+            hi[a] = _js_max[hi[a], v]
+    width = 4
+    if component eq 5123
+        width = 2
+    stride = size * width
+    if target eq 34962
+        stride = ((stride + 3) / 4) * 4
+    length = ((count * stride + 3) / 4) * 4
+    chunk = sys.bytes[0]
+    if component eq 5126
+        chunk = _float_chunk[numbers, true]
+    else
+        for v in numbers
+            chunk = concat[chunk, _whole_chunk[floor[v], width, true]]
+    while len[chunk] lt length
+        chunk = push[chunk, 0]
+    offset = len[w.data]
+    w.data = concat[w.data, chunk]
+    stride_words = ''
+    if target eq 34962
+        stride_words = ',"byteStride":`stride`'
+    w.views = push[w.views, '{"buffer":0,"byteOffset":`offset`,"byteLength":`length`,"target":`target``stride_words`}']
+    kinds = ['SCALAR', 'VEC2', 'VEC3', 'VEC4']
+    kind = kinds[size - 1]
+    view_place = len[w.views] - 1
+    most = _json_list[hi]
+    least = _json_list[lo]
+    w.accessors = push[w.accessors, '{"bufferView":`view_place`,"componentType":`component`,"count":`count`,"max":`most`,"min":`least`,"type":"`kind`"}']
+    w
+
+--- whether two materials are one: every number and word the same
+fn _same_material[a, b]
+    if a.name ne b.name or a.texture ne b.texture or a.transparent ne b.transparent or a.smooth ne b.smooth
+        return false
+    if not (a.shininess eq b.shininess and a.opacity eq b.opacity)
+        return false
+    for k in range[3]
+        if not (a.color[k] eq b.color[k] and a.specular[k] eq b.specular[k] and a.emissive[k] eq b.emissive[k])
+            return false
+    true
+
+--- a material as three's exporter writes a Phong one (and a line's or
+--- points', which have no glow): metal-rough with its colour and opacity
+--- as the base where they are not white and whole, no metal and full
+--- roughness, its glow where it has one, blended where it is transparent,
+--- and its name
+fn _material_words[mat, glows]
+    base = ''
+    whole = mat.color[0] eq 1.0 and mat.color[1] eq 1.0 and mat.color[2] eq 1.0 and mat.opacity eq 1.0
+    if not whole
+        factor = _json_list[push[mat.color, mat.opacity]]
+        base = '"baseColorFactor":`factor`,'
+    out = '{"pbrMetallicRoughness":{`base`"metallicFactor":0,"roughnessFactor":1}'
+    if glows
+        e = mat.emissive
+        if _js_max[_js_max[e[0], e[1]], e[2]] gt 0.0
+            glow = _json_list[e]
+            out = '`out`,"emissiveFactor":`glow`'
+    if mat.transparent
+        out = '`out`,"alphaMode":"BLEND"'
+    if mat.name ne ''
+        named = _json_words[mat.name]
+        out = '`out`,"name":`named`'
+    '`out`}'
+
+--- the place among the written materials of a part's material, written
+--- where it is new
+fn _material_added[w, mat, glows, colored]
+    for i in range[len[w.seen]]
+        if w.colored[i] eq colored and _same_material[w.seen[i], mat]
+            return w
+    w.seen = push[w.seen, mat]
+    w.colored = push[w.colored, colored]
+    w.materials = push[w.materials, _material_words[mat, glows]]
+    w
+
+fn _material_place[w, mat, colored]
+    for i in range[len[w.seen]]
+        if w.colored[i] eq colored and _same_material[w.seen[i], mat]
+            return i
+    -1
+
+--- a part's normals as three's exporter takes them: as they are where
+--- each is of length one (within 0.0005), else each made unit (one of no
+--- length as 1 0 0), in single precision
+fn _gltf_normals[ns]
+    unit = true
+    count = len[ns] / 3
+    for i in range[count]
+        v = _triple_at[ns, i]
+        if abs[sqrt[v[0] * v[0] + v[1] * v[1] + v[2] * v[2]] - 1.0] gt 0.0005
+            unit = false
+    if unit
+        return ns
+    out = []
+    for i in range[count]
+        v = _triple_at[ns, i]
+        made = _three[1.0, v[1], v[2]]
+        if not (v[0] eq 0.0 and v[1] eq 0.0 and v[2] eq 0.0)
+            made = _unit3[v[0], v[1], v[2]]
+        out = concat[out, made]
+    singles[out]
+
+--- the model as glTF 2.0's JSON, its buffer within as a data URI, as
+--- three's GLTFExporter writes the objects (`JSON.stringify` of its
+--- answer): a scene of a node a part, named as it is, each with its mesh
+--- of one primitive (a part with several materials, one a group, its
+--- corners counted out where it has no indices), the part's positions,
+--- normals, colours and uvs as single-precision floats, its indices as
+--- whole numbers, and its materials (metal-rough, as three writes a
+--- Phong material; their pictures are not written). `generator` names
+--- the writer in the asset
+fn gltf_text[m, generator = 'Lory']
+    none = slice[[''], 0, 0]
+    w = _Gltf[none, none, none, slice[[plain_material['']], 0, 0], slice[[true], 0, 0], none, none, sys.bytes[0]]
+    for p in m.parts
+        h = _held_of[p]
+        attributes = slice[[''], 0, 0]
+        vertices = len[h.positions] / 3
+        if vertices gt 0
+            w = _accessor_added[w, h.positions, 3, 5126, 0, vertices, 34962]
+            attributes = push[attributes, '"POSITION":`len[w.accessors] - 1`']
+        if len[h.normals] gt 0
+            w = _accessor_added[w, _gltf_normals[h.normals], 3, 5126, 0, len[h.normals] / 3, 34962]
+            attributes = push[attributes, '"NORMAL":`len[w.accessors] - 1`']
+        if len[h.colors] gt 0
+            w = _accessor_added[w, h.colors, 3, 5126, 0, len[h.colors] / 3, 34962]
+            attributes = push[attributes, '"COLOR_0":`len[w.accessors] - 1`']
+        if len[h.uvs] gt 0
+            w = _accessor_added[w, h.uvs, 2, 5126, 0, len[h.uvs] / 2, 34962]
+            attributes = push[attributes, '"TEXCOORD_0":`len[w.accessors] - 1`']
+        named = ''
+        unnamed = ''
+        if p.name ne ''
+            words = _json_words[p.name]
+            named = '"name":`words`,'
+            unnamed = '"name":`words`'
+        if len[attributes] eq 0
+            w.nodes = push[w.nodes, '{`unnamed`}']
+        else
+            mode = 4
+            if p.form eq 'lines'
+                mode = 1
+            else if p.form eq 'points'
+                mode = 0
+            glows = p.form eq 'mesh'
+            colored = len[h.colors] gt 0
+            listed = join[attributes, ',']
+            primitives = slice[[''], 0, 0]
+            g = p.geometry
+            several = len[p.materials] gt 1
+            if several and len[g.groups] eq 0
+                w.nodes = push[w.nodes, '{`unnamed`}']
+            else
+                corners = []
+                for k in g.indices
+                    corners = push[corners, 0.0 + k]
+                if several and len[corners] eq 0
+                    for k in range[vertices]
+                        corners = push[corners, 0.0 + k]
+                component = 5123
+                for k in corners
+                    if k gte 65535.0
+                        component = 5125
+                ranges = []
+                if several
+                    ranges = g.groups
+                else
+                    ranges = push[push[push[[], 0], len[corners]], 0]
+                k = 0
+                while k + 2 lt len[ranges]
+                    at = ranges[k]
+                    count = ranges[k + 1]
+                    which = ranges[k + 2]
+                    indices = ''
+                    if len[corners] gt 0 and count gt 0
+                        w = _accessor_added[w, corners, 1, component, at, count, 34963]
+                        indices = ',"indices":`len[w.accessors] - 1`'
+                    mat = plain_material['']
+                    if which lt len[p.materials]
+                        mat = p.materials[which]
+                    w = _material_added[w, mat, glows, colored]
+                    place = _material_place[w, mat, colored]
+                    primitives = push[primitives, '{"mode":`mode`,"attributes":{`listed`}`indices`,"material":`place`}']
+                    k = k + 3
+                listed_primitives = join[primitives, ',']
+                w.meshes = push[w.meshes, '{"primitives":[`listed_primitives`]}']
+                mesh_place = len[w.meshes] - 1
+                w.nodes = push[w.nodes, '{`named`"mesh":`mesh_place`}']
+    made = _json_words[generator]
+    out = '{"asset":{"version":"2.0","generator":`made`}'
+    every = slice[[''], 0, 0]
+    for i in range[len[w.nodes]]
+        every = push[every, '`i`']
+    scene_nodes = join[every, ',']
+    if len[w.nodes] gt 0
+        out = '`out`,"scenes":[{"nodes":[`scene_nodes`]}],"scene":0'
+        nodes = join[w.nodes, ',']
+        out = '`out`,"nodes":[`nodes`]'
+    else
+        out = '`out`,"scenes":[{}],"scene":0'
+    if len[w.views] gt 0
+        views = join[w.views, ',']
+        uri = sys.base64[w.data]
+        accessors = join[w.accessors, ',']
+        out = '`out`,"bufferViews":[`views`],"buffers":[{"byteLength":`len[w.data]`,"uri":"data:application/octet-stream;base64,`uri`"}],"accessors":[`accessors`]'
+    if len[w.materials] gt 0
+        materials = join[w.materials, ',']
+        out = '`out`,"materials":[`materials`]'
+    if len[w.meshes] gt 0
+        meshes = join[w.meshes, ',']
+        out = '`out`,"meshes":[`meshes`]'
+    '`out`}'
+
+--- ---- drawing ----
+
+--- a piece of a model as Lory's space draws it: triangles (each corner's
+--- place, facing and picture's point, as `space.mesh` takes them) and the
+--- colour they are drawn in (`space.plain`'s, in sRGB)
+struct Piece [shape, color]
+
+--- a model's lines as Lory draws them over its scene: segments (two
+--- corners each, as `geometry.lines_drawn` takes them) in a colour
+struct Strand [lines, color]
+
+--- the least and the greatest corner of the box around a model's places
+--- (those that are numbers): [[x, y, z], [x, y, z]] (a box at the middle
+--- where it has none)
+fn bounds_of[m]
+    lo = _three[_infinity[], _infinity[], _infinity[]]
+    hi = _three[0.0 - _infinity[], 0.0 - _infinity[], 0.0 - _infinity[]]
+    for p in m.parts
+        ps = p.geometry.positions
+        for i in range[len[ps] / 3]
+            v = _triple_at[ps, i]
+            if _finite[v[0]] and _finite[v[1]] and _finite[v[2]]
+                for k in range[3]
+                    if v[k] lt lo[k]
+                        lo[k] = v[k]
+                    if v[k] gt hi[k]
+                        hi[k] = v[k]
+    if not (lo[0] lte hi[0])
+        return [_three[-0.5, -0.5, -0.5], _three[0.5, 0.5, 0.5]]
+    [lo, hi]
+
+--- how far across a model's box is, corner to corner (1 where it has none)
+fn size_of[m]
+    b = bounds_of[m]
+    d = sqrt[(b[1][0] - b[0][0]) ^ 2 + (b[1][1] - b[0][1]) ^ 2 + (b[1][2] - b[0][2]) ^ 2]
+    if d gt 0.0
+        return d
+    1.0
+
+--- the middle of a model's box
+fn middle_of[m]
+    b = bounds_of[m]
+    _three[(b[0][0] + b[1][0]) / 2.0, (b[0][1] + b[1][1]) / 2.0, (b[0][2] + b[1][2]) / 2.0]
+
+--- a colour of linear light, each part rounded to a 16th, as text: the
+--- key its triangles are gathered under
+fn _shade_key[v]
+    r = floor[_srgb[max[0.0, min[1.0, v[0]]]] * 15.0 + 0.5]
+    g = floor[_srgb[max[0.0, min[1.0, v[1]]]] * 15.0 + 0.5]
+    b = floor[_srgb[max[0.0, min[1.0, v[2]]]] * 15.0 + 0.5]
+    '`r` `g` `b`'
+
+--- the colour a key names, in sRGB
+fn _keyed_color[key]
+    parts = split[key, ' ']
+    lory.Color[_sixteenth[parts[0]], _sixteenth[parts[1]], _sixteenth[parts[2]], 1.0]
+
+--- a key's word as the share of full it names (its whole number of 15)
+fn _sixteenth[w]
+    n = float[w]
+    if not n.ok
+        return 0.0
+    n / 15.0
+
+--- a triangle of a model to draw: its corners' places, facings and
+--- picture's points (nine, nine and six numbers) and its colour's key
+struct _Drawn [at, facing, uv, key]
+
+--- the colour of linear light a corner is drawn in: its own (where the
+--- part has colours) times its material's
+fn _corner_shade[p, mat, i]
+    if len[p.colors] eq 0
+        return mat.color
+    c = _triple_at[p.colors, i]
+    _three[c[0] * mat.color[0], c[1] * mat.color[1], c[2] * mat.color[2]]
+
+--- a number that is one (0 where it is not)
+fn _number_or_zero[x]
+    if _finite[x]
+        return x
+    0.0
+
+--- the triangles of a mesh part to draw: a group's in its material's
+--- colour (and its corners' colours, averaged), facing as its normals say
+--- or, where it has none, as the triangle faces
+fn _mesh_drawn[p]
+    g = p.geometry
+    vertices = _vertices_of[p]
+    corners = _corners_of[g, vertices]
+    groups = g.groups
+    if len[groups] eq 0
+        groups = push[push[push[[], 0], len[corners]], 0]
+    out = slice[[_Drawn[[], [], [], '']], 0, 0]
+    k = 0
+    while k + 2 lt len[groups]
+        first = groups[k]
+        count = groups[k + 1]
+        mat = plain_material['']
+        if groups[k + 2] lt len[p.materials]
+            mat = p.materials[groups[k + 2]]
+        t = first
+        while t + 2 lt first + count and t + 2 lt len[corners]
+            at = []
+            facing = []
+            uv = []
+            shade = _three[0.0, 0.0, 0.0]
+            for j in range[3]
+                i = corners[t + j]
+                v = _triple_at[g.positions, i]
+                for x in v
+                    at = push[at, _number_or_zero[x]]
+                s = _corner_shade[p, mat, i]
+                shade = _three[shade[0] + s[0] / 3.0, shade[1] + s[1] / 3.0, shade[2] + s[2] / 3.0]
+                if len[g.uvs] gt 0
+                    uv = push[uv, _number_or_zero[_at[g.uvs, 2.0 * i]]]
+                    uv = push[uv, _number_or_zero[_at[g.uvs, 2.0 * i + 1.0]]]
+                else
+                    uv = push[push[uv, 0.0], 0.0]
+            own = _unit3[(at[6] - at[3]) * (at[2] - at[5]) - (at[8] - at[5]) * (at[1] - at[4]), (at[8] - at[5]) * (at[0] - at[3]) - (at[6] - at[3]) * (at[2] - at[5]), (at[6] - at[3]) * (at[1] - at[4]) - (at[7] - at[4]) * (at[0] - at[3])]
+            for j in range[3]
+                n = own
+                if len[g.normals] gt 0
+                    given = _triple_at[g.normals, corners[t + j]]
+                    if _finite[given[0]] and _finite[given[1]] and _finite[given[2]] and given[0] * given[0] + given[1] * given[1] + given[2] * given[2] gt 0.0
+                        n = _unit3[given[0], given[1], given[2]]
+                for x in n
+                    facing = push[facing, x]
+            out = push[out, _Drawn[at, facing, uv, _shade_key[shade]]]
+            t = t + 3
+        k = k + 3
+    out
+
+--- a point of a part as a small diamond to draw: an octahedron `size`
+--- across about it, in its colour
+fn _point_drawn[p, mat, i, size]
+    v = _triple_at[p.geometry.positions, i]
+    x = _number_or_zero[v[0]]
+    y = _number_or_zero[v[1]]
+    z = _number_or_zero[v[2]]
+    r = size / 2.0
+    tips = [[x + r, y, z], [x, y + r, z], [x - r, y, z], [x, y - r, z]]
+    key = _shade_key[_corner_shade[p, mat, i]]
+    out = slice[[_Drawn[[], [], [], '']], 0, 0]
+    for pole in [1.0, -1.0]
+        for k in range[4]
+            a = tips[k]
+            b = tips[(k + 1) % 4]
+            if pole lt 0.0
+                a = tips[(k + 1) % 4]
+                b = tips[k]
+            top = [x, y, z + pole * r]
+            at = []
+            for corner in [a, b, top]
+                for n in corner
+                    at = push[at, n]
+            facing = []
+            face = _unit3[(a[0] + b[0] + top[0]) / 3.0 - x, (a[1] + b[1] + top[1]) / 3.0 - y, (a[2] + b[2] + top[2]) / 3.0 - z]
+            for j in range[3]
+                for n in face
+                    facing = push[facing, n]
+            uv = []
+            for j in range[6]
+                uv = push[uv, 0.0]
+            out = push[out, _Drawn[at, facing, uv, key]]
+    out
+
+--- the pieces of a model's meshes and points, for `space.mesh` and
+--- `space.draw`: a mesh's triangles gathered by colour (its materials',
+--- times its corners' own where it has colours, to a 16th of each part),
+--- facing as its normals say or as each triangle faces where it has none;
+--- each of its points a small diamond `size` across (a 60th of the
+--- model's size where `size` is 0) in its colour. Its lines are
+--- `strands_of`
+fn pieces_of[m, size = 0.0]
+    across = size
+    if across lte 0.0
+        across = size_of[m] / 60.0
+    drawn = slice[[_Drawn[[], [], [], '']], 0, 0]
+    for p in m.parts
+        if p.form eq 'mesh'
+            drawn = concat[drawn, _mesh_drawn[p]]
+        else if p.form eq 'points'
+            mat = plain_material['']
+            if len[p.materials] gt 0
+                mat = p.materials[0]
+            for i in range[_vertices_of[p]]
+                drawn = concat[drawn, _point_drawn[p, mat, i, across]]
+    shades = slice[[''], 0, 0]
+    for d in drawn
+        if not (d.key in shades)
+            shades = push[shades, d.key]
+    out = slice[[Piece[space.Shape[[], [], []], lory.white[]]], 0, 0]
+    for key in shades
+        at = []
+        facing = []
+        uv = []
+        for d in drawn
+            if d.key eq key
+                at = concat[at, d.at]
+                facing = concat[facing, d.facing]
+                uv = concat[uv, d.uv]
+        out = push[out, Piece[space.Shape[at, facing, uv], _keyed_color[key]]]
+    out
+
+--- a model's lines, a strand a part, in its first material's colour
+fn strands_of[m]
+    out = slice[[Strand[geometry.Geometry[[], [], [], [], []], lory.white[]]], 0, 0]
+    for p in m.parts
+        if p.form eq 'lines' and len[p.geometry.positions] gt 0
+            mat = plain_material['']
+            if len[p.materials] gt 0
+                mat = p.materials[0]
+            g = p.geometry
+            segments = []
+            if len[g.indices] gt 0
+                for k in g.indices
+                    v = _triple_at[g.positions, k]
+                    for x in v
+                        segments = push[segments, _number_or_zero[x]]
+            else
+                for x in g.positions
+                    segments = push[segments, _number_or_zero[x]]
+            out = push[out, Strand[geometry.Geometry[segments, [], [], [], []], shown_color[mat.color]]]
+    out
+
+--- a model's pieces held on the page, as `name` 0, `name` 1 and on
+fn meshed[c, name, pieces]
+    for k in range[len[pieces]]
+        c = space.mesh[c, '`name` `k`', pieces[k].shape]
+    c
+
+--- a model drawn where `matrix` puts it, after `space.scene`: its pieces
+--- (held by `meshed` under `name`) each in its colour, lit, and its lines
+--- `width` pixels wide over them
+fn drawn[c, name, pieces, strands, matrix, width = 1.5]
+    for k in range[len[pieces]]
+        c = space.draw[c, '`name` `k`', matrix, space.plain[pieces[k].color]]
+    for s in strands
+        c = geometry.lines_drawn[c, s.lines, matrix, width * lory.px[c], s.color]
+    c
+
+--- ---- tests ----
+
+test numbers_are_written_as_javascript_writes_them[]
+    number_text[1.0] eq '1'
+    number_text[-0.0] eq '0'
+    number_text[0.1] eq '0.1'
+    number_text[-2.5] eq '-2.5'
+    number_text[123456789012.0] eq '123456789012'
+    number_text[float['1e21']] eq '1e+21'
+    number_text[float['1.5e21']] eq '1.5e+21'
+    number_text[float['1e20']] eq '100000000000000000000'
+    number_text[0.000001] eq '0.000001'
+    number_text[float['1e-7']] eq '1e-7'
+    number_text[float['1.25e-7']] eq '1.25e-7'
+    number_text[float['5e-324']] eq '5e-324'
+    number_text[0.1 + 0.2] eq '0.30000000000000004'
+    number_text[_nan[]] eq 'NaN'
+    number_text[_infinity[]] eq 'Infinity'
+    number_text[single[0.1]] eq '0.10000000149011612'
+
+test numbers_are_read_as_javascript_reads_them[]
+    js_float['1.5'] eq 1.5
+    js_float['  -2e3xyz'] eq -2000.0
+    js_float['.5'] eq 0.5
+    js_float['1.'] eq 1.0
+    js_float['1e'] eq 1.0
+    js_float['Infinity'] eq _infinity[]
+    js_float['-Infinityx'] eq 0.0 - _infinity[]
+    _is_nan[js_float['inf']]
+    _is_nan[js_float['nan']]
+    _is_nan[js_float['']]
+    _is_nan[js_float['e5']]
+    js_float['0x10'] eq 0.0
+    js_int['12'] eq 12.0
+    js_int['  7/8'] eq 7.0
+    js_int['-3.9'] eq -3.0
+    _is_nan[js_int['x1']]
+    _js_int_any['0x1F'] eq 31.0
+    _js_int_any['-0x10'] eq -16.0
+    _js_round[2.5] eq 3.0
+    _js_round[-2.5] eq -2.0
+    _byte_of[255.9] eq 255
+    _byte_of[256.0] eq 0
+    _byte_of[-1.0] eq 255
+    _byte_of[_nan[]] eq 0
+
+test text_is_split_as_javascript_splits_it[]
+    js_fields['a  b'] eq ['a', 'b']
+    js_fields[' a b '] eq ['', 'a', 'b', '']
+    js_fields['a\tb\rc'] eq ['a', 'b', 'c']
+    js_fields[''] eq ['']
+    js_fields['   '] eq ['', '']
+    _trim_start['  \t x '] eq 'x '
+    _js_trim['  x y  '] eq 'x y'
+    _js_trim['x'] eq 'x'
+
+test an_obj_of_one_triangle_is_read_with_its_normal_worked_out[]
+    m = read_obj['v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n']
+    len[m.parts] eq 1
+    p = m.parts[0]
+    p.form eq 'mesh'
+    p.name eq ''
+    p.geometry.positions eq concat[_three[0.0, 0.0, 0.0], _three[1.0, 0.0, 0.0], _three[0.0, 1.0, 0.0]]
+    p.geometry.normals eq concat[_three[0.0, 0.0, 1.0], _three[0.0, 0.0, 1.0], _three[0.0, 0.0, 1.0]]
+    len[p.geometry.uvs] eq 0
+    len[p.colors] eq 0
+    len[p.materials] eq 1
+    p.materials[0].smooth
+
+test an_off_file_is_read_with_its_faces_fanned_and_its_colours_taken_into_linear_light[]
+    m = read_off['OFF\n# a square and a triangle\n5 2 0\n0 0 0\n1 0 0\n1 1 0\n0 1 0\n0.5 2 0\n4 0 1 2 3\n3 3 2 4\n']
+    readable[m]
+    p = m.parts[0]
+    p.form eq 'mesh'
+    vertex_total[m] eq 5
+    p.geometry.indices eq [0, 1, 2, 0, 2, 3, 3, 2, 4]
+    colored = read_off['COFF\n3 1 0\n0 0 0 255 0 0\n1 0 0 0 255 0\n0 1 0 0 0 255\n3 0 1 2\n']
+    len[colored.parts[0].colors] eq 9
+    colored.parts[0].colors[0] eq 1.0
+    colored.parts[0].colors[1] eq 0.0
+    faced = read_off['OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2 0.5 0.5 0.5\n']
+    --- (a face's colour makes its corners its own: the triangle is unindexed)
+    len[faced.parts[0].geometry.indices] eq 0
+    len[faced.parts[0].colors] eq 9
+    faced.parts[0].colors[0] eq _linear[0.5]
+    points = read_off['OFF 2 0 0\n0 0 0\n1 1 1\n']
+    points.parts[0].form eq 'points'
+
+test a_file_lory_cannot_read_says_why[]
+    not readable[read_off['']]
+    'begins with OFF' in read_off['PLY\n'].failure
+    'counts 3 vertices' in read_off['OFF\n3 1 0\n0 0 0\n'].failure
+    'past its 3 vertices' in read_off['OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 7\n'].failure
+    'no model file' in model_of['house.3ds', sys.bytes['3DS']].failure
+    'property' in read_ply[sys.bytes['ply\nformat ascii 1.0\nproperty float x\nelement vertex 1\nend_header\n1\n']].failure
+    short = sys.bytes[84 + 50]
+    short = set[short, 80, 3]
+    not readable[read_stl[short]]
+    not readable[read_pcd[sys.bytes['# no DATA line\nVERSION 0.7\nFIELDS x y z\n']]]
+    xml = '<?xml version="1.0"?>\n<VTKFile type="PolyData">'
+    pad = repeat[' ', 260]
+    not readable[read_vtk[sys.bytes['`xml``pad`']]]
+    grid = '# vtk DataFile Version 3.0\nan unstructured grid\nASCII\nDATASET UNSTRUCTURED_GRID\nPOINTS 1 float\n0 0 0\n'
+    'POLYDATA' in read_vtk[sys.bytes['`grid``pad`']].failure
+
+test where_three_stops_lory_reads_a_short_stl_as_text_and_a_short_vtk[]
+    --- (three's STL loader reads a header past the end of a file shorter
+    --- than 84 bytes; its VTK loader the first 250 bytes, past a short one)
+    stl = read_stl[sys.bytes['solid s\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid s\n']]
+    readable[stl]
+    vertex_total[stl] eq 3
+    stl.parts[0].materials[0].name eq 's'
+    vtk = read_vtk[sys.bytes['# vtk DataFile Version 3.0\nt\nASCII\nDATASET POLYDATA\nPOINTS 3 float\n0 0 0 1 0 0 0 1 0\nPOLYGONS 1 4\n3 0 1 2\n']]
+    readable[vtk]
+    vtk.parts[0].geometry.indices eq [0, 1, 2]
+
+test a_box_is_written_as_obj_stl_ply_and_gltf[]
+    m = mesh_model[geometry.box[1.0, 1.0, 1.0, 1, 1, 1], 'box']
+    o = split[obj_text[m], '\n']
+    o[0] eq 'o box'
+    o[1] eq 'v 0.5 0.5 0.5'
+    --- (24 vertices, 24 uvs and 24 normals, then 12 triangles)
+    o[49] eq 'vn 1 0 0'
+    o[73] eq 'f 1/1/1 3/3/3 2/2/2'
+    len[o] eq 1 + 24 * 3 + 12 + 1
+    s = split[stl_text[m], '\n']
+    s[0] eq 'solid exported'
+    s[1] eq '\tfacet normal 1 0 0'
+    len[stl_bytes[m]] eq 84 + 50 * 12
+    p = split[ply_text[m], '\n']
+    p[2] eq 'element vertex 24'
+    p[11] eq 'element face 12'
+    p[13] eq 'end_header'
+    p[14] eq '0.5 0.5 0.5 1 0 0 0 1'
+    len[ply_bytes[m]] eq len[sys.bytes[_ply_head[_laid_of[m], 'binary_big_endian']]] + 24 * 32 + 12 * 13
+    g = json[gltf_text[m]]
+    '`g.asset.generator`' eq 'Lory'
+    len[g.accessors] eq 4
+    '`g.nodes[0].name`' eq 'box'
+    starts['`g.buffers[0].uri`', 'data:application/octet-stream;base64,']
+
+test a_model_is_drawn_in_pieces_by_colour_its_points_as_diamonds_its_lines_apart[]
+    two = read_obj['v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\nusemtl red\nf 1 2 3\nusemtl blue\nf 2 4 3\n', 'newmtl red\nKd 1 0 0\nnewmtl blue\nKd 0 0 1\n']
+    pieces = pieces_of[two]
+    len[pieces] eq 2
+    pieces[0].color.r eq 1.0
+    pieces[0].color.b eq 0.0
+    pieces[1].color.b eq 1.0
+    --- (no normals in the file: each corner faces as its triangle does)
+    pieces[0].shape.facing eq [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
+    cloud = read_xyz['0 0 0 255 255 255\n1 1 1 255 255 255\n']
+    dots = pieces_of[cloud, 0.1]
+    len[dots] eq 1
+    len[dots[0].shape.at] eq 2 * 8 * 9
+    line = read_obj['v 0 0 0\nv 1 0 0\nv 1 1 0\nl 1 2 3\n']
+    len[pieces_of[line]] eq 0
+    len[strands_of[line][0].lines.positions] eq 12
+    b = bounds_of[line]
+    b[1] eq [1.0, 1.0, 0.0]
+    size_of[line] eq sqrt[2.0]

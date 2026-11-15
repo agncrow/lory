@@ -4,3 +4,10 @@ dist/
 *.wasm
 # a page `crow build --target web` writes beside its program
 *_web/
+# the site site/site.co renders (the Pages workflow publishes it)
+site/out/
+# what crow check and crow test keep beside a package (snapshots, baselines)
+.crow/
+# a picture tests/icons/picture.py makes on each run
+tests/icons/icons.png
+.DS_Store

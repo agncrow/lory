@@ -1,0 +1,33 @@
+--- Counter: a number and a button that counts it up.
+use lory
+use lory.gui
+use common
+
+struct Counter [count]
+
+fn fresh[]
+    Counter[0]
+
+fn ticked[s, c]
+    s
+
+fn controls[s, c, room]
+    gui.row[[common.with_id[gui.text['`s.count`', 18.0], 'counter:shown'], gui.button['counter:count', 'Count']], gap = 12.0]
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if ev.id eq 'counter:count' and ev.act eq 'press'
+            s.count = s.count + 1
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['count'] = common.words_by[tree, 'counter:shown']
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

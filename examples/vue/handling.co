@@ -1,0 +1,53 @@
+--- Handling User Input: two buttons change the message (one turns its
+--- letters round, one adds a "!"), and a link whose press is held back
+--- from leaving the page says so in an alert.
+use lory
+use lory.gui
+use common
+
+--- the message, the alert standing ('' for none), and whether the last
+--- press on the link was kept from leaving ('' before any)
+struct Handling [message, alert, prevented]
+
+fn fresh[]
+    Handling['Hello World!', '', '']
+
+fn ticked[s, c]
+    s
+
+fn controls[s, c, room]
+    kids = [common.named[common.titled['', s.message, 32.0, c], 'handling-input:heading'], gui.button['handling-input:reverse', 'Reverse Message'], gui.button['handling-input:append', 'Append "!"'], common.link_to['handling-input:link', 'A link kept on this page', 'https://vuejs.org', c]]
+    if s.alert ne ''
+        kids = push[kids, common.alert_of['handling-input', s.alert]]
+    gui.column[kids, gap = 14.0]
+
+fn handled[s, shown, c]
+    if s.alert ne ''
+        if common.alert_closed[shown, 'handling-input']
+            s.alert = ''
+        return s
+    for ev in shown.events
+        if ev.id eq 'handling-input:reverse' and ev.act eq 'press'
+            s.message = common.reversed_text[s.message]
+        if ev.id eq 'handling-input:append' and ev.act eq 'press'
+            s.message = '`s.message`!'
+        if ev.id eq 'handling-input:link' and ev.act eq 'press'
+            --- (the press is kept from going to the link's page, as
+            --- `@click.prevent` keeps it, and the program says so)
+            s.prevented = 'true'
+            s.alert = 'navigation was prevented.'
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['heading'] = common.words_by[tree, 'handling-input:heading']
+    out['alert'] = common.words_by[tree, 'handling-input:alert:words']
+    out['prevented'] = s.prevented
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

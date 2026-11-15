@@ -1,0 +1,143 @@
+--- Lory's forms held to the libraries they follow: reference.json is what
+--- vuetify 4.3.3, semantic-ui-form 2.5.0 and commonmark 0.31.2 answered on
+--- fixed inputs (reference.mjs ran them: masks, an autocomplete's filter,
+--- a number input's words, a file's size, a form's rules, Markdown's
+--- trees) and what JavaScript writes for the temperature converter; Lory
+--- must answer the same, case for case. Run from the repository's root:
+--- `crow test tests/forms/reference.co`.
+use lory.forms
+use lory.editors
+
+fn cases[]
+    json[read['tests/forms/reference.json']]
+
+--- the first few differences, as text, and how many there were
+fn told[wrong]
+    shown = slice[wrong, 0, min[4, len[wrong]]]
+    '`len[wrong]`: `shown`'
+
+fn mask_differences[j]
+    out = []
+    for k in j.masks
+        mask = '`k.mask`'
+        text = '`k.text`'
+        got = [forms.mask_text[text, mask], forms.unmask_text[text, mask], str[forms.mask_valid[text, mask]], str[forms.mask_complete[text, mask]]]
+        want = ['`k.masked`', '`k.unmasked`', '`k.valid`', '`k.complete`']
+        if got ne want
+            out = push[out, '`mask` of `text`: Vuetify `want`, Lory `got`']
+    out
+
+test every_mask_writes_and_reads_words_as_vuetify_does[]
+    j = cases[]
+    len[j.masks] eq 324
+    told[mask_differences[j]] eq '0: []'
+
+fn filter_differences[j]
+    out = []
+    items = []
+    for w in j.filters.items
+        items = push[items, '`w`']
+    for k in j.filters.cases
+        query = '`k.query`'
+        found = forms.filtered[items, query]
+        ordered = forms.filtered[items, query, prefix = true]
+        if '`found`' ne '`k.found`' or '`ordered`' ne '`k.ordered`'
+            out = push[out, '`query`: Vuetify `k.found` `k.ordered`, Lory `found` `ordered`']
+        for i in range[len[k.found]]
+            ranges = forms.match_ranges[items[int[0 + k.found[i]]], query]
+            if query ne '' and '`ranges`' ne '`k.ranges[i]`'
+                out = push[out, '`query` in `items[int[0 + k.found[i]]]`: Vuetify `k.ranges[i]`, Lory `ranges`']
+    out
+
+test an_autocomplete_filters_and_orders_its_choices_as_vuetify_does[]
+    j = cases[]
+    len[j.filters.cases] eq 12
+    told[filter_differences[j]] eq '0: []'
+
+--- a precision as the reference writes it (null, which reads as an
+--- error: none)
+fn places_of[p]
+    if type[p] eq 'error'
+        return -1
+    int[0 + p]
+
+fn number_differences[j]
+    out = []
+    for k in j.formats
+        got = forms.number_text[0.0 + k.value, places = places_of[k.precision]]
+        if got ne '`k.text`'
+            out = push[out, '`k.value` to `k.precision`: Vuetify `k.text`, Lory `got`']
+    for k in j.extracts
+        got = forms.number_kept['`k.text`', places = places_of[k.precision]]
+        if got ne '`k.out`'
+            out = push[out, 'kept of `k.text` to `k.precision`: Vuetify `k.out`, Lory `got`']
+    for k in j.typings
+        t = forms.number_typed['`k.data`', '`k.value`', int[0 + k.start], int[0 + k.end], places = places_of[k.precision]]
+        want = '`k.how`'
+        got = t.how
+        if want eq 'changed'
+            want = '`k.how` `k.text` `k.cursor`'
+            got = '`t.how` `t.words` `t.caret`'
+        if got ne want
+            out = push[out, 'typing `k.data` into `k.value` at `k.start`-`k.end` to `k.precision`: Vuetify `want`, Lory `got`']
+    out
+
+test a_number_inputs_words_are_written_and_typed_as_vuetify_does[]
+    j = cases[]
+    len[j.formats] eq 120
+    len[j.typings] eq 51
+    told[number_differences[j]] eq '0: []'
+
+fn size_differences[j]
+    out = []
+    for k in j.sizes
+        got = forms.file_size[int[0 + k.bytes], base = int[0 + k.base]]
+        if got ne '`k.text`'
+            out = push[out, '`k.bytes` by `k.base`: Vuetify `k.text`, Lory `got`']
+    out
+
+test a_files_size_is_written_as_vuetify_does[]
+    j = cases[]
+    len[j.sizes] eq 30
+    told[size_differences[j]] eq '0: []'
+
+fn temperature_differences[j]
+    out = []
+    for k in j.temperatures
+        f = forms.fahrenheit_of['`k.text`']
+        c = forms.celsius_of['`k.text`']
+        if f ne '`k.fahrenheit`' or c ne '`k.celsius`'
+            out = push[out, '`k.text`: JavaScript `k.fahrenheit` `k.celsius`, Lory `f` `c`']
+    out
+
+test linked_fields_convert_as_javascript_computes_and_writes[]
+    j = cases[]
+    len[j.temperatures] eq 23
+    told[temperature_differences[j]] eq '0: []'
+
+fn rule_differences[j]
+    out = []
+    for k in j.rules
+        fields = map['f' = '`k.value`', 'other' = '`k.other`']
+        got = forms.passes['`k.rule`', '`k.value`', fields]
+        if '`got`' ne '`k.passes`'
+            out = push[out, '`k.rule` of “`k.value`”: Semantic UI `k.passes`, Lory `got`']
+    out
+
+test a_forms_rules_pass_and_fail_as_semantic_ui_checks_them[]
+    j = cases[]
+    len[j.rules] eq 146
+    told[rule_differences[j]] eq '0: []'
+
+fn markdown_differences[j]
+    out = []
+    for k in j.markdown
+        got = editors.tree_text[editors.markdown_blocks['`k.text`']]
+        if got ne '`k.tree`'
+            out = push[out, '“`k.text`”: CommonMark `k.tree`, Lory `got`']
+    out
+
+test markdown_is_read_into_the_tree_commonmark_reads[]
+    j = cases[]
+    len[j.markdown] eq 44
+    told[markdown_differences[j]] eq '0: []'

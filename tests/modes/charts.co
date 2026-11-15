@@ -1,0 +1,167 @@
+--- What Kite's charts compute for fixed charts, written out, to diff the
+--- interpreter's run against the compiled program's: each chart's area,
+--- its axes' ranges, boxes, tick labels and tick pixels, its legend's
+--- items, every mark's geometry, what each interaction mode finds and
+--- what the tooltip shows at the middle of its area; Chart.js's easings,
+--- a long line thinned both ways, and frames of a chart drawn (the
+--- canvas's vertices counted and summed), on the canvas and in gui's tree.
+--- The charts are some of those tests/charts/reference.co holds to Chart.js.
+use math
+use lory
+use lory.gui
+use kite.charts
+use kite.charts_model
+use kite.charts_scales
+use kite.charts_fit
+use kite.charts_marks
+use kite.charts_hits
+use kite.charts_motion
+use kite.charts_decimation
+
+fn _n[x]
+    fmt[x, decimals = 9]
+
+fn _ns[xs]
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt len[xs]
+        out = push[out, _n[xs[i]]]
+        i = i + 1
+    join[out, ' ']
+
+--- the numbers that say where a mark stands, by what it is
+fn _mark_words[m]
+    if m.what eq 'bar'
+        return _ns[[m.x, m.y, m.base, m.width, m.height]]
+    if m.what eq 'arc'
+        return _ns[[m.x, m.y, m.start_angle, m.end_angle, m.inner, m.outer]]
+    _ns[[m.x, m.y, m.cp1x, m.cp1y, m.cp2x, m.cp2y, m.radius]]
+
+--- each scale's ticks' pixels (a radial scale's: their distances from
+--- its centre)
+fn _tick_pixels[sc]
+    out = slice[[0.0], 0, 0]
+    i = 0
+    while i lt len[sc.ticks]
+        if sc.form eq 'radialLinear'
+            a = charts_model.axis_of['r', 'radialLinear', 'r', 'chartArea']
+            out = push[out, charts_fit.distance_of[sc, a, sc.ticks[i]]]
+        else
+            out = push[out, charts_scales.tick_pixel[sc, i]]
+        i = i + 1
+    out
+
+fn _chart_written[name, config]
+    ch = charts.of[name, config]
+    at = charts.laid[ch, 480.0, 320.0]
+    log['`name` area `_ns[at.area]`']
+    k = 0
+    while k lt len[at.scales]
+        sc = at.scales[k]
+        log['`name` `sc.id` `sc.form` `_n[sc.min]` `_n[sc.max]` box `_ns[[sc.left, sc.top, sc.right, sc.bottom]]` turned `_n[sc.rotation]`']
+        log['`name` `sc.id` ticks `join[sc.texts, \'|\']`']
+        log['`name` `sc.id` at `_ns[_tick_pixels[sc]]`']
+        k = k + 1
+    items = slice[[''], 0, 0]
+    k = 0
+    while k lt len[at.legend.hits]
+        items = push[items, _ns[at.legend.hits[k]]]
+        k = k + 1
+    log['`name` legend `join[items, \', \']`']
+    layers = charts.marks_of[ch, at]
+    d = 0
+    while d lt len[layers]
+        layer = layers[d]
+        marks = slice[[''], 0, 0]
+        j = 0
+        while j lt len[layer.marks]
+            marks = push[marks, _mark_words[layer.marks[j]]]
+            j = j + 1
+        log['`name` set `layer.set` `layer.what` `join[marks, \', \']`']
+        d = d + 1
+    cx = (at.area[0] + at.area[2]) / 2.0
+    cy = (at.area[1] + at.area[3]) / 2.0
+    finds = slice[[''], 0, 0]
+    for mode in ['index', 'dataset', 'point', 'nearest', 'x', 'y']
+        for crossed in [true, false]
+            hits = charts.picked[ch, at, layers, cx, cy, mode, crossed, '']
+            finds = push[finds, '`mode` `crossed`: `charts.hits_words[hits]`']
+    log['`name` finds `join[finds, \'; \']`']
+    tip = charts.tooltip[ch, at, layers, cx, cy]
+    log['`name` tooltip `tip.shown` `join[tip.title, \'|\']` `join[tip.lines, \'|\']` `_ns[[tip.x, tip.y, tip.width, tip.height, tip.caret_x, tip.caret_y]]` `tip.x_align` `tip.y_align`']
+
+--- what a canvas holds, counted and summed
+fn _canvas_words[c]
+    v = c.verts
+    total = 0.0
+    i = 0
+    while i lt len[v]
+        total = total + v[i]
+        i = i + 1
+    '`len[v]` `_n[total]`'
+
+fn _frame_at[t, pointers]
+    json['{"t": `t`, "width": 640, "height": 480, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 640, "height": 480, "projection": [], "camera": []}], "input": [], "pointers": `pointers`, "controllers": [], "said": []}']
+
+names = ['bar', 'bar_horizontal', 'bar_stacked', 'bar_floating', 'bar_groups', 'line', 'line_gaps', 'scatter', 'bubble', 'mixed', 'log', 'multi_axes', 'time_days', 'timeseries', 'pie', 'doughnut', 'polar', 'radar']
+configs = [
+    '{"type": "bar", "data": {"labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"], "datasets": [{"label": "Sales", "data": [65, 59, 80, 81, 56, 55, 40]}, {"label": "Costs", "data": [28, 48, 40, 19, 86, 27, 90]}]}}',
+    '{"type": "bar", "data": {"labels": ["Jan", "Feb", "Mar", "Apr", "May"], "datasets": [{"label": "East", "data": [65, 59, 80, 81, 56], "borderWidth": 2}, {"label": "West", "data": [-28, 48, 40, -19, 86], "borderWidth": 2}]}, "options": {"indexAxis": "y", "plugins": {"legend": {"position": "right"}}}}',
+    '{"type": "bar", "data": {"labels": ["Jan", "Feb", "Mar", "Apr", "May"], "datasets": [{"label": "A", "data": [10, -20, 30, 40, -10]}, {"label": "B", "data": [20, 25, -15, 10, 30]}, {"label": "C", "data": [5, 5, 5, -30, 10]}]}, "options": {"scales": {"x": {"stacked": true}, "y": {"stacked": true}}, "plugins": {"title": {"display": true, "text": "Stacked"}}}}',
+    '{"type": "bar", "data": {"labels": ["Jan", "Feb", "Mar", "Apr", "May"], "datasets": [{"label": "Range", "data": [[-10, 20], [5, 30], [-20, -5], [15, 40], [0, 10]]}, {"label": "Other", "data": [[10, 25], [-5, 15], [0, 20], [-30, -10], [5, 35]]}]}}',
+    '{"type": "bar", "data": {"labels": ["Jan", "Feb", "Mar", "Apr"], "datasets": [{"label": "A", "data": [10, 20, 30, 40], "stack": "one", "borderWidth": 2, "borderRadius": 6}, {"label": "B", "data": [15, -10, 25, 5], "stack": "one", "borderWidth": 2, "borderRadius": 6, "borderSkipped": "middle"}, {"label": "C", "data": [30, 10, -20, 15], "stack": "two", "borderRadius": 4, "borderSkipped": false}]}, "options": {"scales": {"x": {"stacked": true}, "y": {"stacked": true}}}}',
+    '{"type": "line", "data": {"labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"], "datasets": [{"label": "Curve", "data": [65, 59, 80, 81, 56, 55, 40], "tension": 0.4, "pointStyle": "rectRot", "pointRadius": 5, "fill": "origin"}, {"label": "Steps", "data": [28, 48, 40, 19, 86, 27, 90], "stepped": "before"}, {"label": "Flat", "data": [10, 15, 12, 18, 14, 20, 16], "fill": "end", "pointRadius": 0}]}}',
+    '{"type": "line", "data": {"labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"], "datasets": [{"label": "Broken", "data": [10, 20, null, 40, 35, null, 50]}, {"label": "Spanned", "data": [15, null, 25, 30, null, 45, 40], "spanGaps": true, "tension": 0.3}, {"label": "Monotone", "data": [5, 25, 15, 60, 20, 70, 30], "cubicInterpolationMode": "monotone"}]}, "options": {"interaction": {"mode": "index", "intersect": false}}}',
+    '{"type": "scatter", "data": {"datasets": [{"label": "Points", "data": [{"x": -10, "y": 0}, {"x": 0, "y": 10}, {"x": 10, "y": 5}, {"x": 0.5, "y": 5.5}, {"x": 7, "y": -3}, {"x": -4, "y": 8}]}, {"label": "Joined", "data": [{"x": -8, "y": -5}, {"x": -2, "y": 2}, {"x": 3, "y": -1}, {"x": 9, "y": 9}], "showLine": true, "pointStyle": "triangle"}]}, "options": {"plugins": {"tooltip": {"position": "nearest"}}}}',
+    '{"type": "bubble", "data": {"datasets": [{"label": "Big", "data": [{"x": 20, "y": 30, "r": 15}, {"x": 40, "y": 10, "r": 10}, {"x": 25, "y": 22, "r": 5}]}, {"label": "Small", "data": [{"x": 10, "y": 15, "r": 4}, {"x": 32, "y": 26, "r": 8}]}]}}',
+    '{"type": "bar", "data": {"labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"], "datasets": [{"label": "Bars", "data": [10, 20, 30, 40, 35, 25], "order": 2}, {"label": "Line", "data": [15, 25, 20, 45, 30, 35], "type": "line", "order": 1}]}}',
+    '{"type": "line", "data": {"labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"], "datasets": [{"label": "Growth", "data": [1, 10, 100, 1000, 10000, 100000, 3]}]}, "options": {"scales": {"y": {"type": "logarithmic"}}}}',
+    '{"type": "line", "data": {"labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"], "datasets": [{"label": "Left", "data": [40.6, 43.5, 40.6, 42.6, 56.3, 55.6, 59.3], "yAxisID": "y"}, {"label": "Right", "data": [660, 487, 817.9, 1232.7, 1121, 1353.1, 1145.5], "yAxisID": "y1"}]}, "options": {"scales": {"y": {"type": "linear", "position": "left"}, "y1": {"type": "linear", "position": "right", "grid": {"drawOnChartArea": false}}}}}',
+    '{"type": "line", "data": {"datasets": [{"label": "Daily", "data": [{"x": 1767571200000, "y": 41.1}, {"x": 1767657600000, "y": 43.4}, {"x": 1767744000000, "y": 39.4}, {"x": 1767830400000, "y": 51.6}, {"x": 1767916800000, "y": 57.5}, {"x": 1768003200000, "y": 56.1}, {"x": 1768089600000, "y": 62.4}, {"x": 1768176000000, "y": 52.6}, {"x": 1768262400000, "y": 44.7}, {"x": 1768348800000, "y": 45.4}, {"x": 1768435200000, "y": 37}, {"x": 1768521600000, "y": 43.6}, {"x": 1768608000000, "y": 52.7}, {"x": 1768694400000, "y": 52.3}, {"x": 1768780800000, "y": 62.3}, {"x": 1768867200000, "y": 59.4}, {"x": 1768953600000, "y": 50.1}, {"x": 1769040000000, "y": 50.5}, {"x": 1769126400000, "y": 39.6}, {"x": 1769212800000, "y": 38.6}, {"x": 1769299200000, "y": 47.3}, {"x": 1769385600000, "y": 46.5}, {"x": 1769472000000, "y": 57.3}, {"x": 1769558400000, "y": 62.2}, {"x": 1769644800000, "y": 54.7}, {"x": 1769731200000, "y": 56.3}, {"x": 1769817600000, "y": 46.5}, {"x": 1769904000000, "y": 38.3}, {"x": 1769990400000, "y": 44.1}, {"x": 1770076800000, "y": 41.4}]}]}, "options": {"scales": {"x": {"type": "time"}}}}',
+    '{"type": "line", "data": {"datasets": [{"label": "Irregular", "data": [{"x": 1767571200000, "y": 43.7}, {"x": 1767657600000, "y": 39.7}, {"x": 1767744000000, "y": 51.2}, {"x": 1768003200000, "y": 58.2}, {"x": 1768089600000, "y": 55.9}, {"x": 1768176000000, "y": 62}, {"x": 1768262400000, "y": 53}, {"x": 1768348800000, "y": 44}, {"x": 1768608000000, "y": 45.4}, {"x": 1768694400000, "y": 37.4}, {"x": 1768780800000, "y": 43.2}, {"x": 1769299200000, "y": 53.2}]}]}, "options": {"scales": {"x": {"type": "timeseries"}}}}',
+    '{"type": "pie", "data": {"labels": ["Red", "Blue", "Yellow", "Green"], "datasets": [{"label": "Votes", "data": [300, 50, 100, 40], "backgroundColor": ["rgb(255, 99, 132)", "rgb(54, 162, 235)", "rgb(255, 205, 86)", "rgb(75, 192, 192)"]}]}}',
+    '{"type": "doughnut", "data": {"labels": ["Red", "Blue", "Yellow", "Green"], "datasets": [{"label": "Outer", "data": [300, 50, 100, 40], "offset": [0, 10, 0, 0], "backgroundColor": ["rgb(255, 99, 132)", "rgb(54, 162, 235)", "rgb(255, 205, 86)", "rgb(75, 192, 192)"]}, {"label": "Inner", "data": [20, 30, 40, 10], "weight": 2, "backgroundColor": ["rgb(255, 99, 132)", "rgb(54, 162, 235)", "rgb(255, 205, 86)", "rgb(75, 192, 192)"]}]}}',
+    '{"type": "polarArea", "data": {"labels": ["Red", "Green", "Yellow", "Grey", "Blue"], "datasets": [{"label": "Polar", "data": [11, 16, 7, 3, 14]}]}}',
+    '{"type": "radar", "data": {"labels": ["Eating", "Drinking", "Sleeping", "Designing", "Coding", "Cycling", "Running"], "datasets": [{"label": "First", "data": [65, 59, 90, 81, 56, 55, 40], "fill": true}, {"label": "Second", "data": [28, 48, 40, 19, 96, 27, 100]}]}}']
+
+i = 0
+while i lt len[names]
+    _chart_written[names[i], configs[i]]
+    i = i + 1
+
+for name in charts_motion.easings[]
+    log['easing `name` `_ns[[charts_motion.eased[name, 0.1], charts_motion.eased[name, 0.5], charts_motion.eased[name, 0.9]]]`']
+
+xs = slice[[0.0], 0, 0]
+ys = slice[[0.0], 0, 0]
+i = 0
+while i lt 1000
+    xs = push[xs, 0.0 + i]
+    ys = push[ys, math.sin[i * 0.05] * 50.0 + (i % 7)]
+    i = i + 1
+thin = charts_decimation.lttb[xs, ys, 0, 1000, 40]
+log['lttb `len[thin.xs]` xs `_ns[thin.xs]`']
+log['lttb ys `_ns[thin.ys]`']
+kept = charts_decimation.min_max[xs, ys, 0, 1000, 60.0]
+log['min_max `len[kept.xs]` xs `_ns[kept.xs]`']
+log['min_max ys `_ns[kept.ys]`']
+
+--- each chart drawn as it sets out, on its way and arrived, then with
+--- the pointer over a bar
+i = 0
+while i lt len[names]
+    ch = charts.of['drawn `names[i]`', configs[i]]
+    words = slice[[''], 0, 0]
+    for t in [0.0, 0.3, 1.5]
+        p = charts.shown_at[lory.begin[_frame_at[t, '[]']], ch, 10.0, 10.0, 480.0, 320.0]
+        words = push[words, _canvas_words[p.canvas]]
+    log['drawn `names[i]` `join[words, \', \']`']
+    i = i + 1
+bar = charts.of['drawn', configs[0]]
+first = charts.shown_at[lory.begin[_frame_at[0.0, '[]']], bar, 10.0, 10.0, 480.0, 320.0]
+over = charts.shown_at[lory.begin[_frame_at[2.0, '[{"x": 186, "y": 200, "down": false}]']], bar, 10.0, 10.0, 480.0, 320.0]
+log['drawn over `_canvas_words[over.canvas]` told `over.events[0].act` `over.events[0].words`']
+pie = charts.of['round', configs[14]]
+tree = gui.column[[charts.drawn[pie, 360.0, 300.0]]]
+shown = gui.show[lory.begin[_frame_at[3.0, '[]']], tree]
+log['gui `_canvas_words[shown.canvas]` box `_ns[shown.boxes[\'round\']]`']

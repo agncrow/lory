@@ -1,0 +1,123 @@
+--- Everything lory.scrolling computes on fixed inputs, written out, to
+--- diff the interpreter's run against the compiled program's.
+use lory
+use lory.scrolling
+
+fn _d[x]
+    fmt[x, decimals = 17]
+
+fn _ds[xs]
+    out = slice[[''], 0, 0]
+    for x in xs
+        out = push[out, _d[x]]
+    join[out, ' ']
+
+fn _is[xs]
+    out = slice[[''], 0, 0]
+    for x in xs
+        out = push[out, '`x`']
+    join[out, ' ']
+
+--- easings as the browser runs them (AOS's names, CSS's words, Lenis's)
+for name in scrolling.aos_easings[]
+    vals = slice[[0.0], 0, 0]
+    for k in range[11]
+        vals = push[vals, scrolling.css_eased[name, (0.0 + k) / 10.0]]
+    log['ease `name` `_ds[vals]`']
+for words in ['ease-in-out', 'cubic-bezier(0.1, 0.7, 1.0, 0.1)', 'steps(4, jump-start)', 'linear']
+    log['css `words` `_d[scrolling.css_eased[words, 0.3]]` `_d[scrolling.css_eased[words, 0.71]]`']
+log['lenis `_d[scrolling.lenis_eased[0.25]]` `_d[scrolling.lenis_eased[0.5]]` in_out_cubic `_d[scrolling.in_out_cubic[300.0, 0.0, 700.0, 700.0]]`']
+
+--- reveals, both AOS versions, along a scroll
+for version in [2, 3]
+    o = scrolling.reveals[version = version, mirror = true]
+    r = scrolling.reveal['a', 'fade-up', 900.0, 200.0, wide = 300.0]
+    held = scrolling.revealing[]
+    t = 0.0
+    for y in [0.0, 100.0, 300.0, 600.0, 1200.0, 200.0]
+        held = scrolling.reveal_step[o, r, held, y, 800.0, t]
+        pose = scrolling.reveal_look[o, r, held, t + 150.0]
+        log['reveal v`version` `y` `held.shown` `_ds[[pose.opacity, pose.x, pose.y, pose.scale]]`']
+        t = t + 1000.0
+
+--- scroll-linked progress (Motion's offsets)
+for y in [0.0, 400.0, 900.0, 1500.0]
+    a = scrolling.linked_progress[y, 800.0, 300.0, 1000.0, ['start end', 'end start']]
+    b = scrolling.linked_progress[y, 800.0, 300.0, 1000.0, ['center center', 'end end']]
+    log['linked `y` `_d[a]` `_d[b]` `_d[scrolling.page_progress[y, 3000.0, 800.0]]`']
+
+--- Lenis: a wheel's turns, frame by frame
+s = scrolling.smooth[5000.0]
+s = scrolling.smooth_frame[s, 0.0]
+s = scrolling.smooth_wheel[s, 300.0, 0]
+for k in range[12]
+    s = scrolling.smooth_frame[s, 16.0 * (1.0 + k)]
+    log['lenis frame `k` `_d[s.at]` `_d[s.velocity]` `s.moving`']
+s = scrolling.smooth_to[s, 1200.0, duration = 0.5, curve = 'ease-in']
+for k in range[6]
+    s = scrolling.smooth_frame[s, 400.0 + 100.0 * k]
+    log['lenis to `k` `_d[s.at]`']
+
+--- full-page sections: moves by key, wheel, dot, slide, loop
+secs = [scrolling.section[name = 'one'], scrolling.section[name = 'two', slides = 3], scrolling.section[name = 'three'], scrolling.section[name = 'four', hidden = true]]
+p = scrolling.pages[secs, 1000.0, 700.0, scrolling.page_options[nav = true, loop_bottom = true], t = 0.0]
+p = scrolling.page_key[p, 'ArrowDown', 100.0]
+for t in [150.0, 400.0, 700.0, 850.0]
+    log['pages key `t` `_d[scrolling.page_y_at[p, t]]`']
+p = scrolling.pages_at[p, 1000.0]
+p = scrolling.page_arrow[p, 'next', 1100.0]
+for t in [1200.0, 1500.0, 1900.0]
+    log['pages slide `t` `_d[scrolling.page_x_at[p, 1, t]]`']
+p = scrolling.pages_at[p, 2000.0]
+p = scrolling.page_wheel[p, 120.0, 2100.0]
+p = scrolling.pages_at[p, 3000.0]
+p = scrolling.page_key[p, 'ArrowDown', 3100.0]
+p = scrolling.pages_at[p, 4000.0]
+p = scrolling.page_dot[p, 1, 4100.0]
+p = scrolling.pages_at[p, 5000.0]
+log['pages at `scrolling.page_index[p]` slide `scrolling.page_slide[p]` y `_d[p.y]` viewing `scrolling.page_viewing[p]`']
+for told in p.told
+    log['told `told.name` `told.section` `told.to` `told.slide` `told.to_slide` `told.direction` `told.trigger` `_d[told.t]`']
+arrow = scrolling.page_arrow_box[p, 'next']
+log['nav `_ds[scrolling.page_nav_box[p]]` dot `_ds[scrolling.page_dot_box[p, 1]]` arrow `_ds[arrow]`']
+
+--- a scroll area, a virtual list and grid, a feed, pull to refresh
+ar = scrolling.area_of[]
+ar.content = 1500.0
+ar.tall = 400.0
+for k in ['ArrowDown', 'PageDown', ' ', 'End', 'PageUp', 'Home']
+    ar = scrolling.area_key[ar, k, 0.0]
+    log['area `k` `_d[ar.top]` thumb `_ds[scrolling.area_thumb[ar, 400.0]]`']
+log['area thumb drag `_d[scrolling.area_from_thumb[ar, 400.0, 233.0, 12.0]]`']
+v = scrolling.virtual_of[50000, 35.0, overscan = 5]
+v = scrolling.virtual_measured[v, 3, 80.0]
+v = scrolling.virtual_measured[v, 1200, 12.5]
+for y in [0.0, 120.0, 41000.0, 1749600.0]
+    log['virtual `y` `_is[scrolling.virtual_range[v, y, 400.0]]` start `_d[scrolling.virtual_start[v, 1300]]` total `_d[scrolling.virtual_total[v]]`']
+g = scrolling.grid_of[10000, 500, 35.0, 120.0]
+g.wide = 700.0
+g = scrolling.grid_left[g, 3000.0]
+log['grid `_is[scrolling.grid_cols[g]]`']
+f = scrolling.feed_of[side = 'both', margin = 50.0]
+fa = f.area
+fa.content = 2000.0
+fa.tall = 500.0
+f.area = scrolling.area_to[fa, 1460.0, 0.0]
+wants = join[scrolling.feed_wants[f], ' ']
+log['feed `wants`']
+f = scrolling.feed_done[scrolling.feed_load[f, 'end'], 'end', 'empty']
+log['feed `f.start` `f.end`']
+pl = scrolling.pull_up[scrolling.pull_move[scrolling.pull_down[scrolling.pull_of[], 5.0], 90.0, 0.0]]
+log['pull `_d[scrolling.pull_offset[pl]]` `pl.refreshing`']
+
+--- sticky, visibility, parallax, spy
+st = scrolling.stuck_of[]
+sn = scrolling.seen_of[]
+for y in [0.0, 150.0, 500.0, 800.0, 900.0, 700.0, 50.0]
+    st = scrolling.sticky_at[st, y, 400.0, 100.0, 600.0, 0.0, 1300.0, offset = 20.0]
+    sn = scrolling.seen_at[sn, y, 400.0, 500.0, 200.0, once = false]
+    sy = scrolling.sticky_y[st, y, 400.0, 100.0, 600.0, 1300.0, offset = 20.0]
+    stold = join[st.told, '+']
+    seen = join[sn.told, '+']
+    log['sticky `y` `st.state` `_d[sy]` `stold` seen `seen` `_d[sn.share]`']
+    log['parallax `y` `_ds[scrolling.vuetify_parallax[y, 400.0, 500.0, 300.0, scale = 0.3]]` spy `scrolling.spy_at[[0.0, 300.0, 600.0], y, 400.0, 1300.0]`']

@@ -1,0 +1,1189 @@
+--- How a laid chart is drawn with Lory, as Chart.js paints one: its axes
+--- first (grid lines, tick marks, the axis line, tick labels and the
+--- axis's title; a radial axis's rings, spokes, point labels and tick
+--- labels on their backdrops), its legend and titles, then its datasets
+--- from the highest `order` to the lowest, so that the lowest is drawn on
+--- top: a line's fill, its line and its points; a bar with its border and
+--- its rounded corners; an arc of a pie, a doughnut or a polar area. The
+--- marks under the pointer are drawn in their hover colours and sizes, and
+--- the tooltip over everything.
+---
+--- A chart is laid in CSS pixels, as Chart.js lays one, and drawn at its
+--- place on the canvas (`Place`), so the numbers held to Chart.js are the
+--- ones drawn. Lory draws no turned text: a turned tick label is written
+--- letter by letter along its turn, and a title beside the area letter
+--- under letter, each letter upright.
+---
+--- These are Chart.js 4.5.1's ways of drawing, read from it and written
+--- anew (see charts_model.co).
+use math
+use lory
+use charts_model
+use charts_scales
+use charts_fit
+use charts_layout
+use charts_marks
+use charts_hits
+
+--- where a chart is drawn on the canvas: the top left of its box and how
+--- many of the canvas's pixels one of the chart's pixels is
+struct Place [x, y, s]
+
+--- ---- the whole chart ----
+
+--- the chart drawn at its place: its axes, legend and titles, its
+--- datasets (`layers`, the marks as they stand now), those of the marks
+--- under the pointer (`hits`) in their hover colours and sizes, and the
+--- tooltip (`tip`, from `charts_hits.told`)
+fn painted[c0, ch, laid, layers, hits, tip, place]
+    c = c0
+    k = 0
+    while k lt len[laid.scales]
+        sc = laid.scales[k]
+        c = _scale_drawn[c, laid, sc, ch.axes[sc.place], place]
+        k = k + 1
+    c = _legend_drawn[c, ch, laid, place]
+    c = _heading_drawn[c, ch.subtitle, laid.parts[1], place]
+    c = _heading_drawn[c, ch.title, laid.parts[2], place]
+    c = _datasets_drawn[c, ch, laid, layers, hits, place]
+    if tip.shown
+        c = _tip_drawn[c, ch, tip, place]
+    c
+
+--- ---- drawing in the chart's pixels ----
+
+fn _x[p, x]
+    p.x + x * p.s
+
+fn _y[p, y]
+    p.y + y * p.s
+
+--- a box filled
+fn _box[c, p, x, y, w, h, color]
+    if w lte 0.0 or h lte 0.0 or color.a lte 0.0
+        return c
+    lory.rect[c, _x[p, x], _y[p, y], w * p.s, h * p.s, color]
+
+--- a line `w` wide
+fn _stroke[c, p, x0, y0, x1, y1, w, color]
+    if w lte 0.0 or color.a lte 0.0
+        return c
+    lory.line[c, _x[p, x0], _y[p, y0], _x[p, x1], _y[p, y1], w * p.s, color]
+
+--- lines through the points
+fn _polyline[c0, p, xs, ys, w, color]
+    c = c0
+    if w lte 0.0 or color.a lte 0.0
+        return c
+    i = 1
+    while i lt len[xs]
+        c = _stroke[c, p, xs[i - 1], ys[i - 1], xs[i], ys[i], w, color]
+        i = i + 1
+    c
+
+--- a triangle filled
+fn _triangle[c, p, x0, y0, x1, y1, x2, y2, color]
+    lory.triangle[c, _x[p, x0], _y[p, y0], _x[p, x1], _y[p, y1], _x[p, x2], _y[p, y2], color]
+
+--- a shape that bulges nowhere inward (a box, a rounded box, a diamond),
+--- filled as a fan from its first point
+fn _convex[c0, p, xs, ys, color]
+    c = c0
+    if color.a lte 0.0
+        return c
+    i = 2
+    while i lt len[xs]
+        c = _triangle[c, p, xs[0], ys[0], xs[i - 1], ys[i - 1], xs[i], ys[i], color]
+        i = i + 1
+    c
+
+--- the room between a closed outline and one inside it of as many
+--- points, filled: a bar's or an arc's border
+fn _between[c0, p, oxs, oys, ixs, iys, color]
+    c = c0
+    if color.a lte 0.0
+        return c
+    n = len[oxs]
+    i = 0
+    while i lt n
+        j = (i + 1) % n
+        c = _triangle[c, p, oxs[i], oys[i], oxs[j], oys[j], ixs[j], iys[j], color]
+        c = _triangle[c, p, oxs[i], oys[i], ixs[j], iys[j], ixs[i], iys[i], color]
+        i = i + 1
+    c
+
+--- the edge of a box `w` by `h`, a line `line_w` wide on it (half inside,
+--- half out), as a canvas strokes a box
+fn _framed[c0, p, x, y, w, h, line_w, color]
+    c = c0
+    half = line_w / 2.0
+    c = _box[c, p, x - half, y - half, w + line_w, line_w, color]
+    c = _box[c, p, x - half, y + h - half, w + line_w, line_w, color]
+    c = _box[c, p, x - half, y + half, line_w, h - line_w, color]
+    _box[c, p, x + w - half, y + half, line_w, h - line_w, color]
+
+--- a circle's edge, a line `w` wide on it
+fn _circled[c, p, x, y, r, w, color]
+    if w lte 0.0 or color.a lte 0.0 or r lte 0.0
+        return c
+    lory.ring[c, _x[p, x], _y[p, y], (r + w / 2.0) * p.s, w * p.s, color]
+
+--- how wide words are in the chart's pixels
+fn _wide[c, p, words, size]
+    lory.measure[c, words, size * p.s] / p.s
+
+--- words written at (x, y): `align` says which of their ends or their
+--- middle stands at x (left, center, right), `baseline` which of their
+--- line's top, middle or bottom stands at y; bold words are written twice,
+--- half a pixel apart
+fn _words[c0, p, x, y, words, size, bold, color, align, baseline]
+    c = c0
+    if words eq '' or color.a lte 0.0
+        return c
+    sz = size * p.s
+    w = lory.measure[c, words, sz]
+    h = lory.line_height[c, sz]
+    left = _x[p, x]
+    if align eq 'center'
+        left = left - w / 2.0
+    else if align eq 'right'
+        left = left - w
+    top = _y[p, y]
+    if baseline eq 'middle'
+        top = top - h / 2.0
+    else if baseline eq 'bottom'
+        top = top - h
+    c = lory.text[c, left, top, words, sz, color]
+    if bold
+        c = lory.text[c, left + 0.5 * p.s, top, words, sz, color]
+    c
+
+--- words written along a turn of `turn` degrees (rising to the right),
+--- letter by letter, each letter upright: the end `align` says (left,
+--- center, right) at (x, y), the middle of their line on the turn
+fn _turned_words[c0, p, x, y, words, size, color, turn, align]
+    c = c0
+    if words eq '' or color.a lte 0.0
+        return c
+    sz = size * p.s
+    w = lory.measure[c, words, sz]
+    h = lory.line_height[c, sz]
+    a = charts_model.radians[turn]
+    ux = cos[a]
+    uy = 0.0 - sin[a]
+    back = 0.0
+    if align eq 'right'
+        back = w
+    else if align eq 'center'
+        back = w / 2.0
+    sx = _x[p, x] - ux * back
+    sy = _y[p, y] - uy * back
+    letters = split[words, '']
+    along = 0.0
+    i = 0
+    while i lt len[letters]
+        lw = lory.measure[c, letters[i], sz]
+        mx = sx + ux * (along + lw / 2.0)
+        my = sy + uy * (along + lw / 2.0)
+        c = lory.text[c, mx - lw / 2.0, my - h / 2.0, letters[i], sz, color]
+        along = along + lw
+        i = i + 1
+    c
+
+--- words written letter under letter, centred on (x, y): a title beside
+--- the area, which Chart.js turns a quarter round
+fn _column_words[c0, p, x, y, words, size, color]
+    c = c0
+    if words eq '' or color.a lte 0.0
+        return c
+    sz = size * p.s
+    h = lory.line_height[c, sz]
+    letters = split[words, '']
+    top = _y[p, y] - h * (0.0 + len[letters]) / 2.0
+    i = 0
+    while i lt len[letters]
+        lw = lory.measure[c, letters[i], sz]
+        c = lory.text[c, _x[p, x] - lw / 2.0, top + h * (0.0 + i), letters[i], sz, color]
+        i = i + 1
+    c
+
+--- ---- axes ----
+
+--- an axis drawn: its grid lines across the area and its tick marks, its
+--- title, its line along the area and its tick labels (a radial axis its
+--- own way)
+fn _scale_drawn[c0, laid, sc, a, p]
+    c = c0
+    if not sc.shown
+        return c
+    if sc.form eq 'radialLinear'
+        return _radial_drawn[c, sc, a, p]
+    area = laid.area
+    tl = 0.0
+    if a.grid_ticks
+        tl = a.tick_length
+    if a.grid_shown
+        spots = _grid_spots[sc, a]
+        i = 0
+        while i lt len[spots]
+            v = spots[i]
+            if sc.horizontal
+                if a.grid_on_area
+                    c = _stroke[c, p, v, area[1], v, area[3], a.grid_width, a.grid_ink]
+                if a.grid_ticks
+                    if sc.position eq 'top'
+                        c = _stroke[c, p, v, sc.bottom - tl, v, sc.bottom, a.grid_width, a.grid_ink]
+                    else
+                        c = _stroke[c, p, v, sc.top, v, sc.top + tl, a.grid_width, a.grid_ink]
+            else
+                if a.grid_on_area
+                    c = _stroke[c, p, area[0], v, area[2], v, a.grid_width, a.grid_ink]
+                if a.grid_ticks
+                    if sc.position eq 'right'
+                        c = _stroke[c, p, sc.left, v, sc.left + tl, v, a.grid_width, a.grid_ink]
+                    else
+                        c = _stroke[c, p, sc.right - tl, v, sc.right, v, a.grid_width, a.grid_ink]
+            i = i + 1
+    c = _axis_title_drawn[c, sc, a, p]
+    if a.border_shown
+        if sc.horizontal
+            edge = sc.top
+            if sc.position eq 'top'
+                edge = sc.bottom
+            c = _stroke[c, p, area[0], edge, area[2], edge, a.border_width, a.border_ink]
+        else
+            edge = sc.right
+            if sc.position eq 'right'
+                edge = sc.left
+            c = _stroke[c, p, edge, area[1], edge, area[3], a.border_width, a.border_ink]
+    if a.ticks_shown
+        c = _tick_labels_drawn[c, sc, a, tl, p]
+    c
+
+--- where the axis's grid lines fall: on its ticks, or (`grid_offset`, a
+--- bar chart's category axis) half way between them, with one more past
+--- each end, those off the axis left out
+fn _grid_spots[sc, a]
+    out = charts_model.no_numbers[]
+    n = len[sc.ticks]
+    if n eq 0
+        return out
+    if not a.grid_offset
+        i = 0
+        while i lt n
+            out = push[out, charts_scales.tick_pixel[sc, i]]
+            i = i + 1
+        return out
+    lo = min[sc.start_pixel, sc.end_pixel] - 0.000001
+    hi = max[sc.start_pixel, sc.end_pixel] + 0.000001
+    i = 0
+    while i lte n
+        at = min[i, n - 1]
+        v = charts_scales.tick_pixel[sc, at]
+        half = 0.0
+        if n eq 1
+            half = max[v - sc.start_pixel, sc.end_pixel - v]
+        else if i eq 0
+            half = (charts_scales.tick_pixel[sc, 1] - v) / 2.0
+        else
+            half = (v - charts_scales.tick_pixel[sc, at - 1]) / 2.0
+        if at lt i
+            v = v + half
+        else
+            v = v - half
+        if v gte lo and v lte hi
+            out = push[out, v]
+        i = i + 1
+    out
+
+--- the axis's tick labels, each beside its tick: below or above an axis
+--- across (turned where the axis turned them), left or right of one up
+--- the side
+fn _tick_labels_drawn[c0, sc, a, tl, p]
+    c = c0
+    gap = tl + a.tick_padding
+    i = 0
+    while i lt len[sc.ticks] and i lt len[sc.texts]
+        words = sc.texts[i]
+        v = charts_scales.tick_pixel[sc, i]
+        if words ne '' and v eq v
+            if sc.horizontal
+                if sc.rotation ne 0.0
+                    if sc.position eq 'top'
+                        c = _turned_words[c, p, v, sc.bottom - gap, words, a.tick_size, a.tick_ink, sc.rotation, 'left']
+                    else
+                        c = _turned_words[c, p, v, sc.top + gap, words, a.tick_size, a.tick_ink, sc.rotation, 'right']
+                else if sc.position eq 'top'
+                    c = _words[c, p, v, sc.bottom - gap, words, a.tick_size, a.tick_bold, a.tick_ink, 'center', 'bottom']
+                else
+                    c = _words[c, p, v, sc.top + gap, words, a.tick_size, a.tick_bold, a.tick_ink, 'center', 'top']
+            else if sc.position eq 'right'
+                c = _words[c, p, sc.left + gap, v, words, a.tick_size, a.tick_bold, a.tick_ink, 'left', 'middle']
+            else
+                c = _words[c, p, sc.right - gap, v, words, a.tick_size, a.tick_bold, a.tick_ink, 'right', 'middle']
+        i = i + 1
+    c
+
+--- the axis's title, at its outer edge: across the middle of an axis
+--- across, letter under letter beside one up the side
+fn _axis_title_drawn[c, sc, a, p]
+    if not a.title_shown or a.title eq ''
+        return c
+    line = charts_model.line_of[a.title_size]
+    if sc.horizontal
+        x = (sc.left + sc.right) / 2.0
+        y = sc.bottom - a.title_bottom - line / 2.0
+        if sc.position eq 'top'
+            y = sc.top + a.title_top + line / 2.0
+        return _words[c, p, x, y, a.title, a.title_size, a.title_bold, a.title_ink, 'center', 'middle']
+    x = sc.left + a.title_top + line / 2.0
+    if sc.position eq 'right'
+        x = sc.right - a.title_top - line / 2.0
+    _column_words[c, p, x, (sc.top + sc.bottom) / 2.0, a.title, a.title_size, a.title_ink]
+
+--- a radial axis drawn: a ring (or a polygon through the spokes) at each
+--- tick but the first, the spokes, the point labels round it and the tick
+--- labels up its middle on their backdrops
+fn _radial_drawn[c0, sc, a, p]
+    c = c0
+    n = len[sc.point_labels]
+    cx = sc.x_center
+    cy = sc.y_center
+    if a.grid_shown
+        i = 0
+        while i lt len[sc.ticks]
+            if i ne 0 or sc.min lt 0.0
+                r = charts_fit.distance_of[sc, a, sc.ticks[i]]
+                if r eq r and r gt 0.0
+                    if a.circular or n eq 0
+                        c = _circled[c, p, cx, cy, r, a.grid_width, a.grid_ink]
+                    else
+                        k = 0
+                        while k lt n
+                            q0 = charts_fit.point_at[sc, a, k, r, 0.0]
+                            q1 = charts_fit.point_at[sc, a, (k + 1) % n, r, 0.0]
+                            c = _stroke[c, p, q0[0], q0[1], q1[0], q1[1], a.grid_width, a.grid_ink]
+                            k = k + 1
+            i = i + 1
+    if a.angle_lines and n gt 0
+        far = charts_fit.distance_of[sc, a, sc.max]
+        if a.reverse
+            far = charts_fit.distance_of[sc, a, sc.min]
+        k = n - 1
+        while k gte 0
+            q = charts_fit.point_at[sc, a, k, far, 0.0]
+            c = _stroke[c, p, cx, cy, q[0], q[1], a.grid_width, a.grid_ink]
+            k = k - 1
+    if a.point_labels_shown
+        k = 0
+        while k lt n and k lt len[sc.label_items]
+            if sc.label_shown[k]
+                b = sc.label_items[k]
+                c = _words[c, p, b[2], b[3], sc.point_labels[k], a.point_label_size, false, a.tick_ink, 'left', 'top']
+            k = k + 1
+    if a.ticks_shown
+        i = 0
+        while i lt len[sc.ticks] and i lt len[sc.texts]
+            if not (i eq 0 and sc.min gte 0.0 and not a.reverse)
+                r = charts_fit.distance_of[sc, a, sc.ticks[i]]
+                words = sc.texts[i]
+                if r eq r and words ne ''
+                    y = cy - r
+                    if a.backdrop
+                        w = _wide[c, p, words, a.tick_size]
+                        bp = a.backdrop_padding
+                        c = _box[c, p, cx - w / 2.0 - bp, y - a.tick_size / 2.0 - bp, w + 2.0 * bp, a.tick_size + 2.0 * bp, lory.rgba[255, 255, 255, 0.75]]
+                    c = _words[c, p, cx, y, words, a.tick_size, a.tick_bold, a.tick_ink, 'center', 'middle']
+            i = i + 1
+    c
+
+--- ---- the legend and the titles ----
+
+--- the legend drawn: its title, and each item's box (or its point's
+--- shape) and its words, struck through where its dataset is hidden
+fn _legend_drawn[c0, ch, laid, p]
+    c = c0
+    l = ch.legend
+    part = laid.parts[0]
+    if not l.shown or not part.shown
+        return c
+    lg = laid.legend
+    if l.title_shown and l.title ne ''
+        c = _words[c, p, (part.left + part.right) / 2.0, part.top + lg.title_height / 2.0, l.title, l.size, true, l.ink, 'center', 'middle']
+    i = 0
+    while i lt len[lg.items] and i lt len[lg.hits]
+        c = _legend_item_drawn[c, l, lg, lg.items[i], lg.hits[i], p]
+        i = i + 1
+    c
+
+fn _legend_item_drawn[c0, l, lg, it, hb, p]
+    c = c0
+    x = hb[0]
+    y = hb[1]
+    bw = lg.box_width
+    bh = lg.box_height
+    if l.point_style
+        style = it.point_style
+        if style eq ''
+            style = 'circle'
+        c = _point_drawn[c, p, style, x + bw / 2.0, y + lg.item_height / 2.0, bh * sqrt[2.0] / 2.0, it.fill, it.edge, it.edge_width]
+    else
+        top = y + max[(l.size - bh) / 2.0, 0.0]
+        c = _box[c, p, x, top, bw, bh, it.fill]
+        if it.edge_width gt 0.0
+            c = _framed[c, p, x, top, bw, bh, it.edge_width, it.edge]
+    tx = x + bw + l.size / 2.0
+    ty = y + lg.item_height / 2.0
+    c = _words[c, p, tx, ty, it.text, l.size, false, l.ink, 'left', 'middle']
+    if it.hidden
+        c = _stroke[c, p, tx, ty, tx + _wide[c, p, it.text, l.size], ty, 2.0, l.ink]
+    c
+
+--- a title or subtitle drawn in its box: each line across it, aligned as
+--- it says; letter under letter where it stands beside the area
+fn _heading_drawn[c0, h, part, p]
+    c = c0
+    if not h.shown or not part.shown or len[h.lines] eq 0
+        return c
+    line = charts_model.line_of[h.size]
+    n = len[h.lines]
+    if part.position eq 'top' or part.position eq 'bottom'
+        x = (part.left + part.right) / 2.0
+        align = 'center'
+        if h.align eq 'start'
+            x = part.left
+            align = 'left'
+        else if h.align eq 'end'
+            x = part.right
+            align = 'right'
+        i = 0
+        while i lt n
+            c = _words[c, p, x, part.top + h.padding_top + line / 2.0 + line * (0.0 + i), h.lines[i], h.size, h.bold, h.ink, align, 'middle']
+            i = i + 1
+        return c
+    i = 0
+    while i lt n
+        x = part.left + h.padding_top + line / 2.0 + line * (0.0 + i)
+        c = _column_words[c, p, x, (part.top + part.bottom) / 2.0, h.lines[i], h.size, h.ink]
+        i = i + 1
+    c
+
+--- ---- datasets ----
+
+--- every shown dataset drawn, the highest `order` first, so that the
+--- lowest is drawn on top; lines and points kept to the area and the
+--- room their points spill past it, as Chart.js clips them
+fn _datasets_drawn[c0, ch, laid, layers, hits, p]
+    c = c0
+    ps = charts_scales.parsed_of[ch, laid.scales]
+    order = charts_model.sorted_sets[ch, true]
+    k = len[order] - 1
+    while k gte 0
+        d = order[k]
+        if d lt len[layers] and d lt len[ps]
+            layer = layers[d]
+            form = layer.what
+            if form eq 'bar'
+                c = _bars_drawn[c, ch, layer, hits, p]
+            else if charts_model.arcs_kind[form]
+                c = _arcs_drawn[c, ch, layer, hits, p]
+            else
+                kept = lory.clipped[c]
+                a = laid.area
+                m = laid.overflow
+                c = lory.clip[c, _x[p, a[0] - m], _y[p, a[1] - m], (a[2] - a[0] + 2.0 * m) * p.s, (a[3] - a[1] + 2.0 * m) * p.s]
+                c = _lined_drawn[c, ch, laid, ps, layers, layer, hits, p]
+                c = lory.unclip[c, kept]
+        k = k - 1
+    c
+
+--- whether the mark at `j` of the dataset at `d` is under the pointer
+fn _is_hit[hits, d, j]
+    for h in hits
+        if h.set eq d and h.index eq j
+            return true
+    false
+
+--- the colour a mark is filled with under the pointer: its dataset's
+--- hover colour, else its own darkened as Chart.js darkens it
+fn _hover_fill[s, j, color]
+    if len[s.hover_fills] gt 0
+        return charts_model.color_at[s.hover_fills, j, color]
+    charts_model.hover_color[color]
+
+fn _hover_edge[s, j, color]
+    if len[s.hover_edges] gt 0
+        return charts_model.color_at[s.hover_edges, j, color]
+    charts_model.hover_color[color]
+
+--- ---- bars ----
+
+fn _bars_drawn[c0, ch, layer, hits, p]
+    c = c0
+    s = ch.sets[layer.set]
+    j = 0
+    while j lt len[layer.marks]
+        m = layer.marks[j]
+        --- (a bar stands in its bounds, as Chart.js draws one: a vertical
+        --- bar's height is none while it grows from its base at first)
+        b = charts_hits.bar_bounds[m]
+        if charts_model.finite[b[0]] and charts_model.finite[b[1]] and charts_model.finite[b[2]] and charts_model.finite[b[3]]
+            fill = m.fill
+            edge = m.edge
+            if _is_hit[hits, layer.set, j]
+                fill = _hover_fill[s, j, fill]
+                edge = _hover_edge[s, j, edge]
+            c = _bar_drawn[c, p, s, m, fill, edge]
+        j = j + 1
+    c
+
+--- a bar drawn: its border (none on the edges it leaves out, no wider
+--- than half the bar) round its fill, its corners rounded where it may be
+--- (none beside an edge left out, none wider than half the bar)
+fn _bar_drawn[c0, p, s, m, fill, edge]
+    c = c0
+    b = charts_hits.bar_bounds[m]
+    w = b[2] - b[0]
+    h = b[3] - b[1]
+    if w lte 0.0 or h lte 0.0
+        return c
+    ew = s.edge_width
+    l = _side_width[m.skipped, 'l', ew, w / 2.0]
+    t = _side_width[m.skipped, 't', ew, h / 2.0]
+    r = _side_width[m.skipped, 'r', ew, w / 2.0]
+    bt = _side_width[m.skipped, 'b', ew, h / 2.0]
+    rounded = m.rounded or s.corners_set
+    most = min[w / 2.0, h / 2.0]
+    tl = _corner[rounded, m.skipped, 't', 'l', s.corners[0], most]
+    tr = _corner[rounded, m.skipped, 't', 'r', s.corners[1], most]
+    bl = _corner[rounded, m.skipped, 'b', 'l', s.corners[2], most]
+    br = _corner[rounded, m.skipped, 'b', 'r', s.corners[3], most]
+    edged = l + t + r + bt gt 0.0
+    if tl + tr + bl + br eq 0.0
+        c = _box[c, p, b[0] + l, b[1] + t, w - l - r, h - t - bt, fill]
+        if edged
+            c = _box[c, p, b[0], b[1], w, t, edge]
+            c = _box[c, p, b[0], b[3] - bt, w, bt, edge]
+            c = _box[c, p, b[0], b[1] + t, l, h - t - bt, edge]
+            c = _box[c, p, b[2] - r, b[1] + t, r, h - t - bt, edge]
+        return c
+    outer = _rounded_outline[b[0], b[1], b[2], b[3], tl, tr, br, bl]
+    inner = _rounded_outline[b[0] + l, b[1] + t, b[2] - r, b[3] - bt, max[0.0, tl - max[t, l]], max[0.0, tr - max[t, r]], max[0.0, br - max[bt, r]], max[0.0, bl - max[bt, l]]]
+    c = _convex[c, p, inner[0], inner[1], fill]
+    if edged
+        c = _between[c, p, outer[0], outer[1], inner[0], inner[1], edge]
+    c
+
+--- how wide a bar's border is on a side (`side`: t, r, b or l): none
+--- where it is left out, else its width kept to `most`
+fn _side_width[skipped, side, width, most]
+    if side in skipped
+        return 0.0
+    charts_model.limited[width, 0.0, most]
+
+--- a corner's radius: none where the bar may not be rounded or beside an
+--- edge left out, else its radius kept to `most`
+fn _corner[rounded, skipped, one, other, r, most]
+    if not rounded or one in skipped or other in skipped
+        return 0.0
+    charts_model.limited[r, 0.0, most]
+
+--- the outline of a box from (x0, y0) to (x1, y1) with its corners
+--- rounded (top left, top right, bottom right, bottom left), clockwise
+--- from its top left: its xs and its ys, six steps round each corner
+fn _rounded_outline[x0, y0, x1, y1, tl, tr, br, bl]
+    xs = charts_model.no_numbers[]
+    ys = charts_model.no_numbers[]
+    centres = [[x0 + tl, y0 + tl, tl, pi], [x1 - tr, y0 + tr, tr, pi * 1.5], [x1 - br, y1 - br, br, 0.0], [x0 + bl, y1 - bl, bl, pi * 0.5]]
+    k = 0
+    while k lt 4
+        q = centres[k]
+        i = 0
+        while i lte 6
+            a = q[3] + pi / 2.0 * (0.0 + i) / 6.0
+            xs = push[xs, q[0] + cos[a] * q[2]]
+            ys = push[ys, q[1] + sin[a] * q[2]]
+            i = i + 1
+        k = k + 1
+    [xs, ys]
+
+--- ---- lines and points ----
+
+--- a dataset of points drawn: its fill and its line where it is a line
+--- that is drawn, then its points, those under the pointer last
+fn _lined_drawn[c0, ch, laid, ps, layers, layer, hits, p]
+    c = c0
+    s = ch.sets[layer.set]
+    form = layer.what
+    lined = s.show_line and (form eq 'line' or form eq 'radar' or form eq 'scatter')
+    if lined and len[layer.marks] gt 0
+        runs = _runs[layer, s, form eq 'radar']
+        if s.fill ne ''
+            c = _fill_drawn[c, ch, laid, ps, layers, layer, runs, p]
+        color = layer.marks[0].edge
+        i = 0
+        while i lt len[runs]
+            path = _run_path[layer, s, runs[i].places]
+            c = _polyline[c, p, path[0], path[1], s.edge_width, color]
+            i = i + 1
+    c = _points_drawn[c, laid, layer, s, hits, p, false]
+    _points_drawn[c, laid, layer, s, hits, p, true]
+
+--- a run of a line's points: their places among its marks, in order
+struct Run [places]
+
+--- the runs of a dataset's points its line is drawn through, each the
+--- places of its points in order: broken at a gap (unless every gap is
+--- spanned) and before a point the line stops at (too far from the one
+--- before); a radar's line closes round where it can
+fn _runs[layer, s, looped]
+    out = slice[[Run[slice[[0], 0, 0]]], 0, 0]
+    run = slice[[0], 0, 0]
+    marks = layer.marks
+    j = layer.first
+    last = min[layer.first + layer.count, len[marks]]
+    spans = s.span_gaps eq inf
+    while j lt last
+        m = marks[j]
+        if m.skip or not charts_model.finite[m.x] or not charts_model.finite[m.y]
+            if not spans and len[run] gt 0
+                out = push[out, Run[run]]
+                run = slice[[0], 0, 0]
+        else
+            if m.stop and len[run] gt 0
+                out = push[out, Run[run]]
+                run = slice[[0], 0, 0]
+            run = push[run, j]
+        j = j + 1
+    if len[run] gt 0
+        out = push[out, Run[run]]
+    if not looped or len[out] eq 0
+        return out
+    n = len[marks]
+    first = out[0].places
+    final = out[len[out] - 1].places
+    if len[out] eq 1
+        if len[first] gt 2 and (spans or len[first] eq n)
+            out[0] = Run[push[first, first[0]]]
+        return out
+    if first[0] eq 0 and final[len[final] - 1] eq n - 1
+        joined = final
+        i = 0
+        while i lt len[first]
+            joined = push[joined, first[i]]
+            i = i + 1
+        out[0] = Run[joined]
+        out = slice[out, 0, len[out] - 1]
+    out
+
+--- the points a run's line passes through, as drawn: straight from point
+--- to point, or stepped (`before`: along, then up; `after`: up, then
+--- along; `middle`: up half way along), or curved through its control
+--- points (each piece in steps of a few pixels)
+fn _run_path[layer, s, run]
+    xs = charts_model.no_numbers[]
+    ys = charts_model.no_numbers[]
+    marks = layer.marks
+    if len[run] eq 0
+        return [xs, ys]
+    a = marks[run[0]]
+    xs = push[xs, a.x]
+    ys = push[ys, a.y]
+    k = 1
+    while k lt len[run]
+        b = marks[run[k]]
+        if s.stepped eq 'middle'
+            mid = (a.x + b.x) / 2.0
+            xs = push[push[xs, mid], mid]
+            ys = push[push[ys, a.y], b.y]
+        else if s.stepped eq 'after'
+            xs = push[xs, a.x]
+            ys = push[ys, b.y]
+        else if s.stepped ne ''
+            xs = push[xs, b.x]
+            ys = push[ys, a.y]
+        else if charts_model.finite[a.cp2x] and charts_model.finite[b.cp1x]
+            long = sqrt[(b.x - a.x) ^ 2.0 + (b.y - a.y) ^ 2.0]
+            steps = max[4, min[32, int[long / 4.0]]]
+            i = 1
+            while i lt steps
+                t = (0.0 + i) / (0.0 + steps)
+                u = 1.0 - t
+                xs = push[xs, u * u * u * a.x + 3.0 * u * u * t * a.cp2x + 3.0 * u * t * t * b.cp1x + t * t * t * b.x]
+                ys = push[ys, u * u * u * a.y + 3.0 * u * u * t * a.cp2y + 3.0 * u * t * t * b.cp1y + t * t * t * b.y]
+                i = i + 1
+        xs = push[xs, b.x]
+        ys = push[ys, b.y]
+        a = b
+        k = k + 1
+    [xs, ys]
+
+--- a line's fill: down (or across) to its axis's naught, its start, its
+--- end or a value; to another dataset's line; or, for a radar, in to the
+--- centre
+fn _fill_drawn[c0, ch, laid, ps, layers, layer, runs, p]
+    c = c0
+    s = ch.sets[layer.set]
+    color = layer.marks[0].fill
+    if color.a lte 0.0
+        return c
+    target = s.fill
+    if layer.what eq 'radar'
+        k = charts_scales.scale_at[laid.scales, ps[layer.set].i_id]
+        if k lt 0 or target eq 'end'
+            return c
+        sc = laid.scales[k]
+        i = 0
+        while i lt len[runs]
+            path = _run_path[layer, s, runs[i].places]
+            j = 1
+            while j lt len[path[0]]
+                c = _triangle[c, p, sc.x_center, sc.y_center, path[0][j - 1], path[1][j - 1], path[0][j], path[1][j], color]
+                j = j + 1
+            i = i + 1
+        return c
+    other = _fill_target[ch, ps, layer.set, target]
+    if other gte 0
+        if other lt len[layers]
+            return _fill_between[c, p, layer, layers[other], color]
+        return c
+    if other eq -2
+        return c
+    kv = charts_scales.scale_at[laid.scales, ps[layer.set].v_id]
+    if kv lt 0
+        return c
+    vsc = laid.scales[kv]
+    base = charts_scales.base_pixel[vsc]
+    if target eq 'start'
+        base = vsc.bottom
+        if vsc.horizontal
+            base = vsc.left
+    else if target eq 'end'
+        base = vsc.top
+        if vsc.horizontal
+            base = vsc.right
+    else if starts[target, 'value:']
+        v = _fill_value[target]
+        if v eq v
+            base = charts_scales.pixel[vsc, v]
+    i = 0
+    while i lt len[runs]
+        path = _run_path[layer, s, runs[i].places]
+        c = _filled_to[c, p, path[0], path[1], base, vsc.horizontal, color]
+        i = i + 1
+    c
+
+--- the value of a fill to a value (`value:85`), nan where it is none
+fn _fill_value[target]
+    v = float[slice[target, 6, len[target]]]
+    if not v.ok
+        return nan
+    0.0 + v
+
+--- the dataset a line is filled to: its place; -1 where it is filled to
+--- an axis, -2 where its target is not shown
+fn _fill_target[ch, ps, d, target]
+    if target eq 'origin' or target eq 'start' or target eq 'end' or starts[target, 'value:'] or target eq 'shape'
+        return -1
+    n = len[ch.sets]
+    other = -1
+    if target eq 'stack'
+        k = d - 1
+        while k gte 0 and other lt 0
+            if ps[k].visible and ps[k].key eq ps[d].key and ps[k].v_id eq ps[d].v_id
+                other = k
+            k = k - 1
+        return other
+    if starts[target, '+'] or starts[target, '-']
+        step = int[slice[target, 1, len[target]]]
+        if not step.ok
+            return -2
+        if starts[target, '+']
+            other = d + step
+        else
+            other = d - step
+    else
+        named = int[target]
+        if not named.ok
+            return -1
+        other = 0 + named
+    if other lt 0 or other gte n or other eq d
+        return -2
+    if not ps[other].visible
+        return -2
+    other
+
+--- the room between a line and a level (`base`: a y, or an x where the
+--- values run across), filled piece by piece, each piece split where the
+--- line crosses the level
+fn _filled_to[c0, p, xs, ys, base, across, color]
+    c = c0
+    i = 1
+    while i lt len[xs]
+        x0 = xs[i - 1]
+        y0 = ys[i - 1]
+        x1 = xs[i]
+        y1 = ys[i]
+        if across
+            c = _piece_filled[c, p, y0, x0, y1, x1, base, color, true]
+        else
+            c = _piece_filled[c, p, x0, y0, x1, y1, base, color, false]
+        i = i + 1
+    c
+
+--- one piece of a fill: from (u0, v0) to (u1, v1) down to the level `base`
+--- of v, as two triangles (or two, split where it crosses); `swapped`
+--- where u is the canvas's y
+fn _piece_filled[c0, p, u0, v0, u1, v1, base, color, swapped]
+    c = c0
+    if (v0 - base) * (v1 - base) lt 0.0
+        uc = u0 + (u1 - u0) * (base - v0) / (v1 - v0)
+        c = _tri_uv[c, p, u0, v0, uc, base, u0, base, color, swapped]
+        return _tri_uv[c, p, uc, base, u1, v1, u1, base, color, swapped]
+    c = _tri_uv[c, p, u0, v0, u1, v1, u1, base, color, swapped]
+    _tri_uv[c, p, u0, v0, u1, base, u0, base, color, swapped]
+
+fn _tri_uv[c, p, u0, v0, u1, v1, u2, v2, color, swapped]
+    if swapped
+        return _triangle[c, p, v0, u0, v1, u1, v2, u2, color]
+    _triangle[c, p, u0, v0, u1, v1, u2, v2, color]
+
+--- the room between two datasets' lines, from point to point where both
+--- have a point at the same place
+fn _fill_between[c0, p, layer, other, color]
+    c = c0
+    a = layer.marks
+    b = other.marks
+    n = min[len[a], len[b]]
+    j = 1
+    while j lt n
+        if _drawn_point[a[j - 1]] and _drawn_point[a[j]] and _drawn_point[b[j - 1]] and _drawn_point[b[j]]
+            c = _triangle[c, p, a[j - 1].x, a[j - 1].y, a[j].x, a[j].y, b[j].x, b[j].y, color]
+            c = _triangle[c, p, a[j - 1].x, a[j - 1].y, b[j].x, b[j].y, b[j - 1].x, b[j - 1].y, color]
+        j = j + 1
+    c
+
+fn _drawn_point[m]
+    not m.skip and charts_model.finite[m.x] and charts_model.finite[m.y]
+
+--- a dataset's points drawn within its drawn run: those under the pointer
+--- (`active`) in their hover radius and colours, or the others; none of
+--- less than a tenth of a pixel, nor any outside the area
+fn _points_drawn[c0, laid, layer, s, hits, p, active]
+    c = c0
+    marks = layer.marks
+    j = layer.first
+    last = min[layer.first + layer.count, len[marks]]
+    while j lt last
+        m = marks[j]
+        if _drawn_point[m] and _is_hit[hits, layer.set, j] eq active
+            r = m.radius
+            fill = m.fill
+            edge = m.edge
+            if active
+                r = m.hover_radius
+                fill = _hover_fill[s, j, fill]
+                edge = _hover_edge[s, j, edge]
+            bw = s.point_edge_width
+            if r gte 0.1 and charts_hits.in_area[m.x, m.y, laid.area, r + bw]
+                c = _point_drawn[c, p, s.point_style, m.x, m.y, r, fill, edge, bw]
+        j = j + 1
+    c
+
+--- a point's shape drawn about (x, y), `r` its radius: a circle, a
+--- square (`rect`), a rounded square, a diamond (`rectRot`), a triangle,
+--- or lines (`cross`, `crossRot`, `star`, `line`, `dash`); filled, then
+--- edged `bw` wide
+fn _point_drawn[c0, p, style, x, y, r, fill, edge, bw]
+    c = c0
+    if style eq 'false' or style eq 'none' or r lte 0.0
+        return c
+    if style eq 'rect'
+        half = r * sqrt[0.5]
+        c = _box[c, p, x - half, y - half, half * 2.0, half * 2.0, fill]
+        if bw gt 0.0
+            c = _framed[c, p, x - half, y - half, half * 2.0, half * 2.0, bw, edge]
+        return c
+    if style eq 'rectRounded'
+        half = r * 0.858
+        c = lory.round_rect[c, _x[p, x - half], _y[p, y - half], half * 2.0 * p.s, half * 2.0 * p.s, r * 0.516 * p.s, fill]
+        if bw gt 0.0
+            c = lory.round_outline[c, _x[p, x - half - bw / 2.0], _y[p, y - half - bw / 2.0], (half * 2.0 + bw) * p.s, (half * 2.0 + bw) * p.s, (r * 0.516 + bw / 2.0) * p.s, bw * p.s, edge]
+        return c
+    if style eq 'rectRot' or style eq 'triangle'
+        xs = [x - r, x, x + r, x]
+        ys = [y, y - r, y, y + r]
+        if style eq 'triangle'
+            xs = [x, x + sin[pi * 2.0 / 3.0] * r, x + sin[pi * 4.0 / 3.0] * r]
+            ys = [y - r, y - cos[pi * 2.0 / 3.0] * r, y - cos[pi * 4.0 / 3.0] * r]
+        c = _convex[c, p, xs, ys, fill]
+        if bw gt 0.0
+            closed_x = push[xs, xs[0]]
+            closed_y = push[ys, ys[0]]
+            c = _polyline[c, p, closed_x, closed_y, bw, edge]
+        return c
+    if style eq 'cross' or style eq 'star'
+        c = _stroke[c, p, x - r, y, x + r, y, bw, edge]
+        c = _stroke[c, p, x, y - r, x, y + r, bw, edge]
+    if style eq 'crossRot' or style eq 'star'
+        d = r * sqrt[0.5]
+        c = _stroke[c, p, x - d, y - d, x + d, y + d, bw, edge]
+        c = _stroke[c, p, x - d, y + d, x + d, y - d, bw, edge]
+    if style eq 'cross' or style eq 'star' or style eq 'crossRot'
+        return c
+    if style eq 'line'
+        return _stroke[c, p, x - r, y, x + r, y, bw, edge]
+    if style eq 'dash'
+        return _stroke[c, p, x, y, x + r, y, bw, edge]
+    c = lory.circle[c, _x[p, x], _y[p, y], r * p.s, fill]
+    _circled[c, p, x, y, r, bw, edge]
+
+--- ---- arcs ----
+
+fn _arcs_drawn[c0, ch, layer, hits, p]
+    c = c0
+    s = ch.sets[layer.set]
+    j = 0
+    while j lt len[layer.marks]
+        m = layer.marks[j]
+        --- (as Chart.js: none where it turns through nothing or a radius
+        --- is below naught; a polar area's arcs have only their angles,
+        --- and one that turns through nothing Chart.js draws as a sliver
+        --- too thin to see, which is left out)
+        if m.end_angle gt m.start_angle and not (m.inner lt 0.0) and not (m.outer lt 0.0) and charts_model.finite[m.outer]
+            fill = m.fill
+            edge = m.edge
+            offset = m.offset
+            if _is_hit[hits, layer.set, j]
+                fill = _hover_fill[s, j, fill]
+                edge = _hover_edge[s, j, edge]
+                offset = s.hover_offset
+            c = _arc_drawn[c, p, m, s, offset, fill, edge]
+        j = j + 1
+    c
+
+--- an arc drawn as Chart.js draws one: moved out from the centre a
+--- quarter of its offset along its middle, its radii grown by its spacing
+--- (and by its offset, where it is narrow), its ends drawn in so that
+--- the room between arcs is as wide all along; its ring filled, then
+--- edged
+fn _arc_drawn[c0, p, m, s, offset0, fill, edge]
+    c = c0
+    offset = offset0 / 4.0
+    spacing = s.spacing / 2.0
+    half_angle = (m.start_angle + m.end_angle) / 2.0
+    cx = m.x + cos[half_angle] * offset
+    cy = m.y + sin[half_angle] * offset
+    turn = m.circumference
+    if not charts_model.finite[turn]
+        turn = 0.0
+    grown = offset * (1.0 - sin[min[pi, turn]])
+    outer = max[m.outer + spacing + grown, 0.0]
+    inner = 0.0
+    if m.inner gt 0.0
+        inner = m.inner + spacing + grown
+    start_angle = m.start_angle
+    end_angle = min[m.end_angle, m.start_angle + pi * 2.0]
+    alpha = end_angle - start_angle
+    spaced = 0.0
+    if spacing gt 0.0
+        plain_inner = 0.0
+        if m.inner gt 0.0
+            plain_inner = m.inner - spacing
+        plain_outer = 0.0
+        if outer gt 0.0
+            plain_outer = outer - spacing
+        middle_radius = (plain_inner + plain_outer) / 2.0
+        if middle_radius ne 0.0
+            spaced = (alpha - alpha * middle_radius / (middle_radius + spacing)) / 2.0
+    if outer gt 0.0
+        beta = max[0.001, alpha * outer - grown / pi] / outer
+        drawn_in = (alpha - beta) / 2.0
+        start_angle = start_angle + drawn_in + spaced
+        end_angle = end_angle - drawn_in - spaced
+    if end_angle lte start_angle or outer lte 0.0
+        return c
+    steps = max[1, int[(end_angle - start_angle) / (pi / 60.0)] + 1]
+    oxs = charts_model.no_numbers[]
+    oys = charts_model.no_numbers[]
+    ixs = charts_model.no_numbers[]
+    iys = charts_model.no_numbers[]
+    i = 0
+    while i lte steps
+        a = start_angle + (end_angle - start_angle) * (0.0 + i) / (0.0 + steps)
+        oxs = push[oxs, cx + cos[a] * outer]
+        oys = push[oys, cy + sin[a] * outer]
+        ixs = push[ixs, cx + cos[a] * inner]
+        iys = push[iys, cy + sin[a] * inner]
+        i = i + 1
+    i = 1
+    while i lte steps
+        if inner gt 0.0
+            c = _triangle[c, p, ixs[i - 1], iys[i - 1], oxs[i - 1], oys[i - 1], oxs[i], oys[i], fill]
+            c = _triangle[c, p, ixs[i - 1], iys[i - 1], oxs[i], oys[i], ixs[i], iys[i], fill]
+        else
+            c = _triangle[c, p, cx, cy, oxs[i - 1], oys[i - 1], oxs[i], oys[i], fill]
+        i = i + 1
+    bw = s.edge_width
+    if bw gt 0.0 and edge.a gt 0.0
+        c = _polyline[c, p, oxs, oys, bw, edge]
+        if inner gt 0.0
+            c = _polyline[c, p, ixs, iys, bw, edge]
+        whole = m.end_angle - m.start_angle gte pi * 2.0 - 0.000001
+        if not whole
+            c = _stroke[c, p, ixs[0], iys[0], oxs[0], oys[0], bw, edge]
+            c = _stroke[c, p, ixs[steps], iys[steps], oxs[steps], oys[steps], bw, edge]
+    c
+
+--- ---- the tooltip ----
+
+--- the tooltip drawn: its box and caret, its title (bold), and a line for
+--- each mark it tells of, after the mark's colours in a box
+fn _tip_drawn[c0, ch, tip, p]
+    c = c0
+    t = ch.tip
+    x = tip.x
+    y = tip.y
+    c = lory.round_rect[c, _x[p, x], _y[p, y], tip.width * p.s, tip.height * p.s, t.corner * p.s, t.fill]
+    caret = _caret_of[tip, t]
+    c = _triangle[c, p, caret[0], caret[1], caret[2], caret[3], caret[4], caret[5], t.fill]
+    pad = t.padding
+    at = y + pad
+    title_line = t.title_size * 1.2
+    n = len[tip.title]
+    i = 0
+    while i lt n
+        c = _words[c, p, x + pad, at + title_line / 2.0, tip.title[i], t.title_size, true, t.ink, 'left', 'middle']
+        at = at + title_line + t.title_spacing
+        i = i + 1
+    if n gt 0
+        at = at + t.title_margin - t.title_spacing
+    body_line = t.body_size * 1.2
+    box_w = t.box_width
+    if box_w ne box_w
+        box_w = t.body_size
+    box_h = t.box_height
+    if box_h ne box_h
+        box_h = t.body_size
+    room = 0.0
+    if t.display_colors
+        room = box_w + 2.0 + t.box_padding
+    i = 0
+    while i lt len[tip.lines]
+        words = tip.lines[i]
+        if words ne ''
+            line_h = body_line
+            if t.display_colors
+                line_h = max[body_line, box_h]
+                h = tip.hits[i]
+                c = _color_box[c, ch, h, x + pad, at + max[(body_line - box_h) / 2.0, 0.0], box_w, box_h, p]
+            c = _words[c, p, x + pad + room, at + line_h / 2.0, words, t.body_size, false, t.ink, 'left', 'middle']
+            at = at + line_h + t.body_spacing
+        i = i + 1
+    c
+
+--- a tooltip line's colour box: white, edged in the mark's edge colour,
+--- filled inside with its fill
+fn _color_box[c0, ch, h, x, y, w, hh, p]
+    c = c0
+    fill = charts_model.fill_at[ch, h.set, h.index]
+    edge = charts_model.edge_at[ch, h.set, h.index]
+    c = _box[c, p, x, y, w, hh, lory.white[]]
+    c = _framed[c, p, x, y, w, hh, 1.0, edge]
+    _box[c, p, x + 1.0, y + 1.0, w - 2.0, hh - 2.0, fill]
+
+--- the tooltip's caret, its three corners (x, y each): on the side of the
+--- box that faces the point it tells of, its tip at the point's gap
+fn _caret_of[tip, t]
+    x = tip.x
+    y = tip.y
+    w = tip.width
+    h = tip.height
+    size = t.caret_size
+    if tip.y_align eq 'center'
+        mid = y + h / 2.0
+        if tip.x_align eq 'left'
+            return [x, mid + size, x - size, mid, x, mid - size]
+        return [x + w, mid - size, x + w + size, mid, x + w, mid + size]
+    tip_x = tip.caret_x
+    if tip.x_align eq 'left'
+        tip_x = x + t.corner + size
+    else if tip.x_align eq 'right'
+        tip_x = x + w - t.corner - size
+    if tip.y_align eq 'top'
+        return [tip_x - size, y, tip_x, y - size, tip_x + size, y]
+    [tip_x + size, y + h, tip_x, y + h + size, tip_x - size, y + h]
+
+--- ---- truths ----
+
+test a_bar_is_bordered_where_it_is_not_left_out[]
+    _side_width['b', 'b', 2.0, 10.0] eq 0.0
+    _side_width['b', 't', 2.0, 10.0] eq 2.0
+    _side_width['', 'l', 30.0, 10.0] eq 10.0
+    _corner[true, 'b', 't', 'l', 6.0, 4.0] eq 4.0
+    _corner[true, 'b', 'b', 'l', 6.0, 4.0] eq 0.0
+    _corner[false, '', 't', 'l', 6.0, 4.0] eq 0.0
+    box = _rounded_outline[0.0, 0.0, 10.0, 20.0, 0.0, 0.0, 0.0, 0.0]
+    len[box[0]] eq 28
+    box[0][0] eq 0.0
+    box[1][0] eq 0.0
+
+test a_line_breaks_at_its_gaps_and_a_radar_closes[]
+    clear = lory.rgba[0, 0, 0, 0.0]
+    m = charts_marks.Mark['point', 0, 0, 1.0, 1.0, nan, nan, nan, false, false, '', false, false, nan, nan, nan, nan, 3.0, 1.0, 4.0, nan, nan, nan, nan, nan, 0.0, nan, clear, clear]
+    gap = m
+    gap.skip = true
+    s = charts_model.dataset['line', 'a', [1.0, 2.0, 3.0, 4.0]]
+    layer = charts_marks.Layer[0, 'line', [m, m, gap, m], 0, 4]
+    runs = _runs[layer, s, false]
+    len[runs] eq 2
+    runs[1].places[0] eq 3
+    s.span_gaps = inf
+    len[_runs[layer, s, false]] eq 1
+    ring = charts_marks.Layer[0, 'radar', [m, m, m], 0, 3]
+    closed = _runs[ring, s, true]
+    len[closed[0].places] eq 4
+    closed[0].places[3] eq 0
+
+test grid_lines_fall_between_the_categories_of_a_bar_chart[]
+    ch = charts_model.chart_of['g', 'bar', ['a', 'b', 'c']]
+    ch.sets = [charts_model.dataset['bar', 'x', [1.0, 2.0, 3.0]]]
+    laid = charts_layout.laid_out[ch, 300.0, 200.0, charts_model.plain_pen[]]
+    sc = laid.scales[0]
+    spots = _grid_spots[sc, ch.axes[0]]
+    len[spots] eq 4
+    abs[spots[0] - sc.start_pixel] lt 0.000001
+    abs[spots[3] - sc.end_pixel] lt 0.000001
+    plain = ch.axes[1]
+    len[_grid_spots[laid.scales[1], plain]] eq len[laid.scales[1].ticks]
+
+test a_tooltip_caret_faces_its_point[]
+    t = charts_model.tip_of[]
+    told = charts_hits.Told[true, slice[[charts_hits.Hit[0, 0]], 0, 0], slice[[''], 0, 0], slice[[''], 0, 0], 100.0, 50.0, 80.0, 40.0, 90.0, 70.0, 'left', 'center']
+    k = _caret_of[told, t]
+    k[2] eq 95.0
+    k[3] eq 70.0
+    told.y_align = 'top'
+    told.x_align = 'center'
+    _caret_of[told, t][3] eq 45.0
+
+test a_growing_bar_and_a_polar_area_s_arcs_are_drawn[]
+    red = lory.rgba[255, 0, 0, 1.0]
+    none = slice[[charts_hits.Hit[0, 0]], 0, 0]
+    at = Place[0.0, 0.0, 1.0]
+    c = lory.begin[json['{"t": 0, "width": 640, "height": 480, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 640, "height": 480, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+    ch = charts_model.chart_of['b', 'bar', ['a']]
+    ch.sets = [charts_model.dataset['bar', 'a', [1.0]]]
+    bar = charts_marks.Mark['bar', 0, 0, 50.0, 20.0, 100.0, 10.0, nan, false, false, '', false, false, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, 0.0, nan, red, red]
+    grown = _bars_drawn[c, ch, charts_marks.Layer[0, 'bar', [bar], 0, 1], none, at]
+    len[grown.verts] gt len[c.verts]
+    flat = bar
+    flat.y = 100.0
+    len[_bars_drawn[c, ch, charts_marks.Layer[0, 'bar', [flat], 0, 1], none, at].verts] eq len[c.verts]
+    polar = charts_model.chart_of['p', 'polarArea', ['a']]
+    polar.sets = [charts_model.dataset['polarArea', 'a', [1.0]]]
+    arc = charts_marks.Mark['arc', 0, 0, 100.0, 100.0, nan, nan, nan, false, false, '', false, false, nan, nan, nan, nan, nan, nan, nan, 0.0, 1.0, 0.0, 50.0, nan, 0.0, nan, red, red]
+    len[_arcs_drawn[c, polar, charts_marks.Layer[0, 'polarArea', [arc], 0, 1], none, at].verts] gt len[c.verts]
+    turned_none = arc
+    turned_none.end_angle = 0.0
+    len[_arcs_drawn[c, polar, charts_marks.Layer[0, 'polarArea', [turned_none], 0, 1], none, at].verts] eq len[c.verts]

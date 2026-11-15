@@ -1,0 +1,200 @@
+--- Lory's games (docs/lory-design.md, phase 6), a package of their own
+--- beside Lory, as Kite is: a clock that steps a game at a fixed rate
+--- whatever the frame rate, shapes that meet, a value eased and held in
+--- bounds, sparks that fly and fade, and sounds made by the page. A game's
+--- state is a record the program keeps in process memory between frames,
+--- as any Lory program's is; its input is the frame's (keys held, the
+--- pointer, a headset's sticks and rays), and so is what it draws on.
+---
+---     use lory
+---     use game
+---
+---     n = game.steps[c, 'play', 120.0]
+---     for i in range[n]
+---         s = step[s, 1.0 / 120.0]
+
+use memory
+use math
+use lory
+
+--- a fixed-rate clock: the time not yet stepped
+struct Clock [left]
+
+--- how many steps of `1 / rate` seconds the frame's time makes, the rest
+--- kept for the next frame under `id` (at most eight a frame, so a slow
+--- machine slows the game rather than stalling it)
+fn steps[c, id, rate]
+    key = 'game.clock.`id`'
+    k = recall[key, Clock[0.0]]
+    k.left = k.left + lory.dt[c]
+    step = 1.0 / rate
+    n = 0
+    while k.left gte step and n lt 8
+        k.left = k.left - step
+        n = n + 1
+    if n eq 8
+        k.left = 0.0
+    remember[key, k]
+    n
+
+--- whether two circles meet: centres and radii
+fn circles_meet[ax, ay, ar, bx, by, br]
+    dx = ax - bx
+    dy = ay - by
+    dx * dx + dy * dy lte (ar + br) * (ar + br)
+
+--- whether two boxes meet: each its left, top, width and height
+fn boxes_meet[ax, ay, aw, ah, bx, by, bw, bh]
+    ax lt bx + bw and bx lt ax + aw and ay lt by + bh and by lt ay + ah
+
+--- whether a circle meets a box
+fn circle_meets_box[cx, cy, r, bx, by, bw, bh]
+    nx = max[bx, min[cx, bx + bw]]
+    ny = max[by, min[cy, by + bh]]
+    dx = cx - nx
+    dy = cy - ny
+    dx * dx + dy * dy lte r * r
+
+fn clamp[v, lo, hi]
+    max[lo, min[hi, v]]
+
+--- a value moved toward a goal, a share `rate` of the way each second
+--- (smooth whatever the frame rate)
+fn toward[v, goal, rate, dt]
+    v + (goal - v) * (1.0 - exp[0.0 - rate * dt])
+
+--- ---- sparks ----
+
+--- a spark: where it is, its speed, the seconds it has left of the ones
+--- it began with, and its colour
+struct Spark [x, y, vx, vy, life, full, color]
+
+--- `n` sparks flung from a point at up to `speed` in every direction
+fn burst[sparks, x, y, n, speed, color]
+    for i in range[n]
+        a = rand[] * 2.0 * pi
+        v = speed * (0.3 + 0.7 * rand[])
+        life = 0.4 + 0.6 * rand[]
+        sparks = push[sparks, Spark[x, y, cos[a] * v, sin[a] * v, life, life, color]]
+    sparks
+
+--- the sparks a moment later, pulled down by `gravity`, the spent ones gone
+fn moved[sparks, dt, gravity]
+    out = []
+    for s in sparks
+        s.life = s.life - dt
+        if s.life gt 0.0
+            s.vy = s.vy + gravity * dt
+            s.x = s.x + s.vx * dt
+            s.y = s.y + s.vy * dt
+            out = push[out, s]
+    out
+
+--- the sparks drawn, each fading as its time runs out
+fn drawn[c, sparks, r]
+    for s in sparks
+        share = s.life / s.full
+        c = lory.circle[c, s.x, s.y, r * (0.4 + 0.6 * share), lory.fade[s.color, share]]
+    c
+
+--- ---- sound ----
+
+--- a short sound: `pick` (a bright rising one), `hit` (a low one),
+--- `start`, or `over`
+fn sound[c, what]
+    if what eq 'pick'
+        return lory.tone[c, 880.0, 0.12, 'triangle', 0.15]
+    if what eq 'hit'
+        return lory.tone[c, 110.0, 0.35, 'sawtooth', 0.2]
+    if what eq 'over'
+        return lory.tone[c, 196.0, 0.7, 'square', 0.12]
+    lory.tone[c, 523.25, 0.18, 'sine', 0.15]
+
+--- ---- tests ----
+
+fn _frame[t]
+    json['{"t": `t`, "width": 400, "height": 300, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 400, "height": 300, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+--- the steps a clock gives frames at these times (in milliseconds), each
+--- frame ended, as a program's is, so that the next knows its time
+fn _stepped[id, times]
+    out = []
+    for t in times
+        c = lory.begin[_frame[t]]
+        out = push[out, steps[c, id, 120.0]]
+        calls = lory.end[c]
+    out
+
+--- a clock steps a game at its rate whatever the frames: a first frame
+--- none, one 40 ms later four steps of 1/120 s and the rest kept, one 20 ms
+--- after that three (the rest carried), and one after a pause at most
+--- eight, the rest let go, so the next frame, 8 ms on, makes none
+test a_clock_steps_a_game_at_its_rate_whatever_the_frames[]
+    _stepped['test.clock', [0, 40, 60, 1060, 1068]] eq [0, 4, 3, 8, 0]
+    --- (each clock its own: another, stepped on the next two frames, has
+    --- none of the first one's 8 ms kept, and makes its two steps of 18 ms
+    --- only on the second)
+    _stepped['test.other', [1076, 1086]] eq [0, 2]
+
+--- shapes meet where they touch, and not where they are apart: circles by
+--- their centres and radii, boxes by their sides (two boxes that only
+--- share an edge do not), a circle and a box by the box's nearest point
+test shapes_meet_where_they_touch[]
+    circles_meet[0.0, 0.0, 1.0, 1.5, 0.0, 1.0] eq true
+    circles_meet[0.0, 0.0, 1.0, 2.0, 0.0, 1.0] eq true
+    circles_meet[0.0, 0.0, 1.0, 2.5, 0.0, 1.0] eq false
+    boxes_meet[0.0, 0.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0] eq true
+    boxes_meet[0.0, 0.0, 2.0, 2.0, 2.0, 0.0, 2.0, 2.0] eq false
+    circle_meets_box[2.4, 1.0, 0.5, 0.0, 0.0, 2.0, 2.0] eq true
+    circle_meets_box[3.0, 1.0, 0.5, 0.0, 0.0, 2.0, 2.0] eq false
+    circle_meets_box[2.3, 2.3, 0.5, 0.0, 0.0, 2.0, 2.0] eq true
+    circle_meets_box[2.4, 2.4, 0.5, 0.0, 0.0, 2.0, 2.0] eq false
+
+--- a value eased toward its goal goes as far in a second as in two halves
+--- of one (smooth whatever the frame rate), and a value is held in bounds
+test a_value_eases_toward_its_goal_and_is_held_in_bounds[]
+    whole = toward[10.0, 20.0, 2.0, 1.0]
+    abs[whole - (20.0 - 10.0 * exp[0.0 - 2.0])] lt 0.000000001
+    half = toward[10.0, 20.0, 2.0, 0.5]
+    abs[toward[half, 20.0, 2.0, 0.5] - whole] lt 0.000000001
+    clamp[7.0, 0.0, 5.0] eq 5.0
+    clamp[0.0 - 1.0, 0.0, 5.0] eq 0.0
+    clamp[3.0, 0.0, 5.0] eq 3.0
+
+--- sparks fly from where they burst, fall, fade as they are drawn, and are
+--- spent within a second
+test sparks_fly_fall_fade_and_are_spent[]
+    seed[3]
+    s = burst[[], 50.0, 50.0, 20, 100.0, lory.white[]]
+    len[s] eq 20
+    s[0].x eq 50.0
+    s[0].y eq 50.0
+    s[0].life eq s[0].full
+    s[0].life gte 0.4
+    s[0].life lte 1.0
+    flown = moved[s, 0.1, 300.0]
+    len[flown] eq 20
+    abs[flown[0].vy - s[0].vy - 30.0] lt 0.000000001
+    abs[flown[0].x - 50.0 - flown[0].vx * 0.1] lt 0.000000001
+    flown[0].life lt flown[0].full
+    c = lory.begin[_frame[0]]
+    c = drawn[c, flown, 2.0]
+    one = len[c.verts]
+    one gt 0
+    c = drawn[lory.begin[_frame[0]], [flown[0]], 2.0]
+    len[c.verts] * 20 eq one
+    gone = s
+    for i in range[11]
+        gone = moved[gone, 0.1, 300.0]
+    len[gone] eq 0
+
+--- a sound is asked of the page with the frame's drawing: a pick is a
+--- bright rising one, a hit a low one
+test a_sound_is_asked_of_the_page[]
+    c = sound[lory.begin[_frame[0]], 'pick']
+    len[c.asks] eq 1
+    c.asks[0] eq ['@tone', '880', '0.12', '=triangle', '0.15']
+    c = sound[c, 'hit']
+    len[c.asks] eq 2
+    c.asks[1][0] eq '@tone'
+    c.asks[1][1] eq '110'

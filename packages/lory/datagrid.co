@@ -1,0 +1,3280 @@
+--- Lory's data grid: cells chosen, merged, edited, checked, pasted and
+--- reckoned, on top of lory.datatable's rows and columns.
+---
+---     use lory.datagrid as dg
+---     use lory.datatable as dt
+---
+---     t = dt.new[columns, rows]
+---     g = dg.grid['people', t]                        --- a grid of a table
+---     tree = dg.view[g, 900.0, 400.0]                 --- its drawing, a gui node
+---     shown = gui.show[c, gui.column[[tree]]]
+---     g = dg.handled[g, shown]                        --- the reader's keys and presses
+---
+--- It has five parts, each usable alone:
+---
+--- - Cell selection and cell spanning, as TanStack Table's table-core
+---   (9.3.1) has them: an ordered list of rectangles held by their corners'
+---   row and column ids (so they follow the cells through sorting,
+---   filtering and reordering), each adding cells or taking them away;
+---   presses, Shift and Ctrl presses, drags, arrows and select-all; the
+---   cells each rectangle holds, counted, listed and copied; and cells
+---   merged down a column where neighbours hold the same value, or across
+---   a row, with what the merges cover.
+--- - TOAST UI Grid's keymap (4.21.22): arrows, Home and End, Page Up and
+---   Down, Ctrl+Home and Ctrl+End, Shift with each to extend, Ctrl+A,
+---   Tab, Enter and Space to edit, Escape, Delete and Backspace to clear,
+---   Ctrl+C and Ctrl+V with the text a spreadsheet copies; its editors
+---   (text, number, a list, a box to tick), its relations between columns,
+---   its tree column, its summary row and three looks.
+--- - Editing as TanStack Table's with-tanstack-form example has it: each
+---   edit a draft over the rows, each draft checked by its column's rules,
+---   the dirty cells and rows known, rows added, and all of it or one row
+---   saved, or let go.
+--- - A grid kept live by a feed: cells changed by row id many times a
+---   second, the page, the sorting and the selection kept, each change
+---   flashing up or down.
+--- - A spreadsheet, the 7GUIs task Cells as Vue's example does it: a cell
+---   holds what was typed (trimmed); one that begins with `=` is a formula
+---   whose references (`A0`) read other cells, worked out as JavaScript
+---   works out the same expression; with a range's count, sum and mean,
+---   cut, copy, paste and clear, and undo and redo.
+---
+--- What each answers was written anew from the libraries' documents and
+--- from running them: tests/datagrid/reference.mjs runs table-core in node
+--- and TOAST UI Grid in headless Chrome on fixed inputs and writes what
+--- they answered to reference.json, and tests/datagrid/reference.co holds
+--- this module to it, value for value. No source of theirs is copied.
+---
+--- The grid draws as one control of gui's (`gui.drawn`): its header, its
+--- rows and its summary are painted in the tree's own pass, with a field
+--- of gui's over the cell being edited (in a headset, gui draws a keyboard
+--- under it). Its events are told by name, and `handled` applies them.
+use memory
+use lory
+use gui
+use datatable as dt
+
+-------------------------------------------------------------------- cell selection
+
+--- A rectangle of the cell selection, held by its two corners: the
+--- `anchor` stays where it was pressed while the `focus` moves with Shift
+--- and a drag; with `exclude` it takes its cells away from what the
+--- rectangles before it chose.
+struct Range [anchor_row, anchor_column, focus_row, focus_column, exclude]
+
+--- A rectangle of cells by their places in the order drawn: its first and
+--- last rows and its first and last columns, each counted from 0.
+struct Bounds [top, bottom, left, right]
+
+--- Which sides of a chosen cell stand on the outer edge of the selection.
+struct Edges [top, right, bottom, left]
+
+--- A cell by its row's id and its column's id ('' for none).
+struct Spot [row, column]
+
+--- A cell by its places: its row's and its column's, counted from 0
+--- (-1 for none); `region` is the chosen rectangle it is in.
+struct Place [region, row, column]
+
+--- How cells may be chosen (table-core's options): at all (`on`); not in
+--- these columns (`unselectable`, a column's enableCellSelection false);
+--- by Shift extending the active rectangle (`ranges`, enableCellRangeSelection);
+--- by a drag (`drag`, enableCellSelectionDrag); and by Ctrl adding or
+--- taking away a rectangle (`multi`, enableMultiCellRangeSelection).
+struct Selecting [on, unselectable, ranges, drag, multi]
+
+--- How cells merge (table-core's cell spanning): at all (`on`); down the
+--- columns named in `rows` where neighbours hold the same value (a
+--- column's spanRows true); across a row by `columns` (a column's
+--- spanColumns as a number, for every row) or by `wide` (a span for one
+--- row: its key is the column's id, a tab and the row's id, where
+--- table-core takes a function of the row); and never in the columns
+--- named in `off` (enableCellSpanning false).
+struct Spanning [on, rows, columns, wide, off]
+
+--- The merges of the rows drawn: the rows in the order drawn (the pinned
+--- top rows, the page's, the pinned bottom rows) and where each id stands
+--- among them, the columns' ids in the order drawn and their places, the
+--- spans down each column that has a merge (a run's first row holds its
+--- length, the rows it covers 0, the rest 1) and the spans across each row
+--- that has one (by the row's place as text: the merging cell holds its
+--- span, the cells it covers 0, the rest 1).
+struct Spans [rows, at, columns, places, down, across]
+
+--- A table laid out for its cells: the table and its row models, the rows
+--- in the order shown before paging (the order cells are counted in) and
+--- where each id stands there, the page's rows, the columns in the order
+--- drawn (pinned to the start, the center's, pinned to the end) and their
+--- places, how cells may be chosen, the merges, and the merged rectangles
+--- in the same places as the selection's.
+struct Laid [table, models, display, at, page, columns, places, selecting, spans, merges]
+
+fn _no_texts[]
+    slice[[''], 0, 0]
+
+fn _no_ints[]
+    out = []
+    for i in range[0]
+        out = push[out, i]
+    out
+
+fn _no_bounds[]
+    slice[[Bounds[0, 0, 0, 0]], 0, 0]
+
+fn _no_ranges[]
+    slice[[Range['', '', '', '', false]], 0, 0]
+
+fn _no_values[]
+    slice[[dt.missing[]], 0, 0]
+
+fn _no_rows[]
+    slice[[dt.row['', map['' = dt.missing[]]]], 0, 0]
+
+fn _no_places[]
+    map['' = 0]
+
+fn _no_spans_by[]
+    map['' = _no_ints[]]
+
+fn _ones[n]
+    out = []
+    for i in range[n]
+        out = push[out, 1]
+    out
+
+--- cells may be chosen everywhere, by every means: table-core's defaults
+fn selecting[on = true, unselectable = [], ranges = true, drag = true, multi = true]
+    off = _no_texts[]
+    for id in unselectable
+        if id ne ''
+            off = push[off, id]
+    Selecting[on, off, ranges, drag, multi]
+
+--- no cells merge until a column asks: down the columns in `rows`, across
+--- by `columns` (a number by column id) and `wide` (by column id, a tab
+--- and row id)
+fn spanning[on = true, rows = [], columns = map[], wide = map[], off = []]
+    down = _no_texts[]
+    for id in rows
+        if id ne ''
+            down = push[down, id]
+    gone = _no_texts[]
+    for id in off
+        if id ne ''
+            gone = push[gone, id]
+    --- (the spans copied into maps of numbers: a map given empty has no
+    --- kind of its own)
+    across = map['' = 0.0]
+    for id in keys[columns]
+        across = set[across, id, 0.0 + columns[id]]
+    by_cell = map['' = 0.0]
+    for id in keys[wide]
+        by_cell = set[by_cell, id, 0.0 + wide[id]]
+    Spanning[on, down, across, by_cell, gone]
+
+--- a rectangle from its anchor to its focus
+fn range_of[anchor_row, anchor_column, focus_row, focus_column, exclude = false]
+    Range[anchor_row, anchor_column, focus_row, focus_column, exclude]
+
+fn _place_of[places, id]
+    if id ne '' and id in places
+        return places[id]
+    -1
+
+--- The rows in the order table-core counts cells in: the rows before
+--- paging, with each expanded row's sub-rows after it.
+fn display_rows[t, m]
+    if t.options.page_expanded or t.options.manual_expanding
+        return m.expanded.rows
+    _opened_rows[t, m.sorted.rows]
+
+fn _opened_rows[t, rows]
+    out = _no_rows[]
+    for r in rows
+        out = push[out, r]
+        if len[r.subs] gt 0 and dt.is_expanded[t, r.id]
+            out = concat[out, _opened_rows[t, r.subs]]
+    out
+
+fn _places_of_rows[rows]
+    at = _no_places[]
+    i = 0
+    while i lt len[rows]
+        if not (rows[i].id in at)
+            at = set[at, rows[i].id, i]
+        i = i + 1
+    at
+
+--- The table laid out for its cells: its row models worked out once, the
+--- rows and columns in their orders, and the merges the spans make.
+fn laid[t, sel, spans_by]
+    m = dt.models[t]
+    laid_with[t, m, sel, spans_by]
+
+--- The same, for row models already worked out.
+fn laid_with[t, m, sel, spans_by]
+    display = display_rows[t, m]
+    at = _places_of_rows[display]
+    columns = dt.drawn_columns[t]
+    places = _no_places[]
+    i = 0
+    while i lt len[columns]
+        places = set[places, columns[i].id, i]
+        i = i + 1
+    sp = span_index[t, m, spans_by]
+    k = Laid[t, m, display, at, m.page.rows, columns, places, sel, sp, _no_bounds[]]
+    k.merges = merge_bounds[k]
+    k
+
+--- whether a column's cells may be chosen
+fn column_selectable[k, id]
+    k.selecting.on and not (id in k.selecting.unselectable)
+
+fn _selectable_columns[k]
+    out = _no_texts[]
+    if not k.selecting.on
+        return out
+    for c in k.columns
+        if not (c.id in k.selecting.unselectable)
+            out = push[out, c.id]
+    out
+
+--- whether a cell may be chosen
+fn cell_selectable[k, row, column]
+    column_selectable[k, column]
+
+fn _inside[b, row, column]
+    row gte b.top and row lte b.bottom and column gte b.left and column lte b.right
+
+fn _within[bounds, row, column]
+    for b in bounds
+        if _inside[b, row, column]
+            return true
+    false
+
+fn _merge_at[merges, row, column]
+    for b in merges
+        if _inside[b, row, column]
+            return b
+    Bounds[-1, -1, -1, -1]
+
+fn _met[a, b]
+    top = max[a.top, b.top]
+    bottom = min[a.bottom, b.bottom]
+    left = max[a.left, b.left]
+    right = min[a.right, b.right]
+    top lte bottom and left lte right
+
+fn _meeting[a, b]
+    Bounds[max[a.top, b.top], min[a.bottom, b.bottom], max[a.left, b.left], min[a.right, b.right]]
+
+--- a rectangle with another taken out of it: up to four pieces, above,
+--- below, then left and right of what they share
+fn _less[a, b]
+    if not _met[a, b]
+        return [a]
+    i = _meeting[a, b]
+    out = _no_bounds[]
+    if a.top lt i.top
+        out = push[out, Bounds[a.top, i.top - 1, a.left, a.right]]
+    if i.bottom lt a.bottom
+        out = push[out, Bounds[i.bottom + 1, a.bottom, a.left, a.right]]
+    if a.left lt i.left
+        out = push[out, Bounds[i.top, i.bottom, a.left, i.left - 1]]
+    if i.right lt a.right
+        out = push[out, Bounds[i.top, i.bottom, i.right + 1, a.right]]
+    out
+
+--- two rectangles side by side or one over the other, as one; a
+--- rectangle with a top of -1 where they do not make one
+fn _joined[a, b]
+    if a.top eq b.top and a.bottom eq b.bottom and (a.right + 1 eq b.left or b.right + 1 eq a.left)
+        return Bounds[a.top, a.bottom, min[a.left, b.left], max[a.right, b.right]]
+    if a.left eq b.left and a.right eq b.right and (a.bottom + 1 eq b.top or b.bottom + 1 eq a.top)
+        return Bounds[min[a.top, b.top], max[a.bottom, b.bottom], a.left, a.right]
+    Bounds[-1, -1, -1, -1]
+
+fn _before[a, b]
+    if a.top ne b.top
+        return a.top lt b.top
+    if a.left ne b.left
+        return a.left lt b.left
+    if a.bottom ne b.bottom
+        return a.bottom lt b.bottom
+    a.right lt b.right
+
+--- rectangles in order: by top, then left, then bottom, then right (a
+--- stable insertion sort, as the pieces are few)
+fn _in_order[xs]
+    out = _no_bounds[]
+    for x in xs
+        placed = _no_bounds[]
+        put = false
+        for y in out
+            if not put and _before[x, y]
+                placed = push[placed, x]
+                put = true
+            placed = push[placed, y]
+        if not put
+            placed = push[placed, x]
+        out = placed
+    out
+
+fn _without_at[xs, j]
+    concat[slice[xs, 0, j], slice[xs, j + 1, len[xs]]]
+
+--- rectangles that touch along a whole side joined, again and again from
+--- the start after each join, then put in order
+fn _merged_all[xs]
+    out = xs
+    i = 0
+    while i lt len[out]
+        j = i + 1
+        joined = false
+        while j lt len[out] and not joined
+            m = _joined[out[i], out[j]]
+            if m.top gte 0
+                out = _without_at[out, j]
+                out[i] = m
+                joined = true
+            else
+                j = j + 1
+        if joined
+            i = 0
+        else
+            i = i + 1
+    _in_order[out]
+
+--- the chosen rectangles with another added: only the parts of it no
+--- rectangle holds yet, then the pieces joined
+fn _added[chosen, b]
+    pieces = [b]
+    for e in chosen
+        if len[pieces] gt 0
+            next = _no_bounds[]
+            for p in pieces
+                next = concat[next, _less[p, e]]
+            pieces = next
+    if len[pieces] eq 0
+        return chosen
+    _merged_all[concat[chosen, pieces]]
+
+--- the chosen rectangles with another taken away
+fn _taken[chosen, b]
+    out = _no_bounds[]
+    for e in chosen
+        out = concat[out, _less[e, b]]
+    _merged_all[out]
+
+--- a rectangle grown until it holds every merged cell it touches whole
+fn _grown[b, merges]
+    out = b
+    changed = true
+    while changed
+        changed = false
+        for m in merges
+            if _met[out, m]
+                u = Bounds[min[out.top, m.top], max[out.bottom, m.bottom], min[out.left, m.left], max[out.right, m.right]]
+                if u.top ne out.top or u.bottom ne out.bottom or u.left ne out.left or u.right ne out.right
+                    out = u
+                    changed = true
+    out
+
+fn _row_place[k, id]
+    _place_of[k.at, id]
+
+--- The cells chosen, as disjoint rectangles in the order drawn, every
+--- rectangle's adding and taking away done in turn (table-core's
+--- getCellSelectionBounds). A rectangle whose corner is not shown (its row
+--- filtered out, its column hidden) adds and takes nothing, and comes back
+--- when it shows again.
+fn selection_bounds[k, sel]
+    chosen = _no_bounds[]
+    for r in sel
+        a = _row_place[k, r.anchor_row]
+        f = _row_place[k, r.focus_row]
+        ac = _place_of[k.places, r.anchor_column]
+        fc = _place_of[k.places, r.focus_column]
+        if a gte 0 and f gte 0 and ac gte 0 and fc gte 0
+            b = Bounds[min[a, f], max[a, f], min[ac, fc], max[ac, fc]]
+            if len[k.merges] gt 0
+                b = _grown[b, k.merges]
+            if r.exclude
+                chosen = _taken[chosen, b]
+            else
+                chosen = _added[chosen, b]
+    _in_order[chosen]
+
+--- the place of a row and a column for a cell that may be chosen, or -1s
+fn _cell_place[k, row, column]
+    if not cell_selectable[k, row, column]
+        return Place[-1, -1, -1]
+    Place[-1, _row_place[k, row], _place_of[k.places, column]]
+
+--- whether a cell is chosen
+fn cell_selected[k, bounds, row, column]
+    p = _cell_place[k, row, column]
+    if p.row lt 0 or p.column lt 0
+        return false
+    _within[bounds, p.row, p.column]
+
+--- whether a cell is the active one: the anchor of the last rectangle
+fn cell_focused[sel, row, column]
+    if len[sel] eq 0
+        return false
+    a = sel[len[sel] - 1]
+    a.anchor_row eq row and a.anchor_column eq column
+
+--- the active cell: the anchor of the last rectangle (a rectangle that
+--- takes cells away is active too, though its anchor is not chosen)
+fn focused_cell[sel]
+    if len[sel] eq 0
+        return Spot['', '']
+    a = sel[len[sel] - 1]
+    Spot[a.anchor_row, a.anchor_column]
+
+fn _strip_out[bounds, fixed, from, to, row_fixed]
+    i = from
+    while i lte to
+        if row_fixed
+            if not _within[bounds, fixed, i]
+                return true
+        else
+            if not _within[bounds, i, fixed]
+                return true
+        i = i + 1
+    false
+
+--- Which sides of a chosen cell are on the selection's outer edge: where
+--- the cell next to it on that side is not chosen (for a merged cell,
+--- where any cell along that side of the merge is not).
+fn cell_edges[k, bounds, row, column]
+    none = Edges[false, false, false, false]
+    p = _cell_place[k, row, column]
+    r = p.row
+    c = p.column
+    if r lt 0 or c lt 0 or not _within[bounds, r, c]
+        return none
+    m = _merge_at[k.merges, r, c]
+    if m.top lt 0
+        return Edges[not _within[bounds, r - 1, c], not _within[bounds, r, c + 1], not _within[bounds, r + 1, c], not _within[bounds, r, c - 1]]
+    Edges[_strip_out[bounds, m.top - 1, m.left, m.right, true], _strip_out[bounds, m.right + 1, m.top, m.bottom, false], _strip_out[bounds, m.bottom + 1, m.left, m.right, true], _strip_out[bounds, m.left - 1, m.top, m.bottom, false]]
+
+--- the selection made one cell
+fn focus_set[row, column]
+    [Range[row, column, row, column, false]]
+
+--- The selection with a rectangle chosen: in its place (`replace`), added
+--- after the others (`include`) or taking its cells away (`exclude`).
+fn range_selected[sel, r, mode = 'replace']
+    one = Range[r.anchor_row, r.anchor_column, r.focus_row, r.focus_column, mode eq 'exclude']
+    if mode eq 'replace'
+        return [one]
+    push[sel, one]
+
+--- every cell that may be chosen, as one rectangle (nothing where no row
+--- or no column may be)
+fn all_selected[k, sel]
+    cols = _selectable_columns[k]
+    if len[k.display] eq 0 or len[cols] eq 0
+        return sel
+    [Range[k.display[0].id, cols[0], k.display[len[k.display] - 1].id, cols[len[cols] - 1], false]]
+
+fn _row_delta[way]
+    if way eq 'up'
+        return -1
+    if way eq 'down'
+        return 1
+    0
+
+fn _column_delta[way]
+    if way eq 'left'
+        return -1
+    if way eq 'right'
+        return 1
+    0
+
+fn _page_place[k, id]
+    i = 0
+    while i lt len[k.page]
+        if k.page[i].id eq id
+            return i
+        i = i + 1
+    -1
+
+fn _page_place_of_display[k, d]
+    i = 0
+    while i lt len[k.page]
+        if _row_place[k, k.page[i].id] eq d
+            return i
+        i = i + 1
+    -1
+
+--- One step from a cell in a direction (table-core's), among the page's
+--- rows and the columns drawn: columns that may not be chosen are passed
+--- over, a merged cell is left from its far side and landed on at its
+--- first cell; a Spot of no ids where the step leaves the grid.
+fn _stepped[k, row, column, way]
+    nowhere = Spot['', '']
+    rows = k.page
+    if len[rows] eq 0 or len[k.columns] eq 0
+        return nowhere
+    dr = _row_delta[way]
+    dc = _column_delta[way]
+    ri = _page_place[k, row]
+    ci = _place_of[k.places, column]
+    if ri lt 0 or ci lt 0
+        return nowhere
+    from_row = _row_place[k, rows[ri].id]
+    from_column = ci
+    if len[k.merges] gt 0
+        --- (table-core looks the merge up by the row's place on the page)
+        s = _merge_at[k.merges, ri, ci]
+        if s.top gte 0
+            if dr gt 0
+                from_row = s.bottom
+            if dr lt 0
+                from_row = s.top
+            if dc gt 0
+                from_column = s.right
+            if dc lt 0
+                from_column = s.left
+    next_row = ri + dr
+    if dr ne 0 and from_row ne _row_place[k, rows[ri].id]
+        edge = _page_place_of_display[k, from_row]
+        if edge lt 0
+            return nowhere
+        next_row = edge + dr
+    if next_row lt 0 or next_row gte len[rows]
+        return nowhere
+    ok = _selectable_columns[k]
+    if len[ok] eq 0
+        return nowhere
+    next_column = from_column
+    if dc ne 0
+        next_column = next_column + dc
+        while next_column gte 0 and next_column lt len[k.columns] and not (k.columns[next_column].id in ok)
+            next_column = next_column + dc
+    else if not (column in ok)
+        distance = 1
+        found = false
+        while distance lt len[k.columns] and not found
+            b = ci - distance
+            a = ci + distance
+            if b gte 0 and k.columns[b].id in ok
+                next_column = b
+                found = true
+            else if a lt len[k.columns] and k.columns[a].id in ok
+                next_column = a
+                found = true
+            distance = distance + 1
+    if next_column lt 0 or next_column gte len[k.columns] or not (k.columns[next_column].id in ok)
+        return nowhere
+    land_row = next_row
+    land_column = next_column
+    if len[k.merges] gt 0
+        s = _merge_at[k.merges, _row_place[k, rows[next_row].id], next_column]
+        if s.top gte 0
+            land_row = _page_place_of_display[k, s.top]
+            if land_row lt 0
+                return nowhere
+            land_column = s.left
+    Spot[rows[land_row].id, k.columns[land_column].id]
+
+--- The selection moved one step (`up`, `down`, `left`, `right`), made one
+--- cell; with nothing chosen, the first cell that may be.
+fn moved[k, sel, way]
+    if len[sel] eq 0
+        cols = _selectable_columns[k]
+        if len[k.page] eq 0 or len[cols] eq 0
+            return sel
+        return focus_set[k.page[0].id, cols[0]]
+    a = sel[len[sel] - 1]
+    s = _stepped[k, a.anchor_row, a.anchor_column, way]
+    if s.row eq ''
+        return sel
+    focus_set[s.row, s.column]
+
+--- The active rectangle grown or shrunk one step by its focus corner, its
+--- anchor kept (Shift and an arrow).
+fn extended[k, sel, way]
+    if len[sel] eq 0
+        return moved[k, sel, way]
+    a = sel[len[sel] - 1]
+    s = _stepped[k, a.focus_row, a.focus_column, way]
+    if s.row eq ''
+        return sel
+    a.focus_row = s.row
+    a.focus_column = s.column
+    sel[len[sel] - 1] = a
+    sel
+
+--- The selection after a press on a cell (table-core's start handler):
+--- with `shift` the active rectangle reaches to it; with `multi` (Ctrl or
+--- Command) a rectangle of it is added, or taken away where the cell is
+--- chosen; else it is the only cell chosen. Nothing changes for a cell
+--- that may not be chosen.
+fn pressed[k, sel, row, column, shift = false, multi = false]
+    if not cell_selectable[k, row, column]
+        return sel
+    ranged = k.selecting.ranges and shift
+    many = k.selecting.multi and multi
+    takes = many and cell_selected[k, selection_bounds[k, sel], row, column]
+    if ranged and len[sel] gt 0
+        a = sel[len[sel] - 1]
+        a.focus_row = row
+        a.focus_column = column
+        sel[len[sel] - 1] = a
+        return sel
+    one = Range[row, column, row, column, takes]
+    if many
+        return push[sel, one]
+    [one]
+
+--- whether a press starts a drag that later cells reach (the drag and
+--- Shift's ranges both allowed)
+fn drags[k]
+    k.selecting.drag and k.selecting.ranges
+
+--- The selection as a drag reaches a cell: the active rectangle's focus
+--- moved there (table-core's extend handler, while a drag is open).
+fn reached[k, sel, row, column]
+    if not cell_selectable[k, row, column] or len[sel] eq 0
+        return sel
+    a = sel[len[sel] - 1]
+    if a.focus_row eq row and a.focus_column eq column
+        return sel
+    a.focus_row = row
+    a.focus_column = column
+    sel[len[sel] - 1] = a
+    sel
+
+--- each chosen cell, region by region, row by row: [region, row place,
+--- column place] of the cells that may be chosen (and, with `skip`,
+--- that no merge covers)
+fn _each_chosen[k, bounds, skip]
+    out = slice[[Place[0, 0, 0]], 0, 0]
+    ri = 0
+    while ri lt len[bounds]
+        b = bounds[ri]
+        r = b.top
+        while r lte b.bottom
+            if r lt len[k.display]
+                c = b.left
+                while c lte b.right
+                    if c lt len[k.columns] and column_selectable[k, k.columns[c].id]
+                        if not skip or not covered[k.spans, k.display[r].id, k.columns[c].id]
+                            out = push[out, Place[ri, r, c]]
+                    c = c + 1
+            r = r + 1
+        ri = ri + 1
+    out
+
+fn _cell_id[k, r, c]
+    '`k.display[r].id`_`k.columns[c].id`'
+
+--- the ids of the chosen cells (`row_column`), row by row, each once
+fn selected_ids[k, bounds]
+    out = _no_texts[]
+    seen = map['' = true]
+    for p in _each_chosen[k, bounds, true]
+        id = _cell_id[k, p.row, p.column]
+        if not (id in seen)
+            seen = set[seen, id, true]
+            out = push[out, id]
+    out
+
+--- how many cells are chosen
+fn selected_count[k, bounds]
+    if not k.selecting.on or len[bounds] eq 0
+        return 0
+    if len[k.merges] gt 0
+        return len[selected_ids[k, bounds]]
+    n = 0
+    for b in bounds
+        cols = 0
+        c = b.left
+        while c lte b.right
+            if c lt len[k.columns] and column_selectable[k, k.columns[c].id]
+                cols = cols + 1
+            c = c + 1
+        n = n + (b.bottom - b.top + 1) * cols
+    n
+
+--- the ids of the rows the selection reaches, in order, each once
+fn selection_rows[k, bounds]
+    out = _no_texts[]
+    seen = map['' = true]
+    for b in bounds
+        r = b.top
+        while r lte b.bottom
+            if r lt len[k.display] and not (k.display[r].id in seen)
+                seen = set[seen, k.display[r].id, true]
+                out = push[out, k.display[r].id]
+            r = r + 1
+    out
+
+--- the ids of the columns the selection reaches but those whose cells
+--- may not be chosen (as table-core lists them, whether the table lets
+--- cells be chosen or not)
+fn selection_columns[k, bounds]
+    out = _no_texts[]
+    seen = map['' = true]
+    for b in bounds
+        c = b.left
+        while c lte b.right
+            if c lt len[k.columns]
+                id = k.columns[c].id
+                if not (id in k.selecting.unselectable) and not (id in seen)
+                    seen = set[seen, id, true]
+                    out = push[out, id]
+            c = c + 1
+    out
+
+--- the value a laid table's row holds in a column
+fn _value_at[k, r, c]
+    dt.value_of[k.display[r], k.columns[c]]
+
+--- Each chosen region's values, row by row (table-core's
+--- getSelectedCellRangesData): a list per region of a list per row.
+fn selected_values[k, bounds]
+    out = slice[[[[dt.missing[]]]], 0, 0]
+    for p in _each_chosen[k, bounds, false]
+        while len[out] lte p.region
+            out = push[out, slice[[[dt.missing[]]], 0, 0]]
+        region = out[p.region]
+        row_at = p.row - bounds[p.region].top
+        while len[region] lte row_at
+            region = push[region, _no_values[]]
+        region[row_at] = push[region[row_at], _value_at[k, p.row, p.column]]
+        out[p.region] = region
+    out
+
+-------------------------------------------------------------------- cell spanning
+
+fn _spans_of[k, key]
+    if key in k
+        return k[key]
+    _no_ints[]
+
+fn _wide_of[sp, column, row]
+    key = '`column`\t`row`'
+    if key in sp.wide
+        return sp.wide[key]
+    if column in sp.columns
+        return sp.columns[column]
+    0.0
+
+--- the rows drawn, in order, and where the pinned parts begin
+fn _rendered[t, m]
+    if len[t.state.top] eq 0 and len[t.state.bottom] eq 0
+        return [m.page.rows, _no_rows[], _no_rows[]]
+    [dt.top_rows[t, m], dt.center_rows[t, m], dt.bottom_rows[t, m]]
+
+--- whether JavaScript's Object.is holds two values the same (the
+--- equality a run of merged cells is kept by): NaN is NaN, 0 is not -0,
+--- and a list or a date is only itself
+fn _same_object[a, b]
+    if a.is ne b.is
+        return false
+    if a.is eq 'number'
+        if a.num ne a.num and b.num ne b.num
+            return true
+        if a.num eq 0.0 and b.num eq 0.0
+            return 1.0 / a.num eq 1.0 / b.num
+        return a.num eq b.num
+    if a.is eq 'text'
+        return a.words eq b.words
+    if a.is eq 'bool'
+        return a.num eq b.num
+    a.is eq 'missing' or a.is eq 'null'
+
+--- The merges of the rows drawn (table-core's getCellSpanIndex): across
+--- each row first, kept within the part of the columns it starts in
+--- (pinned to the start, the center, pinned to the end), then down each
+--- column, a run held together by the same value as its first row (not
+--- null or undefined) and the same span across, and broken where a
+--- pinned part begins, where the rows' depth or parent changes and at a
+--- group's row. A grouped column does not merge.
+fn span_index[t, m, sp]
+    parts = _rendered[t, m]
+    rows = concat[parts[0], parts[1], parts[2]]
+    sections = [len[parts[0]], len[parts[0]] + len[parts[1]]]
+    none = Spans[rows, _places_of_rows[rows], _no_texts[], _no_places[], _no_spans_by[], _no_spans_by[]]
+    if len[rows] eq 0 or not sp.on
+        return none
+    cols = dt.drawn_columns[t]
+    n = len[cols]
+    if n eq 0
+        return none
+    ids = _no_texts[]
+    places = _no_places[]
+    i = 0
+    while i lt n
+        ids = push[ids, cols[i].id]
+        places = set[places, cols[i].id, i]
+        i = i + 1
+    center_start = 0
+    while center_start lt n and cols[center_start].id in t.state.start
+        center_start = center_start + 1
+    center_end = n
+    while center_end gt center_start and cols[center_end - 1].id in t.state.end
+        center_end = center_end - 1
+    breaks = []
+    r = 0
+    while r lt len[rows]
+        broken = false
+        if len[t.state.top] + len[t.state.bottom] gt 0 and (r eq sections[0] or r eq sections[1])
+            broken = true
+        if r gt 0
+            if rows[r].depth ne rows[r - 1].depth or rows[r].parent ne rows[r - 1].parent
+                broken = true
+        if dt.is_group[rows[r]]
+            broken = true
+        breaks = push[breaks, broken]
+        r = r + 1
+    --- (across)
+    across = _no_spans_by[]
+    c = 0
+    while c lt n
+        col = cols[c]
+        asks = col.id in sp.columns
+        for key in keys[sp.wide]
+            if starts[key, '`col.id`\t']
+                asks = true
+        if asks and not (col.id in sp.off)
+            region_end = n
+            if c lt center_start
+                region_end = center_start
+            else if c lt center_end
+                region_end = center_end
+            r = 0
+            while r lt len[rows]
+                key = '`r`'
+                held = key in across
+                skip = held and across[key][c] eq 0
+                if not skip
+                    asked = _wide_of[sp, col.id, rows[r].id]
+                    if asked gt 1.0
+                        span = region_end - c
+                        if asked lt 0.0 + span
+                            span = int[floor[asked]]
+                        if span gte 2
+                            row_spans = _ones[n]
+                            if held
+                                row_spans = across[key]
+                            row_spans[c] = span
+                            j = c + 1
+                            while j lt c + span
+                                row_spans[j] = 0
+                                j = j + 1
+                            across = set[across, key, row_spans]
+                r = r + 1
+        c = c + 1
+    --- (down)
+    down = _no_spans_by[]
+    c = 0
+    while c lt n
+        col = cols[c]
+        if col.id in sp.rows and not (col.id in sp.off) and not dt.is_grouped[t, col.id]
+            spans = _ones[len[rows]]
+            any_run = false
+            anchor = -1
+            anchor_value = dt.missing[]
+            anchor_wide = 1
+            r = 0
+            while r lt len[rows]
+                wide = 1
+                key = '`r`'
+                if key in across
+                    wide = across[key][c]
+                if wide eq 0
+                    anchor = -1
+                else
+                    v = dt.value_of[rows[r], col]
+                    joins = anchor ne -1 and not breaks[r] and wide eq anchor_wide and v.is ne 'missing' and v.is ne 'null' and _same_object[v, anchor_value]
+                    if joins
+                        spans[r] = 0
+                        spans[anchor] = spans[anchor] + 1
+                        any_run = true
+                    else
+                        anchor = r
+                        anchor_value = v
+                        anchor_wide = wide
+                r = r + 1
+            if any_run
+                down = set[down, col.id, spans]
+        c = c + 1
+    Spans[rows, _places_of_rows[rows], ids, places, down, across]
+
+--- how many rows a cell spans: 1, or 0 where a cell above covers it
+fn row_span[sp, row, column]
+    if not (column in sp.down) or column eq ''
+        return 1
+    r = _place_of[sp.at, row]
+    if r lt 0
+        return 1
+    sp.down[column][r]
+
+--- how many columns a cell spans: 1, or 0 where a cell before it covers it
+fn column_span[sp, row, column]
+    r = _place_of[sp.at, row]
+    if r lt 0
+        return 1
+    key = '`r`'
+    if not (key in sp.across) or key eq ''
+        return 1
+    c = _place_of[sp.places, column]
+    if c lt 0
+        return 1
+    sp.across[key][c]
+
+--- whether another cell's span covers a cell (it is not drawn)
+fn covered[sp, row, column]
+    row_span[sp, row, column] eq 0 or column_span[sp, row, column] eq 0
+
+--- The merged cells as rectangles in the selection's places (table-core's
+--- getCellSelectionMergeBounds): each run down a column (as wide as its
+--- first cell's span across), then each span across a row that is not in
+--- a run. A merge whose rows are not together before paging is passed over.
+fn merge_bounds[k]
+    sp = k.spans
+    out = _no_bounds[]
+    if len[sp.rows] eq 0
+        return out
+    for id in sp.columns
+        if id in sp.down
+            ci = _place_of[k.places, id]
+            if ci gte 0
+                spans = sp.down[id]
+                sc = sp.places[id]
+                r = 0
+                while r lt len[spans]
+                    span = spans[r]
+                    if span gt 1
+                        first = _row_place[k, sp.rows[r].id]
+                        last = _row_place[k, sp.rows[r + span - 1].id]
+                        if first gte 0 and last - first eq span - 1
+                            wide = 1
+                            key = '`r`'
+                            if key in sp.across
+                                wide = max[sp.across[key][sc], 1]
+                            out = push[out, Bounds[first, last, ci, ci + wide - 1]]
+                    r = r + 1
+    r = 0
+    while r lt len[sp.rows]
+        key = '`r`'
+        if key in sp.across
+            row_spans = sp.across[key]
+            d = _row_place[k, sp.rows[r].id]
+            if d gte 0
+                c = 0
+                while c lt len[row_spans]
+                    span = row_spans[c]
+                    if span gt 1
+                        id = sp.columns[c]
+                        vertical = 1
+                        if id in sp.down
+                            vertical = sp.down[id][r]
+                        ci = _place_of[k.places, id]
+                        if vertical eq 1 and ci gte 0
+                            out = push[out, Bounds[d, d, ci, ci + span - 1]]
+                    c = c + 1
+        r = r + 1
+    out
+
+-------------------------------------------------------------------- columns: editors, rules, relations
+
+--- What a column of the grid is besides its table column: how its cells
+--- are edited (`editor`: `text`, `number`, `list` of `choices`, `check`,
+--- or `none`), the rules an edit is held to (`rules`), the words its
+--- summary row shows (`summary`: an aggregation of lory.datatable's, as
+--- `sum` or `mean`, or '' for none) and how its words are placed (`align`:
+--- `left` or `right`; '' puts numbers right). A column with no spec of its
+--- own is edited as text and has no rules.
+struct Spec [column, editor, choices, rules, summary, align]
+
+--- What an edit of a cell must be, as a form's schema says it (Zod's in
+--- TanStack's with-tanstack-form, TOAST UI Grid's validation): given
+--- (`required`), a number (`number`), at least and at most (`least`,
+--- `most`: numbers, or text's length for a column of words; past
+--- ten to the 20th for no bound), one of the column's choices (`listed`), and held by no other
+--- row (`unique`).
+struct Rules [required, number, least, most, listed, unique]
+
+--- How one column rules another (TOAST UI Grid's relations): when the
+--- `source` column's value is one of `off`, the `target` column's cell
+--- may not be edited; when it is a key of `choices`, the target's choices
+--- are the ones written there (separated by `|`), and a target value not
+--- among them is cleared.
+struct Relation [source, target, off, choices]
+
+fn _nan[]
+    0.0 / 0.0
+
+--- the rules of a column: nothing asked unless named (`least` and `most`
+--- past ten to the 20th are no bound)
+fn rules[required = false, number = false, least = -1000000000000000000000.0, most = 1000000000000000000000.0, listed = false, unique = false]
+    Rules[required, number, least, most, listed, unique]
+
+--- a column's spec: its editor and its choices, the rules an edit of it
+--- keeps, its summary and how its words are placed
+fn spec[column, editor = 'text', choices = [], required = false, number = false, least = -1000000000000000000000.0, most = 1000000000000000000000.0, listed = false, unique = false, summary = '', align = '']
+    words = _no_texts[]
+    for c in choices
+        words = push[words, c]
+    Spec[column, editor, words, Rules[required, number, least, most, listed, unique], summary, align]
+
+--- a relation from one column to another
+fn relation[source, target, off = [], choices = map[]]
+    words = _no_texts[]
+    for v in off
+        words = push[words, v]
+    Relation[source, target, words, choices]
+
+fn _no_specs[]
+    slice[[Spec['', 'text', _no_texts[], rules[], '', '']], 0, 0]
+
+fn _no_relations[]
+    slice[[Relation['', '', _no_texts[], map['' = '']]], 0, 0]
+
+fn _spec_of[g, column]
+    for s in g.specs
+        if s.column eq column
+            return s
+    Spec[column, 'text', _no_texts[], rules[], '', '']
+
+-------------------------------------------------------------------- the grid
+
+--- What a data grid holds: its id (its control's, and its events'), the
+--- table it shows, how its cells may be chosen and merge, its columns'
+--- specs and relations; the focused cell and the selection's rectangles
+--- (`selected` is whether a rectangle has been chosen beyond the focus,
+--- TOAST UI Grid's selection; `whole` that it was chosen whole by Ctrl+A);
+--- whether a drag is choosing cells; the cell being edited ('' for none)
+--- and what its editor holds; the edits; whether edits wait to be saved
+--- (`drafts`, a form's) or are made at once (a grid's); what was copied
+--- this frame (for the program to put on the clipboard) and the grid's
+--- own clipboard; how far its body is scrolled; its look (`default`,
+--- `striped` or `clean`); the cells a feed changed and when, and the
+--- time; and the sheet whose cells it shows, for a spreadsheet (one of no
+--- columns for a grid of a table).
+struct Grid [id, table, selecting, spanning, specs, relations, focus, sel, selected, whole, dragging, editing, draft, edits, drafts, copied, clipboard, scroll, look, flashes, now, sheet]
+
+--- The edits made: each cell's draft not yet saved (by row id, a tab and
+--- column id), what each cell's last edit broke of its rules (the words
+--- of the first rule broken), the cells changed since the last save, and
+--- the rows added since.
+struct Edits [drafts, errors, changed, added]
+
+--- One change a feed makes: a row's cell by id, its new value.
+struct Change [row, column, value]
+
+--- When a cell last changed, and which way (1 up, -1 down, 0 neither).
+struct Flash [at, way]
+
+fn _no_edits[]
+    Edits[map['' = dt.missing[]], map['' = ''], map['' = false], _no_texts[]]
+
+fn _no_flashes[]
+    map['' = Flash[0.0, 0]]
+
+--- a grid of a table: every cell chosen as table-core chooses it, edits
+--- made at once, nothing focused, in the default look
+fn grid[id, t]
+    Grid[id, t, selecting[], spanning[], _no_specs[], _no_relations[], Spot['', ''], _no_ranges[], false, false, false, Spot['', ''], '', _no_edits[], false, '', '', 0.0, 'default', _no_flashes[], 0.0, Sheet[0, 0, map['' = ''], _no_steps[], _no_steps[], false]]
+
+--- the grid with its columns' specs
+fn specs_set[g, specs]
+    g.specs = specs
+    g
+
+--- the grid with relations between its columns
+fn relations_set[g, relations]
+    g.relations = relations
+    g
+
+--- the grid laid out for its cells
+fn grid_laid[g]
+    laid[g.table, g.selecting, g.spanning]
+
+fn _key_of[row, column]
+    '`row`\t`column`'
+
+--- what a cell holds: its draft where it has one, else its row's value
+fn cell_value[g, k, row, column]
+    key = _key_of[row, column]
+    if key in g.edits.drafts
+        return g.edits.drafts[key]
+    r = dt.data_row_of[k.models, row]
+    if r.id eq ''
+        return dt.missing[]
+    if column in k.places
+        return dt.value_of[r, k.columns[k.places[column]]]
+    if column in r.cells
+        return r.cells[column]
+    dt.missing[]
+
+--- the words a cell shows: undefined and null show as nothing
+fn cell_words[v]
+    if v.is eq 'missing' or v.is eq 'null'
+        return ''
+    dt.shown[v]
+
+fn _relation_off[g, k, row, column]
+    for rel in g.relations
+        if rel.target eq column
+            source = cell_words[cell_value[g, k, row, rel.source]]
+            if source in rel.off
+                return true
+    false
+
+--- whether a cell may be edited: its column has an editor, a relation
+--- does not keep it, and its row is a row of data
+fn editable[g, k, row, column]
+    s = _spec_of[g, column]
+    if s.editor eq 'none'
+        return false
+    if not (row in k.at) and dt.data_row_of[k.models, row].id eq ''
+        return false
+    if starts[row, '__']
+        return false
+    not _relation_off[g, k, row, column]
+
+--- the choices a cell may take: its column's, or a relation's for the
+--- value its source cell holds
+fn choices_of[g, k, row, column]
+    s = _spec_of[g, column]
+    out = s.choices
+    for rel in g.relations
+        if rel.target eq column
+            source = cell_words[cell_value[g, k, row, rel.source]]
+            if source in rel.choices
+                out = split[rel.choices[source], '|']
+    out
+
+--- The words of the first rule a value breaks, or '' where it keeps
+--- them all: given, a number, at least, at most, one of the choices, not
+--- held by another row.
+fn broken_rule[g, k, row, column, v]
+    s = _spec_of[g, column]
+    r = s.rules
+    words = cell_words[v]
+    blank = trim[words] eq ''
+    if r.required and blank
+        return 'is required'
+    if blank
+        return ''
+    numeric = r.number or s.editor eq 'number'
+    x = 0.0
+    if numeric
+        x = dt.text_number[words]
+        if x ne x
+            return 'must be a number'
+    else
+        x = 0.0 + len[words]
+    if r.least gt -100000000000000000000.0 and x lt r.least
+        if numeric
+            return 'must be at least `dt.number_text[r.least]`'
+        return 'must have at least `dt.number_text[r.least]` characters'
+    if r.most lt 100000000000000000000.0 and x gt r.most
+        if numeric
+            return 'must be at most `dt.number_text[r.most]`'
+        return 'must have at most `dt.number_text[r.most]` characters'
+    if r.listed and not (words in choices_of[g, k, row, column])
+        return 'must be one of the choices'
+    if r.unique
+        for other in k.display
+            if other.id ne row and not dt.is_group[other]
+                if cell_words[cell_value[g, k, other.id, column]] eq words
+                    return 'must be unique'
+    ''
+
+--- a value as a column holds what was typed: a number for a number's
+--- editor (text where it reads as none, for its rule to refuse), a truth
+--- for a box to tick, else the words
+fn typed_value[g, column, words]
+    if g.sheet.columns gt 0
+        return dt.words[words]
+    s = _spec_of[g, column]
+    if s.editor eq 'number' or s.rules.number
+        x = dt.text_number[words]
+        if trim[words] ne '' and x eq x
+            return dt.number[x]
+        return dt.words[words]
+    if s.editor eq 'check'
+        return dt.truth[words eq 'true']
+    dt.words[words]
+
+fn _with_cell[rows, id, column, v]
+    out = rows
+    i = 0
+    while i lt len[out]
+        r = out[i]
+        if r.id eq id
+            r.cells = set[r.cells, column, v]
+            out[i] = r
+        else if len[r.subs] gt 0
+            r.subs = _with_cell[r.subs, id, column, v]
+            out[i] = r
+        i = i + 1
+    out
+
+fn _column_key[k, column]
+    if column in k.places
+        return k.columns[k.places[column]].key
+    column
+
+--- The grid with a cell set to a value (an edit, a paste, a feed): held
+--- as a draft where edits wait to be saved, else written into its row;
+--- checked by its column's rules; known as changed; and the cells its
+--- relations rule cleared where their value is no longer a choice.
+fn cell_set[g, k, row, column, v]
+    key = _key_of[row, column]
+    if g.sheet.columns gt 0
+        name = _sheet_cell[g, row, column]
+        if name eq ''
+            return g
+        g.sheet = sheet_set[g.sheet, name, cell_words[v]]
+        g.table = _sheet_shown[g.table, g.sheet]
+        e = g.edits
+        e.changed = set[e.changed, key, true]
+        g.edits = e
+        return g
+    if g.drafts
+        e = g.edits
+        e.drafts = set[e.drafts, key, v]
+        g.edits = e
+    else
+        t = g.table
+        t.rows = _with_cell[t.rows, row, _column_key[k, column], v]
+        g.table = t
+    e = g.edits
+    e.changed = set[e.changed, key, true]
+    g.edits = e
+    k2 = k
+    if not g.drafts
+        k2 = grid_laid[g]
+    why = broken_rule[g, k2, row, column, v]
+    e = g.edits
+    if why ne ''
+        e.errors = set[e.errors, key, why]
+    else if key in e.errors
+        e.errors = del[e.errors, key]
+    g.edits = e
+    for rel in g.relations
+        if rel.source eq column
+            now_choices = choices_of[g, k2, row, rel.target]
+            held = cell_words[cell_value[g, k2, row, rel.target]]
+            if held ne '' and len[now_choices] gt 0 and not (held in now_choices)
+                g = cell_set[g, k2, row, rel.target, dt.words['']]
+    g
+
+--- whether a cell was changed since the last save
+fn cell_dirty[g, row, column]
+    _key_of[row, column] in g.edits.changed
+
+--- the words of the rule a cell's last edit broke, or ''
+fn cell_error[g, row, column]
+    key = _key_of[row, column]
+    if key in g.edits.errors
+        return g.edits.errors[key]
+    ''
+
+fn _row_of_key[key]
+    split[key, '\t'][0]
+
+--- the ids of the rows with a changed cell, in the order they first changed
+fn dirty_rows[g]
+    out = _no_texts[]
+    for key in keys[g.edits.changed]
+        if key ne ''
+            r = _row_of_key[key]
+            if not (r in out)
+                out = push[out, r]
+    out
+
+--- whether a row has a changed cell
+fn row_dirty[g, row]
+    row in dirty_rows[g]
+
+--- whether the edits may be saved: none breaks a rule (of one row, or
+--- of all of them)
+fn can_save[g, row = '']
+    for key in keys[g.edits.errors]
+        if key ne '' and (row eq '' or _row_of_key[key] eq row)
+            return false
+    true
+
+fn _saved_keys[g, row]
+    out = _no_texts[]
+    for key in keys[g.edits.changed]
+        if key ne '' and (row eq '' or _row_of_key[key] eq row)
+            out = push[out, key]
+    out
+
+--- The grid with its edits saved, all of them or one row's (`row`): each
+--- draft written into its row, and the cells known as changed no longer.
+--- Edits that break a rule are not saved: the grid is answered as it was.
+fn saved[g, row = '']
+    if not can_save[g, row]
+        return g
+    k = grid_laid[g]
+    t = g.table
+    e = g.edits
+    for key in _saved_keys[g, row]
+        if key in e.drafts
+            parts = split[key, '\t']
+            t.rows = _with_cell[t.rows, parts[0], _column_key[k, parts[1]], e.drafts[key]]
+            e.drafts = del[e.drafts, key]
+        e.changed = del[e.changed, key]
+    if row eq ''
+        e.added = _no_texts[]
+    else
+        kept = _no_texts[]
+        for a in e.added
+            if a ne row
+                kept = push[kept, a]
+        e.added = kept
+    g.table = t
+    g.edits = e
+    g
+
+--- the grid with its drafts let go and their rule breaks forgotten
+--- (rows added stay, empty)
+fn discarded[g]
+    e = g.edits
+    for key in keys[e.drafts]
+        if key ne ''
+            e.drafts = del[e.drafts, key]
+            if key in e.changed
+                e.changed = del[e.changed, key]
+            if key in e.errors
+                e.errors = del[e.errors, key]
+    g.edits = e
+    g
+
+--- The grid with a row added at the end of its table's rows, known as
+--- added (and each of its cells checked, so a row of required cells waits
+--- to be filled before it may be saved).
+fn row_added[g, r]
+    t = g.table
+    t.rows = push[t.rows, r]
+    g.table = t
+    e = g.edits
+    e.added = push[e.added, r.id]
+    g.edits = e
+    k = grid_laid[g]
+    for c in k.columns
+        v = cell_value[g, k, r.id, c.id]
+        why = broken_rule[g, k, r.id, c.id, v]
+        if why ne ''
+            e = g.edits
+            e.errors = set[e.errors, _key_of[r.id, c.id], why]
+            g.edits = e
+    g
+
+-------------------------------------------------------------------- TOAST UI Grid's keymap
+
+--- the page's row at a place and a column at a place, as a Spot
+fn _spot_at[k, r, c]
+    if r lt 0 or r gte len[k.page] or c lt 0 or c gte len[k.columns]
+        return Spot['', '']
+    Spot[k.page[r].id, k.columns[c].id]
+
+--- a cell's places on the page and among the columns (-1 for none)
+fn place_of[k, s]
+    Place[-1, _page_place[k, s.row], _place_of[k.places, s.column]]
+
+--- TOAST UI Grid's next cell for a command from a place: `up`, `down`,
+--- `left`, `right`, `firstColumn` (Home), `lastColumn` (End), `pageUp`
+--- and `pageDown` (the first and last rows: TOAST UI Grid 4.21.22 goes
+--- there, not a screen's height), `firstCell`, `lastCell`, `nextCell`
+--- (Tab: on along the row, then down to the next row's first) and
+--- `prevCell`, kept within the grid.
+fn toast_next[k, command, row, column]
+    last_row = len[k.page] - 1
+    last_column = len[k.columns] - 1
+    r = row
+    c = column
+    if command eq 'up'
+        r = r - 1
+    else if command eq 'down'
+        r = r + 1
+    else if command eq 'left'
+        c = c - 1
+    else if command eq 'right'
+        c = c + 1
+    else if command eq 'firstCell'
+        r = 0
+        c = 0
+    else if command eq 'lastCell'
+        r = last_row
+        c = last_column
+    else if command eq 'pageUp'
+        r = 0
+    else if command eq 'pageDown'
+        r = last_row
+    else if command eq 'firstColumn'
+        c = 0
+    else if command eq 'lastColumn'
+        c = last_column
+    else if command eq 'nextCell'
+        if not (r eq last_row and c eq last_column)
+            if c eq last_column
+                r = r + 1
+                c = 0
+            else
+                c = c + 1
+    else if command eq 'prevCell'
+        if not (r eq 0 and c eq 0)
+            if c eq 0
+                r = r - 1
+                c = last_column
+            else
+                c = c - 1
+    Place[-1, max[0, min[last_row, r]], max[0, min[last_column, c]]]
+
+--- the command TOAST UI Grid gives a key stroke (`ctrl` for Control or
+--- Command), with what kind of command it is: `move`, `select`, `edit`,
+--- `remove` or `clipboard` ('' for a key it does nothing with)
+fn toast_command[key, shift, ctrl]
+    name = _key_name[key]
+    stroke = name
+    if shift
+        stroke = 'shift-`stroke`'
+    if ctrl
+        stroke = 'ctrl-`stroke`'
+    moves = map[up = 'up', down = 'down', left = 'left', right = 'right', pageUp = 'pageUp', pageDown = 'pageDown', home = 'firstColumn', end = 'lastColumn']
+    if stroke in moves
+        return ['move', moves[stroke]]
+    if stroke eq 'enter' or stroke eq 'space'
+        return ['edit', 'currentCell']
+    if stroke eq 'tab'
+        return ['edit', 'nextCell']
+    if stroke eq 'shift-tab'
+        return ['edit', 'prevCell']
+    if stroke eq 'backspace' or stroke eq 'del'
+        return ['remove', '']
+    if starts[stroke, 'shift-'] and not starts[stroke, 'ctrl-']
+        rest = slice[stroke, 6, len[stroke]]
+        if rest in moves
+            return ['select', moves[rest]]
+    if stroke eq 'ctrl-a'
+        return ['select', 'all']
+    if stroke eq 'ctrl-c'
+        return ['clipboard', 'copy']
+    if stroke eq 'ctrl-v'
+        return ['clipboard', 'paste']
+    if stroke eq 'ctrl-home'
+        return ['move', 'firstCell']
+    if stroke eq 'ctrl-end'
+        return ['move', 'lastCell']
+    if stroke eq 'ctrl-shift-home'
+        return ['select', 'firstCell']
+    if stroke eq 'ctrl-shift-end'
+        return ['select', 'lastCell']
+    ['', '']
+
+--- a browser's key name as TOAST UI Grid names it
+fn _key_name[key]
+    names = map[ArrowUp = 'up', ArrowDown = 'down', ArrowLeft = 'left', ArrowRight = 'right', PageUp = 'pageUp', PageDown = 'pageDown', Home = 'home', End = 'end', Enter = 'enter', Tab = 'tab', Backspace = 'backspace', Delete = 'del', Escape = 'esc']
+    if key in names
+        return names[key]
+    if key eq ' '
+        return 'space'
+    lower[key]
+
+--- the grid with its focus on a cell: the selection let go
+fn focused_on[g, row, column]
+    g.focus = Spot[row, column]
+    g.sel = focus_set[row, column]
+    g.selected = false
+    g.whole = false
+    g
+
+--- the rectangle TOAST UI Grid's selection covers, by places (row, row,
+--- column, column) ascending; Bounds of -1 where it has none
+fn toast_selection[g, k]
+    if not g.selected or len[g.sel] eq 0
+        return Bounds[-1, -1, -1, -1]
+    if g.whole
+        return Bounds[0, len[k.page] - 1, 0, len[k.columns] - 1]
+    a = g.sel[len[g.sel] - 1]
+    ar = _page_place[k, a.anchor_row]
+    fr = _page_place[k, a.focus_row]
+    ac = _place_of[k.places, a.anchor_column]
+    fc = _place_of[k.places, a.focus_column]
+    Bounds[min[ar, fr], max[ar, fr], min[ac, fc], max[ac, fc]]
+
+--- The grid after a TOAST UI Grid selection command: the selection's far
+--- corner moved by the command from where it stands (from the focus when
+--- nothing is chosen), its near corner kept; Ctrl+A chooses every cell,
+--- and the next Shift move goes on from the focus's row.
+fn toast_selected[g, k, command]
+    f = place_of[k, g.focus]
+    if f.row lt 0 or f.column lt 0
+        return g
+    sr = f.row
+    sc = f.column
+    er = f.row
+    ec = f.column
+    if g.selected and len[g.sel] gt 0
+        a = g.sel[len[g.sel] - 1]
+        sr = _page_place[k, a.anchor_row]
+        sc = _place_of[k.places, a.anchor_column]
+        er = _page_place[k, a.focus_row]
+        ec = _place_of[k.places, a.focus_column]
+    whole = false
+    if command eq 'all'
+        sc = 0
+        sr = f.row
+        er = len[k.page] - 1
+        ec = len[k.columns] - 1
+        whole = true
+    else
+        n = toast_next[k, command, er, ec]
+        er = n.row
+        ec = n.column
+    a = _spot_at[k, sr, sc]
+    b = _spot_at[k, er, ec]
+    g.sel = [Range[a.row, a.column, b.row, b.column, false]]
+    g.selected = true
+    g.whole = whole
+    g
+
+--- the cells a command acts on: the selection, or the focused cell
+fn _acted_on[g, k]
+    b = toast_selection[g, k]
+    if b.top gte 0
+        return b
+    f = place_of[k, g.focus]
+    Bounds[f.row, f.row, f.column, f.column]
+
+--- The text TOAST UI Grid copies: the cells' words, a tab between
+--- columns and a new line between rows (as a spreadsheet pastes them).
+fn copied_text[g, k]
+    b = _acted_on[g, k]
+    if b.top lt 0 or b.left lt 0
+        return ''
+    lines = _no_texts[]
+    r = b.top
+    while r lte b.bottom
+        words = _no_texts[]
+        c = b.left
+        while c lte b.right
+            words = push[words, cell_words[cell_value[g, k, k.page[r].id, k.columns[c].id]]]
+            c = c + 1
+        lines = push[lines, join[words, '\t']]
+        r = r + 1
+    join[lines, '\n']
+
+--- Text as TOAST UI Grid reads a paste: rows by new lines, cells by tabs;
+--- a cell in double quotes that holds a new line has its quotes taken
+--- off and its doubled quotes made one (any other cell is kept as it is).
+fn pasted_cells[t]
+    --- (new lines inside quotes are hidden first, so they do not end a row)
+    hidden = ''
+    quoted = false
+    for ch in split[t, '']
+        if ch eq '"'
+            quoted = not quoted
+            hidden = '`hidden``ch`'
+        else if quoted and ch eq '\n'
+            hidden = '`hidden`\u{1}'
+        else if quoted and ch eq '\r'
+            hidden = '`hidden`\u{2}'
+        else
+            hidden = '`hidden``ch`'
+    out = slice[[_no_texts[]], 0, 0]
+    for line in split[replace[hidden, '\r\n', '\n'], '\n']
+        cells = _no_texts[]
+        for cell in split[line, '\t']
+            v = cell
+            if '\u{1}' in v
+                v = replace[slice[v, 1, len[v] - 1], '""', '"']
+            v = replace[replace[v, '\u{1}', '\n'], '\u{2}', '\r']
+            cells = push[cells, v]
+        out = push[out, cells]
+    out
+
+--- The grid with text pasted (TOAST UI Grid's paste): from the
+--- selection's first cell (or the focus), the pasted rows repeated to
+--- fill a selection that holds them whole more than once, each cell that
+--- may be edited set; the selection is then what was pasted. Rows past
+--- the page's last are not added (TOAST UI Grid adds empty ones).
+fn pasted[g, k, t]
+    data = pasted_cells[t]
+    if len[data] eq 0 or len[data[0]] eq 0
+        return g
+    b = toast_selection[g, k]
+    if b.top gte 0
+        rows_n = b.bottom - b.top + 1
+        cols_n = b.right - b.left + 1
+        rep_r = rows_n / len[data] - 1
+        rep_c = cols_n / len[data[0]] - 1
+        grown = data
+        i = 0
+        while i lt rep_r
+            grown = concat[grown, data]
+            i = i + 1
+        wide = slice[[_no_texts[]], 0, 0]
+        for row in grown
+            whole = row
+            j = 0
+            while j lt rep_c
+                whole = concat[whole, row]
+                j = j + 1
+            wide = push[wide, whole]
+        data = wide
+    sr = b.top
+    sc = b.left
+    if sr lt 0
+        f = place_of[k, g.focus]
+        sr = f.row
+        sc = f.column
+    if sr lt 0 or sc lt 0
+        return g
+    er = len[data] + sr - 1
+    ec = min[len[data[0]] + sc, len[k.columns]] - 1
+    g = _batch_begun[g]
+    r = 0
+    while r + sr lte er and r + sr lt len[k.page]
+        c = 0
+        while c + sc lte ec
+            row = k.page[r + sr].id
+            column = k.columns[c + sc].id
+            if c lt len[data[r]] and editable[g, k, row, column]
+                g = cell_set[g, k, row, column, typed_value[g, column, data[r][c]]]
+            c = c + 1
+        r = r + 1
+    g = _batch_ended[g]
+    a = _spot_at[k, sr, sc]
+    z = _spot_at[k, min[er, len[k.page] - 1], ec]
+    g.sel = [Range[a.row, a.column, z.row, z.column, false]]
+    g.selected = true
+    g.whole = false
+    g
+
+--- the grid with the cells a command acts on cleared (Delete, Backspace),
+--- those that may be edited
+fn cleared[g, k]
+    b = _acted_on[g, k]
+    if b.top lt 0 or b.left lt 0
+        return g
+    g = _batch_begun[g]
+    r = b.top
+    while r lte b.bottom
+        c = b.left
+        while c lte b.right
+            row = k.page[r].id
+            column = k.columns[c].id
+            if editable[g, k, row, column]
+                g = cell_set[g, k, row, column, typed_value[g, column, '']]
+            c = c + 1
+        r = r + 1
+    _batch_ended[g]
+
+--- the grid editing its focused cell, its editor holding the cell's words
+--- (nothing where the cell may not be edited)
+fn edit_started[g, k]
+    f = g.focus
+    if f.row eq '' or not editable[g, k, f.row, f.column]
+        return g
+    g.editing = f
+    g.draft = cell_words[cell_value[g, k, f.row, f.column]]
+    if g.sheet.columns gt 0
+        g.draft = raw_of[g.sheet, _sheet_cell[g, f.row, f.column]]
+    g
+
+--- the grid with its edit made: the cell set to what the editor holds
+fn edit_finished[g, k]
+    e = g.editing
+    if e.row eq ''
+        return g
+    g = cell_set[g, k, e.row, e.column, typed_value[g, e.column, g.draft]]
+    g.editing = Spot['', '']
+    g.draft = ''
+    g
+
+--- the grid with its edit let go (Escape): the cell as it was
+fn edit_cancelled[g]
+    g.editing = Spot['', '']
+    g.draft = ''
+    g
+
+--- The grid after a key typed while it has the focus, as TOAST UI Grid's
+--- keymap has it (`ctrl` is Control or Command). Copying leaves the text
+--- in `copied` for the program to put on the clipboard (and keeps it as
+--- the grid's own, which Ctrl+V pastes).
+fn keyed[g, k, key, shift = false, ctrl = false]
+    if g.editing.row ne ''
+        if key eq 'Escape'
+            return edit_cancelled[g]
+        if key eq 'Enter'
+            return edit_finished[g, k]
+        if key eq 'Tab'
+            g = edit_finished[g, k]
+            k = grid_laid[g]
+        else
+            return g
+    cmd = toast_command[key, shift, ctrl]
+    kind = cmd[0]
+    what = cmd[1]
+    if g.focus.row eq ''
+        if kind eq ''
+            return g
+        first = _spot_at[k, 0, 0]
+        return focused_on[g, first.row, first.column]
+    f = place_of[k, g.focus]
+    if kind eq 'move'
+        n = toast_next[k, what, f.row, f.column]
+        s = _spot_at[k, n.row, n.column]
+        return focused_on[g, s.row, s.column]
+    if kind eq 'select'
+        return toast_selected[g, k, what]
+    if kind eq 'edit'
+        if what eq 'currentCell'
+            return edit_started[g, k]
+        n = toast_next[k, what, f.row, f.column]
+        s = _spot_at[k, n.row, n.column]
+        return focused_on[g, s.row, s.column]
+    if kind eq 'remove'
+        return cleared[g, k]
+    if kind eq 'clipboard'
+        if what eq 'copy'
+            t = copied_text[g, k]
+            g.copied = t
+            g.clipboard = t
+            return g
+        if g.clipboard ne ''
+            return pasted[g, k, g.clipboard]
+    g
+
+-------------------------------------------------------------------- a spreadsheet: 7GUIs Cells
+
+--- A sheet of cells, as the 7GUIs task Cells has one (Vue's example: five
+--- columns A to E, twenty rows counted from 0): what each cell was given,
+--- trimmed, by its name (`A0`); the steps that may be undone (each a list
+--- of the cells it changed) and the steps undone that may be done again;
+--- and whether a step is open, so that a paste's many cells are one step.
+struct Sheet [columns, rows, raw, history, undone, open]
+
+--- One cell a step changed: its name, what it held before and after.
+struct Was [name, before, after]
+
+--- What a cell's formula reads: the tokens, where the reading stands,
+--- and the value so far; `failed` once the formula cannot be read.
+struct Reading [tokens, at, value, failed]
+
+fn _no_steps[]
+    slice[[slice[[Was['', '', '']], 0, 0]], 0, 0]
+
+--- an empty sheet of `columns` letters and `rows` rows
+fn sheet[columns = 5, rows = 20]
+    Sheet[columns, rows, map['' = ''], _no_steps[], _no_steps[], false]
+
+fn _letters[]
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+--- a cell's name: its column's letter and its row's number (`A0`)
+fn cell_name[column, row]
+    '`slice[_letters[], column, column + 1]``row`'
+
+--- what was given a cell ('' for nothing)
+fn raw_of[s, name]
+    if name ne '' and name in s.raw
+        return s.raw[name]
+    ''
+
+--- The sheet with a cell given words, trimmed (as Vue's example commits
+--- an edit): one step that may be undone, or a part of the step open.
+fn sheet_set[s, name, words]
+    after = trim[words]
+    before = raw_of[s, name]
+    if after eq before
+        return s
+    s.raw = set[s.raw, name, after]
+    w = Was[name, before, after]
+    if s.open and len[s.history] gt 0
+        last = s.history[len[s.history] - 1]
+        s.history[len[s.history] - 1] = push[last, w]
+    else
+        s.history = push[s.history, [w]]
+    s.undone = _no_steps[]
+    s
+
+--- the sheet with a step begun that the cells set after it join, until
+--- it is ended
+fn step_begun[s]
+    s.history = push[s.history, slice[[Was['', '', '']], 0, 0]]
+    s.open = true
+    s
+
+--- the sheet with its open step ended (an empty one dropped)
+fn step_ended[s]
+    s.open = false
+    if len[s.history] gt 0 and len[s.history[len[s.history] - 1]] eq 0
+        s.history = pop[s.history]
+    s
+
+--- whether there is a step to undo, and one to do again
+fn can_undo[s]
+    len[s.history] gt 0
+
+fn can_redo[s]
+    len[s.undone] gt 0
+
+--- the sheet with its last step undone: each cell given what it held
+fn undone[s]
+    if len[s.history] eq 0
+        return s
+    step = s.history[len[s.history] - 1]
+    s.history = pop[s.history]
+    i = len[step] - 1
+    while i gte 0
+        s.raw = set[s.raw, step[i].name, step[i].before]
+        i = i - 1
+    s.undone = push[s.undone, step]
+    s
+
+--- the sheet with the last step undone done again
+fn redone[s]
+    if len[s.undone] eq 0
+        return s
+    step = s.undone[len[s.undone] - 1]
+    s.undone = pop[s.undone]
+    for w in step
+        s.raw = set[s.raw, w.name, w.after]
+    s.history = push[s.history, step]
+    s
+
+fn _error[]
+    dt.Value['error', 0.0, '#ERROR', slice[[dt.missing[]], 0, 0]]
+
+fn _is_letter[ch]
+    (ch gte 'a' and ch lte 'z') or (ch gte 'A' and ch lte 'Z') or ch eq '_' or ch eq '$'
+
+fn _is_digit[ch]
+    ch gte '0' and ch lte '9'
+
+--- A formula's words read into tokens: numbers as JavaScript writes them
+--- (`2`, `.5`, `1e3`), names, the operators and the brackets; `?` for a
+--- character no formula holds.
+fn _tokens[t]
+    chars = split[t, '']
+    out = _no_texts[]
+    i = 0
+    n = len[chars]
+    while i lt n
+        ch = chars[i]
+        if ch eq ' ' or ch eq '\t' or ch eq '\n'
+            i = i + 1
+        else if _is_digit[ch] or (ch eq '.' and i + 1 lt n and _is_digit[chars[i + 1]])
+            j = i
+            while j lt n and _is_digit[chars[j]]
+                j = j + 1
+            if j lt n and chars[j] eq '.'
+                j = j + 1
+                while j lt n and _is_digit[chars[j]]
+                    j = j + 1
+            if j lt n and (chars[j] eq 'e' or chars[j] eq 'E')
+                m = j + 1
+                if m lt n and (chars[m] eq '+' or chars[m] eq '-')
+                    m = m + 1
+                if m lt n and _is_digit[chars[m]]
+                    j = m
+                    while j lt n and _is_digit[chars[j]]
+                        j = j + 1
+            --- (a name straight after a number is no JavaScript)
+            if j lt n and (_is_letter[chars[j]] or _is_digit[chars[j]])
+                out = push[out, '?']
+                j = j + 1
+            else
+                piece = join[slice[chars, i, j], '']
+                out = push[out, '#`piece`']
+            i = j
+        else if _is_letter[ch]
+            j = i
+            while j lt n and (_is_letter[chars[j]] or _is_digit[chars[j]])
+                j = j + 1
+            piece = join[slice[chars, i, j], '']
+            out = push[out, '@`piece`']
+            i = j
+        else if (ch eq '+' or ch eq '-') and i + 1 lt n and chars[i + 1] eq ch
+            --- (`++` and `--` are JavaScript's own operators, which a formula
+            --- of cells cannot use)
+            out = push[out, '?']
+            i = i + 2
+        else if ch eq '+' or ch eq '-' or ch eq '*' or ch eq '/' or ch eq '%' or ch eq '(' or ch eq ')'
+            if ch eq '*' and i + 1 lt n and chars[i + 1] eq '*'
+                out = push[out, '?']
+                i = i + 2
+            else
+                out = push[out, ch]
+                i = i + 1
+        else
+            out = push[out, '?']
+            i = i + 1
+    out
+
+--- whether a name is a cell's: one capital letter and one or two digits
+fn _is_cell_name[name]
+    chars = split[name, '']
+    if len[chars] lt 2 or len[chars] gt 3
+        return false
+    if not (chars[0] gte 'A' and chars[0] lte 'Z')
+        return false
+    for ch in slice[chars, 1, len[chars]]
+        if not _is_digit[ch]
+            return false
+    true
+
+--- JavaScript's Number() of a cell's value
+fn _as_number[v]
+    if v.is eq 'number'
+        return v.num
+    if v.is eq 'text'
+        return dt.text_number[v.words]
+    dt.js_number[v]
+
+--- JavaScript's String() of a cell's value
+fn _as_text[v]
+    if v.is eq 'text'
+        return v.words
+    dt.shown[v]
+
+--- JavaScript's remainder (`%`): the sign of the dividend, NaN for a
+--- remainder by 0 or of an infinity
+fn _remainder[a, b]
+    if a ne a or b ne b or b eq 0.0 or a eq 1.0 / 0.0 or a eq -1.0 / 0.0
+        return 0.0 / 0.0
+    if b eq 1.0 / 0.0 or b eq -1.0 / 0.0
+        return a
+    q = a / b
+    whole = 0.0 + floor[abs[q]]
+    if q lt 0.0
+        whole = 0.0 - whole
+    r = a - b * whole
+    if r eq 0.0 and a lt 0.0
+        return -0.0
+    r
+
+fn _applied[op, a, b]
+    if op eq '+'
+        if a.is eq 'text' or b.is eq 'text'
+            return dt.words['`_as_text[a]``_as_text[b]`']
+        return dt.number[_as_number[a] + _as_number[b]]
+    x = _as_number[a]
+    y = _as_number[b]
+    if op eq '-'
+        return dt.number[x - y]
+    if op eq '*'
+        return dt.number[x * y]
+    if op eq '/'
+        return dt.number[x / y]
+    dt.number[_remainder[x, y]]
+
+fn _token_at[rd]
+    if rd.at lt len[rd.tokens]
+        return rd.tokens[rd.at]
+    ''
+
+fn _failed[rd]
+    rd.failed = true
+    rd.value = _error[]
+    rd
+
+--- a primary: a number, a cell's name, or a formula in brackets
+fn _primary[s, rd, depth]
+    tok = _token_at[rd]
+    if starts[tok, '#']
+        rd.value = dt.number[dt.text_number[slice[tok, 1, len[tok]]]]
+        rd.at = rd.at + 1
+        return rd
+    if starts[tok, '@']
+        name = slice[tok, 1, len[tok]]
+        if not _is_cell_name[name]
+            return _failed[rd]
+        v = cell_result[s, name, depth + 1]
+        if v.is eq 'error'
+            return _failed[rd]
+        rd.value = v
+        rd.at = rd.at + 1
+        return rd
+    if tok eq '('
+        rd.at = rd.at + 1
+        rd = _sum[s, rd, depth]
+        if rd.failed or _token_at[rd] ne ')'
+            return _failed[rd]
+        rd.at = rd.at + 1
+        return rd
+    _failed[rd]
+
+--- a sign before a primary (`-`, `+`), each a JavaScript unary operator
+fn _signed[s, rd, depth]
+    tok = _token_at[rd]
+    if tok eq '-' or tok eq '+'
+        rd.at = rd.at + 1
+        rd = _signed[s, rd, depth]
+        if rd.failed
+            return rd
+        x = _as_number[rd.value]
+        if tok eq '-'
+            x = 0.0 - x
+            if _as_number[rd.value] eq 0.0
+                x = -1.0 * _as_number[rd.value]
+        rd.value = dt.number[x]
+        return rd
+    _primary[s, rd, depth]
+
+fn _product[s, rd, depth]
+    rd = _signed[s, rd, depth]
+    while not rd.failed and (_token_at[rd] eq '*' or _token_at[rd] eq '/' or _token_at[rd] eq '%')
+        op = _token_at[rd]
+        left = rd.value
+        rd.at = rd.at + 1
+        rd = _signed[s, rd, depth]
+        if not rd.failed
+            rd.value = _applied[op, left, rd.value]
+    rd
+
+fn _sum[s, rd, depth]
+    rd = _product[s, rd, depth]
+    while not rd.failed and (_token_at[rd] eq '+' or _token_at[rd] eq '-')
+        op = _token_at[rd]
+        left = rd.value
+        rd.at = rd.at + 1
+        rd = _product[s, rd, depth]
+        if not rd.failed
+            rd.value = _applied[op, left, rd.value]
+    rd
+
+--- A cell's value, as Vue's Cells example works it out: a formula (its
+--- words begin with `=`) is the JavaScript expression after the `=`, its
+--- cells' names reading their cells' values; other words that read as a
+--- number are that number; anything else is the words. A formula that is
+--- no expression of numbers, names of cells, `+ - * / %` and brackets, or
+--- that reads a cell that reads itself again, is an error (`#ERROR`).
+--- Arithmetic is JavaScript's: `+` joins words, the rest read words as
+--- Number() does.
+fn cell_result[s, name, depth = 0]
+    if depth gt 64
+        return _error[]
+    t = raw_of[s, name]
+    if not starts[t, '=']
+        if t ne ''
+            x = dt.text_number[t]
+            if x eq x
+                return dt.number[x]
+        return dt.words[t]
+    toks = _tokens[slice[t, 1, len[t]]]
+    if len[toks] eq 0 or '?' in toks
+        return _error[]
+    rd = _sum[s, Reading[toks, 0, dt.missing[], false], depth]
+    if rd.failed or rd.at ne len[toks]
+        return _error[]
+    rd.value
+
+--- what a cell shows: its value as JavaScript writes it, or `#ERROR`
+fn cell_shown[s, name]
+    v = cell_result[s, name]
+    if v.is eq 'error'
+        return '#ERROR'
+    _as_text[v]
+
+--- What the cells of a rectangle hold, as TanStack's sheet sums a range
+--- up: how many hold something, how many of them hold a number, the
+--- numbers' sum and their mean (NaN when none does).
+struct Tally [count, numbers, total, mean]
+
+fn sheet_tally[s, top, bottom, left, right]
+    count = 0
+    numbers = 0
+    total = 0.0
+    r = top
+    while r lte bottom
+        c = left
+        while c lte right
+            name = cell_name[c, r]
+            if raw_of[s, name] ne ''
+                count = count + 1
+                v = cell_result[s, name]
+                if v.is eq 'number' and v.num eq v.num
+                    numbers = numbers + 1
+                    total = total + v.num
+            c = c + 1
+        r = r + 1
+    mean = 0.0 / 0.0
+    if numbers gt 0
+        mean = total / numbers
+    Tally[count, numbers, total, mean]
+
+--- The sheet as a table lory.datatable holds: a row for each of its rows
+--- (by its number), a column for each of its letters, each cell what the
+--- cell shows; and a first column of the rows' numbers.
+fn sheet_table[s]
+    columns = [dt.column['#', '', sortable = false, size = 48.0]]
+    i = 0
+    while i lt s.columns
+        letter = slice[_letters[], i, i + 1]
+        columns = push[columns, dt.column[letter, letter, sortable = false, size = 120.0]]
+        i = i + 1
+    rows = _no_rows[]
+    r = 0
+    while r lt s.rows
+        cells = map['#' = dt.words['`r`']]
+        c = 0
+        while c lt s.columns
+            name = cell_name[c, r]
+            v = cell_result[s, name]
+            if v.is eq 'error'
+                v = dt.words['#ERROR']
+            cells = set[cells, slice[_letters[], c, c + 1], v]
+            c = c + 1
+        rows = push[rows, dt.row['`r`', cells]]
+        r = r + 1
+    t = dt.new[columns, rows]
+    dt.page_size_set[t, s.rows]
+
+--- a grid of a sheet: its cells drawn as the table answers them, its row
+--- numbers not edited, and every edit given to the sheet as words
+fn sheet_grid[id, s]
+    g = grid[id, sheet_table[s]]
+    g.sheet = s
+    g.specs = [spec['#', editor = 'none', align = 'right']]
+    g
+
+--- the table with the cells a sheet shows now, its state kept
+fn _sheet_shown[t, s]
+    t.rows = sheet_table[s].rows
+    t
+
+--- a grid's sheet with its last step undone, or done again, and the
+--- table showing it
+fn sheet_undone[g]
+    g.sheet = undone[g.sheet]
+    g.table = _sheet_shown[g.table, g.sheet]
+    g
+
+fn sheet_redone[g]
+    g.sheet = redone[g.sheet]
+    g.table = _sheet_shown[g.table, g.sheet]
+    g
+
+--- the grid with a step of its sheet begun or ended (nothing for a grid
+--- of a table)
+fn _batch_begun[g]
+    if g.sheet.columns gt 0
+        g.sheet = step_begun[g.sheet]
+    g
+
+fn _batch_ended[g]
+    if g.sheet.columns gt 0
+        g.sheet = step_ended[g.sheet]
+    g
+
+fn _sheet_cell[g, row, column]
+    c = 0
+    while c lt g.sheet.columns
+        if slice[_letters[], c, c + 1] eq column
+            return cell_name[c, int[row]]
+        c = c + 1
+    ''
+
+
+-------------------------------------------------------------------- a grid kept live by a feed
+
+--- the grid at a time (milliseconds), for the flashes of its changed cells
+fn time_set[g, ms]
+    g.now = ms
+    g
+
+--- a change a feed makes to a cell
+fn change[row, column, value]
+    Change[row, column, value]
+
+fn _changed_rows[rows, by_row, flashes, at_ms]
+    out = rows
+    i = 0
+    while i lt len[out]
+        r = out[i]
+        if r.id in by_row
+            for ch in by_row[r.id]
+                way = 0
+                if ch.column in r.cells
+                    old = r.cells[ch.column]
+                    if old.is eq 'number' and ch.value.is eq 'number'
+                        if ch.value.num gt old.num
+                            way = 1
+                        else if ch.value.num lt old.num
+                            way = -1
+                r.cells = set[r.cells, ch.column, ch.value]
+                flashes = set[flashes, _key_of[r.id, ch.column], Flash[at_ms, way]]
+            out[i] = r
+        if len[r.subs] gt 0
+            inner = _changed_rows[r.subs, by_row, flashes, at_ms]
+            r = out[i]
+            r.subs = inner.rows
+            out[i] = r
+            flashes = inner.flashes
+        i = i + 1
+    Fed[out, flashes]
+
+--- rows with changes made, and the flashes they leave
+struct Fed [rows, flashes]
+
+--- The grid with a feed's changes made: each cell written into its row
+--- by the row's id (the cell key its column reads), the page, the sorting,
+--- the focus and the selection kept (they hold ids, so a row that sorts
+--- elsewhere takes them with it), and each cell flashing from now, up or
+--- down where a number rose or fell. A feed's change is no edit: it
+--- leaves no draft and marks nothing dirty.
+fn ticked[g, changes]
+    by_row = map['' = slice[[Change['', '', dt.missing[]]], 0, 0]]
+    for ch in changes
+        list = slice[[Change['', '', dt.missing[]]], 0, 0]
+        if ch.row in by_row
+            list = by_row[ch.row]
+        by_row = set[by_row, ch.row, push[list, ch]]
+    fed = _changed_rows[g.table.rows, by_row, g.flashes, g.now]
+    t = g.table
+    t.rows = fed.rows
+    g.table = t
+    g.flashes = fed.flashes
+    g
+
+--- how long a changed cell flashes, in milliseconds
+fn flash_lasts[]
+    800.0
+
+--- How strongly a cell flashes now: 1 the moment it changed, fading to 0
+--- over `flash_lasts`, signed by the way its number went (0 for a change
+--- that went neither way, held at its strength).
+fn flash_of[g, row, column]
+    key = _key_of[row, column]
+    if not (key in g.flashes)
+        return 0.0
+    f = g.flashes[key]
+    left = 1.0 - (g.now - f.at) / flash_lasts[]
+    if left lte 0.0 or left gt 1.0
+        return 0.0
+    if f.way lt 0
+        return 0.0 - left
+    left
+
+--- the grid with the flashes that have ended let go
+fn flashes_pruned[g]
+    kept = _no_flashes[]
+    for key in keys[g.flashes]
+        if key ne ''
+            f = g.flashes[key]
+            if g.now - f.at lt flash_lasts[]
+                kept = set[kept, key, f]
+    g.flashes = kept
+    g
+
+-------------------------------------------------------------------- the grid drawn
+
+--- the heights of a header, a row and the summary's footer, in CSS pixels
+fn row_tall[]
+    30.0
+
+fn head_tall[]
+    34.0
+
+fn foot_tall[]
+    30.0
+
+--- One box the painter draws, in CSS pixels from the body's top left:
+--- what it is (`head`, `cell` or `foot`), its row and column ids, its
+--- words and how they are placed (`left`, `right` or `center`), its tone
+--- (`` , `error`, `dirty`, `off` or `editing`), whether it is chosen and
+--- which of its sides are the selection's edge, whether it has the focus,
+--- how it flashes (signed, -1 to 1), its depth in a tree and whether it
+--- holds a toggle (open or not), its sort mark (`asc`, `desc` or '') and
+--- whether its row is striped.
+struct Box [part, row, column, x, y, w, h, words, placed, shade, chosen, edges, focus, flash, depth, toggle, open, mark, striped]
+
+--- what the painter draws: the boxes (the body's under the header's and
+--- the footer's), where the body's rows begin and end, whether lines
+--- part the columns, and whether the grid is focused on a cell
+struct Painting [boxes, top, bottom, lines]
+
+fn _no_boxes[]
+    slice[[Box['', '', '', 0.0, 0.0, 0.0, 0.0, '', 0, 0, false, Edges[false, false, false, false], false, 0.0, 0, false, false, '', false]], 0, 0]
+
+fn _no_painting[]
+    Painting[_no_boxes[], 0.0, 0.0, true]
+
+--- the columns' widths scaled to fill `wide`
+fn _widths[g, k, wide]
+    total = 0.0
+    for c in k.columns
+        total = total + dt.column_size[g.table, c.id]
+    out = []
+    for c in k.columns
+        if total gt 0.0
+            out = push[out, dt.column_size[g.table, c.id] * wide / total]
+        else
+            out = push[out, 0.0]
+    out
+
+fn _header_words[c]
+    if c.header ne ''
+        return c.header
+    c.id
+
+fn _foot_tall[g]
+    for s in g.specs
+        if s.summary ne ''
+            return foot_tall[]
+    0.0
+
+--- how far the body may scroll: its rows' height past what shows
+fn scroll_most[g, k, tall]
+    body = tall - head_tall[] - _foot_tall[g]
+    max[0.0, len[k.spans.rows] * row_tall[] - body]
+
+fn _align_of[g, column, v]
+    s = _spec_of[g, column]
+    if s.align ne ''
+        return s.align
+    if v.is eq 'number'
+        return 'right'
+    'left'
+
+fn _tone_of[g, k, row, column]
+    if g.editing.row eq row and g.editing.column eq column
+        return 'editing'
+    if cell_error[g, row, column] ne ''
+        return 'error'
+    if cell_dirty[g, row, column]
+        return 'dirty'
+    if not editable[g, k, row, column]
+        return 'off'
+    ''
+
+--- (what a painter reads must not be able to fail: each part of a box is
+--- worked out where its failure is answered, read as nothing)
+fn _span_down[sp, row, column]
+    n = row_span[sp, row, column]
+    if not n.ok
+        return 1
+    n
+
+fn _span_across[sp, row, column]
+    n = column_span[sp, row, column]
+    if not n.ok
+        return 1
+    n
+
+fn _width_at[widths, i]
+    w = widths[i]
+    if not w.ok
+        return 0.0
+    w
+
+fn _chosen_at[k, bounds, row, column]
+    yes = cell_selected[k, bounds, row, column]
+    if not yes.ok
+        return false
+    yes
+
+fn _edges_at[k, bounds, row, column]
+    e = cell_edges[k, bounds, row, column]
+    if not e.ok
+        return Edges[false, false, false, false]
+    Edges[e.top, e.right, e.bottom, e.left]
+
+fn _opened_at[t, id]
+    yes = dt.is_expanded[t, id]
+    if not yes.ok
+        return false
+    yes
+
+--- a cell's tone as the painter reads it: 0 none, 1 an error, 2 changed,
+--- 3 not editable, 4 being edited
+fn _tone_at[g, k, row, column]
+    t = _tone_of[g, k, row, column]
+    if not t.ok
+        return 0
+    codes = map['' = 0, error = 1, dirty = 2, off = 3, editing = 4]
+    if t in codes
+        return codes[t]
+    0
+
+--- how a cell's words are placed, as the painter reads it: 0 at its
+--- start, 1 at its end, 2 in its middle
+fn _align_at[g, column, v]
+    a = _align_of[g, column, v]
+    if not a.ok
+        return 0
+    if a eq 'right'
+        return 1
+    if a eq 'center'
+        return 2
+    0
+
+fn _flash_at[g, row, column]
+    f = flash_of[g, row, column]
+    if not f.ok
+        return 0.0
+    0.0 + f
+
+fn _sort_at[t, id]
+    m = dt.sort_of[t, id]
+    if not m.ok
+        return ''
+    '`m`'
+
+--- What a grid paints, `wide` by `tall` CSS pixels: its header (with the
+--- sort marks), the rows its scroll shows, each cell drawn once at the
+--- size of its merge, its tones, the selection and focus, its flashes, a
+--- tree's indent and toggles, and the summary's footer.
+fn painting[g, wide, tall]
+    k = grid_laid[g]
+    sp = k.spans
+    widths = _widths[g, k, wide]
+    xs = []
+    x = 0.0
+    j = 0
+    while j lt len[widths]
+        xs = push[xs, x]
+        x = x + _width_at[widths, j]
+        j = j + 1
+    boxes = _no_boxes[]
+    foot = _foot_tall[g]
+    top = head_tall[]
+    bottom = tall - foot
+    none = Edges[false, false, false, false]
+    bounds = selection_bounds[k, g.sel]
+    chosen_some = g.selected or g.whole
+    rows = sp.rows
+    i = 0
+    odd = false
+    while (i + 1) * row_tall[] lte g.scroll
+        i = i + 1
+        odd = not odd
+    while i lt len[rows] and top + i * row_tall[] - g.scroll lt bottom
+        r = rows[i]
+        y = top + i * row_tall[] - g.scroll
+        c = 0
+        while c lt len[k.columns]
+            col = k.columns[c].id
+            down = _span_down[sp, r.id, col]
+            across = _span_across[sp, r.id, col]
+            if down gt 0 and across gt 0
+                w = 0.0
+                j = c
+                while j lt c + across and j lt len[widths]
+                    w = w + _width_at[widths, j]
+                    j = j + 1
+                v = cell_value[g, k, r.id, col]
+                words = cell_words[v]
+                if g.sheet.columns gt 0
+                    words = cell_words[v]
+                chosen = false
+                edges = none
+                if chosen_some
+                    chosen = g.whole or _chosen_at[k, bounds, r.id, col]
+                    if chosen and not g.whole
+                        edges = _edges_at[k, bounds, r.id, col]
+                focus = g.focus.row eq r.id and g.focus.column eq col
+                toggle = c eq 0 and len[r.subs] gt 0
+                opened = toggle and _opened_at[g.table, r.id]
+                depth = 0
+                if c eq 0
+                    depth = r.depth
+                b = Box['cell', r.id, col, _width_at[xs, c], y, w, down * row_tall[], words, _align_at[g, col, v], _tone_at[g, k, r.id, col], chosen, edges, focus, _flash_at[g, r.id, col], depth, toggle, opened, '', g.look eq 'striped' and odd]
+                boxes = push[boxes, b]
+            c = c + 1
+        i = i + 1
+        odd = not odd
+    c = 0
+    while c lt len[k.columns]
+        col = k.columns[c]
+        boxes = push[boxes, Box['head', '', col.id, _width_at[xs, c], 0.0, _width_at[widths, c], head_tall[], _header_words[col], 0, 0, false, none, false, 0.0, 0, false, false, _sort_at[g.table, col.id], false]]
+        c = c + 1
+    if foot gt 0.0
+        c = 0
+        while c lt len[k.columns]
+            id = k.columns[c].id
+            s = _spec_of[g, id]
+            words = ''
+            if s.summary ne ''
+                vs = slice[[dt.missing[]], 0, 0]
+                for r in k.display
+                    if not dt.is_group[r]
+                        vs = push[vs, cell_value[g, k, r.id, id]]
+                words = '`s.summary` `cell_words[dt.aggregated[s.summary, vs]]`'
+            boxes = push[boxes, Box['foot', '', id, _width_at[xs, c], bottom, _width_at[widths, c], foot, words, 1, 0, false, none, false, 0.0, 0, false, false, '', false]]
+            c = c + 1
+    Painting[boxes, top, bottom, g.look ne 'clean']
+
+--- the words an edit bar names the focused cell by: a sheet's cell name,
+--- else the column's header and the row's id
+fn focus_label[g]
+    f = g.focus
+    if f.row eq ''
+        return ''
+    if g.sheet.columns gt 0
+        return _sheet_cell[g, f.row, f.column]
+    '`f.column` · `f.row`'
+
+--- what the edit bar holds: the draft while a cell is edited, else what
+--- the focused cell was given (a sheet's formula, a grid's words)
+fn bar_words[g]
+    if g.editing.row ne ''
+        return g.draft
+    f = g.focus
+    if f.row eq ''
+        return ''
+    if g.sheet.columns gt 0
+        return raw_of[g.sheet, _sheet_cell[g, f.row, f.column]]
+    k = grid_laid[g]
+    cell_words[cell_value[g, k, f.row, f.column]]
+
+--- the id of a grid's edit bar
+fn editor_id[g]
+    '`g.id`:editor'
+
+--- The grid drawn, `wide` by `tall` CSS pixels (the edit bar's row above
+--- it aside): an edit bar naming the focused cell and holding what it was
+--- given, where its edit is typed (as a spreadsheet's formula bar, and in
+--- a headset where gui's keyboard types into it), above one drawn control
+--- of the cells. The body tells `cell` (a press: `words` the row and
+--- column ids, a tab between; `num` 1 with Shift, 2 with Ctrl or Command),
+--- `reach` (a drag over a cell), `release`, `edit` (a double press),
+--- `toggle` (a tree row's toggle: `words` its row), `sort` (a header:
+--- `words` its column, `num` 1 with Shift), `scroll` (`num` the wheel's
+--- turn in CSS pixels) and `key` (`words` the key, `num` its flags).
+fn grid_view[g, wide, tall]
+    remember['lory.datagrid:`g.id`', painting[g, wide, tall]]
+    bar = gui.row[[gui.sized[gui.text[focus_label[g], 13.0, 'muted'], 90.0], gui.sized[gui.field[editor_id[g], bar_words[g], hint = 'Edit the cell'], wide - 100.0]], gap = 10.0]
+    gui.column[[bar, gui.drawn[g.id, 0.0, wide, tall, _grid_painted]], gap = 8.0]
+
+
+--- (a box's parts read where a failure is answered: a painter's answer
+--- must not be able to fail)
+fn _box_y[b]
+    v = b.y
+    if not v.ok
+        return 0.0
+    v
+
+fn _box_w[b]
+    v = b.w
+    if not v.ok
+        return 0.0
+    v
+
+fn _box_h[b]
+    v = b.h
+    if not v.ok
+        return 0.0
+    v
+
+fn _box_words[b]
+    v = b.words
+    if not v.ok
+        return ''
+    v
+
+fn _box_placed[b]
+    v = b.placed
+    if not v.ok
+        return 0
+    v
+
+fn _box_shade[b]
+    v = b.shade
+    if not v.ok
+        return 0
+    v
+
+fn _box_toggle[b]
+    v = b.toggle
+    if not v.ok
+        return false
+    v
+
+fn _box_open[b]
+    v = b.open
+    if not v.ok
+        return false
+    v
+
+fn _box_mark[b]
+    v = b.mark
+    if not v.ok
+        return ''
+    v
+
+fn _box_x[b]
+    v = b.x
+    if not v.ok
+        return 0.0
+    v
+
+fn _box_chosen[b]
+    v = b.chosen
+    if not v.ok
+        return false
+    v
+
+fn _box_focus[b]
+    v = b.focus
+    if not v.ok
+        return false
+    v
+
+fn _box_flash[b]
+    v = b.flash
+    if not v.ok
+        return 0.0
+    v
+
+fn _box_depth[b]
+    v = b.depth
+    if not v.ok
+        return 0
+    v
+
+fn _box_part[b]
+    v = b.part
+    if not v.ok
+        return ''
+    v
+
+fn _box_striped[b]
+    v = b.striped
+    if not v.ok
+        return false
+    v
+
+fn _box_row[b]
+    v = b.row
+    if not v.ok
+        return ''
+    v
+
+fn _box_column[b]
+    v = b.column
+    if not v.ok
+        return ''
+    v
+
+fn _edge_top[b]
+    v = b.edges.top
+    if not v.ok
+        return false
+    v
+
+fn _edge_right[b]
+    v = b.edges.right
+    if not v.ok
+        return false
+    v
+
+fn _edge_bottom[b]
+    v = b.edges.bottom
+    if not v.ok
+        return false
+    v
+
+fn _edge_left[b]
+    v = b.edges.left
+    if not v.ok
+        return false
+    v
+
+fn _painting_top[pt]
+    v = pt.top
+    if not v.ok
+        return 0.0
+    v
+
+fn _painting_bottom[pt]
+    v = pt.bottom
+    if not v.ok
+        return 0.0
+    v
+
+fn _painting_lines[pt]
+    v = pt.lines
+    if not v.ok
+        return true
+    v
+
+fn _inside_at[px, py, x, y, w, h]
+    px gte x and py gte y and px lt x + w and py lt y + h
+
+--- the box under a point of the drawing, the header's and footer's over
+--- the body's, or -1
+fn _box_under[pt, d, px, py]
+    s = d.s
+    found = -1
+    i = 0
+    for b in pt.boxes
+        bx = d.x + _box_x[b] * s
+        by = d.y + _box_y[b] * s
+        if _inside_at[px, py, bx, by, _box_w[b] * s, _box_h[b] * s]
+            if _box_part[b] ne 'cell' or (py gte d.y + _painting_top[pt] * s and py lt d.y + _painting_bottom[pt] * s)
+                found = i
+        i = i + 1
+    found
+
+fn _flags[e]
+    n = 0.0
+    if e.shift
+        n = n + 1.0
+    if e.ctrl or e.meta
+        n = n + 2.0
+    n
+
+fn _ground[look, b]
+    if _box_part[b] eq 'head' or _box_part[b] eq 'foot'
+        return look.panel
+    look.field
+
+--- the tint over a cell's ground: its tone's, or its stripe's
+fn _tint[look, b]
+    if _box_shade[b] eq 1
+        return lory.fade[look.danger, 0.22]
+    if _box_shade[b] eq 2
+        return lory.fade[look.warning, 0.16]
+    if _box_striped[b]
+        return lory.fade[look.ink, 0.04]
+    lory.fade[look.ink, 0.0]
+
+fn _box_painted[c, d, b, pt]
+    look = d.look
+    s = d.s
+    x = d.x + _box_x[b] * s
+    y = d.y + _box_y[b] * s
+    w = _box_w[b] * s
+    h = _box_h[b] * s
+    was = lory.clipped[c]
+    if _box_part[b] eq 'cell'
+        c = lory.clip[c, d.x, d.y + _painting_top[pt] * s, d.w, (_painting_bottom[pt] - _painting_top[pt]) * s]
+    c = lory.rect[c, x, y, w, h, _ground[look, b]]
+    if _box_shade[b] eq 1 or _box_shade[b] eq 2 or _box_striped[b]
+        c = lory.rect[c, x, y, w, h, _tint[look, b]]
+    if _box_flash[b] gt 0.0
+        c = lory.rect[c, x, y, w, h, lory.fade[look.success, 0.45 * _box_flash[b]]]
+    if _box_flash[b] lt 0.0
+        c = lory.rect[c, x, y, w, h, lory.fade[look.danger, 0.0 - 0.45 * _box_flash[b]]]
+    if _box_chosen[b]
+        c = lory.rect[c, x, y, w, h, lory.fade[look.accent, 0.2]]
+    --- the lines between cells: under each, and between columns but in
+    --- the clean look
+    c = lory.rect[c, x, y + h - s, w, s, look.edge]
+    if _painting_lines[pt] or _box_part[b] eq 'head'
+        c = lory.rect[c, x + w - s, y, s, h, look.edge]
+    ink = look.ink
+    if _box_shade[b] eq 3 or _box_part[b] eq 'foot'
+        ink = look.muted
+    if _box_shade[b] eq 1
+        ink = look.danger
+    size = 13.0 * s
+    pad = 8.0 * s
+    left = x + pad + _box_depth[b] * 16.0 * s
+    if _box_toggle[b]
+        cx = left + 5.0 * s
+        cy = y + h * 0.5
+        if _box_open[b]
+            c = lory.triangle[c, cx - 4.0 * s, cy - 2.0 * s, cx + 4.0 * s, cy - 2.0 * s, cx, cy + 3.0 * s, look.muted]
+        else
+            c = lory.triangle[c, cx - 2.0 * s, cy - 4.0 * s, cx - 2.0 * s, cy + 4.0 * s, cx + 3.0 * s, cy, look.muted]
+        left = left + 16.0 * s
+    inner = lory.clipped[c]
+    c = lory.clip[c, x, y, w, h]
+    ty = y + (h - 16.0 * s) * 0.5
+    if _box_part[b] eq 'head'
+        c = lory.text[c, left, ty, _box_words[b], size, look.ink]
+        if _box_mark[b] ne ''
+            mx = x + w - 14.0 * s
+            my = y + h * 0.5
+            if _box_mark[b] eq 'asc'
+                c = lory.triangle[c, mx - 4.0 * s, my + 2.0 * s, mx + 4.0 * s, my + 2.0 * s, mx, my - 3.0 * s, look.accent]
+            else
+                c = lory.triangle[c, mx - 4.0 * s, my - 2.0 * s, mx + 4.0 * s, my - 2.0 * s, mx, my + 3.0 * s, look.accent]
+    else if _box_placed[b] eq 1
+        c = lory.text_right[c, x + w - pad, ty, _box_words[b], size, ink]
+    else if _box_placed[b] eq 2
+        c = lory.text_centered[c, x + w * 0.5, y + h * 0.5, _box_words[b], size, ink]
+    else
+        c = lory.text[c, left, ty, _box_words[b], size, ink]
+    c = lory.unclip[c, inner]
+    if _box_chosen[b]
+        line = 1.5 * s
+        if _edge_top[b]
+            c = lory.rect[c, x, y, w, line, look.accent]
+        if _edge_bottom[b]
+            c = lory.rect[c, x, y + h - line, w, line, look.accent]
+        if _edge_left[b]
+            c = lory.rect[c, x, y, line, h, look.accent]
+        if _edge_right[b]
+            c = lory.rect[c, x + w - line, y, line, h, look.accent]
+    if _box_focus[b]
+        c = lory.outline[c, x + s, y + s, w - 2.0 * s, h - 2.0 * s, 2.0 * s, look.focus]
+    if _box_shade[b] eq 4
+        c = lory.outline[c, x + s, y + s, w - 2.0 * s, h - 2.0 * s, 2.0 * s, look.accent]
+    lory.unclip[c, was]
+
+--- the painter of a grid's body: its boxes drawn, then what the reader
+--- did told
+fn _grid_painted[d]
+    pt = recall['lory.datagrid:`d.id`', _no_painting[]]
+    --- (the frame's input can fail: a painter that decided on a failure
+    --- would answer one, so a frame whose input failed is drawn as it was)
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    look = d.look
+    s = d.s
+    c = d.c
+    c = lory.rect[c, d.x, d.y, d.w, d.h, look.field]
+    for b in pt.boxes
+        c = _box_painted[c, d, b, pt]
+    c = lory.outline[c, d.x, d.y, d.w, d.h, s, look.edge]
+    d.c = c
+    for e in evs
+        inside = _inside_at[e.x, e.y, d.x, d.y, d.w, d.h]
+        if e.on eq 'down' and inside
+            at = _box_under[pt, d, e.x, e.y]
+            if at gte 0
+                b = pt.boxes[at]
+                if _box_part[b] eq 'head'
+                    d = gui.tell[d, 'sort', _box_column[b], _flags[e]]
+                else if _box_part[b] eq 'cell'
+                    reach = d.x + (_box_x[b] + 8.0 + _box_depth[b] * 16.0 + 16.0) * s
+                    if _box_toggle[b] and e.x lt reach
+                        d = gui.tell[d, 'toggle', _box_row[b], 0.0]
+                    else
+                        d = gui.tell[d, 'cell', '`_box_row[b]`\t`_box_column[b]`', _flags[e]]
+        else if e.on eq 'move' and d.down
+            at = _box_under[pt, d, e.x, e.y]
+            if at gte 0
+                b = pt.boxes[at]
+                if _box_part[b] eq 'cell'
+                    d = gui.tell[d, 'reach', '`_box_row[b]`\t`_box_column[b]`', 0.0]
+        else if e.on eq 'up'
+            d = gui.tell[d, 'release', '', 0.0]
+        else if e.on eq 'double' and inside
+            at = _box_under[pt, d, e.x, e.y]
+            if at gte 0
+                b = pt.boxes[at]
+                if _box_part[b] eq 'cell'
+                    d = gui.tell[d, 'edit', '`_box_row[b]`\t`_box_column[b]`', 0.0]
+        else if e.on eq 'wheel' and inside
+            d = gui.tell[d, 'scroll', '', e.dy]
+        else if e.on eq 'key' and d.focused
+            d = gui.tell[d, 'key', e.key, _flags[e]]
+    d
+
+--- (a painter called once by name, so that its parameter is typed: one
+--- handed into a record in a module is refused otherwise)
+fn _painters_typed[c]
+    d = gui.Drawn[c, '', 0.0, 0.0, 1.0, '', 0.0, 0.0, 0.0, 0.0, 1.0, gui.dark[], false, false, false, false, 0.0, 0.0, slice[[''], 0, 0], slice[[gui.Event['', '', '', 0.0]], 0, 0]]
+    d = _grid_painted[d]
+    d.c
+
+-------------------------------------------------------------------- what the reader did
+
+fn _spot_words[words]
+    parts = split[words, '\t']
+    if len[parts] lt 2
+        return Spot['', '']
+    Spot[parts[0], parts[1]]
+
+--- the grid scrolled so that its focused cell's row shows
+fn focus_shown[g, k, tall]
+    if g.focus.row eq ''
+        return g
+    i = _place_of[k.spans.at, g.focus.row]
+    if i lt 0
+        return g
+    body = tall - head_tall[] - _foot_tall[g]
+    y = i * row_tall[]
+    if y lt g.scroll
+        g.scroll = y
+    else if y + row_tall[] gt g.scroll + body
+        g.scroll = y + row_tall[] - body
+    g.scroll = max[0.0, min[g.scroll, scroll_most[g, k, tall]]]
+    g
+
+fn _editing_begun[g, k]
+    g = edit_started[g, k]
+    if g.editing.row ne ''
+        took = gui.focus[editor_id[g], g.draft]
+    g
+
+fn _grid_refocused[g]
+    took = gui.focus[g.id, '']
+    g
+
+--- the grid's tall as shown (its box's, in CSS pixels)
+fn _shown_tall[g, shown]
+    if g.id in shown.boxes
+        b = shown.boxes[g.id]
+        if len[b] eq 4
+            return b[3]
+    300.0
+
+fn _grid_event[g, k, e, tall]
+    if e.act eq 'cell'
+        at = _spot_words[e.words]
+        with_shift = e.num eq 1.0 or e.num eq 3.0
+        multi = e.num gte 2.0
+        again = not with_shift and not multi and not g.selected and g.focus.row eq at.row and g.focus.column eq at.column
+        if g.editing.row ne ''
+            g = edit_finished[g, k]
+            k = grid_laid[g]
+        g.sel = pressed[k, g.sel, at.row, at.column, with_shift, multi]
+        g.focus = focused_cell[g.sel]
+        g.selected = with_shift or multi or len[g.sel] gt 1
+        g.whole = false
+        g.dragging = drags[k]
+        if again
+            g = _editing_begun[g, k]
+        return g
+    if e.act eq 'reach'
+        if g.dragging
+            at = _spot_words[e.words]
+            g.sel = reached[k, g.sel, at.row, at.column]
+            g.selected = g.selected or selected_count[k, selection_bounds[k, g.sel]] gt 1
+        return g
+    if e.act eq 'release'
+        g.dragging = false
+        return g
+    if e.act eq 'edit'
+        at = _spot_words[e.words]
+        g = focused_on[g, at.row, at.column]
+        return _editing_begun[g, k]
+    if e.act eq 'toggle'
+        g.table = dt.row_expansion_toggled[g.table, e.words]
+        return g
+    if e.act eq 'sort'
+        if g.sheet.columns eq 0
+            g.table = dt.sort_toggled[g.table, e.words, e.num eq 1.0]
+        return g
+    if e.act eq 'scroll'
+        g.scroll = max[0.0, min[g.scroll + e.num, scroll_most[g, k, tall]]]
+        return g
+    if e.act eq 'key'
+        with_shift = e.num eq 1.0 or e.num eq 3.0
+        ctrl = e.num gte 2.0
+        key = e.words
+        if g.sheet.columns gt 0 and ctrl and (key eq 'z' or key eq 'Z')
+            if with_shift
+                return sheet_redone[g]
+            return sheet_undone[g]
+        if g.sheet.columns gt 0 and ctrl and (key eq 'y' or key eq 'Y')
+            return sheet_redone[g]
+        if key eq 'Escape' and g.editing.row eq ''
+            g.sel = focus_set[g.focus.row, g.focus.column]
+            g.selected = false
+            g.whole = false
+            return g
+        --- (a character typed on a cell begins its edit with it, as a
+        --- spreadsheet's)
+        if len[split[key, '']] eq 1 and key ne ' ' and not ctrl and g.editing.row eq ''
+            g = edit_started[g, k]
+            if g.editing.row ne ''
+                g.draft = key
+                took = gui.focus[editor_id[g], key]
+            return g
+        before = g.editing.row
+        g = keyed[g, k, key, with_shift, ctrl]
+        if g.editing.row ne '' and before eq ''
+            took = gui.focus[editor_id[g], g.draft]
+        if key eq 'Tab'
+            g = _grid_refocused[g]
+        return focus_shown[g, grid_laid[g], tall]
+    g
+
+--- The grid after a frame: what its body and its edit bar told applied,
+--- in order (a press chooses and focuses, a drag reaches, a press on the
+--- focused cell or a double press edits it in the edit bar, a key acts
+--- as TOAST UI Grid's keymap has it, a header sorts, a toggle opens a
+--- tree's row, the wheel scrolls), Enter in the edit bar making the edit
+--- and Escape letting it go (the grid focused again after either), and
+--- Tab in the edit bar making the edit and moving on. What was copied is
+--- in `copied` until the next frame.
+fn handled[g, shown]
+    g.copied = ''
+    tall = _shown_tall[g, shown]
+    k = grid_laid[g]
+    editor = editor_id[g]
+    keys_told = false
+    --- (what the edit bar holds is taken first: a frame that typed and
+    --- pressed Enter makes the edit typed)
+    typed = false
+    words = ''
+    for e in shown.events
+        if e.id eq editor and e.act eq 'edit'
+            typed = true
+            words = e.words
+    if typed
+        if g.editing.row eq ''
+            g = edit_started[g, k]
+        if g.editing.row ne ''
+            g.draft = words
+    for e in shown.events
+        if e.id eq g.id
+            if e.act eq 'key'
+                keys_told = true
+            g = _grid_event[g, k, e, tall]
+            if e.act ne 'reach' and e.act ne 'release' and e.act ne 'scroll'
+                k = grid_laid[g]
+        else if e.id eq editor
+            if e.act eq 'submit'
+                g = edit_finished[g, k]
+                g = _grid_refocused[g]
+                k = grid_laid[g]
+    if g.editing.row ne '' and not keys_told
+        evs = lory.events[shown.canvas]
+        if evs.ok
+            for ev in evs
+                if ev.on eq 'key' and ev.key eq 'Escape'
+                    g = edit_cancelled[g]
+                    g = _grid_refocused[g]
+                else if ev.on eq 'key' and ev.key eq 'Tab' and g.editing.row ne ''
+                    g = keyed[g, k, 'Tab', ev.shift, false]
+                    g = _grid_refocused[g]
+    g
+
+-------------------------------------------------------------------- tests
+
+fn _sample[]
+    teams = ['red', 'red', 'blue', 'blue', 'blue', 'gold']
+    rows = _no_rows[]
+    for i in range[6]
+        rows = push[rows, dt.row['r`i`', map[team = dt.words[teams[i]], name = dt.words['n`i`'], hours = dt.number[i * 2]]]]
+    dt.new[[dt.column['team', 'Team'], dt.column['name', 'Name'], dt.column['hours', 'Hours']], rows]
+
+test a_drag_chooses_a_rectangle_and_shift_reaches_it_further[]
+    k = laid[_sample[], selecting[], spanning[]]
+    sel = pressed[k, _no_ranges[], 'r1', 'name']
+    sel = reached[k, sel, 'r3', 'hours']
+    b = selection_bounds[k, sel]
+    len[b] eq 1
+    selected_count[k, b] eq 6
+    sel = pressed[k, sel, 'r4', 'hours', shift = true]
+    selected_count[k, selection_bounds[k, sel]] eq 8
+    focused_cell[sel].row eq 'r1'
+
+test rows_merge_down_a_column_while_its_value_holds[]
+    t = _sample[]
+    k = laid[t, selecting[], spanning[rows = ['team']]]
+    row_span[k.spans, 'r0', 'team'] eq 2
+    row_span[k.spans, 'r1', 'team'] eq 0
+    covered[k.spans, 'r1', 'team']
+    row_span[k.spans, 'r2', 'team'] eq 3
+    row_span[k.spans, 'r5', 'team'] eq 1
+    --- (a press inside a merge chooses the whole of it)
+    bs = selection_bounds[k, pressed[k, _no_ranges[], 'r3', 'team']]
+    bs[0].top eq 2 and bs[0].bottom eq 4
+
+test edits_kept_as_drafts_are_checked_and_then_saved[]
+    g = grid['people', _sample[]]
+    g.drafts = true
+    g = specs_set[g, [spec['hours', number = true, least = 0.0, most = 40.0], spec['team', editor = 'select', choices = ['red', 'blue', 'gold'], listed = true]]]
+    k = grid_laid[g]
+    g = cell_set[g, k, 'r1', 'hours', typed_value[g, 'hours', '50']]
+    cell_error[g, 'r1', 'hours'] ne ''
+    not can_save[g]
+    cell_dirty[saved[g], 'r1', 'hours']
+    g = cell_set[g, k, 'r1', 'hours', typed_value[g, 'hours', '12']]
+    cell_error[g, 'r1', 'hours'] eq ''
+    can_save[g]
+    g.table.rows[1].cells['hours'].num eq 2.0
+    cell_words[cell_value[g, k, 'r1', 'hours']] eq '12'
+    dirty_rows[g] eq ['r1']
+    g = cell_set[g, k, 'r2', 'team', typed_value[g, 'team', 'green']]
+    cell_error[g, 'r2', 'team'] ne ''
+    g = cell_set[g, k, 'r2', 'team', typed_value[g, 'team', 'gold']]
+    g = saved[g]
+    g.table.rows[1].cells['hours'].num eq 12.0
+    cell_words[g.table.rows[2].cells['team']] eq 'gold'
+    len[dirty_rows[g]] eq 0
+
+test a_relation_clears_what_its_source_no_longer_offers[]
+    g = grid['people', _sample[]]
+    g = relations_set[g, [relation['team', 'name', choices = map[red = 'n0|n1', blue = 'n2|n3|n4', gold = 'n5']]]]
+    k = grid_laid[g]
+    choices_of[g, k, 'r0', 'name'] eq ['n0', 'n1']
+    g = cell_set[g, k, 'r0', 'team', dt.words['blue']]
+    k = grid_laid[g]
+    cell_words[cell_value[g, k, 'r0', 'name']] eq ''
+    choices_of[g, k, 'r0', 'name'] eq ['n2', 'n3', 'n4']
+
+test a_sheet_works_out_its_formulas_and_undoes_a_step[]
+    s = sheet[]
+    s = sheet_set[s, 'A0', '2']
+    s = sheet_set[s, 'A1', '3']
+    s = sheet_set[s, 'B0', '=A0*A1']
+    cell_shown[s, 'B0'] eq '6'
+    s = sheet_set[s, 'A1', '4']
+    cell_shown[s, 'B0'] eq '8'
+    s = undone[s]
+    cell_shown[s, 'B0'] eq '6'
+    can_redo[s]
+    s = redone[s]
+    cell_shown[s, 'B0'] eq '8'
+    s = sheet_set[s, 'C0', '=C0+1']
+    cell_shown[s, 'C0'] eq '#ERROR'
+    tally = sheet_tally[s, 0, 1, 0, 1]
+    tally.count eq 3
+    tally.total eq 14.0
+
+test a_feed_changes_cells_in_place_and_they_flash_the_way_they_went[]
+    g = grid['live', _sample[]]
+    g = time_set[g, 1000.0]
+    g = focused_on[g, 'r2', 'hours']
+    g = ticked[g, [change['r2', 'hours', dt.number[9]], change['r3', 'hours', dt.number[1]]]]
+    k = grid_laid[g]
+    cell_words[cell_value[g, k, 'r2', 'hours']] eq '9'
+    cell_words[cell_value[g, k, 'r3', 'hours']] eq '1'
+    flash_of[g, 'r2', 'hours'] eq 1.0
+    flash_of[g, 'r3', 'hours'] eq -1.0
+    flash_of[g, 'r4', 'hours'] eq 0.0
+    not cell_dirty[g, 'r2', 'hours']
+    g.focus.row eq 'r2'
+    g = time_set[g, 1400.0]
+    flash_of[g, 'r2', 'hours'] eq 0.5
+    g = time_set[g, 1800.0]
+    flash_of[g, 'r2', 'hours'] eq 0.0
+    len[keys[flashes_pruned[g].flashes]] eq 1
+
+test a_painting_draws_each_shown_cell_once_under_its_header[]
+    g = grid['people', _sample[]]
+    p = painting[g, 450.0, 240.0]
+    len[p.boxes] eq 21
+    p.boxes[0].w eq 150.0
+    p.boxes[3].y eq 64.0
+    p.boxes[18].part eq 'head'
+    p.boxes[20].words eq 'Hours'
+    p.boxes[2].placed eq 1
+    --- (scrolled by two rows and a half, the first row shown is the third)
+    g.scroll = 75.0
+    q = painting[g, 450.0, 240.0]
+    q.boxes[0].row eq 'r2'
+    q.boxes[0].y eq 34.0 + 60.0 - 75.0
+
+fn _screen[given]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _mouse[kind, x, y]
+    '{"type": "`kind`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+fn _input[evs]
+    sep = ', '
+    joined = join[evs, sep]
+    '[`joined`]'
+
+fn _key_ev[name]
+    '{"type": "key", "key": "`name`", "code": "`name`"}'
+
+--- a grid's frame: the grid shown with the input given, its events applied
+fn _framed[g, given]
+    shown = gui.show[lory.begin[_screen[given]], gui.column[[grid_view[g, 450.0, 240.0]]]]
+    handled[g, shown]
+
+--- where a cell of the sample stands in a frame, its middle
+fn _at_cell[b, row, column]
+    [b[0] + column * 150.0 + 40.0, b[1] + 34.0 + row * 30.0 + 15.0]
+
+test a_press_focuses_a_cell_a_drag_chooses_and_keys_move_and_edit[]
+    gui.unfocus[]
+    g = grid['people', _sample[]]
+    first = gui.show[lory.begin[_screen['[]']], gui.column[[grid_view[g, 450.0, 240.0]]]]
+    b = first.boxes['people']
+    b[2] eq 450.0
+    a = _at_cell[b, 1, 1]
+    z = _at_cell[b, 3, 2]
+    g = _framed[g, _input[[_mouse['down', a[0], a[1]]]]]
+    g.focus.row eq 'r1' and g.focus.column eq 'name'
+    g.dragging
+    g = _framed[g, _input[[_mouse['move', z[0], z[1]], _mouse['up', z[0], z[1]]]]]
+    not g.dragging
+    k = grid_laid[g]
+    selected_count[k, selection_bounds[k, g.sel]] eq 6
+    g.selected
+    g = _framed[g, _input[[_key_ev['Escape']]]]
+    not g.selected
+    g = _framed[g, _input[[_key_ev['ArrowDown']]]]
+    g.focus.row eq 'r2'
+    --- (a double press edits in the edit bar; Enter there makes the edit)
+    c = _at_cell[b, 2, 1]
+    g = _framed[g, _input[[_mouse['double', c[0], c[1]]]]]
+    g.editing.row eq 'r2' and g.editing.column eq 'name'
+    g.draft eq 'n2'
+    g = _framed[g, '[{"type": "text", "text": "x"}]']
+    g.draft eq 'n2x'
+    g = _framed[g, _input[[_key_ev['Enter']]]]
+    g.editing.row eq ''
+    cell_words[cell_value[g, grid_laid[g], 'r2', 'name']] eq 'n2x'
+    --- (a header's press sorts by its column)
+    g = _framed[g, _input[[_mouse['down', b[0] + 340.0, b[1] + 10.0], _mouse['up', b[0] + 340.0, b[1] + 10.0]]]]
+    dt.sort_of[g.table, 'hours'] ne ''
+
+test copying_a_selection_leaves_its_text_for_the_clipboard[]
+    gui.unfocus[]
+    g = grid['people', _sample[]]
+    first = gui.show[lory.begin[_screen['[]']], gui.column[[grid_view[g, 450.0, 240.0]]]]
+    b = first.boxes['people']
+    a = _at_cell[b, 0, 0]
+    g = _framed[g, _input[[_mouse['down', a[0], a[1]], _mouse['up', a[0], a[1]]]]]
+    g = _framed[g, '[{"type": "key", "key": "ArrowRight", "code": "ArrowRight", "shift": true}]']
+    g = _framed[g, '[{"type": "key", "key": "c", "code": "KeyC", "ctrl": true}]']
+    g.copied eq 'red\tn0'
+
+fn _headset[ms, given, toward, x, y]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    way = encode[[(0.002 * x - 1.0) / 1.5, (0.55 - 0.002 * y) / 1.5, -1.0]]
+    json['{"t": `ms`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "blend": "opaque", "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": `way`, "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, `toward`]}], "said": []}']
+
+fn _trigger[]
+    '[{"type": "down", "device": "ray", "id": "right"}, {"type": "up", "device": "ray", "id": "right"}]'
+
+fn _worn[g, ms, given, toward, x, y]
+    shown = gui.show[lory.begin[_headset[ms, given, toward, x, y]], gui.column[[grid_view[g, 450.0, 240.0]]]]
+    drawn = lory.end[shown.canvas]
+    handled[g, shown]
+
+test in_a_headset_the_trigger_focuses_a_cell_and_the_thumbstick_scrolls[]
+    gui.unfocus[]
+    g = sheet_grid['worn', sheet[]]
+    first = gui.show[lory.begin[_headset[1000.0, '[]', 0.0, 990.0, 550.0]], gui.column[[grid_view[g, 450.0, 240.0]]]]
+    lory.end[first.canvas] gt 0
+    len[first.canvas.verts] gt 100
+    b = first.boxes['worn']
+    --- (the sheet's columns: its row numbers 48 wide, five of 120, all
+    --- scaled to 450)
+    x = b[0] + 48.0 * 450.0 / 648.0 + 20.0
+    y = b[1] + 34.0 + 30.0 + 15.0
+    g = _worn[g, 1100.0, _trigger[], 0.0, x, y]
+    g.focus.row eq '1' and g.focus.column eq 'A'
+    focus_label[g] eq 'A1'
+    g = _worn[g, 1200.0, '[]', 1.0, x, y]
+    g.scroll gt 0.0
+
+test a_grouped_grid_draws_its_groups_as_a_tree_that_a_toggle_opens[]
+    gui.unfocus[]
+    t = dt.grouping_set[_sample[], ['team']]
+    g = grid['tree', t]
+    p = painting[g, 450.0, 240.0]
+    p.boxes[0].toggle and not p.boxes[0].open
+    len[p.boxes] eq 3 * 3 + 3
+    first = gui.show[lory.begin[_screen['[]']], gui.column[[grid_view[g, 450.0, 240.0]]]]
+    b = first.boxes['tree']
+    x = b[0] + 12.0
+    y = b[1] + 34.0 + 15.0
+    g = _framed[g, _input[[_mouse['down', x, y], _mouse['up', x, y]]]]
+    q = painting[g, 450.0, 240.0]
+    q.boxes[0].open
+    len[q.boxes] eq 5 * 3 + 3
+    q.boxes[3].depth eq 1

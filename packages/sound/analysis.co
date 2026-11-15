@@ -1,0 +1,304 @@
+--- Analysis: what a sound holds, measured. Tone's own analysers are here
+--- as the page's AnalyserNode computes them — `fft` the decibels of each
+--- band of the last samples under a Blackman window, smoothed against the
+--- last reading; `waveform` the samples themselves; `meter` the level,
+--- falling no faster than its smoothing lets it; `dc` the first sample;
+--- `follower` a sound's size smoothed — so a drawn spectrum or meter shows
+--- what Tone's would on the same input, number for number.
+---
+--- The measures a test holds a render by are here too: RMS every few
+--- milliseconds, a stretch's level, its spectrum under a Hann window, the
+--- fundamental found near a pitch (refined between bands), the first
+--- harmonics' levels against it, the spectrum's centroid, and where a
+--- response falls 3 dB below its passband. tests/sound/reference.js
+--- computes the same measures of Tone's renders, so the two are compared
+--- measure for measure.
+---
+---     m = analysis.measured[samples, 16000.0, 0.1, 0.3, 440.0]
+---     m.fundamental        (Hz, near 440)
+
+use math
+use sound
+
+--- what a stretch of sound measures: RMS every 10 ms from its start, and
+--- over the stretch its level (dB), its spectrum's centroid (Hz), the
+--- fundamental found near the pitch asked (Hz), and its first harmonics'
+--- levels against the fundamental's (dB, the first 0)
+struct Measure [rms, level, centroid, fundamental, harmonics]
+
+--- one of Tone's analysers: what it reads (`fft` or `waveform`), how many values it
+--- answers (its FFT is twice as long), its smoothing (0 to 1), and the
+--- smoothed magnitudes of its last reading
+struct Analyser [reads, size, smoothing, last]
+
+--- Tone's meter: its smoothing and the level it last read (a gain)
+struct Meter [smoothing, last]
+
+--- an analyser's reading: its values, and the analyser holding it (the
+--- next reading is smoothed against this one)
+struct Reading [values, analyser]
+
+--- a meter's reading: the level in decibels, as a gain, and the meter
+--- holding it
+struct Metered [db, gain, meter]
+
+--- ---- measures ----
+
+--- the RMS of each run of `w` samples from the first (a part run at the
+--- end left out)
+fn windows[xs, w]
+    n = floor[(0.0 + len[xs]) / w]
+    out = zeros[n]
+    k = 0
+    while k lt n
+        part = slice[xs, k * w, (k + 1) * w]
+        out[k] = sqrt[sum[part .* part] / w]
+        k = k + 1
+    out
+
+--- the RMS of samples
+fn rms[xs]
+    if len[xs] eq 0
+        return 0.0
+    sqrt[sum[xs .* xs] / len[xs]]
+
+--- the level of samples in decibels (their RMS's)
+fn level[xs]
+    20.0 * log10[rms[xs] + 0.000000000001]
+
+--- the magnitudes of a stretch's spectrum: a Hann window over the
+--- stretch, zeros after it to `size` (a power of two), bands 0 to size/2
+fn spectrum[xs, size]
+    n = min[len[xs], size]
+    shaped_in = zeros[size]
+    if n gt 0
+        i = 0.0 + range[n]
+        part = slice[xs, 0, n] .* (0.5 - 0.5 * cos[2.0 * pi * i / n])
+        shaped_in = concat[part, zeros[size - n]]
+    f = fft[shaped_in]
+    re = slice[f[0], 0, size / 2 + 1]
+    im = slice[f[1], 0, size / 2 + 1]
+    sqrt[re .* re + im .* im]
+
+fn _db[m]
+    20.0 * log10[max[m, 0.000000000001]]
+
+--- the strongest band within `share` of a frequency (above or below),
+--- its frequency refined by a parabola through the decibels of it and its
+--- neighbours, and its level: `[hz, dB]`
+fn peak_near[mags, rate, size, hz, share]
+    low = max[1, floor[hz * (1.0 - share) * size / rate]]
+    high = min[len[mags] - 2, ceil[hz * (1.0 + share) * size / rate]]
+    k = low
+    i = low
+    while i lte high
+        if mags[i] gt mags[k]
+            k = i
+        i = i + 1
+    a = _db[mags[k - 1]]
+    b = _db[mags[k]]
+    c = _db[mags[k + 1]]
+    d = a - 2.0 * b + c
+    p = 0.0
+    if d ne 0.0
+        p = 0.5 * (a - c) / d
+    [(k + p) * rate / size, b - 0.25 * (a - c) * p]
+
+--- a spectrum's centroid: each band's frequency weighted by its magnitude
+fn centroid[mags, rate, size]
+    weight = sum[mags]
+    if weight lte 0.0
+        return 0.0
+    hz = (0.0 + range[len[mags]]) * (rate / size)
+    sum[hz .* mags] / weight
+
+--- what samples at `rate` measure: RMS every 10 ms, and from `from` to
+--- `to` seconds their level, centroid, fundamental near `hz` and the
+--- harmonics below 95% of the highest frequency the rate holds (none
+--- asked, `hz` 0, none found)
+fn measured[xs, rate, from, to, hz]
+    w = round[0.01 * rate]
+    a = round[from * rate]
+    b = min[len[xs], round[to * rate]]
+    part = slice[xs, a, b]
+    size = 8192
+    mags = spectrum[part, size]
+    found = 0.0
+    harmonics = slice[[0.0], 0, 0]
+    if hz gt 0.0
+        f = peak_near[mags, rate, size, hz, 0.06]
+        found = f[0]
+        k = 1
+        while k lte 8 and k * hz lte rate / 2.0 * 0.95
+            h = peak_near[mags, rate, size, k * f[0], 0.03]
+            harmonics = push[harmonics, h[1] - f[1]]
+            k = k + 1
+    Measure[windows[xs, w], level[part], centroid[mags, rate, size], found, harmonics]
+
+--- a sound's measure, its left channel's (its only one's where it is
+--- mono)
+fn measure_of[s, from, to, hz]
+    measured[s.left, s.rate, from, to, hz]
+
+--- where a response (gains at rising frequencies) first falls 3 dB below
+--- `reference_gain`, the frequency between the two it falls between found
+--- along a straight line in decibels (0 where it never does)
+fn falls_3db[gains, freqs, reference_gain]
+    edge = _db[reference_gain] - 3.0
+    i = 1
+    while i lt len[gains]
+        a = _db[gains[i - 1]]
+        b = _db[gains[i]]
+        if a gte edge and b lt edge
+            return freqs[i - 1] + (freqs[i] - freqs[i - 1]) * (a - edge) / (a - b)
+        i = i + 1
+    0.0
+
+--- where a response first rises to within 3 dB of `reference_gain` (a
+--- highpass's edge), found as `falls_3db` finds a fall
+fn rises_3db[gains, freqs, reference_gain]
+    edge = _db[reference_gain] - 3.0
+    i = 1
+    while i lt len[gains]
+        a = _db[gains[i - 1]]
+        b = _db[gains[i]]
+        if a lt edge and b gte edge
+            return freqs[i - 1] + (freqs[i] - freqs[i - 1]) * (edge - a) / (b - a)
+        i = i + 1
+    0.0
+
+--- the gains at frequencies of a filter whose impulse response is given:
+--- its spectrum without a window, zeros after it to `size`, read at the
+--- band nearest each frequency
+fn response_of_impulse[impulse, rate, size, freqs]
+    padded = concat[slice[impulse, 0, min[len[impulse], size]], zeros[max[0, size - len[impulse]]]]
+    f = fft[padded]
+    out = zeros[len[freqs]]
+    i = 0
+    while i lt len[freqs]
+        k = min[size / 2, round[freqs[i] * size / rate]]
+        out[i] = sqrt[f[0][k] * f[0][k] + f[1][k] * f[1][k]]
+        i = i + 1
+    out
+
+--- ---- Tone's analysers ----
+
+--- an analyser of `size` values (a power of two): `fft` answers the
+--- decibels of that many bands, `waveform` that many samples; smoothing
+--- 0.8, as Tone's
+fn analyser[kind, size]
+    Analyser[kind, size, 0.8, zeros[size]]
+
+--- the last `n` samples of `xs` (zeros before its start where it is
+--- shorter)
+fn _last[xs, n]
+    if len[xs] gte n
+        return slice[xs, len[xs] - n, len[xs]]
+    concat[zeros[n - len[xs]], xs]
+
+--- the Blackman window the page's analyser shapes each reading with
+fn _blackman[n]
+    x = (0.0 + range[n]) / n
+    0.42 - 0.5 * cos[2.0 * pi * x] + 0.08 * cos[4.0 * pi * x]
+
+--- what an analyser reads of the samples heard so far (`recent`, its last
+--- ones at its end): an `fft` analyser the decibels of each band of the
+--- last twice-its-size samples, each band's magnitude smoothed against
+--- its last reading; a `waveform` one the older half of those samples.
+--- Answers the reading and the analyser holding it
+fn analysed[an, recent]
+    n = an.size * 2
+    heard = _last[recent, n]
+    if an.reads eq 'waveform'
+        return Reading[slice[heard, 0, an.size], an]
+    f = fft[heard .* _blackman[n]]
+    re = slice[f[0], 0, an.size]
+    im = slice[f[1], 0, an.size]
+    im[0] = 0.0
+    magnitudes = sqrt[re .* re + im .* im] / n
+    smoothed = an.last * an.smoothing + magnitudes * (1.0 - an.smoothing)
+    Reading[20.0 * log10[smoothed], Analyser[an.reads, an.size, an.smoothing, smoothed]]
+
+--- the values an analyser reads (as `analysed`, without the analyser)
+fn values_of[an, recent]
+    analysed[an, recent].values
+
+--- the frequency of an `fft` analyser's band `index` at `rate`
+fn band_hz[an, index, rate]
+    index * rate / (an.size * 2.0)
+
+--- a meter (Tone's Meter), smoothing 0.8, that has read nothing
+fn meter[]
+    Meter[0.8, 0.0]
+
+--- what a meter reads of the samples heard so far: the RMS of the older
+--- half of the last 512, which may rise at once but falls no faster than
+--- its smoothing lets it: its level in decibels and as a gain, and the
+--- meter holding it
+fn metered[m, recent]
+    heard = slice[_last[recent, 512], 0, 256]
+    value = max[rms[heard], m.last * m.smoothing]
+    Metered[20.0 * (ln[value] / ln[10.0]), value, Meter[m.smoothing, value]]
+
+--- a DC meter's reading (Tone's DCMeter): the first of the samples a
+--- waveform analyser of 256 reads
+fn dc_of[recent]
+    _last[recent, 512][0]
+
+--- a sound's size smoothed (Tone's Follower): each sample's size through
+--- a one-pole lowpass at `1 / smoothing` Hz
+fn followed[xs, rate, smoothing]
+    a = 2.0 * pi * (1.0 / smoothing) / rate
+    out = zeros[len[xs]]
+    y = 0.0
+    i = 0
+    while i lt len[xs]
+        y = a * abs[xs[i]] + (1.0 - a) * y
+        out[i] = y
+        i = i + 1
+    out
+
+--- ---- tests ----
+
+test a_sine_measures_as_its_pitch_and_level[]
+    rate = 8000.0
+    t = (0.0 + range[4000]) / rate
+    xs = 0.5 * sin[2.0 * pi * 440.0 * t]
+    m = measured[xs, rate, 0.0, 0.5, 440.0]
+    abs[m.fundamental - 440.0] lt 0.5
+    abs[m.level - 20.0 * log10[0.5 / sqrt[2.0]]] lt 0.01
+    len[m.rms] eq 50
+    abs[m.rms[3] - 0.5 / sqrt[2.0]] lt 0.01
+    m.harmonics[0] eq 0.0
+    m.harmonics[1] lt -60.0
+    abs[m.centroid - 440.0] lt 40.0
+
+test an_analyser_reads_as_the_pages_does[]
+    rate = 8000.0
+    t = (0.0 + range[2048]) / rate
+    xs = sin[2.0 * pi * 1000.0 * t]
+    a = analyser['fft', 256]
+    got = analysed[a, xs]
+    db = got.values
+    len[db] eq 256
+    argmax[db] eq 64
+    abs[db[64] - 20.0 * log10[0.2 * 0.21]] lt 0.1
+    again = analysed[got.analyser, xs].values
+    again[64] gt db[64]
+    len[values_of[analyser['waveform', 128], xs]] eq 128
+
+test a_meter_rises_at_once_and_falls_slowly[]
+    loud = zeros[512] + 0.5
+    m = metered[meter[], loud]
+    abs[m.gain - 0.5] lt 0.000001
+    quiet = metered[m.meter, zeros[512]]
+    abs[quiet.gain - 0.4] lt 0.000001
+    dc_of[concat[zeros[512] + 0.25, zeros[10]]] eq 0.25
+
+test a_response_falls_where_it_falls[]
+    gains = [1.0, 0.9, 0.5, 0.1]
+    freqs = [100.0, 200.0, 300.0, 400.0]
+    f = falls_3db[gains, freqs, 1.0]
+    f gt 200.0
+    f lt 300.0
+    rises_3db[[0.1, 0.5, 1.0], [1.0, 2.0, 3.0], 1.0] gt 2.0

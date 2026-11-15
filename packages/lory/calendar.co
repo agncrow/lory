@@ -1,0 +1,2328 @@
+--- Lory's calendar (docs/components/pickers.md): days and the arithmetic
+--- of days, weeks, months, quarters and years; dates written in a
+--- locale's words and read back from words; which days may be chosen;
+--- a month's days drawn, pointed at and keyed through, with its header,
+--- the weeks' numbers and several months beside one another
+--- (`month_view`); and a scheduler's month, week and day (`scheduler`),
+--- its events laid out side by side where they overlap.
+---
+--- A day is a moment at midnight in UTC, as `moment[2024, 3, 5]` makes it:
+--- a date with no time and no zone, which Crow's moments compare, subtract
+--- and read the fields of. The arithmetic is date-fns's (4.1.0, the date
+--- library react-datepicker stands on), and tests/pickers/reference.co
+--- holds it to what date-fns answered, number for number:
+---
+---     due = calendar.day[2024, 1, 31]
+---     calendar.add_months[due, 1]                    --- 2024-02-29
+---     calendar.format[due, 'EEEE, MMMM do', calendar.locale['en-US']]
+---                                                    --- Wednesday, January 31st
+---     calendar.parse['31.01.2024', 'dd.MM.yyyy', calendar.locale['de'], due, 'UTC']
+---
+--- Lory's own lists of names (of months and weekdays, in English, French,
+--- German and Spanish) are written here, and held to the words date-fns
+--- writes for the same days.
+use memory
+use lory
+use gui
+
+--- ---- days ----
+
+--- the day `d` of month `m` of year `y`, at midnight in UTC: a month past
+--- December or before January is counted on into the years about it
+--- (`day[2024, 13, 1]` is 2025-01-01), and a day past the month's end is
+--- its last (`day[2023, 2, 31]` is 2023-02-28)
+fn day[y, m, d]
+    at = y * 12 + (m - 1)
+    year = _floor_div[at, 12]
+    month = at - year * 12 + 1
+    t = moment[year, month, max[1, min[d, days_in_month[year, month]]]]
+    if not t.ok
+        return moment[0]
+    t
+
+--- whether February of year `y` has a 29th
+fn leap_year[y]
+    moment[y, 2, 29].ok
+
+--- how many days month `m` (1 to 12) of year `y` has
+fn days_in_month[y, m]
+    if m eq 2
+        if leap_year[y]
+            return 29
+        return 28
+    if m eq 4 or m eq 6 or m eq 9 or m eq 11
+        return 30
+    31
+
+--- the day a moment falls on, as its own zone reads it
+fn day_of[t]
+    day[t.year, t.month, t.day]
+
+--- the day it is now in a zone (`UTC`, an offset as `+05:30`, or an IANA
+--- name as `Europe/Paris`; a zone Crow does not know is UTC)
+fn today[zone]
+    day_of[in_zone[now[], zone]]
+
+--- the same instant as a zone's clock reads it (as it was given, where
+--- Crow does not know the zone)
+fn in_zone[t, zone]
+    there = moment[t, tz = zone]
+    if not there.ok
+        return t
+    there
+
+--- the day of the week: 0 is Sunday, 1 Monday, 6 Saturday (date-fns's
+--- getDay; a moment's own `weekday` is 1 for Monday to 7 for Sunday)
+fn weekday[t]
+    t.weekday % 7
+
+--- the seconds since its midnight a moment's clock shows
+fn seconds_into[t]
+    t.hour * 3600 + t.minute * 60 + t.second
+
+--- `a` divided by `b`, rounded down (Crow's division of ints rounds
+--- toward zero), and what is left, never below 0
+fn _floor_div[a, b]
+    q = a / b
+    if q * b gt a
+        return q - 1
+    q
+
+fn _floor_mod[a, b]
+    a - _floor_div[a, b] * b
+
+--- ---- arithmetic: what date-fns's add functions answer ----
+
+--- `n` days on (back, where `n` is below 0)
+fn add_days[t, n]
+    t + n * 86400
+
+fn add_weeks[t, n]
+    add_days[t, 7 * n]
+
+--- `n` months on: the same day of the month, or the month's last where it
+--- is shorter (January 31 and a month is February 29 in a leap year), the
+--- clock's time kept
+fn add_months[t, n]
+    at = t.year * 12 + (t.month - 1) + n
+    year = _floor_div[at, 12]
+    day[year, at - year * 12 + 1, t.day] + seconds_into[t]
+
+fn add_quarters[t, n]
+    add_months[t, 3 * n]
+
+--- `n` years on (February 29 and a year is February 28)
+fn add_years[t, n]
+    add_months[t, 12 * n]
+
+--- how many days `t` is after `since`, counted by the days they fall on
+--- (below 0 where it is before): differenceInCalendarDays
+fn days_between[t, since]
+    round[(day_of[t] - day_of[since]) / 86400.0]
+
+--- how many months, quarters and years apart by the calendar
+fn months_between[t, since]
+    t.year * 12 + t.month - (since.year * 12 + since.month)
+
+fn quarters_between[t, since]
+    t.year * 4 + quarter[t] - (since.year * 4 + quarter[since])
+
+fn years_between[t, since]
+    t.year - since.year
+
+--- ---- where weeks, months, quarters and years begin and end ----
+
+--- the first day of the week a day is in, the weeks beginning on
+--- `week_start` (0 Sunday … 6 Saturday)
+fn start_of_week[t, week_start]
+    back = weekday[t] - week_start
+    if back lt 0
+        back = back + 7
+    add_days[day_of[t], 0 - back]
+
+--- the week's last day (date-fns's endOfWeek is the last moment of it)
+fn end_of_week[t, week_start]
+    add_days[start_of_week[t, week_start], 6]
+
+fn start_of_month[t]
+    day[t.year, t.month, 1]
+
+fn end_of_month[t]
+    day[t.year, t.month, 31]
+
+--- the quarter of the year a day is in, 1 to 4
+fn quarter[t]
+    (t.month - 1) / 3 + 1
+
+fn start_of_quarter[t]
+    day[t.year, 3 * quarter[t] - 2, 1]
+
+fn end_of_quarter[t]
+    day[t.year, 3 * quarter[t], 31]
+
+fn start_of_year[t]
+    day[t.year, 1, 1]
+
+fn end_of_year[t]
+    day[t.year, 12, 31]
+
+--- whether two moments fall on the same day, month, quarter or year (as
+--- each one's own zone reads it)
+fn same_day[a, b]
+    a.year eq b.year and a.month eq b.month and a.day eq b.day
+
+fn same_month[a, b]
+    a.year eq b.year and a.month eq b.month
+
+fn same_quarter[a, b]
+    a.year eq b.year and quarter[a] eq quarter[b]
+
+fn same_year[a, b]
+    a.year eq b.year
+
+--- every day from `first` to `last`, both kept (none where `last` is
+--- before `first`): eachDayOfInterval
+fn each_day[first, last]
+    out = no_days[]
+    day_one = day_of[first]
+    k = days_between[last, day_one]
+    i = 0
+    while i lte k
+        out = push[out, add_days[day_one, i]]
+        i = i + 1
+    out
+
+--- a list of days that holds none yet
+fn no_days[]
+    slice[[moment[0]], 0, 0]
+
+--- the days of a list that may have failed (none where it did): a list a
+--- calendar is handed, held as days whatever it was
+fn plain_days[chosen]
+    if not chosen.ok
+        return no_days[]
+    chosen
+
+--- ---- weeks of the year ----
+
+--- the year whose weeks a day is counted in, where weeks begin on
+--- `week_start` and a year's first week is the one that holds its January
+--- `first_holds` (date-fns's getWeekYear: 1 counts the week of January 1,
+--- 4 the first week mostly in January)
+fn week_year[t, week_start, first_holds]
+    y = t.year
+    d = day_of[t]
+    if d gte start_of_week[day[y + 1, 1, first_holds], week_start]
+        return y + 1
+    if d gte start_of_week[day[y, 1, first_holds], week_start]
+        return y
+    y - 1
+
+--- the week of its week-year a day is in, 1 to 53 (date-fns's getWeek)
+fn week[t, week_start, first_holds]
+    week_one = start_of_week[day[week_year[t, week_start, first_holds], 1, first_holds], week_start]
+    days_between[start_of_week[t, week_start], week_one] / 7 + 1
+
+--- ISO 8601's week and the year it belongs to: weeks begin on Monday, and
+--- a year's first week holds its first Thursday
+fn iso_week[t]
+    week[t, 1, 4]
+
+fn iso_week_year[t]
+    week_year[t, 1, 4]
+
+--- ---- the days a month's calendar shows ----
+
+--- from the start of the week the month's first day is in to the end of
+--- the week its last day is in (four to six weeks), or six weeks whatever
+--- the month (`six`), as react-datepicker's fixed height shows it
+fn month_days[y, m, week_start, six]
+    first = start_of_week[day[y, m, 1], week_start]
+    last = end_of_week[day[y, m, 31], week_start]
+    if six
+        last = add_days[first, 41]
+    each_day[first, last]
+
+--- ---- locales ----
+
+--- a locale's words for dates and the weeks it counts: its name; the day
+--- its weeks begin on (0 Sunday) and the January day its year's first
+--- week holds; the months' names, short names and letters; the weekdays'
+--- from Sunday, their short names, two letters and one; the marks of the
+--- morning and the afternoon, short and long; the letter a quarter's
+--- number follows (Q1) and the word for a quarter; and its language, which
+--- says how a day of the month is written as an ordinal ('en' 1st, 'fr'
+--- 1er, 'de' 1., 'es' 1º)
+struct Locale [name, week_start, first_holds, months, months_short, months_letter, weekdays, weekdays_short, weekdays_two, weekdays_letter, periods, periods_long, quarter_mark, quarter_word, language]
+
+--- the locale of that name: `en-US` (the default, as any name Lory does
+--- not know is), `en-GB`, `fr`, `de` or `es`
+fn locale[name]
+    if name eq 'en-GB'
+        e = locale['en-US']
+        e.name = 'en-GB'
+        e.week_start = 1
+        e.first_holds = 4
+        return e
+    if name eq 'fr'
+        return Locale['fr', 1, 4, ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'], ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'], split['JFMAMJJASOND', ''], ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'], ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'], ['di', 'lu', 'ma', 'me', 'je', 've', 'sa'], split['DLMMJVS', ''], ['AM', 'PM'], ['AM', 'PM'], 'T', 'trimestre', 'fr']
+    if name eq 'de'
+        return Locale['de', 1, 4, ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'], ['Jan.', 'Feb.', 'März', 'Apr.', 'Mai', 'Juni', 'Juli', 'Aug.', 'Sep.', 'Okt.', 'Nov.', 'Dez.'], split['JFMAMJJASOND', ''], ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'], ['So.', 'Mo.', 'Di.', 'Mi.', 'Do.', 'Fr.', 'Sa.'], ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'], split['SMDMDFS', ''], ['vorm.', 'nachm.'], ['vormittags', 'nachmittags'], 'Q', 'Quartal', 'de']
+    if name eq 'es'
+        return Locale['es', 1, 1, ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'], ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'], split['EFMAMJJASOND', ''], ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'], ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'], ['do', 'lu', 'ma', 'mi', 'ju', 'vi', 'sá'], split['dlmmjvs', ''], ['AM', 'PM'], ['AM', 'PM'], 'T', 'trimestre', 'es']
+    Locale['en-US', 0, 1, ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'], ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], split['JFMAMJJASOND', ''], ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'], ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'], split['SMTWTFS', ''], ['AM', 'PM'], ['a.m.', 'p.m.'], 'Q', 'quarter', 'en']
+
+--- the locales Lory has words for
+fn locales[]
+    ['en-US', 'en-GB', 'fr', 'de', 'es']
+
+--- a number as an ordinal in the locale's language (1st, 1er, 1., 1º)
+fn ordinal[n, loc]
+    if loc.language eq 'fr'
+        if n eq 1
+            return '1er'
+        return '`n`ème'
+    if loc.language eq 'de'
+        return '`n`.'
+    if loc.language eq 'es'
+        return '`n`º'
+    r = n % 100
+    if r gte 11 and r lte 13
+        return '`n`th'
+    last = n % 10
+    if last eq 1
+        return '`n`st'
+    if last eq 2
+        return '`n`nd'
+    if last eq 3
+        return '`n`rd'
+    '`n`th'
+
+--- ---- dates written ----
+
+--- a piece of a pattern: a token (a run of one letter, as `yyyy` or `do`)
+--- or words written as they stand (`token` '')
+struct Piece [token, words]
+
+fn _letter[ch]
+    lower[ch] ne upper[ch]
+
+--- a pattern cut into its pieces, as date-fns reads one: a run of one
+--- letter is a token (a letter of a day, month, quarter, week or hour
+--- followed by `o` is its ordinal, `do`), words between quotes are written
+--- as they are (two quotes are one), and any other character stands for
+--- itself
+fn pieces[pattern]
+    chars = split[pattern, '']
+    n = len[chars]
+    out = slice[[Piece['', '']], 0, 0]
+    q = '\''
+    i = 0
+    while i lt n
+        ch = chars[i]
+        if ch eq q
+            if i + 1 lt n and chars[i + 1] eq q
+                out = push[out, Piece['', q]]
+                i = i + 2
+            else
+                words = ''
+                i = i + 1
+                going = true
+                while going and i lt n
+                    if chars[i] eq q
+                        if i + 1 lt n and chars[i + 1] eq q
+                            words = '`words``q`'
+                            i = i + 2
+                        else
+                            going = false
+                            i = i + 1
+                    else
+                        words = '`words``chars[i]`'
+                        i = i + 1
+                out = push[out, Piece['', words]]
+        else if _letter[ch]
+            j = i + 1
+            if j lt n and chars[j] eq 'o' and ch in ['y', 'Y', 'Q', 'q', 'M', 'L', 'w', 'I', 'd', 'D', 'e', 'c', 'i', 'h', 'H', 'K', 'k', 'm', 's']
+                out = push[out, Piece['`ch`o', '']]
+                i = j + 1
+            else
+                while j lt n and chars[j] eq ch
+                    j = j + 1
+                out = push[out, Piece[join[slice[chars, i, j], ''], '']]
+                i = j
+        else
+            out = push[out, Piece['', ch]]
+            i = i + 1
+    out
+
+--- `n` written with at least `width` digits
+fn _padded[n, width]
+    words = str[n]
+    if len[words] lt width
+        zeros = repeat['0', width - len[words]]
+        return '`zeros``words`'
+    words
+
+--- the offset east of UTC, in minutes, written as an ISO offset: `xxx`
+--- +05:30, `xx` +0530, `x` +05 (+0530 where there are minutes)
+fn _offset_words[minutes, width]
+    sign = '+'
+    m = minutes
+    if m lt 0
+        sign = '-'
+        m = 0 - m
+    hours = _padded[m / 60, 2]
+    rest = _padded[m % 60, 2]
+    if width gte 3
+        return '`sign``hours`:`rest`'
+    if width eq 2 or m % 60 ne 0
+        return '`sign``hours``rest`'
+    '`sign``hours`'
+
+--- one token written for a moment, in the locale's words
+fn _written[t, token, loc]
+    k = len[token]
+    first = slice[token, 0, 1]
+    if token eq 'do'
+        return ordinal[t.day, loc]
+    if token eq 'wo'
+        return ordinal[week[t, loc.week_start, loc.first_holds], loc]
+    if token eq 'Io'
+        return ordinal[iso_week[t], loc]
+    if token eq 'Qo'
+        return ordinal[quarter[t], loc]
+    if first eq 'y'
+        y = t.year
+        if y lte 0
+            y = 1 - y
+        if k eq 2
+            return _padded[y % 100, 2]
+        return _padded[y, k]
+    if first eq 'Y'
+        y = week_year[t, loc.week_start, loc.first_holds]
+        if k eq 2
+            return _padded[y % 100, 2]
+        return _padded[y, k]
+    if first eq 'R'
+        return _padded[iso_week_year[t], k]
+    if first eq 'M' or first eq 'L'
+        if k lte 2
+            return _padded[t.month, k]
+        if k eq 3
+            return loc.months_short[t.month - 1]
+        if k eq 5
+            return loc.months_letter[t.month - 1]
+        return loc.months[t.month - 1]
+    if first eq 'd'
+        return _padded[t.day, k]
+    if first eq 'E'
+        wd = weekday[t]
+        if k lte 3
+            return loc.weekdays_short[wd]
+        if k eq 5
+            return loc.weekdays_letter[wd]
+        if k eq 6
+            return loc.weekdays_two[wd]
+        return loc.weekdays[wd]
+    if first eq 'H'
+        return _padded[t.hour, k]
+    if first eq 'h'
+        h = t.hour % 12
+        if h eq 0
+            h = 12
+        return _padded[h, k]
+    if first eq 'm'
+        return _padded[t.minute, k]
+    if first eq 's'
+        return _padded[t.second, k]
+    if first eq 'a'
+        pm = 0
+        if t.hour gte 12
+            pm = 1
+        if k eq 3
+            return lower[loc.periods[pm]]
+        if k eq 4
+            return loc.periods_long[pm]
+        if k eq 5
+            return slice[lower[loc.periods[pm]], 0, 1]
+        return loc.periods[pm]
+    if first eq 'Q' or first eq 'q'
+        q = quarter[t]
+        if k eq 1 or k eq 5
+            return str[q]
+        if k eq 2
+            return _padded[q, 2]
+        if k eq 3
+            return '`loc.quarter_mark``q`'
+        return '`ordinal[q, loc]` `loc.quarter_word`'
+    if first eq 'w'
+        return _padded[week[t, loc.week_start, loc.first_holds], k]
+    if first eq 'I'
+        return _padded[iso_week[t], k]
+    if first eq 'x' or first eq 'X'
+        if first eq 'X' and t.offset eq 0
+            return 'Z'
+        return _offset_words[t.offset, k]
+    --- (a letter that is no token of Lory's is written as it stands)
+    token
+
+--- the moment written by a pattern of date-fns's tokens, in the locale's
+--- words (its own zone's day and clock): `yyyy` `yy` `y` the year; `MM`
+--- `M` the month's number, `MMM` its short name, `MMMM` its name (`LLLL`
+--- as it stands alone); `dd` `d` `do` the day; `EEE` `EEEE` `EEEEEE`
+--- the weekday short, long and in two letters; `HH` `H` the hour of 24,
+--- `hh` `h` of 12, `a` its mark; `mm` `ss` the minute and second; `Q`
+--- `QQQ` the quarter; `w` the locale's week, `I` the ISO week and `R` its
+--- year; `xxx` the zone's offset. Words between quotes are written as
+--- they are.
+fn format[t, pattern, loc]
+    parts = for p in pieces[pattern]
+        if p.token eq ''
+            p.words
+        else
+            _written[t, p.token, loc]
+    join[parts, '']
+
+--- ---- dates read back from words ----
+
+--- the value read at a place of the words: the number or the name's place
+--- it stands for and where the words go on after it (`next` -1: nothing
+--- there that the token reads)
+struct Got [value, next]
+
+fn _none_got[]
+    Got[0, -1]
+
+fn _digit[ch]
+    if not (ch in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
+        return -1
+    v = int[ch]
+    if not v.ok
+        return -1
+    v
+
+--- up to `most` digits from place `i`
+fn _digits[chars, i, most]
+    v = 0
+    j = i
+    while j lt len[chars] and j - i lt most and _digit[chars[j]] gte 0
+        v = v * 10 + _digit[chars[j]]
+        j = j + 1
+    if j eq i
+        return _none_got[]
+    Got[v, j]
+
+--- a number of two digits at most, read as date-fns's patterns read a
+--- month, a day of the month or an hour: two digits where the two are
+--- no more than `top` (12 for a month, 31 for a day), else one
+fn _bounded[chars, i, top]
+    one = _digits[chars, i, 1]
+    if one.next lt 0
+        return one
+    two = _digits[chars, i, 2]
+    if two.next eq i + 2 and two.value lte top and (two.value gte 10 or chars[i] eq '0')
+        return two
+    one
+
+--- whether the words at place `i` begin with `name`, case aside
+fn _begins[chars, i, name]
+    k = len[name]
+    if k eq 0 or i + k gt len[chars]
+        return false
+    lower[join[slice[chars, i, i + k], '']] eq lower[name]
+
+--- the place in `names` of the longest one the words begin with at `i`
+fn _named[chars, i, names]
+    best = -1
+    wide = 0
+    for j in range[len[names]]
+        if len[names[j]] gt wide and _begins[chars, i, names[j]]
+            best = j
+            wide = len[names[j]]
+    if best lt 0
+        return _none_got[]
+    Got[best, i + wide]
+
+--- a month's name: its full name, else its short name, else (where one
+--- letter is all that is asked, or all there is) the first month that
+--- letter begins
+fn _month_named[chars, i, loc, token]
+    if token eq 'MMMM'
+        whole = _named[chars, i, loc.months]
+        if whole.next gte 0
+            return whole
+    short = _named[chars, i, loc.months_short]
+    if short.next gte 0
+        return short
+    if i lt len[chars]
+        j = 0
+        while j lt 12
+            if lower[chars[i]] eq lower[loc.months_letter[j]]
+                return Got[j, i + 1]
+            j = j + 1
+    _none_got[]
+
+--- the morning or the afternoon: `a`, `am`, `a.m.` and `a m` alike, or the
+--- locale's own marks (0 the morning, 1 the afternoon)
+fn _period[chars, i, loc]
+    own = _named[chars, i, concat[loc.periods, loc.periods_long]]
+    if own.next gte 0
+        return Got[own.value % 2, own.next]
+    if i gte len[chars]
+        return _none_got[]
+    letter = lower[chars[i]]
+    if letter ne 'a' and letter ne 'p'
+        return _none_got[]
+    pm = 0
+    if letter eq 'p'
+        pm = 1
+    j = i + 1
+    if j lt len[chars] and chars[j] eq '.'
+        j = j + 1
+    if j lt len[chars] and chars[j] eq ' '
+        j = j + 1
+    if j lt len[chars] and lower[chars[j]] eq 'm'
+        j = j + 1
+        if j lt len[chars] and chars[j] eq '.'
+            j = j + 1
+        return Got[pm, j]
+    Got[pm, i + 1]
+
+--- the endings an ordinal may have in a language, the longest first
+fn _ordinal_endings[language]
+    if language eq 'fr'
+        return ['ième', 'ère', 'ème', 'er', 'e']
+    if language eq 'de'
+        return ['.']
+    if language eq 'es'
+        return ['º']
+    ['th', 'st', 'nd', 'rd']
+
+--- an ordinal's number with its ending, if it has one
+fn _ordinal_read[chars, i, loc]
+    n = _digits[chars, i, 9]
+    if n.next lt 0
+        return n
+    endings = _ordinal_endings[loc.language]
+    j = 0
+    while j lt len[endings]
+        if _begins[chars, n.next, endings[j]]
+            return Got[n.value, n.next + len[endings[j]]]
+        j = j + 1
+    n
+
+--- a quarter written by a token: `Q` one digit, `QQ` one or two, `Qo` an
+--- ordinal, `QQQ` the locale's mark and its number (`Q3`) or the number
+--- alone, `QQQQ` its ordinal and the word (`3rd quarter`, the ending
+--- left out or not) or as `QQQ` reads it
+fn _quarter_read[chars, i, loc, token]
+    k = len[token]
+    if token eq 'Qo'
+        return _ordinal_read[chars, i, loc]
+    if k eq 1 or k eq 5
+        return _digits[chars, i, 1]
+    if k eq 2
+        return _digits[chars, i, 2]
+    if k eq 4
+        whole = _ordinal_read[chars, i, loc]
+        word = ' `loc.quarter_word`'
+        if whole.next gte 0 and _begins[chars, whole.next, word]
+            return Got[whole.value, whole.next + len[word]]
+    mark = loc.quarter_mark
+    if _begins[chars, i, mark]
+        n = _digits[chars, i + len[mark], 1]
+        if n.next gte 0
+            return n
+    _digits[chars, i, 1]
+
+--- what a token reads at place `i`, and under which name it is kept: `y`
+--- (`yy` a year of two digits), `R` (a year of ISO weeks), `Q`, `M`,
+--- `I` (an ISO week), `d`, `a`, `h`, `H`, `m`, `s` ('': a token Lory does
+--- not read)
+fn _read_token[chars, i, token, loc]
+    k = len[token]
+    first = slice[token, 0, 1]
+    if token eq 'do' or token eq 'Io'
+        return _ordinal_read[chars, i, loc]
+    if first eq 'Q'
+        return _quarter_read[chars, i, loc, token]
+    if first eq 'I'
+        if k eq 1
+            return _bounded[chars, i, 53]
+        return _digits[chars, i, k]
+    if first eq 'R'
+        if k eq 1
+            return _digits[chars, i, 4]
+        return _digits[chars, i, k]
+    if first eq 'y'
+        if k eq 1
+            return _digits[chars, i, 4]
+        return _digits[chars, i, k]
+    if first eq 'M' or first eq 'L'
+        if k eq 1
+            return _bounded[chars, i, 12]
+        if k eq 2
+            return _digits[chars, i, 2]
+        got = _month_named[chars, i, loc, token]
+        if got.next gte 0
+            got.value = got.value + 1
+        return got
+    if first eq 'd'
+        if k eq 1
+            return _bounded[chars, i, 31]
+        return _digits[chars, i, k]
+    if first eq 'H'
+        if k eq 1
+            return _bounded[chars, i, 23]
+        return _digits[chars, i, k]
+    if first eq 'h'
+        if k eq 1
+            return _bounded[chars, i, 12]
+        return _digits[chars, i, k]
+    if first eq 'm' or first eq 's'
+        if k eq 1
+            return _bounded[chars, i, 59]
+        return _digits[chars, i, k]
+    if first eq 'a'
+        return _period[chars, i, loc]
+    _none_got[]
+
+fn _kept_as[token]
+    first = slice[token, 0, 1]
+    if token eq 'yy'
+        return 'yy'
+    if token eq 'do'
+        return 'd'
+    if first eq 'L'
+        return 'M'
+    if first in ['y', 'R', 'Q', 'M', 'I', 'd', 'a', 'h', 'H', 'm', 's']
+        return first
+    ''
+
+--- the year a two-digit year stands for, near `now_year`: within the
+--- hundred years that end fifty years after it (date-fns's rule)
+fn _century[two, now_year]
+    if now_year lte 50
+        if two eq 0
+            return 100
+        return two
+    ends_at = now_year + 50
+    hundreds = ends_at / 100 * 100
+    if two gte ends_at % 100
+        return two + hundreds - 100
+    two + hundreds
+
+--- the moment the words write by the pattern, in the locale's words, read
+--- as date-fns's parse reads them: what the pattern does not say is the
+--- `reference` moment's (its day and clock as its own zone reads them),
+--- a year read sets the date to its first day (a year of ISO weeks to the
+--- Monday of its first week), a quarter and a month to their first, an
+--- ISO week to its Monday (the week moved to in the year the date is
+--- in), a day to its midnight, an hour to its first minute; the clock is in
+--- `zone`. The words must hold every piece of the pattern, and nothing
+--- after them but spaces. Words that do not, a day the month does not
+--- have, a token Lory does not read or one given twice are an error
+--- value of kind `parse`.
+fn parse[words, pattern, loc, reference, zone]
+    chars = split[words, '']
+    got = map['' = 0]
+    j = 0
+    parts = pieces[pattern]
+    k = 0
+    while k lt len[parts]
+        p = parts[k]
+        if p.token eq ''
+            w = split[p.words, '']
+            if j + len[w] gt len[chars] or join[slice[chars, j, j + len[w]], ''] ne p.words
+                return error['`words` is not written as `pattern`', 'parse']
+            j = j + len[w]
+        else
+            name = _kept_as[p.token]
+            if name eq ''
+                return error['Lory does not read `p.token` from words', 'parse']
+            if _clashes[name, got]
+                return error['`pattern` reads the same part of a date twice', 'parse']
+            took = _read_token[chars, j, p.token, loc]
+            if took.next lt 0
+                return error['`words` is not written as `pattern`', 'parse']
+            got[name] = took.value
+            j = took.next
+        k = k + 1
+    while j lt len[chars]
+        if trim[chars[j]] ne ''
+            return error['`words` goes on past `pattern`', 'parse']
+        j = j + 1
+    base = in_zone[reference, zone]
+    y = base.year
+    mo = base.month
+    d = base.day
+    hh = base.hour
+    mi = base.minute
+    se = base.second
+    if 'yy' in got
+        y = _century[got['yy'], y]
+        mo = 1
+        d = 1
+        hh = 0
+        mi = 0
+        se = 0
+    if 'y' in got
+        y = got['y']
+        if y lte 0
+            return error['a year is 1 or later', 'parse']
+        mo = 1
+        d = 1
+        hh = 0
+        mi = 0
+        se = 0
+    if 'R' in got
+        if got['R'] lte 0
+            return error['a year is 1 or later', 'parse']
+        weeks_begin = start_of_week[day[got['R'], 1, 4], 1]
+        y = weeks_begin.year
+        mo = weeks_begin.month
+        d = weeks_begin.day
+        hh = 0
+        mi = 0
+        se = 0
+    if 'Q' in got
+        q = got['Q']
+        if q lt 1 or q gt 4
+            return error['a quarter is 1 to 4', 'parse']
+        mo = (q - 1) * 3 + 1
+        d = 1
+        hh = 0
+        mi = 0
+        se = 0
+    if 'M' in got
+        mo = got['M']
+        if mo lt 1 or mo gt 12
+            return error['a month is 1 to 12', 'parse']
+        d = 1
+        hh = 0
+        mi = 0
+        se = 0
+    if 'I' in got
+        w = got['I']
+        if w lt 1 or w gt 53
+            return error['a week of the year is 1 to 53', 'parse']
+        here = day[y, mo, d]
+        monday = start_of_week[add_days[here, (w - iso_week[here]) * 7], 1]
+        y = monday.year
+        mo = monday.month
+        d = monday.day
+        hh = 0
+        mi = 0
+        se = 0
+    if 'd' in got
+        d = got['d']
+        if d lt 1 or d gt days_in_month[y, mo]
+            return error['the month has no such day', 'parse']
+        hh = 0
+        mi = 0
+        se = 0
+    if 'a' in got
+        hh = 12 * got['a']
+        mi = 0
+        se = 0
+    if 'h' in got
+        h = got['h']
+        if h lt 1 or h gt 12
+            return error['an hour of twelve is 1 to 12', 'parse']
+        if hh gte 12 and h lt 12
+            hh = h + 12
+        else if hh lt 12 and h eq 12
+            hh = 0
+        else
+            hh = h
+        mi = 0
+        se = 0
+    if 'H' in got
+        hh = got['H']
+        if hh gt 23
+            return error['an hour is 0 to 23', 'parse']
+        mi = 0
+        se = 0
+    if 'm' in got
+        mi = got['m']
+        if mi gt 59
+            return error['a minute is 0 to 59', 'parse']
+        se = 0
+    if 's' in got
+        se = got['s']
+        if se gt 59
+            return error['a second is 0 to 59', 'parse']
+    at_clock[day[y, mo, d], hh * 3600 + mi * 60 + se, zone]
+
+--- whether a part of a date read already rules this one out, as date-fns
+--- rules it out: a part read twice, a year of two digits and of four, a
+--- year and a year of ISO weeks or an ISO week, a quarter with a month, a
+--- day, an ISO week or a year of ISO weeks, a month or a day with an ISO
+--- week, an hour of twelve and of twenty-four, or an hour of twenty-four
+--- with a mark of the afternoon
+fn _clashes[name, got]
+    if name in got
+        return true
+    if name eq 'yy' or name eq 'y'
+        return 'y' in got or 'yy' in got or 'R' in got or 'I' in got
+    if name eq 'R'
+        return 'y' in got or 'yy' in got or 'Q' in got or 'M' in got or 'd' in got
+    if name eq 'Q'
+        return 'R' in got or 'M' in got or 'I' in got or 'd' in got
+    if name eq 'I'
+        return 'y' in got or 'yy' in got or 'Q' in got or 'M' in got or 'd' in got
+    if name eq 'M' or name eq 'd'
+        return 'Q' in got or 'I' in got or 'R' in got
+    if name eq 'h'
+        return 'H' in got
+    if name eq 'H'
+        return 'h' in got or 'a' in got
+    if name eq 'a'
+        return 'H' in got
+    false
+
+--- ---- days in a zone ----
+
+--- the moment a day begins in a zone (its midnight, or the first hour it
+--- has where midnight falls in a turn of the clocks)
+fn day_start[d, zone]
+    t = moment[d.year, d.month, d.day, tz = zone]
+    if not t.ok
+        return _day_start_late[d, zone]
+    t
+
+fn _day_start_late[d, zone]
+    t = moment[d.year, d.month, d.day, hour = 1, tz = zone]
+    if not t.ok
+        return day[d.year, d.month, d.day]
+    t
+
+--- how many hours a day has in a zone: 24, or 23 and 25 where its clocks
+--- turn
+fn hours_in_day[d, zone]
+    round[(day_start[add_days[d, 1], zone] - day_start[d, zone]) / 3600.0]
+
+--- the moment a zone's clock shows `seconds` past the day's midnight; a
+--- time the clocks skip is the instant that many seconds after the day
+--- began, as JavaScript's dates move it on
+fn at_clock[d, seconds, zone]
+    t = moment[d.year, d.month, d.day, hour = seconds / 3600, minute = seconds / 60 % 60, second = seconds % 60, tz = zone]
+    if not t.ok
+        return day_start[d, zone] + seconds
+    t
+
+--- ---- which days may be chosen ----
+
+--- two days and the days between them, both kept
+struct Span [start, end]
+
+--- a day shown in a tone of the look (`accent`, `success`, `warning` or
+--- `danger`), and a holiday with its name
+struct Mark [day, tone]
+struct Holiday [day, name]
+
+--- which days may be chosen: none before `earliest` or after `latest`,
+--- none of the days `excluded` or in the `excluded_spans`, where
+--- `only_listed` only the days `included`, where `only_spans` only those
+--- in the `included_spans`, and only those the function `keep` keeps (a
+--- day given, a truth answered); and the days `marked` and the `holidays`,
+--- which are shown so and may be chosen
+struct Rules [earliest, latest, excluded, excluded_spans, included, only_listed, included_spans, only_spans, keep, marked, holidays]
+
+fn _every_day[t]
+    true
+
+fn _no_spans[]
+    slice[[Span[moment[0], moment[0]]], 0, 0]
+
+fn _no_marks[]
+    slice[[Mark[moment[0], '']], 0, 0]
+
+fn _no_holidays[]
+    slice[[Holiday[moment[0], '']], 0, 0]
+
+--- every day may be chosen, from the year 1 to 9999, and none is marked
+fn rules[]
+    --- (Lory's own keeper is called by name once, so that Crow knows what
+    --- a keeper is handed: a function a module writes into a record is
+    --- typed by a call)
+    all_open = _every_day[day[2000, 1, 1]]
+    _ruled[day[1, 1, 1], day[9999, 12, 31], no_days[], _no_spans[], no_days[], not all_open, _no_spans[], not all_open, _every_day, _no_marks[], _no_holidays[]]
+
+--- (the one place a Rules is made, its keeper handed in as a parameter)
+fn _ruled[earliest, latest, excluded, excluded_spans, included, only_listed, included_spans, only_spans, keep, marked, holidays]
+    Rules[earliest, latest, excluded, excluded_spans, included, only_listed, included_spans, only_spans, keep, marked, holidays]
+
+--- the rules with none of the days before `earliest` or after `latest`
+fn bounded[r, earliest, latest]
+    r.earliest = day_of[earliest]
+    r.latest = day_of[latest]
+    r
+
+--- the rules with these days, or the days of these spans, left out
+fn excluding[r, days]
+    r.excluded = concat[r.excluded, days]
+    r
+
+fn excluding_spans[r, spans]
+    r.excluded_spans = concat[r.excluded_spans, spans]
+    r
+
+--- the rules with only these days, or the days of these spans, allowed
+--- (an empty list allows none)
+fn including[r, days]
+    r.included = concat[r.included, days]
+    r.only_listed = true
+    r
+
+fn including_spans[r, spans]
+    r.included_spans = concat[r.included_spans, spans]
+    r.only_spans = true
+    r
+
+--- the rules keeping only the days `keep` keeps: `fn keep[t]`, handed a
+--- day, answering whether it may be chosen (react-datepicker's filterDate)
+fn filtered[r, keep]
+    _ruled[r.earliest, r.latest, r.excluded, r.excluded_spans, r.included, r.only_listed, r.included_spans, r.only_spans, keep, r.marked, r.holidays]
+
+--- the rules with these days shown in a tone, and these holidays
+fn marking[r, days, tone]
+    for t in days
+        r.marked = push[r.marked, Mark[day_of[t], tone]]
+    r
+
+fn observing[r, holidays]
+    r.holidays = concat[r.holidays, holidays]
+    r
+
+fn _listed[d, days]
+    i = 0
+    while i lt len[days]
+        if same_day[days[i], d]
+            return true
+        i = i + 1
+    false
+
+fn _spanned[d, spans]
+    i = 0
+    while i lt len[spans]
+        if d gte day_of[spans[i].start] and d lte day_of[spans[i].end]
+            return true
+        i = i + 1
+    false
+
+--- whether a day may not be chosen, as react-datepicker decides it: out
+--- of bounds, excluded, not among the days or spans included where some
+--- are, or not kept by the rules' function
+fn day_off[r, t]
+    d = day_of[t]
+    if d lt r.earliest or d gt r.latest
+        return true
+    if _listed[d, r.excluded] or _spanned[d, r.excluded_spans]
+        return true
+    if r.only_listed and not _listed[d, r.included]
+        return true
+    if r.only_spans and not _spanned[d, r.included_spans]
+        return true
+    not r.keep[d]
+
+--- whether every day of a span may not be chosen (a week, a month, a
+--- quarter or a year is offered while one of its days may be)
+fn span_off[r, first, last]
+    if day_of[last] lt r.earliest or day_of[first] gt r.latest
+        return true
+    t = day_of[first]
+    while t lte day_of[last]
+        if not day_off[r, t]
+            return false
+        t = add_days[t, 1]
+    true
+
+--- a holiday's name, or '' on a day that is none; a day's tone, or ''
+fn holiday_on[r, t]
+    i = 0
+    while i lt len[r.holidays]
+        if same_day[r.holidays[i].day, t]
+            return r.holidays[i].name
+        i = i + 1
+    ''
+
+fn tone_on[r, t]
+    i = 0
+    while i lt len[r.marked]
+        if same_day[r.marked[i].day, t]
+            return r.marked[i].tone
+        i = i + 1
+    ''
+
+--- the day itself where it may be chosen, else the first of its month
+--- that may, else the day (react-datepicker's choice for a month moved to)
+fn open_day_in_month[r, t]
+    if not day_off[r, t]
+        return day_of[t]
+    d = start_of_month[t]
+    last = end_of_month[t]
+    while d lte last
+        if not day_off[r, d]
+            return d
+        d = add_days[d, 1]
+    day_of[t]
+
+--- ---- the keys on a month's days ----
+
+--- the keys that move the focus over days
+fn moving_key[key]
+    key in ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End']
+
+fn _stepped[t, key, shift, week_start, by_weeks]
+    if key eq 'ArrowLeft'
+        if by_weeks
+            return add_days[t, -7]
+        return add_days[t, -1]
+    if key eq 'ArrowRight'
+        if by_weeks
+            return add_days[t, 7]
+        return add_days[t, 1]
+    if key eq 'ArrowUp'
+        return add_days[t, -7]
+    if key eq 'ArrowDown'
+        return add_days[t, 7]
+    if key eq 'PageUp'
+        if shift
+            return add_years[t, -1]
+        return add_months[t, -1]
+    if key eq 'PageDown'
+        if shift
+            return add_years[t, 1]
+        return add_months[t, 1]
+    if key eq 'Home'
+        return start_of_week[t, week_start]
+    if key eq 'End'
+        return end_of_week[t, week_start]
+    t
+
+--- the day the focus moves to from `t` by a key, as react-datepicker's
+--- month moves it: the left and right arrows a day (a week where the
+--- weeks are chosen, `by_weeks`), up and down a week, Page Up and Page
+--- Down a month (with Shift a year), Home and End to the week's first and
+--- last day. A day that may not be chosen is stepped past in the key's
+--- way (Page Up and Home on to later days, Page Down and End back to
+--- earlier ones), a step before the first day allowed taken to it (or on
+--- from it) and after the last back to it, at most 40 steps; after them
+--- the focus stays where it was. (react-datepicker's End goes to the
+--- Saturday of the week whatever day the weeks begin on; Lory's to the
+--- week's last day, as its documents say.)
+fn key_moved[t, key, shift, r, week_start, by_weeks]
+    if not moving_key[key]
+        return day_of[t]
+    k = key
+    at = _stepped[day_of[t], k, shift, week_start, by_weeks]
+    rounds = 0
+    while rounds lt 40
+        if at lt r.earliest
+            k = 'ArrowRight'
+            if day_off[r, r.earliest]
+                at = _stepped[at, k, shift, week_start, by_weeks]
+            else
+                at = r.earliest
+        if at gt r.latest
+            k = 'ArrowLeft'
+            if day_off[r, r.latest]
+                at = _stepped[at, k, shift, week_start, by_weeks]
+            else
+                at = r.latest
+        if not day_off[r, at]
+            return at
+        if k eq 'PageUp' or k eq 'Home'
+            k = 'ArrowRight'
+        if k eq 'PageDown' or k eq 'End'
+            k = 'ArrowLeft'
+        at = _stepped[at, k, shift, week_start, by_weeks]
+        rounds = rounds + 1
+    day_of[t]
+
+--- ---- what a press on a day chooses ----
+
+--- the days chosen once `t` is pressed, by the way a calendar chooses
+--- (`mode`): 'day' that day; 'days' that day added, or taken away where
+--- it was chosen; 'week' the week it is in (its first day that may be
+--- chosen); 'range' a range begun, ended or begun again, as
+--- react-datepicker's: the first press begins it, a second on or after
+--- its first day ends it, a second before begins it again there (or,
+--- `swap`, ends it with the two days swapped), and a press once it is
+--- whole begins a new one
+fn chosen_by[chosen, t, mode, swap, r, week_start]
+    d = day_of[t]
+    if mode eq 'days'
+        if _listed[d, chosen]
+            out = no_days[]
+            for c in chosen
+                if not same_day[c, d]
+                    out = push[out, c]
+            return out
+        return push[chosen, d]
+    if mode eq 'week'
+        first = start_of_week[d, week_start]
+        k = 0
+        while k lt 7
+            if not day_off[r, add_days[first, k]]
+                return [add_days[first, k]]
+            k = k + 1
+        return [first]
+    if mode eq 'range'
+        if len[chosen] eq 1
+            if d lt day_of[chosen[0]]
+                if swap
+                    return [d, chosen[0]]
+                return [d]
+            return [chosen[0], d]
+        return [d]
+    [d]
+
+--- whether choosing `t` ends a choice, so a picker's calendar closes: a
+--- day or a week chosen, or a range ended (react-datepicker keeps it open
+--- while a range has only its first day, and for many days)
+fn choice_ends[chosen, t, mode, swap]
+    if mode eq 'days'
+        return false
+    if mode eq 'range'
+        return len[chosen] eq 1 and (swap or not (day_of[t] lt day_of[chosen[0]]))
+    true
+
+--- ---- a month's calendar, drawn ----
+
+--- a month's calendar as it is drawn: its id; the first day of the first
+--- month it shows, how many months, and how many to a row (`columns`, 0:
+--- all in one row); its locale; whether it shows the weeks' numbers
+--- (ISO's number of each row's first day, as react-datepicker numbers
+--- them) and always six weeks; which days may be chosen; the days chosen
+--- and how they are read (`mode`, as `chosen_by` reads it; `swap`); the
+--- day the keys move from (`focus`); whether a range's second day is shown
+--- as the pointer or the focus moves (`previews`); and today
+struct Sheet [id, shown, months, columns, loc, numbers, six, rules, chosen, mode, swap, focus, previews, today]
+
+--- a month's calendar of that id showing the month of the first day
+--- chosen (or today's), one month, in en-US, any day allowed, a day chosen
+--- at a time
+fn sheet[id, chosen]
+    picked = plain_days[chosen]
+    now_day = today['UTC']
+    focus = now_day
+    if len[picked] gt 0
+        focus = day_of[picked[0]]
+    Sheet[id, start_of_month[focus], 1, 0, locale['en-US'], false, false, rules[], picked, 'day', false, focus, true, now_day]
+
+--- the sheet with its focus on a day and its months moved, if they must
+--- be, to show it (the first shown where it is before them, the last
+--- where it is after)
+fn focused_on[sh, t]
+    d = day_of[t]
+    sh.focus = d
+    first = start_of_month[sh.shown]
+    if d lt first
+        sh.shown = start_of_month[d]
+    last = end_of_month[add_months[first, sh.months - 1]]
+    if d gt last
+        sh.shown = add_months[start_of_month[d], 1 - sh.months]
+    sh
+
+--- the sheet showing months `n` on (back, below 0), its focus moved as
+--- react-datepicker's is: the same day of the month, else the first that
+--- may be chosen
+fn turned[sh, n]
+    sh.shown = add_months[start_of_month[sh.shown], n]
+    sh.focus = open_day_in_month[sh.rules, add_months[sh.focus, n]]
+    sh
+
+--- whether the months before the first shown, or after the last, hold a
+--- day that may be chosen (else its arrow is shown off)
+fn turns_back[sh]
+    add_days[start_of_month[sh.shown], -1] gte sh.rules.earliest
+
+fn turns_on[sh]
+    add_months[start_of_month[sh.shown], sh.months] lte sh.rules.latest
+
+--- ---- its geometry, in CSS pixels ----
+
+fn _cell_w[]
+    36.0
+
+fn _cell_h[]
+    32.0
+
+fn _title_h[]
+    36.0
+
+fn _names_h[]
+    24.0
+
+fn _numbers_w[sh]
+    if sh.numbers
+        return 30.0
+    0.0
+
+fn _month_gap[]
+    20.0
+
+fn _weeks_shown[sh]
+    if sh.six or sh.months gt 1
+        return 6
+    first = start_of_month[sh.shown]
+    len[month_days[first.year, first.month, sh.loc.week_start, false]] / 7
+
+fn _columns_of[sh]
+    if sh.columns lte 0 or sh.columns gt sh.months
+        return max[1, sh.months]
+    sh.columns
+
+fn _block_w[sh]
+    _numbers_w[sh] + 7.0 * _cell_w[]
+
+fn _block_h[sh]
+    _title_h[] + _names_h[] + _weeks_shown[sh] * _cell_h[]
+
+--- the calendar's width and height, in CSS pixels
+fn sheet_wide[sh]
+    cols = _columns_of[sh]
+    cols * _block_w[sh] + (cols - 1) * _month_gap[]
+
+fn sheet_tall[sh]
+    cols = _columns_of[sh]
+    rows = (sh.months + cols - 1) / cols
+    rows * _block_h[sh] + (rows - 1) * _month_gap[]
+
+--- where a day's cell is in the calendar, from its top left in CSS
+--- pixels (x, y, width, height), in the first month shown that holds it;
+--- [-1, -1, 0, 0] where none does
+fn day_spot[sh, t]
+    d = day_of[t]
+    cols = _columns_of[sh]
+    i = 0
+    while i lt sh.months
+        first = add_months[start_of_month[sh.shown], i]
+        if same_month[first, d]
+            ox = (i % cols) * (_block_w[sh] + _month_gap[])
+            oy = (i / cols) * (_block_h[sh] + _month_gap[])
+            from = start_of_week[first, sh.loc.week_start]
+            k = days_between[d, from]
+            return [ox + _numbers_w[sh] + (k % 7) * _cell_w[], oy + _title_h[] + _names_h[] + (k / 7) * _cell_h[], _cell_w[], _cell_h[]]
+        i = i + 1
+    [-1.0, -1.0, 0.0, 0.0]
+
+--- where the arrow to the months before (`which` 'previous') or after
+--- ('next') stands, from the calendar's top left
+fn arrow_spot[sh, which]
+    if which eq 'previous'
+        return [4.0, 4.0, 28.0, 28.0]
+    cols = _columns_of[sh]
+    [cols * _block_w[sh] + (cols - 1) * _month_gap[] - 32.0, 4.0, 28.0, 28.0]
+
+--- ---- what its painter is handed ----
+
+--- words drawn at a place (their middle), and a day's cell as drawn: its
+--- day, words and place; whether it is outside its month (and hidden),
+--- chosen, a range's first or last day or between them, not to be
+--- chosen, today, the focus; its tone and its holiday's name
+struct Label [x, y, words]
+struct Cell [day, words, x, y, outside, hidden, picked, start, end, between, off, today, focus, tone, holiday]
+
+--- all a calendar's painter draws: its labels, cells, arrows (and whether
+--- each may be pressed), and a range begun and not ended (`pending`,
+--- from `start`, `swap`); its size
+struct Painting [titles, names, numbers, cells, back, back_on, on, on_on, pending, start, swap, previews, wide, tall, firsts]
+
+fn _no_labels[]
+    slice[[Label[0.0, 0.0, '']], 0, 0]
+
+fn _no_cells[]
+    slice[[Cell[moment[0], '', 0.0, 0.0, false, false, false, false, false, false, false, false, false, '', '']], 0, 0]
+
+fn _no_painting[]
+    Painting[_no_labels[], _no_labels[], _no_labels[], _no_cells[], [0.0, 0.0, 0.0, 0.0], false, [0.0, 0.0, 0.0, 0.0], false, false, moment[0], false, false, 0.0, 0.0, no_days[]]
+
+--- the days chosen as a range: its first and last day (the last is the
+--- first where it has one day; `whole` where it has two)
+fn _range_ends[chosen]
+    if len[chosen] eq 0
+        return no_days[]
+    a = day_of[chosen[0]]
+    if len[chosen] eq 1
+        return [a, a]
+    [a, day_of[chosen[len[chosen] - 1]]]
+
+fn _painting[sh]
+    cols = _columns_of[sh]
+    bw = _block_w[sh]
+    bh = _block_h[sh]
+    nw = _numbers_w[sh]
+    cw = _cell_w[]
+    ch = _cell_h[]
+    weeks = _weeks_shown[sh]
+    ws = sh.loc.week_start
+    titles = _no_labels[]
+    names = _no_labels[]
+    numbers = _no_labels[]
+    cells = _no_cells[]
+    firsts = no_days[]
+    bounds = _range_ends[sh.chosen]
+    ranged = sh.mode eq 'range' and len[sh.chosen] eq 2
+    pending = sh.mode eq 'range' and len[sh.chosen] eq 1
+    i = 0
+    while i lt sh.months
+        first = add_months[start_of_month[sh.shown], i]
+        firsts = push[firsts, first]
+        ox = (i % cols) * (bw + _month_gap[])
+        oy = (i / cols) * (bh + _month_gap[])
+        titles = push[titles, Label[ox + bw / 2.0, oy + _title_h[] / 2.0, format[first, 'LLLL yyyy', sh.loc]]]
+        j = 0
+        while j lt 7
+            names = push[names, Label[ox + nw + j * cw + cw / 2.0, oy + _title_h[] + _names_h[] / 2.0, sh.loc.weekdays_two[(ws + j) % 7]]]
+            j = j + 1
+        from = start_of_week[first, ws]
+        w = 0
+        while w lt weeks
+            row_y = oy + _title_h[] + _names_h[] + w * ch
+            row_first = add_days[from, 7 * w]
+            if sh.numbers
+                numbers = push[numbers, Label[ox + nw / 2.0, row_y + ch / 2.0, str[iso_week[row_first]]]]
+            k = 0
+            while k lt 7
+                d = add_days[row_first, k]
+                outside = not same_month[d, first]
+                picked = false
+                start = false
+                finish = false
+                between = false
+                if sh.mode eq 'range'
+                    if len[bounds] gt 0
+                        start = same_day[d, bounds[0]]
+                        finish = ranged and same_day[d, bounds[1]]
+                        between = ranged and d gt bounds[0] and d lt bounds[1]
+                else if sh.mode eq 'week'
+                    picked = len[sh.chosen] gt 0 and same_day[start_of_week[d, ws], start_of_week[sh.chosen[0], ws]]
+                else
+                    picked = _listed[d, sh.chosen]
+                --- (months side by side leave out the days the next or the
+                --- last one shows, where they meet, as react-datepicker does:
+                --- after each month but the last, before each but the first)
+                hidden = outside and ((d gt first and i lt sh.months - 1) or (d lt first and i gt 0))
+                cells = push[cells, Cell[d, str[d.day], ox + nw + k * cw, row_y, outside, hidden, picked, start, finish, between, day_off[sh.rules, d], same_day[d, sh.today], same_day[d, sh.focus], tone_on[sh.rules, d], holiday_on[sh.rules, d]]]
+                k = k + 1
+            w = w + 1
+        i = i + 1
+    start_day = moment[0]
+    if len[bounds] gt 0
+        start_day = bounds[0]
+    Painting[titles, names, numbers, cells, arrow_spot[sh, 'previous'], turns_back[sh], arrow_spot[sh, 'next'], turns_on[sh], pending, start_day, sh.swap, sh.previews, sheet_wide[sh], sheet_tall[sh], firsts]
+
+--- the calendar drawn: one control, one stop of Tab, its arrows, months,
+--- day names, weeks' numbers and days drawn by Lory. It tells `press`
+--- (`words` the day, as `2024-03-05`) for a day that may be chosen,
+--- `previous` and `next` for its arrows, `title` (the month's first day)
+--- for a month's name, `key` for a key typed while it has the focus
+--- (`words` the key, `num` 1 with Shift) and `tab` where Tab leaves it.
+fn month_view[sh]
+    remember['lory.calendar:`sh.id`', _painting[sh]]
+    gui.drawn[sh.id, 0.0, sheet_wide[sh], sheet_tall[sh], _days_painted]
+
+fn _inside_box[x, y, b]
+    x gte b[0] and y gte b[1] and x lt b[0] + b[2] and y lt b[1] + b[3]
+
+--- the cell the pointer is over, or -1
+fn _cell_under[pt, x, y]
+    i = 0
+    cw = _cell_w[]
+    ch = _cell_h[]
+    while i lt len[pt.cells]
+        k = pt.cells[i]
+        if not k.hidden and x gte k.x and y gte k.y and x lt k.x + cw and y lt k.y + ch
+            return i
+        i = i + 1
+    -1
+
+--- the chevron of an arrow, pointing left (`way` -1) or right (1)
+fn _chevron[c, cx, cy, size, way, color, s]
+    c = lory.line[c, cx - way * size * 0.25, cy - size * 0.5, cx + way * size * 0.25, cy, 2.0 * s, color]
+    lory.line[c, cx + way * size * 0.25, cy, cx - way * size * 0.25, cy + size * 0.5, 2.0 * s, color]
+
+fn _days_painted[d]
+    pt = recall['lory.calendar:`d.id`', _no_painting[]]
+    s = d.s
+    look = d.look
+    cw = _cell_w[] * s
+    ch = _cell_h[] * s
+    --- (where the pointer stands is read from the frame's input, which
+    --- can fail: a painter that decided on a failure would answer one, and
+    --- gui's node holds only a painter whose answer cannot fail, so a frame
+    --- whose input failed is drawn as it stood)
+    px = d.px / s
+    if not px.ok
+        return d
+    py = d.py / s
+    if not py.ok
+        return d
+    typed = keys_typed[d.c]
+    if not typed.ok
+        return d
+    over = -1
+    if d.hover
+        over = _cell_under[pt, px, py]
+    --- (a range begun: the days to the one pointed at, or to the focus,
+    --- shown as they would be chosen)
+    reach = moment[0]
+    reaching = false
+    if pt.pending and pt.previews
+        if over gte 0
+            reach = pt.cells[over].day
+            reaching = true
+        else if d.focused
+            for k in pt.cells
+                if k.focus
+                    reach = k.day
+                    reaching = true
+    low = pt.start
+    high = reach
+    if reaching and reach lt pt.start and pt.swap
+        low = reach
+        high = pt.start
+    c = d.c
+    for t in pt.titles
+        c = lory.text_centered[c, d.x + t.x * s, d.y + t.y * s, t.words, 15.0 * s, look.ink]
+    for t in pt.names
+        c = lory.text_centered[c, d.x + t.x * s, d.y + t.y * s, t.words, 12.0 * s, look.muted]
+    for t in pt.numbers
+        c = lory.text_centered[c, d.x + t.x * s, d.y + t.y * s, t.words, 11.0 * s, lory.fade[look.muted, 0.8]]
+    back = look.ink
+    if not pt.back_on
+        back = lory.fade[look.muted, 0.4]
+    c = _chevron[c, d.x + (pt.back[0] + 14.0) * s, d.y + (pt.back[1] + 14.0) * s, 12.0 * s, -1.0, back, s]
+    ahead = look.ink
+    if not pt.on_on
+        ahead = lory.fade[look.muted, 0.4]
+    c = _chevron[c, d.x + (pt.on[0] + 14.0) * s, d.y + (pt.on[1] + 14.0) * s, 12.0 * s, 1.0, ahead, s]
+    i = 0
+    for k in pt.cells
+        if not k.hidden
+            x = d.x + k.x * s
+            y = d.y + k.y * s
+            previewed = reaching and not k.outside and not k.off and k.day gte low and k.day lte high
+            if k.between or previewed
+                band = 0.22
+                if previewed and not k.between
+                    band = 0.14
+                c = lory.rect[c, x, y + 2.0 * s, cw, ch - 4.0 * s, lory.fade[look.accent, band]]
+            if k.tone ne '' and not (k.picked or k.start or k.end)
+                c = lory.round_rect[c, x + 3.0 * s, y + 2.0 * s, cw - 6.0 * s, ch - 4.0 * s, 6.0 * s, lory.fade[_tone[look, k.tone], 0.28]]
+            if i eq over and not k.off and not (k.picked or k.start or k.end)
+                c = lory.round_rect[c, x + 3.0 * s, y + 2.0 * s, cw - 6.0 * s, ch - 4.0 * s, 6.0 * s, look.hover]
+            ink = look.ink
+            if k.outside
+                ink = look.muted
+            if k.picked or k.start or k.end
+                c = lory.round_rect[c, x + 3.0 * s, y + 2.0 * s, cw - 6.0 * s, ch - 4.0 * s, 6.0 * s, look.accent]
+                ink = look.on_accent
+            if k.off
+                ink = lory.fade[look.muted, 0.45]
+            if k.today
+                c = lory.round_outline[c, x + 3.0 * s, y + 2.0 * s, cw - 6.0 * s, ch - 4.0 * s, 6.0 * s, 1.5 * s, look.accent]
+            if k.focus and d.focused
+                c = lory.round_outline[c, x + 1.0 * s, y, cw - 2.0 * s, ch, 7.0 * s, 2.0 * s, look.focus]
+            if k.holiday ne ''
+                c = lory.circle[c, x + cw - 8.0 * s, y + 7.0 * s, 2.5 * s, look.danger]
+            c = lory.text_centered[c, x + cw / 2.0, y + ch / 2.0, k.words, 13.0 * s, ink]
+        i = i + 1
+    --- (a holiday's name over the day the pointer rests on)
+    if over gte 0 and pt.cells[over].holiday ne ''
+        k = pt.cells[over]
+        name = k.holiday
+        wide = lory.measure[c, name, 12.0 * s] + 12.0 * s
+        tx = min[d.x + k.x * s, d.x + d.w - wide]
+        ty = d.y + k.y * s - 24.0 * s
+        c = lory.round_rect[c, tx, ty, wide, 20.0 * s, 4.0 * s, look.ink]
+        c = lory.text[c, tx + 6.0 * s, ty + 3.0 * s, name, 12.0 * s, look.page]
+    d.c = c
+    --- what the reader did
+    if d.pressed
+        if _inside_box[px, py, pt.back]
+            if pt.back_on
+                d = gui.tell[d, 'previous', '', 0.0]
+        else if _inside_box[px, py, pt.on]
+            if pt.on_on
+                d = gui.tell[d, 'next', '', 0.0]
+        else
+            at = _cell_under[pt, px, py]
+            if at gte 0
+                if not pt.cells[at].off
+                    d = gui.tell[d, 'press', str[pt.cells[at].day], 0.0]
+            else
+                j = 0
+                while j lt len[pt.titles]
+                    t = pt.titles[j]
+                    if abs[px - t.x] lt 70.0 and abs[py - t.y] lt _title_h[] / 2.0
+                        d = gui.tell[d, 'title', str[pt.firsts[j]], 0.0]
+                    j = j + 1
+    if d.focused
+        for k in typed
+            shift = 0.0
+            name = k
+            if ends[k, '+'] and len[k] gt 1
+                shift = 1.0
+                name = slice[k, 0, len[k] - 1]
+            if name eq 'Tab'
+                d = gui.tell[d, 'tab', '', shift]
+            else
+                d = gui.tell[d, 'key', name, shift]
+    d
+
+--- how far the wheel, or a headset's thumbstick, turned this frame: each
+--- turn's `dy`, in CSS pixels
+fn wheel_turns[c]
+    out = []
+    evs = lory.events[c]
+    if not evs.ok
+        return out
+    for e in evs
+        if e.on eq 'wheel'
+            out = push[out, e.dy / lory.px[c]]
+    out
+
+--- the presses made this frame, each where it was made in CSS pixels
+fn presses_at[c]
+    out = []
+    evs = lory.events[c]
+    if not evs.ok
+        return out
+    for e in evs
+        if e.on eq 'down'
+            out = push[out, [e.x / lory.px[c], e.y / lory.px[c]]]
+    out
+
+--- the keys typed this frame, Tab among them, each followed by `+` where
+--- Shift was held (a drawn control's own keys say nothing of Shift)
+fn keys_typed[c]
+    out = slice[[''], 0, 0]
+    evs = lory.events[c]
+    if not evs.ok
+        return out
+    for e in evs
+        if e.on eq 'key'
+            if e.shift
+                out = push[out, '`e.key`+']
+            else
+                out = push[out, '`e.key`']
+    out
+
+--- a tone of the look by name
+fn _tone[look, tone]
+    if tone eq 'success'
+        return look.success
+    if tone eq 'warning'
+        return look.warning
+    if tone eq 'danger'
+        return look.danger
+    look.accent
+
+--- ---- a scheduler: entries laid on a month, a week or a day ----
+
+--- an entry of a scheduler: its id, its title, when it begins and ends,
+--- whether it fills whole days (`whole`: from the day it begins to the
+--- day it ends, both kept), and its tone (`accent`, `success`, `warning`,
+--- `danger`)
+struct Entry [id, title, start, end, whole, tone]
+
+--- an entry from one moment to another, and one over whole days
+fn entry[id, title, start, end]
+    Entry[id, title, start, end, false, 'accent']
+
+fn whole_days[id, title, first, last]
+    Entry[id, title, day_of[first], day_of[last], true, 'success']
+
+fn _no_entries[]
+    slice[[Entry['', '', moment[0], moment[0], false, '']], 0, 0]
+
+--- an entry laid in a day's hours: the minutes of the day where it begins
+--- and ends there (clipped to the day), its column among the entries it
+--- overlaps, and how many columns those take
+struct Laid [entry, top, bottom, column, columns]
+
+fn _no_laid[]
+    slice[[Laid[Entry['', '', moment[0], moment[0], false, ''], 0.0, 0.0, 0, 0]], 0, 0]
+
+--- the timed entries of a day in a zone laid side by side where they
+--- overlap, as TOAST UI lays them: in the order they begin (the longer
+--- first), each in the first column free when it begins, and the entries
+--- that overlap one another, directly or through others, sharing their
+--- number of columns. An entry ending as another begins does not overlap
+--- it.
+fn side_by_side[entries, d, zone]
+    begins = day_start[d, zone]
+    most = hours_in_day[d, zone] * 60.0
+    parts = _no_laid[]
+    for e in entries
+        if not e.whole
+            top = (e.start - begins) / 60.0
+            bottom = (e.end - begins) / 60.0
+            if bottom gt top and top lt most and bottom gt 0.0
+                parts = push[parts, Laid[e, max[0.0, top], min[most, bottom], 0, 0]]
+            else if bottom eq top and top gte 0.0 and top lt most
+                parts = push[parts, Laid[e, top, top, 0, 0]]
+    parts = _in_order[parts]
+    out = _no_laid[]
+    ends_at = []
+    from = 0
+    reach = -1.0
+    i = 0
+    while i lt len[parts]
+        p = parts[i]
+        if p.top gte reach and len[ends_at] gt 0
+            out = _columned[out, from, len[ends_at]]
+            ends_at = []
+            from = len[out]
+        col = -1
+        j = 0
+        while j lt len[ends_at] and col lt 0
+            if ends_at[j] lte p.top
+                col = j
+            j = j + 1
+        bottom = max[p.bottom, p.top + 0.001]
+        if col lt 0
+            col = len[ends_at]
+            ends_at = push[ends_at, bottom]
+        else
+            ends_at[col] = bottom
+        reach = max[reach, bottom]
+        p.column = col
+        out = push[out, p]
+        i = i + 1
+    if len[ends_at] gt 0
+        out = _columned[out, from, len[ends_at]]
+    out
+
+fn _columned[out, from, n]
+    k = from
+    while k lt len[out]
+        laid = out[k]
+        laid.columns = n
+        out[k] = laid
+        k = k + 1
+    out
+
+--- laid parts in the order they begin, the longer first where two begin
+--- together (an insertion's order: a day holds few)
+fn _in_order[parts]
+    out = _no_laid[]
+    for p in parts
+        at = len[out]
+        while at gt 0 and _before[p, out[at - 1]]
+            at = at - 1
+        out = concat[concat[slice[out, 0, at], [p]], slice[out, at, len[out]]]
+    out
+
+fn _before[a, b]
+    if a.top ne b.top
+        return a.top lt b.top
+    a.bottom - a.top gt b.bottom - b.top
+
+--- an entry laid along a row of days: its lane (0 the top one) and the
+--- first and last of the row's days it covers (from 0)
+struct Lane [entry, lane, from, to]
+
+fn _no_lanes[]
+    slice[[Lane[Entry['', '', moment[0], moment[0], false, ''], 0, 0, 0]], 0, 0]
+
+--- the days an entry covers, as they are read in a zone: from the day it
+--- begins to the day it ends (one ending at a midnight ends the day
+--- before)
+fn _first_day[e, zone]
+    if e.whole
+        return day_of[e.start]
+    day_of[in_zone[e.start, zone]]
+
+fn _last_day[e, zone]
+    if e.whole
+        return day_of[e.end]
+    there = in_zone[e.end, zone]
+    last = day_of[there]
+    if seconds_into[there] eq 0 and e.end gt e.start
+        return add_days[last, -1]
+    last
+
+--- the entries along `n` days from `first` laid in lanes, as a month's
+--- rows and a week's whole days lay them: in the order they begin (the
+--- longer first), each in the first lane free over its days (`whole`:
+--- only the entries of whole days)
+fn lanes[entries, first, n, zone, whole]
+    cut = _no_lanes[]
+    for e in entries
+        if e.whole or not whole
+            a = days_between[_first_day[e, zone], first]
+            b = days_between[_last_day[e, zone], first]
+            if b gte 0 and a lt n
+                cut = push[cut, Lane[e, 0, max[0, a], min[n - 1, b]]]
+    ordered = _no_lanes[]
+    for p in cut
+        at = len[ordered]
+        while at gt 0 and _lane_before[p, ordered[at - 1]]
+            at = at - 1
+        ordered = concat[concat[slice[ordered, 0, at], [p]], slice[ordered, at, len[ordered]]]
+    out = _no_lanes[]
+    taken = []
+    for p in ordered
+        lane = -1
+        j = 0
+        while j lt len[taken] and lane lt 0
+            if taken[j] lt p.from
+                lane = j
+            j = j + 1
+        if lane lt 0
+            lane = len[taken]
+            taken = push[taken, p.to]
+        else
+            taken[lane] = p.to
+        p.lane = lane
+        out = push[out, p]
+    out
+
+fn _lane_before[a, b]
+    if a.from ne b.from
+        return a.from lt b.from
+    if a.to - a.from ne b.to - b.from
+        return a.to - a.from gt b.to - b.from
+    a.entry.start lt b.entry.start
+
+--- how many of the entries laid along a row cover its day `k` in lanes
+--- from `shown` down (what a `+N more` counts)
+fn hidden_on[laid, k, shown]
+    n = 0
+    for p in laid
+        if p.lane gte shown and p.from lte k and p.to gte k
+            n = n + 1
+    n
+
+--- ---- the scheduler, drawn ----
+
+--- a scheduler as it is drawn: its id; what it shows (`scope`: 'month',
+--- 'week' or 'day') and a day it shows; its entries; its locale and the zone its
+--- clock is read in; the hours a week or a day shows (`first_hour` to
+--- `last_hour`) and how tall an hour is; how many lanes of entries a
+--- month's day or a week's whole days show before `+N more`; its width;
+--- and today
+struct Schedule [id, scope, shown, entries, loc, zone, first_hour, last_hour, hour_tall, lanes_shown, wide, today]
+
+--- a scheduler showing the month, the week or the day `shown` is in, in
+--- en-US and UTC, every hour of the day, 40 pixels an hour, three lanes,
+--- 728 pixels wide (set its fields to change them)
+fn schedule[id, scope, shown, entries]
+    Schedule[id, scope, day_of[shown], entries, locale['en-US'], 'UTC', 0, 24, 40.0, 3, 728.0, today['UTC']]
+
+--- the days a scheduler shows: a month's weeks, a week, a day
+fn schedule_days[sch]
+    if sch.scope eq 'day'
+        return [day_of[sch.shown]]
+    if sch.scope eq 'week'
+        first = start_of_week[sch.shown, sch.loc.week_start]
+        return each_day[first, add_days[first, 6]]
+    month_days[sch.shown.year, sch.shown.month, sch.loc.week_start, false]
+
+--- the scheduler showing the next month, week or day (`n` 1) or the one
+--- before (-1)
+fn schedule_turned[sch, n]
+    if sch.scope eq 'day'
+        sch.shown = add_days[sch.shown, n]
+    else if sch.scope eq 'week'
+        sch.shown = add_days[sch.shown, 7 * n]
+    else
+        sch.shown = add_months[start_of_month[sch.shown], n]
+    sch
+
+--- what the scheduler's painter draws: boxes pressed (an entry, a `+N
+--- more`, a day), words, rules, and where its hours are
+struct Block [x, y, w, h, words, detail, tone, act, arg]
+struct Rule [x0, y0, x1, y1]
+struct Board [blocks, labels, small, marks, rules, days, zone, grid_x, grid_y, col_w, hour_tall, first_hour, last_hour, month, wide, tall]
+
+fn _no_blocks[]
+    slice[[Block[0.0, 0.0, 0.0, 0.0, '', '', '', '', '']], 0, 0]
+
+fn _no_rules[]
+    slice[[Rule[0.0, 0.0, 0.0, 0.0]], 0, 0]
+
+fn _no_board[]
+    Board[_no_blocks[], _no_labels[], _no_labels[], _no_labels[], _no_rules[], no_days[], 'UTC', 0.0, 0.0, 0.0, 0.0, 0, 24, false, 0.0, 0.0]
+
+fn _gutter[]
+    52.0
+
+fn _lane_h[]
+    20.0
+
+fn _month_row_h[sch]
+    26.0 + (sch.lanes_shown + 1) * _lane_h[]
+
+--- the time a clock shows, in the locale's way (9:30 AM, 09:30)
+fn _clock_words[t, loc]
+    if loc.language eq 'en' and loc.name eq 'en-US'
+        if t.minute eq 0
+            return format[t, 'h a', loc]
+        return format[t, 'h:mm a', loc]
+    format[t, 'HH:mm', loc]
+
+fn _whole_rows[sch]
+    days = schedule_days[sch]
+    laid = lanes[sch.entries, days[0], len[days], sch.zone, true]
+    most = 0
+    for p in laid
+        most = max[most, p.lane + 1]
+    min[max[1, most], sch.lanes_shown]
+
+--- the scheduler's height, in CSS pixels
+fn schedule_tall[sch]
+    if sch.scope eq 'month'
+        return 28.0 + len[schedule_days[sch]] / 7 * _month_row_h[sch]
+    44.0 + _whole_rows[sch] * _lane_h[] + 26.0 + (sch.last_hour - sch.first_hour) * sch.hour_tall
+
+fn _board[sch]
+    days = schedule_days[sch]
+    if sch.scope eq 'month'
+        return _month_board[sch, days]
+    _week_board[sch, days]
+
+fn _month_board[sch, days]
+    wide = sch.wide
+    col_w = wide / 7.0
+    row_h = _month_row_h[sch]
+    blocks = _no_blocks[]
+    labels = _no_labels[]
+    small = _no_labels[]
+    marks = _no_labels[]
+    strokes = _no_rules[]
+    j = 0
+    while j lt 7
+        small = push[small, Label[j * col_w + col_w / 2.0, 14.0, sch.loc.weekdays_short[(sch.loc.week_start + j) % 7]]]
+        j = j + 1
+    weeks = len[days] / 7
+    w = 0
+    while w lt weeks
+        y = 28.0 + w * row_h
+        strokes = push[strokes, Rule[0.0, y, wide, y]]
+        first = days[7 * w]
+        laid = lanes[sch.entries, first, 7, sch.zone, false]
+        k = 0
+        while k lt 7
+            d = days[7 * w + k]
+            x = k * col_w
+            blocks = push[blocks, Block[x, y, col_w, row_h, '', '', '', 'day', str[d]]]
+            words = str[d.day]
+            if d.day eq 1
+                words = format[d, 'MMM d', sch.loc]
+            if same_day[d, sch.today]
+                marks = push[marks, Label[x + 14.0, y + 12.0, words]]
+            else if same_month[d, sch.shown]
+                labels = push[labels, Label[x + 6.0, y + 4.0, words]]
+            else
+                small = push[small, Label[x + 6.0 + 0.55 * 12.0 * len[words] / 2.0, y + 11.0, words]]
+            more = hidden_on[laid, k, sch.lanes_shown]
+            if more gt 0
+                blocks = push[blocks, Block[x + 2.0, y + 24.0 + sch.lanes_shown * _lane_h[], col_w - 4.0, _lane_h[] - 2.0, '+`more` more', '', 'more', 'more', str[d]]]
+            k = k + 1
+        for p in laid
+            if p.lane lt sch.lanes_shown
+                words = p.entry.title
+                if not p.entry.whole
+                    words = '`_clock_words[in_zone[p.entry.start, sch.zone], sch.loc]` `p.entry.title`'
+                blocks = push[blocks, Block[p.from * col_w + 2.0, y + 24.0 + p.lane * _lane_h[], (p.to - p.from + 1) * col_w - 4.0, _lane_h[] - 2.0, words, '', p.entry.tone, 'open', p.entry.id]]
+        w = w + 1
+    k = 1
+    while k lt 7
+        strokes = push[strokes, Rule[k * col_w, 28.0, k * col_w, 28.0 + weeks * row_h]]
+        k = k + 1
+    Board[blocks, labels, small, marks, strokes, days, sch.zone, 0.0, 28.0, col_w, 0.0, 0, 0, true, wide, schedule_tall[sch]]
+
+fn _week_board[sch, days]
+    wide = sch.wide
+    n = len[days]
+    gx = _gutter[]
+    col_w = (wide - gx) / n
+    blocks = _no_blocks[]
+    labels = _no_labels[]
+    small = _no_labels[]
+    marks = _no_labels[]
+    strokes = _no_rules[]
+    k = 0
+    while k lt n
+        d = days[k]
+        words = '`sch.loc.weekdays_short[weekday[d]]` `d.day`'
+        if same_day[d, sch.today]
+            marks = push[marks, Label[gx + k * col_w + col_w / 2.0, 22.0, words]]
+        else
+            labels = push[labels, Label[gx + k * col_w + col_w / 2.0, 22.0, words]]
+        k = k + 1
+    rows = _whole_rows[sch]
+    whole_y = 44.0
+    small = push[small, Label[gx / 2.0, whole_y + _lane_h[] / 2.0, 'all day']]
+    laid = lanes[sch.entries, days[0], n, sch.zone, true]
+    for p in laid
+        if p.lane lt sch.lanes_shown
+            blocks = push[blocks, Block[gx + p.from * col_w + 2.0, whole_y + p.lane * _lane_h[] + 1.0, (p.to - p.from + 1) * col_w - 4.0, _lane_h[] - 2.0, p.entry.title, '', p.entry.tone, 'open', p.entry.id]]
+    k = 0
+    while k lt n
+        more = hidden_on[laid, k, sch.lanes_shown]
+        if more gt 0
+            small = push[small, Label[gx + k * col_w + col_w / 2.0, whole_y + rows * _lane_h[] + 9.0, '+`more` more']]
+        k = k + 1
+    gy = whole_y + rows * _lane_h[] + 26.0
+    strokes = push[strokes, Rule[0.0, gy, wide, gy]]
+    h = sch.first_hour
+    while h lt sch.last_hour
+        y = gy + (h - sch.first_hour) * sch.hour_tall
+        strokes = push[strokes, Rule[gx, y, wide, y]]
+        small = push[small, Label[gx / 2.0, y + 8.0, _clock_words[day[2024, 1, 1] + h * 3600, sch.loc]]]
+        h = h + 1
+    k = 0
+    while k lt n
+        strokes = push[strokes, Rule[gx + k * col_w, 44.0, gx + k * col_w, gy + (sch.last_hour - sch.first_hour) * sch.hour_tall]]
+        k = k + 1
+    from_min = sch.first_hour * 60.0
+    to_min = sch.last_hour * 60.0
+    k = 0
+    while k lt n
+        for p in side_by_side[sch.entries, days[k], sch.zone]
+            top = max[p.top, from_min]
+            bottom = min[max[p.bottom, p.top + 20.0], to_min]
+            if bottom gt top
+                part_w = col_w / p.columns
+                x = gx + k * col_w + p.column * part_w + 1.0
+                y = gy + (top - from_min) / 60.0 * sch.hour_tall + 1.0
+                tall = (bottom - top) / 60.0 * sch.hour_tall - 2.0
+                at = in_zone[p.entry.start, sch.zone]
+                till = in_zone[p.entry.end, sch.zone]
+                blocks = push[blocks, Block[x, y, part_w - 2.0, tall, p.entry.title, '`_clock_words[at, sch.loc]` – `_clock_words[till, sch.loc]`', p.entry.tone, 'open', p.entry.id]]
+        k = k + 1
+    Board[blocks, labels, small, marks, strokes, days, sch.zone, gx, gy, col_w, sch.hour_tall, sch.first_hour, sch.last_hour, false, wide, schedule_tall[sch]]
+
+--- the scheduler drawn: one control, its entries pressed. It tells
+--- `open` (`words` the entry's id) for an entry, `more` (the day) for a
+--- day's `+N more`, `day` (the day) for a month's day pressed elsewhere,
+--- and `slot` (the moment, as `2026-07-14T09:30:00-04:00`) for a week's or
+--- a day's hours pressed where no entry is, to the half hour.
+fn scheduler[sch]
+    remember['lory.calendar.schedule:`sch.id`', _board[sch]]
+    gui.drawn[sch.id, 0.0, sch.wide, schedule_tall[sch], _schedule_painted]
+
+--- where an entry's box is in the scheduler, from its top left (the
+--- first, where it is laid in several rows), or [-1, -1, 0, 0]
+fn entry_spot[sch, id]
+    b = _board[sch]
+    for k in b.blocks
+        if k.act eq 'open' and k.arg eq id
+            return [k.x, k.y, k.w, k.h]
+    [-1.0, -1.0, 0.0, 0.0]
+
+--- every box an entry is drawn in, from the scheduler's top left
+fn entry_spots[sch, id]
+    b = _board[sch]
+    out = []
+    for k in b.blocks
+        if k.act eq 'open' and k.arg eq id
+            out = push[out, [k.x, k.y, k.w, k.h]]
+    out
+
+fn _schedule_painted[d]
+    b = recall['lory.calendar.schedule:`d.id`', _no_board[]]
+    s = d.s
+    look = d.look
+    --- (where the pointer stands is read from the frame's input, which
+    --- can fail: a painter that decided on a failure would answer one, and
+    --- gui's node holds only a painter whose answer cannot fail, so a frame
+    --- whose input failed is drawn as it stood)
+    px = d.px / s
+    if not px.ok
+        return d
+    py = d.py / s
+    if not py.ok
+        return d
+    c = d.c
+    for r in b.rules
+        c = lory.line[c, d.x + r.x0 * s, d.y + r.y0 * s, d.x + r.x1 * s, d.y + r.y1 * s, 1.0 * s, look.edge]
+    for t in b.labels
+        if b.month
+            c = lory.text[c, d.x + t.x * s, d.y + t.y * s, t.words, 12.0 * s, look.ink]
+        else
+            c = lory.text_centered[c, d.x + t.x * s, d.y + t.y * s, t.words, 13.0 * s, look.ink]
+    for t in b.small
+        c = lory.text_centered[c, d.x + t.x * s, d.y + t.y * s, t.words, 11.0 * s, look.muted]
+    for t in b.marks
+        if b.month
+            wide = lory.measure[c, t.words, 12.0 * s] + 12.0 * s
+            c = lory.round_rect[c, d.x + t.x * s - 8.0 * s, d.y + t.y * s - 9.0 * s, wide, 18.0 * s, 9.0 * s, look.accent]
+            c = lory.text[c, d.x + t.x * s - 2.0 * s, d.y + t.y * s - 8.0 * s, t.words, 12.0 * s, look.on_accent]
+        else
+            c = lory.text_centered[c, d.x + t.x * s, d.y + t.y * s, t.words, 13.0 * s, look.accent]
+    hit = -1
+    i = 0
+    for k in b.blocks
+        inside = px gte k.x and py gte k.y and px lt k.x + k.w and py lt k.y + k.h
+        if k.act ne 'day'
+            x = d.x + k.x * s
+            y = d.y + k.y * s
+            w = k.w * s
+            h = k.h * s
+            if k.act eq 'more'
+                ground = look.hover
+                if inside and d.hover
+                    ground = look.press
+                c = lory.round_rect[c, x, y, w, h, 4.0 * s, ground]
+                c = lory.text[c, x + 6.0 * s, y + 3.0 * s, k.words, 11.0 * s, look.ink]
+            else
+                tone = _tone[look, k.tone]
+                ground = lory.fade[tone, 0.24]
+                if inside and d.hover
+                    ground = lory.fade[tone, 0.4]
+                c = lory.round_rect[c, x, y, w, h, 4.0 * s, ground]
+                c = lory.rect[c, x, y, 3.0 * s, h, tone]
+                kept = lory.clipped[c]
+                c = lory.clip[c, x, y, w, h]
+                c = lory.text[c, x + 7.0 * s, y + 3.0 * s, k.words, 12.0 * s, look.ink]
+                if k.detail ne '' and h gt 34.0 * s
+                    c = lory.text[c, x + 7.0 * s, y + 19.0 * s, k.detail, 11.0 * s, look.muted]
+                c = lory.unclip[c, kept]
+        if inside
+            if hit lt 0 or b.blocks[hit].act eq 'day'
+                hit = i
+        i = i + 1
+    d.c = c
+    if d.pressed
+        if hit gte 0
+            k = b.blocks[hit]
+            d = gui.tell[d, k.act, k.arg, 0.0]
+        else if not b.month and px gte b.grid_x and py gte b.grid_y and len[b.days] gt 0
+            col = floor[(px - b.grid_x) / b.col_w]
+            if col gte 0 and col lt len[b.days]
+                half = floor[(py - b.grid_y) / b.hour_tall * 2.0]
+                minutes = b.first_hour * 60 + half * 30
+                if minutes lt b.last_hour * 60
+                    d = gui.tell[d, 'slot', str[at_clock[b.days[col], minutes * 60, b.zone]], 0.0]
+    d
+
+--- ---- tests ----
+
+--- a frame of a page 900 by 700 CSS pixels, and of a headset's left eye,
+--- holding the input given; a mouse's press and release at a place
+fn _screen[given]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _headset[given]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+--- what a control told in a frame, each as its act and its words
+fn _told[shown, id]
+    out = []
+    for e in shown.events
+        if e.id eq id
+            out = push[out, '`e.act` `e.words`']
+    out
+
+fn _days_words[days]
+    out = []
+    for t in days
+        out = push[out, format[t, 'yyyy-MM-dd', locale['en-US']]]
+    join[out, ' ']
+
+test days_roll_over_and_keep_inside_their_month[]
+    day[2024, 13, 1] eq day[2025, 1, 1]
+    day[2024, 0, 15] eq day[2023, 12, 15]
+    day[2023, 2, 31] eq day[2023, 2, 28]
+    days_in_month[2024, 2] eq 29
+    leap_year[1900] eq false
+    leap_year[2000]
+    weekday[day[2024, 3, 3]] eq 0
+    day_of[moment[2024, 3, 5, 17, 45, 0]] eq day[2024, 3, 5]
+
+test months_added_keep_the_day_or_take_the_months_last[]
+    add_months[day[2024, 1, 31], 1] eq day[2024, 2, 29]
+    add_months[day[2024, 3, 31], -1] eq day[2024, 2, 29]
+    add_years[day[2024, 2, 29], 1] eq day[2025, 2, 28]
+    add_quarters[day[2024, 11, 30], 1] eq day[2025, 2, 28]
+    days_between[day[2024, 3, 1], day[2024, 2, 1]] eq 29
+    months_between[day[2024, 3, 1], day[2023, 1, 1]] eq 14
+
+test weeks_begin_on_the_day_given_and_are_numbered_two_ways[]
+    start_of_week[day[2024, 3, 6], 0] eq day[2024, 3, 3]
+    start_of_week[day[2024, 3, 6], 1] eq day[2024, 3, 4]
+    end_of_week[day[2024, 3, 6], 1] eq day[2024, 3, 10]
+    iso_week[day[2021, 1, 3]] eq 53
+    iso_week_year[day[2021, 1, 3]] eq 2020
+    week[day[2021, 1, 3], 0, 1] eq 2
+    quarter[day[2024, 8, 1]] eq 3
+    start_of_quarter[day[2024, 8, 1]] eq day[2024, 7, 1]
+
+test a_months_calendar_shows_whole_weeks_and_six_where_asked[]
+    march = month_days[2024, 3, 0, false]
+    len[march] eq 42
+    march[0] eq day[2024, 2, 25]
+    february = month_days[2026, 2, 0, false]
+    len[february] eq 28
+    len[month_days[2026, 2, 0, true]] eq 42
+    month_days[2024, 3, 1, false][0] eq day[2024, 2, 26]
+
+--- how many cells show a day, not left out
+fn _visible[pt, t]
+    n = 0
+    for k in pt.cells
+        if same_day[k.day, t] and not k.hidden
+            n = n + 1
+    n
+
+test months_side_by_side_leave_out_the_days_where_they_meet[]
+    two = sheet['two', [day[2026, 7, 14]]]
+    two.months = 2
+    pt = _painting[two]
+    _visible[pt, day[2026, 6, 28]] eq 1
+    _visible[pt, day[2026, 8, 1]] eq 1
+    _visible[pt, day[2026, 7, 31]] eq 1
+    _visible[pt, day[2026, 9, 5]] eq 1
+    one = _painting[sheet['one', [day[2026, 7, 14]]]]
+    _visible[one, day[2026, 8, 1]] eq 1
+    _visible[one, day[2026, 6, 28]] eq 1
+
+test dates_are_written_and_read_by_a_pattern_in_a_locale[]
+    en = locale['en-US']
+    format[day[2024, 3, 5], 'MM/dd/yyyy', en] eq '03/05/2024'
+    format[day[2024, 3, 5], 'EEEE, MMMM do', en] eq 'Tuesday, March 5th'
+    format[day[2024, 3, 5], 'EEEE d MMMM', locale['fr']] eq 'mardi 5 mars'
+    format[moment[2024, 3, 5, 14, 7, 0], 'h:mm aa', en] eq '2:07 PM'
+    parse['03/20/2024', 'MM/dd/yyyy', en, day[2000, 1, 1], 'UTC'] eq day[2024, 3, 20]
+    parse['2:30 PM', 'h:mm aa', en, day[2024, 3, 5], 'UTC'] eq moment[2024, 3, 5, 14, 30, 0]
+    not parse['13/40/2024', 'MM/dd/yyyy', en, day[2000, 1, 1], 'UTC'].ok
+    not parse['03/20', 'MM/dd/yyyy', en, day[2000, 1, 1], 'UTC'].ok
+    parse['2024, Q3', 'yyyy, QQQ', en, day[2000, 1, 1], 'UTC'] eq day[2024, 7, 1]
+    parse['10/2024', 'I/R', en, day[2000, 1, 1], 'UTC'] eq day[2024, 3, 4]
+    not parse['03/2024', 'MM/I', en, day[2000, 1, 1], 'UTC'].ok
+
+test a_day_in_a_zone_begins_where_its_clocks_say[]
+    hours_in_day[day[2024, 3, 10], 'America/New_York'] eq 23
+    hours_in_day[day[2024, 11, 3], 'America/New_York'] eq 25
+    hours_in_day[day[2024, 3, 10], 'UTC'] eq 24
+    day_start[day[2024, 7, 1], 'Europe/Paris'] eq moment[2024, 6, 30, 22, 0, 0]
+    at_clock[day[2024, 7, 1], 9 * 3600, 'Asia/Kolkata'] eq moment[2024, 7, 1, 3, 30, 0]
+
+fn _weekends[t]
+    weekday[t] ne 0 and weekday[t] ne 6
+
+test rules_close_days_out_of_bounds_left_out_or_not_kept[]
+    r = bounded[rules[], day[2024, 3, 4], day[2024, 3, 28]]
+    day_off[r, day[2024, 3, 3]]
+    not day_off[r, day[2024, 3, 4]]
+    day_off[r, day[2024, 3, 29]]
+    r = excluding[r, [day[2024, 3, 12]]]
+    day_off[r, day[2024, 3, 12]]
+    r = excluding_spans[r, [Span[day[2024, 3, 18], day[2024, 3, 20]]]]
+    day_off[r, day[2024, 3, 19]]
+    weekdays = filtered[rules[], _weekends]
+    day_off[weekdays, day[2024, 3, 9]]
+    not day_off[weekdays, day[2024, 3, 8]]
+    only = including[rules[], [day[2024, 3, 5], day[2024, 3, 7]]]
+    not day_off[only, day[2024, 3, 5]]
+    day_off[only, day[2024, 3, 6]]
+    marked = observing[marking[rules[], [day[2024, 3, 8]], 'success'], [Holiday[day[2024, 3, 17], 'A feast']]]
+    tone_on[marked, day[2024, 3, 8]] eq 'success'
+    holiday_on[marked, day[2024, 3, 17]] eq 'A feast'
+    span_off[r, day[2024, 3, 1], day[2024, 3, 3]]
+    not span_off[r, day[2024, 3, 1], day[2024, 3, 31]]
+    --- (only the days of these spans, both ends held; with days listed
+    --- too, as react-datepicker has it, only a day in both)
+    spans = including_spans[rules[], [Span[day[2024, 3, 10], day[2024, 3, 12]]]]
+    not day_off[spans, day[2024, 3, 10]] and not day_off[spans, day[2024, 3, 12]]
+    day_off[spans, day[2024, 3, 9]] and day_off[spans, day[2024, 3, 13]]
+    both = including[spans, [day[2024, 3, 11], day[2024, 3, 20]]]
+    not day_off[both, day[2024, 3, 11]]
+    day_off[both, day[2024, 3, 20]] and day_off[both, day[2024, 3, 10]]
+
+test keys_move_the_focus_as_react_datepicker_moves_it[]
+    r = rules[]
+    t = day[2024, 3, 13]
+    key_moved[t, 'ArrowRight', false, r, 0, false] eq day[2024, 3, 14]
+    key_moved[t, 'ArrowLeft', false, r, 0, false] eq day[2024, 3, 12]
+    key_moved[t, 'ArrowDown', false, r, 0, false] eq day[2024, 3, 20]
+    key_moved[t, 'ArrowUp', false, r, 0, false] eq day[2024, 3, 6]
+    key_moved[t, 'PageDown', false, r, 0, false] eq day[2024, 4, 13]
+    key_moved[t, 'PageUp', true, r, 0, false] eq day[2023, 3, 13]
+    key_moved[t, 'Home', false, r, 0, false] eq day[2024, 3, 10]
+    key_moved[t, 'End', false, r, 1, false] eq day[2024, 3, 17]
+    key_moved[t, 'ArrowRight', false, r, 0, true] eq day[2024, 3, 20]
+    --- (a day left out is stepped past in the key's way)
+    off = excluding[r, [day[2024, 3, 14], day[2024, 3, 15]]]
+    key_moved[t, 'ArrowRight', false, off, 0, false] eq day[2024, 3, 16]
+    bounds = bounded[r, day[2024, 3, 1], day[2024, 3, 31]]
+    key_moved[day[2024, 3, 28], 'ArrowDown', false, bounds, 0, false] eq day[2024, 3, 31]
+
+test a_range_is_begun_ended_and_begun_again[]
+    r = rules[]
+    one = chosen_by[no_days[], day[2024, 3, 10], 'range', false, r, 0]
+    _days_words[one] eq '2024-03-10'
+    not choice_ends[no_days[], day[2024, 3, 10], 'range', false]
+    two = chosen_by[one, day[2024, 3, 14], 'range', false, r, 0]
+    _days_words[two] eq '2024-03-10 2024-03-14'
+    choice_ends[one, day[2024, 3, 14], 'range', false]
+    _days_words[chosen_by[one, day[2024, 3, 6], 'range', false, r, 0]] eq '2024-03-06'
+    _days_words[chosen_by[one, day[2024, 3, 6], 'range', true, r, 0]] eq '2024-03-06 2024-03-10'
+    _days_words[chosen_by[two, day[2024, 3, 20], 'range', false, r, 0]] eq '2024-03-20'
+    many = chosen_by[chosen_by[no_days[], day[2024, 3, 3], 'days', false, r, 0], day[2024, 3, 5], 'days', false, r, 0]
+    _days_words[many] eq '2024-03-03 2024-03-05'
+    _days_words[chosen_by[many, day[2024, 3, 3], 'days', false, r, 0]] eq '2024-03-05'
+    _days_words[chosen_by[no_days[], day[2024, 3, 6], 'week', false, r, 1]] eq '2024-03-04'
+
+test overlapping_entries_stand_side_by_side_and_whole_days_in_lanes[]
+    t = day[2024, 3, 4]
+    es = [entry['a', 'Stand-up', t + 9 * 3600, t + 10 * 3600], entry['b', 'Review', t + 9 * 3600 + 1800, t + 11 * 3600], entry['c', 'Lunch', t + 12 * 3600, t + 13 * 3600], entry['e', 'Call', t + 10 * 3600, t + 10 * 3600 + 1800], whole_days['d', 'Trip', t, add_days[t, 2]]]
+    laid = side_by_side[es, t, 'UTC']
+    len[laid] eq 4
+    lined = for k in laid
+        '`k.entry.id` `k.column` `k.columns`'
+    join[lined, ', '] eq 'a 0 2, b 1 2, e 0 2, c 0 1'
+    rows = lanes[es, t, 7, 'UTC', true]
+    len[rows] eq 1
+    '`rows[0].entry.id` `rows[0].from` `rows[0].to`' eq 'd 0 2'
+
+test a_month_is_drawn_and_a_day_pressed_is_told[]
+    gui.unfocus[]
+    sh = sheet['march', [day[2024, 3, 5]]]
+    sh.numbers = true
+    first = gui.show[lory.begin[_screen['[]']], gui.column[[month_view[sh]]]]
+    b = first.boxes['march']
+    b[2] eq sheet_wide[sh]
+    spot = day_spot[sh, day[2024, 3, 20]]
+    pressed = gui.show[lory.begin[_screen[_press_at[b[0] + spot[0] + 10.0, b[1] + spot[1] + 10.0]]], gui.column[[month_view[sh]]]]
+    _told[pressed, 'march'] eq ['press 2024-03-20']
+    next = arrow_spot[sh, 'next']
+    turned = gui.show[lory.begin[_screen[_press_at[b[0] + next[0] + 8.0, b[1] + next[1] + 8.0]]], gui.column[[month_view[sh]]]]
+    _told[turned, 'march'] eq ['next ']
+    turned[sh, 1].shown eq day[2024, 4, 1]
+    turns_on[sh]
+
+test a_week_of_the_scheduler_is_drawn_and_an_entry_pressed_is_opened[]
+    gui.unfocus[]
+    t = day[2024, 3, 4]
+    es = [entry['a', 'Stand-up', t + 9 * 3600, t + 10 * 3600], entry['b', 'Review', t + 9 * 3600 + 1800, t + 11 * 3600]]
+    sch = schedule['week', 'week', t, es]
+    first = gui.show[lory.begin[_screen['[]']], gui.column[[scheduler[sch]]]]
+    b = first.boxes['week']
+    spot = entry_spot[sch, 'b']
+    spot[0] gte 0.0
+    pressed = gui.show[lory.begin[_screen[_press_at[b[0] + spot[0] + 6.0, b[1] + spot[1] + 6.0]]], gui.column[[scheduler[sch]]]]
+    _told[pressed, 'week'] eq ['open b']
+    len[schedule_days[sch]] eq 7
+    schedule_turned[sch, 1].shown eq day[2024, 3, 11]
+
+test a_calendar_in_a_headset_is_drawn_and_pressed_as_on_a_page[]
+    gui.unfocus[]
+    sh = sheet['worn', [day[2024, 3, 5]]]
+    first = gui.show[lory.begin[_headset['[]']], gui.column[[month_view[sh]]]]
+    len[first.canvas.verts] gt 100
+    b = first.boxes['worn']
+    spot = day_spot[sh, day[2024, 3, 21]]
+    pressed = gui.show[lory.begin[_headset[_press_at[b[0] + spot[0] + 10.0, b[1] + spot[1] + 10.0]]], gui.column[[month_view[sh]]]]
+    _told[pressed, 'worn'] eq ['press 2024-03-21']

@@ -1,0 +1,2441 @@
+--- Lory's icons: every glyph a control needs, drawn by Lory from its own
+--- lines, discs, rings and boxes, in the colour it is given.
+---
+---     c = icons.draw[c, 'check', x, y, 24.0, look.ink]
+---
+--- An icon is designed on a grid of 15 units (Radix's grid), scaled to the
+--- square it is drawn in: its strokes are a unit wide, so an icon drawn 15
+--- pixels wide on whole pixels has crisp one-pixel lines, and their ends
+--- and corners are round. Where an icon is solid (play, a filled star) it
+--- is filled and edged with the same stroke, so its corners are round too.
+---
+--- The set (docs/components/icons.md): Crow ui's closed set by Crow's names,
+--- Radix Icons' by Radix's names (its brand marks aside), and the icons the
+--- surveyed kits' components ask for (a map's pin, a table's sorts, a
+--- player's volume, a hotkey's keys). A name is spelled with hyphens, as
+--- Radix spells it, or underscores, as Crow does: `eye_off` is `eye-off`.
+--- Some names are another's drawing (`close` is `x`); every other name has
+--- a drawing of its own. A name the set does not draw is a small square.
+--- `names[]` lists them all, `known[name]` says whether one is drawn,
+--- `turned` draws an icon turned about its middle (a section's chevron as
+--- it opens), `spinning` turned as far as the time has taken a loading
+--- icon, and `flipped` mirrored.
+---
+--- Strokes meet where an icon's parts touch, so an icon drawn in a colour
+--- that is not opaque shows its joins darker: draw it opaque (mix the
+--- colour with what it is drawn on, `lory.mix`) and fade the whole.
+
+use lory
+use math
+
+--- how an icon is being drawn: its square's top left, the pixels one unit
+--- of the grid is, a stroke's width in pixels, and its colour
+struct Pen [x, y, unit, stroke, color]
+
+--- ---- the set ----
+
+--- the canvas with the icon `name` drawn in the square from (x, y), `size`
+--- wide and tall, in the drawing's pixels; a name the set does not draw
+--- is a small outlined square
+fn draw[c, name, x, y, size, color]
+    k = size / 15.0
+    p = Pen[x, y, k, k, color]
+    _drawn[c, p, _target[_spelled[name]]]
+
+--- every name drawn, spelled with hyphens, in order
+fn names[]
+    out = slice[[''], 0, 0]
+    for n in _crow_set[]
+        out = push[out, _spelled[n]]
+    for n in _radix_set[]
+        out = push[out, n]
+    for n in _kit_set[]
+        out = push[out, n]
+    for pair in _aliases[]
+        out = push[out, pair[0]]
+    sorted = sort[out]
+    kept = slice[[''], 0, 0]
+    i = 0
+    while i lt len[sorted]
+        if i eq 0 or sorted[i] ne sorted[i - 1]
+            kept = push[kept, sorted[i]]
+        i = i + 1
+    kept
+
+--- whether the set draws the name (a name it does not is drawn as a
+--- small square)
+fn known[name]
+    _drawing[_target[_spelled[name]]]
+
+--- the canvas with the icon drawn as `draw` draws it, then turned
+--- clockwise about its square's middle by `degrees`: a chevron that turns
+--- as its section opens (Semantic UI's rotated icons are a quarter turn,
+--- 90 clockwise and -90 counterclockwise). Every shape Lory draws is
+--- placed by its corners and shaded from its own corner's numbers, so
+--- turning the corners turns the shape whole: a rounded box stays rounded,
+--- a line keeps its width
+fn turned[c, name, x, y, size, color, degrees]
+    before = len[c.verts]
+    c = draw[c, name, x, y, size, color]
+    --- (whole turns leave it as it is drawn, to the last bit)
+    if degrees / 360.0 eq floor[degrees / 360.0]
+        return c
+    _spun[c, before, x + size / 2.0, y + size / 2.0, degrees]
+
+--- the canvas with the icon drawn as a loading icon is at the frame's
+--- time `t` (milliseconds, `lory.time[c]`): turned at an even pace, once
+--- round every two seconds, as Semantic UI turns its loading icons. Drawn
+--- each frame, it spins
+fn spinning[c, name, x, y, size, color, t]
+    turned[c, name, x, y, size, color, _spin[t]]
+
+--- how far a loading icon has turned at time t (milliseconds), in degrees:
+--- a whole turn every two seconds
+fn _spin[t]
+    turns = t / 2000.0
+    360.0 * (turns - floor[turns])
+
+--- the canvas with the icon drawn as `draw` draws it, then flipped about
+--- its square's middle, as Semantic UI flips its icons: `horizontally`
+--- (left and right swapped: the arrow right points left) or `vertically`
+--- (top and bottom swapped). Every shape Lory draws is shaded alike on
+--- either side of its middle, so a shape flipped is the shape mirrored
+fn flipped[c, name, x, y, size, color, way]
+    before = len[c.verts]
+    c = draw[c, name, x, y, size, color]
+    _mirror[c, before, x + size / 2.0, y + size / 2.0, way eq 'horizontally']
+
+--- the canvas with its vertices from float `before` on mirrored about the
+--- line down through (cx, cy) where `across`, else the line across it
+fn _mirror[c, before, cx, cy, across]
+    vs = c.verts
+    step = lory.floats[]
+    i = before
+    while i lt len[vs]
+        if across
+            vs[i] = 2.0 * cx - vs[i]
+        else
+            vs[i + 1] = 2.0 * cy - vs[i + 1]
+        i = i + step
+    c.verts = vs
+    c
+
+--- the canvas with its vertices from float `before` on turned clockwise
+--- about (cx, cy) by `degrees`; what they are shaded from is kept
+fn _spun[c, before, cx, cy, degrees]
+    a = degrees * pi / 180.0
+    ca = cos[a]
+    sa = sin[a]
+    vs = c.verts
+    step = lory.floats[]
+    i = before
+    while i lt len[vs]
+        dx = vs[i] - cx
+        dy = vs[i + 1] - cy
+        vs[i] = cx + dx * ca - dy * sa
+        vs[i + 1] = cy + dx * sa + dy * ca
+        i = i + step
+    c.verts = vs
+    c
+
+--- a name as the set spells it: underscores are hyphens
+fn _spelled[name]
+    replace[name, '_', '-']
+
+--- the name whose drawing a name is: an alias's, or its own
+fn _target[name]
+    for pair in _aliases[]
+        if pair[0] eq name
+            return pair[1]
+    name
+
+--- ---- drawing on the grid ----
+
+--- (every number below is in units of the grid, from its top left; a pen
+--- puts them in the drawing's pixels)
+
+--- a stroke through the points (x0, y0, x1, y1, …): its ends round, a
+--- sharp corner rounded by a disc, and a gentle bend closed by the lines
+--- on either side reaching past it, so a curve drawn as short lines shows
+--- no notches and costs no discs
+fn _stroke[c, p, pts]
+    _path[c, p, pts, false]
+
+--- a stroke around the points, the last joined to the first
+fn _loop[c, p, pts]
+    _path[c, p, pts, true]
+
+fn _path[c, p, pts, closed]
+    n = len[pts] / 2
+    if n lt 2
+        return c
+    half = p.stroke / p.unit / 2.0
+    sides = n - 1
+    if closed
+        sides = n
+    i = 0
+    while i lt sides
+        j = i + 1
+        if j eq n
+            j = 0
+        ax = pts[2 * i]
+        ay = pts[2 * i + 1]
+        bx = pts[2 * j]
+        by = pts[2 * j + 1]
+        dx = bx - ax
+        dy = by - ay
+        long = sqrt[dx * dx + dy * dy]
+        if long gt 0.000001
+            back = _reach[pts, n, i, closed, half] / long
+            on = _reach[pts, n, j, closed, half] / long
+            c = lory.line[c, p.x + (ax - dx * back) * p.unit, p.y + (ay - dy * back) * p.unit, p.x + (bx + dx * on) * p.unit, p.y + (by + dy * on) * p.unit, p.stroke, p.color]
+        i = i + 1
+    r = p.stroke / 2.0
+    i = 0
+    while i lt n
+        if _turn[pts, n, i, closed] lt 0.9 or _turn[pts, n, i, closed] gt 1.5
+            c = lory.circle[c, p.x + pts[2 * i] * p.unit, p.y + pts[2 * i + 1] * p.unit, r, p.color]
+        i = i + 1
+    c
+
+--- the cosine of the turn a path makes at its point i (1 straight on, -1
+--- doubling back), or 2 where the path ends there
+fn _turn[pts, n, i, closed]
+    h = i - 1
+    j = i + 1
+    if closed
+        if h lt 0
+            h = n - 1
+        if j eq n
+            j = 0
+    if h lt 0 or j gte n
+        return 2.0
+    ux = pts[2 * i] - pts[2 * h]
+    uy = pts[2 * i + 1] - pts[2 * h + 1]
+    vx = pts[2 * j] - pts[2 * i]
+    vy = pts[2 * j + 1] - pts[2 * i + 1]
+    lengths = sqrt[(ux * ux + uy * uy) * (vx * vx + vy * vy)]
+    if lengths lt 0.000000001
+        return -1.0
+    (ux * vx + uy * vy) / lengths
+
+--- how far the lines meeting at point i reach past it: half a stroke
+--- times the tangent of half the turn, where the bend is gentle (a sharp
+--- one and an end are rounded by a disc instead)
+fn _reach[pts, n, i, closed, half]
+    t = _turn[pts, n, i, closed]
+    if t lt 0.9 or t gt 1.5
+        return 0.0
+    half * sqrt[max[0.0, 1.0 - t] / (1.0 + t)]
+
+--- the convex polygon through the points filled
+fn _solid[c, p, pts]
+    n = len[pts] / 2
+    xs = for i in range[n]
+        p.x + pts[2 * i] * p.unit
+    ys = for i in range[n]
+        p.y + pts[2 * i + 1] * p.unit
+    lory.fill[c, xs, ys, p.color]
+
+--- the convex polygon filled and edged, so its corners are round
+fn _filled[c, p, pts]
+    c = _solid[c, p, pts]
+    _loop[c, p, pts]
+
+--- a circle's edge about (cx, cy), the stroke centred on radius r
+fn _ring[c, p, cx, cy, r]
+    lory.ring[c, p.x + cx * p.unit, p.y + cy * p.unit, r * p.unit + p.stroke / 2.0, p.stroke, p.color]
+
+--- a disc of radius r about (cx, cy)
+fn _disc[c, p, cx, cy, r]
+    lory.circle[c, p.x + cx * p.unit, p.y + cy * p.unit, r * p.unit, p.color]
+
+--- a box's edge from (x, y), w wide and h tall, the stroke centred on it,
+--- its corners rounded to radius r (at r 0 the stroke's own round corner)
+fn _box[c, p, x, y, w, h, r]
+    s = p.stroke
+    lory.round_outline[c, p.x + x * p.unit - s / 2.0, p.y + y * p.unit - s / 2.0, w * p.unit + s, h * p.unit + s, r * p.unit + s / 2.0, s, p.color]
+
+--- a box filled, its corners rounded to radius r
+fn _block[c, p, x, y, w, h, r]
+    lory.round_rect[c, p.x + x * p.unit, p.y + y * p.unit, w * p.unit, h * p.unit, r * p.unit, p.color]
+
+--- the arc of a circle about (cx, cy) of radius r, from angle a0 to a1 in
+--- degrees, clockwise from three o'clock
+fn _arc[c, p, cx, cy, r, a0, a1]
+    _stroke[c, p, _arc_points[cx, cy, r, r, a0, a1]]
+
+--- an ellipse's edge about (cx, cy), rx across and ry down
+fn _oval[c, p, cx, cy, rx, ry]
+    _loop[c, p, slice[_arc_points[cx, cy, rx, ry, 0.0, 360.0], 0, 32]]
+
+--- the points of an ellipse's arc about (cx, cy), rx across and ry down,
+--- from angle a0 to a1 in degrees clockwise from three o'clock: a point
+--- at least every 22.5 degrees
+fn _arc_points[cx, cy, rx, ry, a0, a1]
+    steps = max[2, ceil[abs[a1 - a0] / 22.5]]
+    out = []
+    for k in range[steps + 1]
+        a = (a0 + (a1 - a0) * k / steps) * pi / 180.0
+        out = push[out, cx + rx * cos[a]]
+        out = push[out, cy + ry * sin[a]]
+    out
+
+--- the points of a quadratic curve from (x0, y0) to (x2, y2), pulled
+--- toward (x1, y1)
+fn _curve_points[x0, y0, x1, y1, x2, y2]
+    out = []
+    for k in range[9]
+        t = k / 8.0
+        u = 1.0 - t
+        out = push[out, u * u * x0 + 2.0 * u * t * x1 + t * t * x2]
+        out = push[out, u * u * y0 + 2.0 * u * t * y1 + t * t * y2]
+    out
+
+--- n strokes out from (cx, cy), from radius r0 to r1, the first at angle
+--- a0 (degrees clockwise from three o'clock), the rest evenly round
+fn _rays[c, p, cx, cy, r0, r1, n, a0]
+    i = 0
+    while i lt n
+        a = (a0 + 360.0 * i / n) * pi / 180.0
+        c = _stroke[c, p, [cx + r0 * cos[a], cy + r0 * sin[a], cx + r1 * cos[a], cy + r1 * sin[a]]]
+        i = i + 1
+    c
+
+--- n dots of radius r from (x0, y0) to (x1, y1), the first and last on
+--- those points
+fn _dots[c, p, x0, y0, x1, y1, n, r]
+    i = 0
+    while i lt n
+        t = 0.0
+        if n gt 1
+            t = (0.0 + i) / (n - 1)
+        c = _disc[c, p, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r]
+        i = i + 1
+    c
+
+--- a dashed line from (x0, y0) to (x1, y1): `on` units drawn, `off` left
+fn _dashes[c, p, x0, y0, x1, y1, on, off]
+    lory.dashed[c, p.x + x0 * p.unit, p.y + y0 * p.unit, p.x + x1 * p.unit, p.y + y1 * p.unit, p.stroke, p.color, on * p.unit, off * p.unit, 0.0]
+
+--- the pen with strokes w units wide
+fn _wide[p, w]
+    Pen[p.x, p.y, p.unit, p.unit * w, p.color]
+
+--- the points turned clockwise about the square's middle by q quarter
+--- turns: a drawing made pointing right points down at 1, left at 2 and
+--- up at 3
+fn _turned[pts, q]
+    out = []
+    n = len[pts] / 2
+    for i in range[n]
+        x = pts[2 * i]
+        y = pts[2 * i + 1]
+        if q % 4 eq 0
+            out = push[out, x]
+            out = push[out, y]
+        if q % 4 eq 1
+            out = push[out, 15.0 - y]
+            out = push[out, x]
+        if q % 4 eq 2
+            out = push[out, 15.0 - x]
+            out = push[out, 15.0 - y]
+        if q % 4 eq 3
+            out = push[out, y]
+            out = push[out, 15.0 - x]
+    out
+
+--- the points seen in a mirror: left and right swapped
+fn _mirrored[pts]
+    out = []
+    n = len[pts] / 2
+    for i in range[n]
+        out = push[out, 15.0 - pts[2 * i]]
+        out = push[out, pts[2 * i + 1]]
+    out
+
+--- an arrow's head: two strokes `size` long meeting at its tip (x, y),
+--- pointing at angle `a` (degrees clockwise from three o'clock)
+fn _head[c, p, x, y, a, size]
+    l = (a + 135.0) * pi / 180.0
+    r = (a - 135.0) * pi / 180.0
+    _stroke[c, p, [x + size * cos[l], y + size * sin[l], x, y, x + size * cos[r], y + size * sin[r]]]
+
+--- an arc from angle a0 to a1 about (cx, cy), its end an arrow's head
+--- pointing the way the arc goes
+fn _arc_arrow[c, p, cx, cy, r, a0, a1, size]
+    c = _arc[c, p, cx, cy, r, a0, a1]
+    t = a1 * pi / 180.0
+    way = a1 + 90.0
+    if a1 lt a0
+        way = a1 - 90.0
+    _head[c, p, cx + r * cos[t], cy + r * sin[t], way, size]
+
+--- a five-pointed star's points about (cx, cy), its tips `outer` from
+--- the middle and the corners between them `inner`, from the top tip
+--- round clockwise
+fn _star_points[cx, cy, outer, inner]
+    out = []
+    for k in range[10]
+        r = outer
+        if k % 2 eq 1
+            r = inner
+        t = (-90.0 + 36.0 * k) * pi / 180.0
+        out = push[out, cx + r * cos[t]]
+        out = push[out, cy + r * sin[t]]
+    out
+
+--- a line from x0 to x1 at height y with a ring on it at x = k, the line
+--- broken where the ring is (a mixer's track and knob), turned by q
+--- quarter turns
+fn _track[c, p, x0, x1, y, k, q]
+    c = _stroke[c, p, _turned[[x0, y, k - 2.75, y], q]]
+    c = _stroke[c, p, _turned[[k + 2.75, y, x1, y], q]]
+    m = _turned[[k, y], q]
+    _ring[c, p, m[0], m[1], 1.5]
+
+--- the points turned clockwise about the square's middle by `deg`
+--- degrees
+fn _rotated[pts, deg]
+    t = deg * pi / 180.0
+    ct = cos[t]
+    st = sin[t]
+    out = []
+    n = len[pts] / 2
+    for i in range[n]
+        dx = pts[2 * i] - 7.5
+        dy = pts[2 * i + 1] - 7.5
+        out = push[out, 7.5 + dx * ct - dy * st]
+        out = push[out, 7.5 + dx * st + dy * ct]
+    out
+
+--- the shape about (cx, cy) through the points filled, as triangles from
+--- that middle: a shape every ray from the middle leaves once (a star, a
+--- heart) is filled exactly
+fn _fan[c, p, cx, cy, pts]
+    n = len[pts] / 2
+    mx = p.x + cx * p.unit
+    my = p.y + cy * p.unit
+    i = 0
+    while i lt n
+        j = (i + 1) % n
+        c = lory.triangle[c, mx, my, p.x + pts[2 * i] * p.unit, p.y + pts[2 * i + 1] * p.unit, p.x + pts[2 * j] * p.unit, p.y + pts[2 * j + 1] * p.unit, p.color]
+        i = i + 1
+    c
+
+--- n small squares a unit wide, from the one about (x0, y0) to the one
+--- about (x1, y1): a dotted guide, crisp where its middles are on half
+--- units
+fn _specks[c, p, x0, y0, x1, y1, n]
+    i = 0
+    while i lt n
+        t = 0.0
+        if n gt 1
+            t = (0.0 + i) / (n - 1)
+        c = _block[c, p, x0 + (x1 - x0) * t - 0.5, y0 + (y1 - y0) * t - 0.5, 1.0, 1.0, 0.0]
+        i = i + 1
+    c
+
+--- a square's edge dotted, from (a, a) to (b, b), n dots a side
+fn _dotted_square[c, p, a, b, n]
+    step = (b - a) / (n - 1)
+    c = _specks[c, p, a, a, b, a, n]
+    c = _specks[c, p, a, b, b, b, n]
+    c = _specks[c, p, a, a + step, a, b - step, n - 2]
+    _specks[c, p, b, a + step, b, b - step, n - 2]
+
+--- a guide drawn as a solid line, or as n dots between the ends of `dots`
+fn _guide[c, p, line, dots, n, solid]
+    if solid
+        return _stroke[c, p, line]
+    _specks[c, p, dots[0], dots[1], dots[2], dots[3], n]
+
+--- the box from (x, y), w wide and h tall, turned clockwise about the
+--- square's middle by q quarter turns: its corner, width and height
+fn _turned_rect[x, y, w, h, q]
+    if q % 4 eq 1
+        return [15.0 - y - h, x, h, w]
+    if q % 4 eq 2
+        return [15.0 - x - w, 15.0 - y - h, w, h]
+    if q % 4 eq 3
+        return [y, 15.0 - x - w, h, w]
+    [x, y, w, h]
+
+--- a box filled, turned by q quarter turns
+fn _block_turned[c, p, x, y, w, h, r, q]
+    b = _turned_rect[x, y, w, h, q]
+    _block[c, p, b[0], b[1], b[2], b[3], r]
+
+--- the points of an S about (cx, cy), w wide and h tall: the upper bowl
+--- from its right round over the top to the middle, the lower from the
+--- middle round under the bottom
+fn _s_points[cx, cy, w, h]
+    rx = w / 2.0
+    ry = h / 4.0
+    top = _arc_points[cx, cy - ry, rx, ry, -30.0, -270.0]
+    low = _arc_points[cx, cy + ry, rx, ry, -90.0, 150.0]
+    concat[top, slice[low, 2, len[low]]]
+
+--- a capital A standing from x0 to x1, its top at `top` and its feet on
+--- `base`
+fn _cap_a[c, p, x0, x1, top, base]
+    mid = (x0 + x1) / 2.0
+    c = _stroke[c, p, [x0, base, mid, top, x1, base]]
+    y = top + (base - top) * 0.65
+    f = (base - y) / (base - top)
+    _stroke[c, p, [x0 + (mid - x0) * f, y, x1 - (x1 - mid) * f, y]]
+
+--- a small a about x = cx standing on `base`: a bowl of radius r and its
+--- stem
+fn _small_a[c, p, cx, base, r]
+    c = _ring[c, p, cx, base - r, r]
+    _stroke[c, p, [cx + r, base - 2.0 * r, cx + r, base]]
+
+--- a chain's link as two halves facing across the middle, turned by
+--- `slant` degrees: joined by a bar, broken (pulled apart, the bar's
+--- stubs and the break's marks), or apart
+fn _link[c, p, kind, slant]
+    s = 0.0
+    if kind ne 'joined'
+        s = 1.0
+    left = concat[[6.5 - s, 4.5], _arc_points[4.5 - s, 7.5, 3.0, 3.0, -90.0, -270.0], [6.5 - s, 10.5]]
+    c = _stroke[c, p, _rotated[left, slant]]
+    c = _stroke[c, p, _rotated[_mirrored[left], slant]]
+    if kind eq 'joined'
+        return _stroke[c, p, _rotated[[5.0, 7.5, 10.0, 7.5], slant]]
+    if kind eq 'broken'
+        c = _stroke[c, p, _rotated[[3.5, 7.5, 5.0, 7.5], slant]]
+        c = _stroke[c, p, _rotated[[10.0, 7.5, 11.5, 7.5], slant]]
+        c = _stroke[c, p, _rotated[[7.5, 1.0, 7.5, 3.0], slant]]
+        return _stroke[c, p, _rotated[[7.5, 12.0, 7.5, 14.0], slant]]
+    c
+
+--- ---- the names ----
+
+--- Crow ui's closed set, as Crow's spec spells it (language-spec.md, "The
+--- icon set")
+fn _crow_set[]
+    ['check', 'x', 'plus', 'minus', 'chevron_down', 'chevron_up', 'chevron_left', 'chevron_right',
+     'arrow_up', 'arrow_down', 'arrow_left', 'arrow_right', 'search', 'menu', 'more', 'settings',
+     'user', 'home', 'calendar', 'clock', 'refresh', 'play', 'pause', 'stop', 'upload', 'download',
+     'trash', 'edit', 'copy', 'link', 'external', 'info', 'warning', 'error', 'success', 'star',
+     'filter', 'sort', 'chart', 'table', 'bell', 'mail', 'lock', 'eye', 'eye_off', 'dollar',
+     'bookmark', 'flag', 'tag', 'circle', 'dot', 'loader']
+
+--- Radix Icons' names, as Radix spells them (the survey's list of its
+--- repository; its fourteen brand marks are not drawn: docs/components/
+--- icons.md says why)
+fn _radix_set[]
+    ['accessibility', 'activity-log', 'align-baseline', 'align-bottom', 'align-center-horizontally',
+     'align-center-vertically', 'align-left', 'align-right', 'align-top', 'all-sides', 'angle',
+     'archive', 'arrow-bottom-left', 'arrow-bottom-right', 'arrow-down', 'arrow-left',
+     'arrow-right', 'arrow-top-left', 'arrow-top-right', 'arrow-up', 'aspect-ratio', 'avatar',
+     'backpack', 'badge', 'bar-chart', 'bell', 'blending-mode', 'bookmark', 'bookmark-filled',
+     'border-all', 'border-bottom', 'border-dashed', 'border-dotted', 'border-left', 'border-none',
+     'border-right', 'border-solid', 'border-split', 'border-style', 'border-top', 'border-width',
+     'box', 'box-model', 'button', 'calendar', 'camera', 'card-stack', 'card-stack-minus',
+     'card-stack-plus', 'caret-down', 'caret-left', 'caret-right', 'caret-sort', 'caret-up',
+     'chat-bubble', 'check', 'check-circled', 'checkbox', 'chevron-down', 'chevron-left',
+     'chevron-right', 'chevron-up', 'circle', 'circle-backslash', 'clipboard', 'clipboard-copy',
+     'clock', 'code', 'color-wheel', 'column-spacing', 'columns', 'commit', 'component-1',
+     'component-2', 'component-boolean', 'component-instance', 'component-none',
+     'component-placeholder', 'container', 'cookie', 'copy', 'corner-bottom-left',
+     'corner-bottom-right', 'corner-top-left', 'corner-top-right', 'corners', 'countdown-timer',
+     'counter-clockwise-clock', 'crop', 'cross-1', 'cross-2', 'cross-circled', 'crosshair-1',
+     'crosshair-2', 'crumpled-paper', 'cube', 'cursor-arrow', 'cursor-text', 'dash', 'dashboard',
+     'database', 'desktop', 'dimensions', 'disc', 'divider-horizontal', 'divider-vertical', 'dot',
+     'dot-filled', 'dots-horizontal', 'dots-vertical', 'double-arrow-down', 'double-arrow-left',
+     'double-arrow-right', 'double-arrow-up', 'download', 'drag-handle-dots-1',
+     'drag-handle-dots-2', 'drag-handle-horizontal', 'drag-handle-vertical', 'drawing-pin',
+     'drawing-pin-filled', 'dropdown-menu', 'enter', 'enter-full-screen', 'envelope-closed',
+     'envelope-open', 'eraser', 'exclamation-circled', 'exclamation-mark', 'exclamation-triangle',
+     'exit', 'exit-full-screen', 'external-link', 'eye-closed', 'eye-none', 'eye-open', 'face',
+     'file', 'file-minus', 'file-plus', 'file-text', 'filter', 'font-bold', 'font-family',
+     'font-italic', 'font-roman', 'font-size', 'font-style', 'frame', 'gear', 'globe', 'globe-2',
+     'grid', 'group', 'half-1', 'half-2', 'hamburger-menu', 'hand', 'heading', 'heart',
+     'heart-filled', 'height', 'hobby-knife', 'home', 'id-card', 'image', 'info-circled', 'input',
+     'keyboard', 'lap-timer', 'laptop', 'layers', 'layout', 'letter-case-capitalize',
+     'letter-case-lowercase', 'letter-case-toggle', 'letter-case-uppercase', 'letter-spacing',
+     'lightning-bolt', 'line-height', 'link-1', 'link-2', 'link-break-1', 'link-break-2',
+     'link-none-1', 'link-none-2', 'list-bullet', 'lock-closed', 'lock-open-1', 'lock-open-2',
+     'loop', 'magic-wand', 'magnifying-glass', 'margin', 'mask-off', 'mask-on', 'minimize', 'minus',
+     'minus-circled', 'mix', 'mixer-horizontal', 'mixer-vertical', 'mobile', 'moon', 'move',
+     'opacity', 'open-in-new-window', 'overline', 'padding', 'panel-bottom',
+     'panel-bottom-minimized', 'panel-left', 'panel-left-minimized', 'panel-right',
+     'panel-right-minimized', 'paper-plane', 'pause', 'pencil-1', 'pencil-2', 'people', 'person',
+     'pie-chart', 'pilcrow', 'pin-bottom', 'pin-left', 'pin-right', 'pin-top', 'play', 'plus',
+     'plus-circled', 'question-mark', 'question-mark-circled', 'quote', 'radiobutton', 'reader',
+     'reload', 'reset', 'resume', 'rocket', 'rotate-counter-clockwise', 'row-spacing', 'rows',
+     'ruler-horizontal', 'ruler-square', 'scissors', 'section', 'server', 'sewing-pin',
+     'sewing-pin-filled', 'shadow', 'shadow-inner', 'shadow-none', 'shadow-outer', 'share-1',
+     'share-2', 'shuffle', 'size', 'slash', 'slider', 'space-between-horizontally',
+     'space-between-vertically', 'space-evenly-horizontally', 'space-evenly-vertically',
+     'speaker-loud', 'speaker-moderate', 'speaker-off', 'speaker-quiet', 'square', 'stack', 'star',
+     'star-filled', 'stop', 'stopwatch', 'stretch-horizontally', 'stretch-vertically',
+     'strikethrough', 'sun', 'switch', 'symbol', 'table', 'target', 'text', 'text-align-bottom',
+     'text-align-center', 'text-align-justify', 'text-align-left', 'text-align-middle',
+     'text-align-right', 'text-align-top', 'text-none', 'thick-arrow-down', 'thick-arrow-left',
+     'thick-arrow-right', 'thick-arrow-up', 'timer', 'tokens', 'track-next', 'track-previous',
+     'transform', 'transparency-grid', 'trash', 'triangle-down', 'triangle-left', 'triangle-right',
+     'triangle-up', 'underline', 'update', 'upload', 'value', 'value-none', 'video', 'view-grid',
+     'view-horizontal', 'view-none', 'view-vertical', 'width', 'zoom-in', 'zoom-out']
+
+--- the icons the surveyed kits' components ask for that neither set has:
+--- a tree's folders and boxes, a table's sorts and pages, a file field's
+--- clip, a colour picker's dropper and palette, a rating's half star, a
+--- map's pins, a player's keys, an editor's lists and turns, a hotkey's
+--- keys, a status bar's signals
+fn _kit_set[]
+    ['unfold-more', 'unfold-less', 'sort-ascending', 'sort-descending', 'first-page', 'last-page',
+     'list-view', 'square-plus', 'square-minus', 'folder', 'folder-open', 'paperclip', 'cloud',
+     'cloud-upload', 'eyedropper', 'palette', 'star-half', 'spinner', 'map', 'map-pin',
+     'map-pin-filled', 'locate', 'compass', 'navigation', 'record', 'rewind', 'fast-forward',
+     'microphone', 'music', 'undo', 'redo', 'list-numbered', 'list-check', 'indent', 'outdent',
+     'code-block', 'flip-horizontal', 'flip-vertical', 'rotate-clockwise', 'command', 'shift',
+     'option', 'control', 'return', 'backspace', 'wifi', 'battery', 'signal', 'phone']
+
+--- the names drawn as another's drawing: Crow's names where Radix has the
+--- same icon, and the kits' words for icons the set has
+fn _aliases[]
+    [['x', 'cross-2'], ['search', 'magnifying-glass'], ['menu', 'hamburger-menu'], ['more',
+     'dots-horizontal'], ['settings', 'gear'], ['user', 'person'], ['refresh', 'reload'], ['edit',
+     'pencil-1'], ['link', 'link-2'], ['external', 'external-link'], ['info', 'info-circled'],
+     ['warning', 'exclamation-triangle'], ['error', 'cross-circled'], ['success', 'check-circled'],
+     ['chart', 'bar-chart'], ['mail', 'envelope-closed'], ['lock', 'lock-closed'], ['eye',
+     'eye-open'], ['eye-off', 'eye-none'], ['dot-filled', 'dot'], ['close', 'cross-2'], ['expand',
+     'chevron-down'], ['collapse', 'chevron-up'], ['drag-handle', 'drag-handle-dots-2'],
+     ['grid-view', 'view-grid'], ['checkbox-indeterminate', 'square-minus'], ['volume',
+     'speaker-loud'], ['mute', 'speaker-off'], ['fullscreen', 'enter-full-screen'],
+     ['fullscreen-exit', 'exit-full-screen'], ['bold', 'font-bold'], ['italic', 'font-italic'],
+     ['history', 'counter-clockwise-clock']]
+
+--- ---- the drawings ----
+
+--- the canvas with the drawing of a name drawn: the kind whose names hold
+--- it draws it (asking the names, not counting what was drawn, which
+--- would copy the canvas's vertices in a compiled program)
+fn _drawn[c, p, name]
+    if name in _arrow_names[]
+        return _arrows[c, p, name]
+    if name in _layout_names[]
+        return _layout[c, p, name]
+    if name in _box_names[]
+        return _boxes[c, p, name]
+    if name in _text_names[]
+        return _text[c, p, name]
+    if name in _mark_names[]
+        return _marks[c, p, name]
+    if name in _thing_names[]
+        return _things[c, p, name]
+    _box[c, p, 4.5, 4.5, 6.0, 6.0, 0.0]
+
+--- whether a drawing is the set's own (an alias's target is)
+fn _drawing[name]
+    name in _arrow_names[] or name in _layout_names[] or name in _box_names[] or name in _text_names[] or name in _mark_names[] or name in _thing_names[]
+
+--- ---- arrows ----
+
+--- the names of the arrows, chevrons, carets and turns
+fn _arrow_names[]
+    ['arrow-bottom-left', 'arrow-bottom-right', 'arrow-down', 'arrow-left', 'arrow-right',
+     'arrow-top-left', 'arrow-top-right', 'arrow-up', 'caret-down', 'caret-left', 'caret-right',
+     'caret-sort', 'caret-up', 'chevron-down', 'chevron-left', 'chevron-right', 'chevron-up',
+     'corner-bottom-left', 'corner-bottom-right', 'corner-top-left', 'corner-top-right',
+     'double-arrow-down', 'double-arrow-left', 'double-arrow-right', 'double-arrow-up', 'enter',
+     'enter-full-screen', 'exit', 'exit-full-screen', 'external-link', 'first-page',
+     'flip-horizontal', 'flip-vertical', 'last-page', 'loop', 'open-in-new-window', 'redo',
+     'reload', 'reset', 'rotate-clockwise', 'rotate-counter-clockwise', 'share-1', 'share-2',
+     'shuffle', 'sort', 'sort-ascending', 'sort-descending', 'thick-arrow-down',
+     'thick-arrow-left', 'thick-arrow-right', 'thick-arrow-up', 'triangle-down', 'triangle-left',
+     'triangle-right', 'triangle-up', 'undo', 'unfold-less', 'unfold-more', 'update']
+
+--- the quarter turns a direction's word asks of a drawing that points
+--- right: right 0, down 1, left 2, up 3, and -1 for a word that names none
+fn _quarter[way]
+    if way eq 'right'
+        return 0
+    if way eq 'down' or way eq 'bottom'
+        return 1
+    if way eq 'left'
+        return 2
+    if way eq 'up' or way eq 'top'
+        return 3
+    -1
+
+--- the points turned upside down
+fn _flipped[pts]
+    out = []
+    n = len[pts] / 2
+    for i in range[n]
+        out = push[out, pts[2 * i]]
+        out = push[out, 15.0 - pts[2 * i + 1]]
+    out
+
+--- the arrows, chevrons, carets and turns, each drawn pointing right and
+--- turned for the other ways
+fn _arrows[c, p, name]
+    parts = split[name, '-']
+    last = parts[len[parts] - 1]
+    q = _quarter[last]
+    if q gte 0 and len[parts] eq 2
+        kind = parts[0]
+        if kind eq 'arrow'
+            c = _stroke[c, p, _turned[[2.5, 7.5, 12.5, 7.5], q]]
+            return _stroke[c, p, _turned[[8.5, 3.5, 12.5, 7.5, 8.5, 11.5], q]]
+        if kind eq 'chevron'
+            return _stroke[c, p, _turned[[6.0, 3.75, 9.75, 7.5, 6.0, 11.25], q]]
+        if kind eq 'caret'
+            return _filled[c, p, _turned[[6.0, 4.5, 9.0, 7.5, 6.0, 10.5], q]]
+        if kind eq 'triangle'
+            return _filled[c, p, _turned[[5.0, 3.0, 10.0, 7.5, 5.0, 12.0], q]]
+    if q gte 0 and len[parts] eq 3
+        kind = '`parts[0]`-`parts[1]`'
+        if kind eq 'double-arrow'
+            c = _stroke[c, p, _turned[[3.5, 3.75, 7.25, 7.5, 3.5, 11.25], q]]
+            return _stroke[c, p, _turned[[8.0, 3.75, 11.75, 7.5, 8.0, 11.25], q]]
+        if kind eq 'thick-arrow'
+            c = _filled[c, p, _turned[[2.5, 6.0, 8.5, 6.0, 8.5, 9.0, 2.5, 9.0], q]]
+            return _filled[c, p, _turned[[8.0, 2.5, 12.5, 7.5, 8.0, 12.5], q]]
+    if starts[name, 'arrow-'] and len[parts] eq 3
+        --- (the diagonals: top right turned for the other corners)
+        t = -1
+        if name eq 'arrow-top-right'
+            t = 0
+        if name eq 'arrow-bottom-right'
+            t = 1
+        if name eq 'arrow-bottom-left'
+            t = 2
+        if name eq 'arrow-top-left'
+            t = 3
+        if t gte 0
+            c = _stroke[c, p, _turned[[3.5, 11.5, 11.5, 3.5], t]]
+            return _stroke[c, p, _turned[[5.5, 3.5, 11.5, 3.5, 11.5, 9.5], t]]
+    if starts[name, 'corner-']
+        --- (an arrow that turns a corner: up then right is the top right)
+        bend = [3.5, 12.5, 3.5, 5.5, 11.5, 5.5]
+        tip = [8.5, 2.5, 11.5, 5.5, 8.5, 8.5]
+        if name eq 'corner-top-right'
+            c = _stroke[c, p, bend]
+            return _stroke[c, p, tip]
+        if name eq 'corner-top-left'
+            c = _stroke[c, p, _mirrored[bend]]
+            return _stroke[c, p, _mirrored[tip]]
+        if name eq 'corner-bottom-right'
+            c = _stroke[c, p, _flipped[bend]]
+            return _stroke[c, p, _flipped[tip]]
+        if name eq 'corner-bottom-left'
+            c = _stroke[c, p, _mirrored[_flipped[bend]]]
+            return _stroke[c, p, _mirrored[_flipped[tip]]]
+    if name eq 'enter'
+        c = _stroke[c, p, [8.5, 2.0, 12.5, 2.0, 12.5, 13.0, 8.5, 13.0]]
+        c = _stroke[c, p, [1.5, 7.5, 9.0, 7.5]]
+        return _stroke[c, p, [6.0, 4.5, 9.0, 7.5, 6.0, 10.5]]
+    if name eq 'exit'
+        c = _stroke[c, p, [6.5, 2.0, 2.5, 2.0, 2.5, 13.0, 6.5, 13.0]]
+        c = _stroke[c, p, [6.0, 7.5, 13.5, 7.5]]
+        return _stroke[c, p, [10.5, 4.5, 13.5, 7.5, 10.5, 10.5]]
+    if name eq 'enter-full-screen' or name eq 'exit-full-screen'
+        corner = [2.5, 5.5, 2.5, 2.5, 5.5, 2.5]
+        if name eq 'exit-full-screen'
+            corner = [2.5, 5.5, 5.5, 5.5, 5.5, 2.5]
+        for t in range[4]
+            c = _stroke[c, p, _turned[corner, t]]
+        return c
+    if name eq 'external-link'
+        c = _stroke[c, p, [12.5, 8.5, 12.5, 12.5, 2.5, 12.5, 2.5, 2.5, 6.5, 2.5]]
+        c = _stroke[c, p, [9.0, 2.5, 12.5, 2.5, 12.5, 6.0]]
+        return _stroke[c, p, [12.5, 2.5, 6.5, 8.5]]
+    if name eq 'open-in-new-window'
+        c = _box[c, p, 1.5, 5.5, 8.0, 8.0, 1.0]
+        c = _stroke[c, p, [1.5, 8.0, 9.5, 8.0]]
+        c = _stroke[c, p, [10.0, 1.5, 13.5, 1.5, 13.5, 5.0]]
+        return _stroke[c, p, [13.5, 1.5, 7.5, 7.5]]
+    if name eq 'share-1'
+        c = _stroke[c, p, [5.0, 5.5, 2.5, 5.5, 2.5, 13.0, 12.5, 13.0, 12.5, 5.5, 10.0, 5.5]]
+        c = _stroke[c, p, [7.5, 9.5, 7.5, 1.5]]
+        return _stroke[c, p, [5.0, 4.0, 7.5, 1.5, 10.0, 4.0]]
+    if name eq 'share-2'
+        c = _ring[c, p, 11.0, 3.5, 2.0]
+        c = _ring[c, p, 4.0, 7.5, 2.0]
+        c = _ring[c, p, 11.0, 11.5, 2.0]
+        c = _stroke[c, p, [5.75, 6.5, 9.25, 4.5]]
+        return _stroke[c, p, [5.75, 8.5, 9.25, 10.5]]
+    if name eq 'shuffle'
+        c = _stroke[c, p, [1.5, 4.5, 4.5, 4.5, 10.0, 10.5, 13.0, 10.5]]
+        c = _stroke[c, p, [11.0, 8.5, 13.0, 10.5, 11.0, 12.5]]
+        c = _stroke[c, p, [1.5, 10.5, 4.5, 10.5, 10.0, 4.5, 13.0, 4.5]]
+        return _stroke[c, p, [11.0, 2.5, 13.0, 4.5, 11.0, 6.5]]
+    if name eq 'loop'
+        c = _stroke[c, p, [2.5, 8.5, 2.5, 6.0, 4.0, 4.5, 12.0, 4.5]]
+        c = _stroke[c, p, [10.0, 2.5, 12.0, 4.5, 10.0, 6.5]]
+        c = _stroke[c, p, [12.5, 6.5, 12.5, 9.0, 11.0, 10.5, 3.0, 10.5]]
+        return _stroke[c, p, [5.0, 8.5, 3.0, 10.5, 5.0, 12.5]]
+    if name eq 'reload'
+        return _arc_arrow[c, p, 7.5, 7.5, 5.5, 30.0, 300.0, 2.75]
+    if name eq 'reset'
+        return _arc_arrow[c, p, 7.5, 7.5, 5.5, 150.0, -120.0, 2.75]
+    if name eq 'update'
+        c = _arc_arrow[c, p, 7.5, 7.5, 5.5, 200.0, 330.0, 2.5]
+        return _arc_arrow[c, p, 7.5, 7.5, 5.5, 20.0, 150.0, 2.5]
+    if name eq 'rotate-counter-clockwise'
+        return _arc_arrow[c, p, 7.5, 9.0, 5.0, 0.0, -180.0, 2.75]
+    if name eq 'rotate-clockwise'
+        return _arc_arrow[c, p, 7.5, 9.0, 5.0, 180.0, 360.0, 2.75]
+    if name eq 'undo' or name eq 'redo'
+        hook = concat[[2.5, 5.5], _arc_points[9.0, 8.75, 3.25, 3.25, -90.0, 90.0], [6.0, 12.0]]
+        tip = [5.25, 2.75, 2.5, 5.5, 5.25, 8.25]
+        if name eq 'redo'
+            hook = _mirrored[hook]
+            tip = _mirrored[tip]
+        c = _stroke[c, p, hook]
+        return _stroke[c, p, tip]
+    if name eq 'flip-horizontal' or name eq 'flip-vertical'
+        t = 0
+        if name eq 'flip-vertical'
+            t = 1
+        c = _loop[c, p, _turned[[6.0, 3.0, 6.0, 12.0, 1.5, 12.0], t]]
+        c = _filled[c, p, _turned[[9.0, 3.0, 13.5, 12.0, 9.0, 12.0], t]]
+        axis = _turned[[7.5, 1.5, 7.5, 13.5], t]
+        return _dashes[c, p, axis[0], axis[1], axis[2], axis[3], 1.0, 1.0]
+    if name eq 'unfold-more'
+        c = _stroke[c, p, [4.5, 5.0, 7.5, 2.0, 10.5, 5.0]]
+        return _stroke[c, p, [4.5, 10.0, 7.5, 13.0, 10.5, 10.0]]
+    if name eq 'unfold-less'
+        c = _stroke[c, p, [4.5, 2.0, 7.5, 5.0, 10.5, 2.0]]
+        return _stroke[c, p, [4.5, 13.0, 7.5, 10.0, 10.5, 13.0]]
+    if name eq 'caret-sort'
+        c = _filled[c, p, [5.0, 6.0, 7.5, 3.5, 10.0, 6.0]]
+        return _filled[c, p, [5.0, 9.0, 10.0, 9.0, 7.5, 11.5]]
+    if name eq 'sort'
+        c = _stroke[c, p, [4.5, 2.5, 4.5, 12.5]]
+        c = _stroke[c, p, [2.5, 10.5, 4.5, 12.5, 6.5, 10.5]]
+        c = _stroke[c, p, [10.5, 12.5, 10.5, 2.5]]
+        return _stroke[c, p, [8.5, 4.5, 10.5, 2.5, 12.5, 4.5]]
+    if name eq 'sort-ascending' or name eq 'sort-descending'
+        shaft = [4.5, 12.5, 4.5, 2.5]
+        tip = [2.0, 5.0, 4.5, 2.5, 7.0, 5.0]
+        long = [2.0, 3.5, 5.0]
+        if name eq 'sort-descending'
+            shaft = _flipped[shaft]
+            tip = _flipped[tip]
+            long = [5.0, 3.5, 2.0]
+        c = _stroke[c, p, shaft]
+        c = _stroke[c, p, tip]
+        for i in range[3]
+            c = _stroke[c, p, [9.0, 3.5 + 4.0 * i, 9.0 + long[i], 3.5 + 4.0 * i]]
+        return c
+    if name eq 'first-page' or name eq 'last-page'
+        bar = [3.5, 3.5, 3.5, 11.5]
+        tip = [10.5, 3.5, 6.5, 7.5, 10.5, 11.5]
+        if name eq 'last-page'
+            bar = _mirrored[bar]
+            tip = _mirrored[tip]
+        c = _stroke[c, p, bar]
+        return _stroke[c, p, tip]
+    c
+
+--- ---- layout ----
+
+--- the names of where things stand on a page
+fn _layout_names[]
+    ['align-baseline', 'align-bottom', 'align-center-horizontally', 'align-center-vertically',
+     'align-left', 'align-right', 'align-top', 'aspect-ratio', 'column-spacing', 'columns',
+     'container', 'dimensions', 'divider-horizontal', 'divider-vertical', 'frame', 'grid',
+     'height', 'layout', 'list-view', 'panel-bottom', 'panel-bottom-minimized', 'panel-left',
+     'panel-left-minimized', 'panel-right', 'panel-right-minimized', 'pin-bottom', 'pin-left',
+     'pin-right', 'pin-top',
+     'row-spacing', 'rows', 'section', 'size', 'space-between-horizontally',
+     'space-between-vertically', 'space-evenly-horizontally', 'space-evenly-vertically',
+     'stretch-horizontally', 'stretch-vertically', 'table', 'view-grid', 'view-horizontal',
+     'view-none', 'view-vertical', 'width']
+
+--- the drawings of where things stand on a page: aligned, spaced,
+--- stretched and pinned; its views, panels, rows, columns and grids; and
+--- a box's measures
+fn _layout[c, p, name]
+    parts = split[name, '-']
+    way = parts[len[parts] - 1]
+    if (parts[0] eq 'align' or parts[0] eq 'pin') and len[parts] eq 2 and _quarter[way] gte 0
+        --- (drawn against the left edge, and turned for the others)
+        q = (_quarter[way] + 2) % 4
+        if parts[0] eq 'pin'
+            c = _stroke[c, p, _turned[[1.5, 2.5, 1.5, 12.5], q]]
+            c = _stroke[c, p, _turned[[13.0, 7.5, 4.5, 7.5], q]]
+            return _stroke[c, p, _turned[[7.5, 4.5, 4.5, 7.5, 7.5, 10.5], q]]
+        c = _stroke[c, p, _turned[[1.5, 1.5, 1.5, 13.5], q]]
+        c = _block_turned[c, p, 3.0, 3.0, 9.0, 3.0, 0.5, q]
+        return _block_turned[c, p, 3.0, 9.0, 6.0, 3.0, 0.5, q]
+    if name eq 'align-baseline'
+        c = _stroke[c, p, [1.5, 10.5, 13.5, 10.5]]
+        c = _block[c, p, 3.0, 3.0, 4.0, 7.0, 0.5]
+        return _block[c, p, 8.0, 6.0, 4.0, 7.5, 0.5]
+    if name eq 'align-center-horizontally' or name eq 'align-center-vertically'
+        q = 0
+        if way eq 'vertically'
+            q = 1
+        c = _stroke[c, p, _turned[[7.5, 1.5, 7.5, 13.5], q]]
+        c = _block_turned[c, p, 2.0, 3.0, 11.0, 3.0, 0.5, q]
+        return _block_turned[c, p, 4.0, 9.0, 7.0, 3.0, 0.5, q]
+    if parts[0] eq 'space' or parts[0] eq 'stretch'
+        q = 0
+        if way eq 'vertically'
+            q = 1
+        if parts[0] eq 'stretch' or parts[1] eq 'between'
+            c = _stroke[c, p, _turned[[1.5, 1.5, 1.5, 13.5], q]]
+            c = _stroke[c, p, _turned[[13.5, 1.5, 13.5, 13.5], q]]
+            if parts[0] eq 'stretch'
+                return _block_turned[c, p, 3.0, 5.0, 9.0, 5.0, 0.5, q]
+            c = _block_turned[c, p, 3.0, 3.0, 3.0, 9.0, 0.5, q]
+            return _block_turned[c, p, 9.0, 3.0, 3.0, 9.0, 0.5, q]
+        c = _stroke[c, p, _turned[[0.5, 1.5, 0.5, 13.5], q]]
+        c = _stroke[c, p, _turned[[14.5, 1.5, 14.5, 13.5], q]]
+        c = _block_turned[c, p, 4.0, 3.0, 2.0, 9.0, 0.5, q]
+        return _block_turned[c, p, 9.0, 3.0, 2.0, 9.0, 0.5, q]
+    if parts[0] eq 'panel'
+        --- (a page and the panel on its side: four units wide, or two when
+        --- it is minimized)
+        narrow = way eq 'minimized'
+        c = _box[c, p, 1.5, 2.5, 12.0, 10.0, 1.0]
+        if parts[1] eq 'left'
+            at = 5.5
+            if narrow
+                at = 3.5
+            return _stroke[c, p, [at, 2.5, at, 12.5]]
+        if parts[1] eq 'right'
+            at = 9.5
+            if narrow
+                at = 11.5
+            return _stroke[c, p, [at, 2.5, at, 12.5]]
+        at = 8.5
+        if narrow
+            at = 10.5
+        return _stroke[c, p, [1.5, at, 13.5, at]]
+    if name eq 'layout'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        c = _stroke[c, p, [1.5, 5.5, 13.5, 5.5]]
+        return _stroke[c, p, [5.5, 5.5, 5.5, 13.5]]
+    if name eq 'view-grid'
+        c = _box[c, p, 2.5, 2.5, 4.0, 4.0, 0.5]
+        c = _box[c, p, 8.5, 2.5, 4.0, 4.0, 0.5]
+        c = _box[c, p, 2.5, 8.5, 4.0, 4.0, 0.5]
+        return _box[c, p, 8.5, 8.5, 4.0, 4.0, 0.5]
+    if name eq 'view-horizontal'
+        c = _box[c, p, 1.5, 2.5, 12.0, 10.0, 1.0]
+        return _stroke[c, p, [1.5, 7.5, 13.5, 7.5]]
+    if name eq 'view-vertical'
+        c = _box[c, p, 2.5, 1.5, 10.0, 12.0, 1.0]
+        return _stroke[c, p, [7.5, 1.5, 7.5, 13.5]]
+    if name eq 'view-none'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        return _stroke[c, p, [1.5, 13.5, 13.5, 1.5]]
+    if name eq 'columns' or name eq 'rows'
+        q = 0
+        if name eq 'rows'
+            q = 1
+        c = _block_turned[c, p, 2.0, 2.0, 3.0, 11.0, 0.5, q]
+        c = _block_turned[c, p, 6.0, 2.0, 3.0, 11.0, 0.5, q]
+        return _block_turned[c, p, 10.0, 2.0, 3.0, 11.0, 0.5, q]
+    if name eq 'grid'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        c = _stroke[c, p, [5.5, 1.5, 5.5, 13.5]]
+        c = _stroke[c, p, [9.5, 1.5, 9.5, 13.5]]
+        c = _stroke[c, p, [1.5, 5.5, 13.5, 5.5]]
+        return _stroke[c, p, [1.5, 9.5, 13.5, 9.5]]
+    if name eq 'table'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        c = _block[c, p, 1.5, 1.5, 12.0, 4.5, 1.0]
+        c = _stroke[c, p, [1.5, 9.5, 13.5, 9.5]]
+        return _stroke[c, p, [7.5, 6.0, 7.5, 13.5]]
+    if name eq 'row-spacing' or name eq 'column-spacing'
+        q = 0
+        if name eq 'column-spacing'
+            q = 1
+        c = _block_turned[c, p, 2.0, 1.0, 11.0, 2.0, 0.5, q]
+        c = _block_turned[c, p, 2.0, 12.0, 11.0, 2.0, 0.5, q]
+        c = _stroke[c, p, _turned[[7.5, 4.5, 7.5, 10.5], q]]
+        c = _stroke[c, p, _turned[[5.5, 6.5, 7.5, 4.5, 9.5, 6.5], q]]
+        return _stroke[c, p, _turned[[5.5, 8.5, 7.5, 10.5, 9.5, 8.5], q]]
+    if name eq 'divider-horizontal' or name eq 'divider-vertical'
+        q = 0
+        if name eq 'divider-vertical'
+            q = 1
+        c = _block_turned[c, p, 3.0, 2.0, 9.0, 3.0, 0.5, q]
+        c = _block_turned[c, p, 3.0, 10.0, 9.0, 3.0, 0.5, q]
+        return _stroke[c, p, _turned[[1.5, 7.5, 13.5, 7.5], q]]
+    if name eq 'list-view'
+        c = _block[c, p, 1.0, 2.0, 3.0, 3.0, 0.5]
+        c = _block[c, p, 1.0, 6.0, 3.0, 3.0, 0.5]
+        c = _block[c, p, 1.0, 10.0, 3.0, 3.0, 0.5]
+        c = _stroke[c, p, [6.5, 3.5, 13.5, 3.5]]
+        c = _stroke[c, p, [6.5, 7.5, 13.5, 7.5]]
+        return _stroke[c, p, [6.5, 11.5, 13.5, 11.5]]
+    if name eq 'container'
+        c = _stroke[c, p, [1.5, 1.5, 1.5, 13.5]]
+        c = _stroke[c, p, [13.5, 1.5, 13.5, 13.5]]
+        return _box[c, p, 4.5, 3.5, 6.0, 8.0, 0.5]
+    if name eq 'section'
+        c = _stroke[c, p, [1.5, 1.5, 13.5, 1.5]]
+        c = _stroke[c, p, [1.5, 13.5, 13.5, 13.5]]
+        return _box[c, p, 1.5, 4.5, 12.0, 6.0, 1.0]
+    if name eq 'frame'
+        c = _stroke[c, p, [4.5, 1.5, 4.5, 13.5]]
+        c = _stroke[c, p, [10.5, 1.5, 10.5, 13.5]]
+        c = _stroke[c, p, [1.5, 4.5, 13.5, 4.5]]
+        return _stroke[c, p, [1.5, 10.5, 13.5, 10.5]]
+    if name eq 'dimensions'
+        c = _box[c, p, 4.5, 4.5, 9.0, 9.0, 0.5]
+        c = _stroke[c, p, [4.5, 1.5, 13.5, 1.5]]
+        c = _stroke[c, p, [4.5, 0.5, 4.5, 2.5]]
+        c = _stroke[c, p, [13.5, 0.5, 13.5, 2.5]]
+        c = _stroke[c, p, [1.5, 4.5, 1.5, 13.5]]
+        c = _stroke[c, p, [0.5, 4.5, 2.5, 4.5]]
+        return _stroke[c, p, [0.5, 13.5, 2.5, 13.5]]
+    if name eq 'width' or name eq 'height'
+        q = 0
+        if name eq 'height'
+            q = 1
+        c = _stroke[c, p, _turned[[1.5, 4.5, 1.5, 10.5], q]]
+        c = _stroke[c, p, _turned[[13.5, 4.5, 13.5, 10.5], q]]
+        c = _stroke[c, p, _turned[[3.5, 7.5, 11.5, 7.5], q]]
+        c = _stroke[c, p, _turned[[5.5, 5.5, 3.5, 7.5, 5.5, 9.5], q]]
+        return _stroke[c, p, _turned[[9.5, 5.5, 11.5, 7.5, 9.5, 9.5], q]]
+    if name eq 'size'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        c = _stroke[c, p, [4.5, 10.5, 10.5, 4.5]]
+        c = _stroke[c, p, [4.5, 7.5, 4.5, 10.5, 7.5, 10.5]]
+        return _stroke[c, p, [7.5, 4.5, 10.5, 4.5, 10.5, 7.5]]
+    if name eq 'aspect-ratio'
+        c = _box[c, p, 1.5, 3.5, 12.0, 8.0, 1.0]
+        c = _stroke[c, p, [4.5, 8.5, 4.5, 6.5, 6.5, 6.5]]
+        return _stroke[c, p, [10.5, 6.5, 10.5, 8.5, 8.5, 8.5]]
+    c
+
+--- ---- boxes ----
+
+--- the names of a box's parts and of what a design tool draws
+fn _box_names[]
+    ['all-sides', 'angle', 'archive', 'blending-mode', 'border-all', 'border-bottom',
+     'border-dashed', 'border-dotted', 'border-left', 'border-none', 'border-right',
+     'border-solid', 'border-split', 'border-style', 'border-top', 'border-width', 'box',
+     'box-model', 'button', 'checkbox', 'color-wheel', 'component-1', 'component-2',
+     'component-boolean', 'component-instance', 'component-none', 'component-placeholder',
+     'corners', 'crop', 'crosshair-1', 'crosshair-2', 'cursor-arrow', 'cursor-text',
+     'dropdown-menu', 'eraser', 'eyedropper', 'group', 'half-1', 'half-2', 'hobby-knife',
+     'input', 'magic-wand', 'margin', 'mask-off', 'mask-on', 'mix', 'move', 'opacity',
+     'padding', 'palette', 'pencil-1', 'pencil-2', 'radiobutton', 'ruler-horizontal',
+     'ruler-square', 'scissors', 'shadow', 'shadow-inner', 'shadow-none', 'shadow-outer',
+     'slash', 'slider', 'switch', 'symbol', 'target', 'tokens', 'transform',
+     'transparency-grid', 'value', 'value-none']
+
+--- the drawings of a box's parts (its borders and their styles, its
+--- margin, padding and shadows) and of what a design tool draws: shapes,
+--- components, tools, and a form's fields
+fn _boxes[c, p, name]
+    if starts[name, 'border-']
+        side = slice[name, 7, len[name]]
+        if side eq 'solid'
+            return _block[c, p, 1.0, 7.0, 13.0, 1.0, 0.0]
+        if side eq 'dashed'
+            return _dashed_row[c, p, 7.0]
+        if side eq 'dotted'
+            return _specks[c, p, 1.5, 7.5, 13.5, 7.5, 5]
+        if side eq 'style'
+            c = _block[c, p, 1.0, 3.0, 13.0, 1.0, 0.0]
+            c = _dashed_row[c, p, 7.0]
+            return _specks[c, p, 1.5, 11.5, 13.5, 11.5, 5]
+        if side eq 'width'
+            c = _block[c, p, 1.0, 2.0, 13.0, 1.0, 0.0]
+            c = _block[c, p, 1.0, 5.0, 13.0, 2.0, 0.0]
+            return _block[c, p, 1.0, 9.0, 13.0, 3.0, 0.0]
+        --- (a square and its middle cross, each line solid where the name
+        --- says and dotted elsewhere)
+        whole = side eq 'all'
+        c = _guide[c, p, [1.5, 1.5, 13.5, 1.5], [1.5, 1.5, 13.5, 1.5], 5, whole or side eq 'top']
+        c = _guide[c, p, [1.5, 13.5, 13.5, 13.5], [1.5, 13.5, 13.5, 13.5], 5, whole or side eq 'bottom']
+        c = _guide[c, p, [1.5, 1.5, 1.5, 13.5], [1.5, 4.5, 1.5, 10.5], 3, whole or side eq 'left']
+        c = _guide[c, p, [13.5, 1.5, 13.5, 13.5], [13.5, 4.5, 13.5, 10.5], 3, whole or side eq 'right']
+        c = _guide[c, p, [7.5, 1.5, 7.5, 13.5], [7.5, 4.5, 7.5, 10.5], 3, side eq 'split']
+        return _guide[c, p, [1.5, 7.5, 13.5, 7.5], [4.5, 7.5, 10.5, 7.5], 2, side eq 'split']
+    if name eq 'all-sides'
+        c = _stroke[c, p, [4.5, 1.5, 10.5, 1.5]]
+        c = _stroke[c, p, [4.5, 13.5, 10.5, 13.5]]
+        c = _stroke[c, p, [1.5, 4.5, 1.5, 10.5]]
+        c = _stroke[c, p, [13.5, 4.5, 13.5, 10.5]]
+        return _disc[c, p, 7.5, 7.5, 1.25]
+    if name eq 'box' or name eq 'archive'
+        c = _box[c, p, 1.5, 1.5, 12.0, 3.0, 0.5]
+        c = _stroke[c, p, [2.5, 4.5, 2.5, 13.5, 12.5, 13.5, 12.5, 4.5]]
+        if name eq 'box'
+            return _stroke[c, p, [7.5, 1.5, 7.5, 8.5]]
+        return _stroke[c, p, [6.0, 7.5, 9.0, 7.5]]
+    if name eq 'box-model'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        return _box[c, p, 4.5, 4.5, 6.0, 6.0, 0.5]
+    if name eq 'margin'
+        c = _dotted_square[c, p, 1.5, 13.5, 5]
+        return _box[c, p, 4.5, 4.5, 6.0, 6.0, 0.5]
+    if name eq 'padding'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        return _dotted_square[c, p, 4.5, 10.5, 3]
+    if name eq 'corners'
+        corner = concat[[1.5, 6.5], _arc_points[5.5, 5.5, 4.0, 4.0, 180.0, 270.0], [6.5, 1.5]]
+        for t in range[4]
+            c = _stroke[c, p, _turned[corner, t]]
+        return c
+    if name eq 'shadow'
+        c = _box[c, p, 1.5, 1.5, 8.0, 8.0, 0.5]
+        return _stroke[c, _wide[p, 2.0], [12.0, 4.0, 12.0, 12.0, 4.0, 12.0]]
+    if name eq 'shadow-inner'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        return _stroke[c, _wide[p, 2.0], [4.0, 11.0, 4.0, 4.0, 11.0, 4.0]]
+    if name eq 'shadow-outer'
+        c = _box[c, p, 3.5, 3.5, 8.0, 8.0, 0.5]
+        w = _wide[p, 2.0]
+        c = _stroke[c, w, [4.5, 1.0, 10.5, 1.0]]
+        c = _stroke[c, w, [4.5, 14.0, 10.5, 14.0]]
+        c = _stroke[c, w, [1.0, 4.5, 1.0, 10.5]]
+        return _stroke[c, w, [14.0, 4.5, 14.0, 10.5]]
+    if name eq 'shadow-none'
+        c = _box[c, p, 1.5, 1.5, 8.0, 8.0, 0.5]
+        c = _specks[c, p, 11.5, 3.5, 11.5, 11.5, 5]
+        return _specks[c, p, 3.5, 11.5, 9.5, 11.5, 4]
+    if name eq 'transparency-grid'
+        c = _box[c, p, 2.5, 2.5, 10.0, 10.0, 0.5]
+        c = _block[c, p, 3.0, 3.0, 3.0, 3.0, 0.0]
+        c = _block[c, p, 9.0, 3.0, 3.0, 3.0, 0.0]
+        c = _block[c, p, 6.0, 6.0, 3.0, 3.0, 0.0]
+        c = _block[c, p, 3.0, 9.0, 3.0, 3.0, 0.0]
+        return _block[c, p, 9.0, 9.0, 3.0, 3.0, 0.0]
+    if name eq 'opacity'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        c = _specks[c, p, 7.5, 3.5, 3.5, 7.5, 3]
+        c = _specks[c, p, 9.5, 5.5, 5.5, 9.5, 3]
+        return _specks[c, p, 11.5, 7.5, 7.5, 11.5, 3]
+    if name eq 'half-1'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        return _solid[c, p, _arc_points[7.5, 7.5, 6.0, 6.0, 90.0, 270.0]]
+    if name eq 'half-2'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        return _block[c, p, 1.5, 1.5, 6.0, 12.0, 0.0]
+    if name eq 'blending-mode'
+        c = _ring[c, p, 5.5, 7.5, 4.0]
+        c = _ring[c, p, 9.5, 7.5, 4.0]
+        return _solid[c, p, concat[_arc_points[5.5, 7.5, 4.0, 4.0, -60.0, 60.0], _arc_points[9.5, 7.5, 4.0, 4.0, 120.0, 240.0]]]
+    if name eq 'mix'
+        c = _ring[c, p, 4.5, 4.5, 2.75]
+        c = _box[c, p, 8.5, 1.5, 5.0, 5.0, 0.5]
+        return _loop[c, p, [7.5, 8.5, 11.5, 13.5, 3.5, 13.5]]
+    if starts[name, 'component-']
+        kind = slice[name, 10, len[name]]
+        if kind eq '1' or kind eq '2'
+            middles = [7.5, 3.5, 11.5, 7.5, 7.5, 11.5, 3.5, 7.5]
+            i = 0
+            while i lt 4
+                x = middles[2 * i]
+                y = middles[2 * i + 1]
+                d = [x, y - 2.5, x + 2.5, y, x, y + 2.5, x - 2.5, y]
+                if kind eq '1'
+                    c = _loop[c, p, d]
+                if kind eq '2'
+                    c = _filled[c, p, d]
+                i = i + 1
+            return c
+        diamond = [7.5, 1.5, 13.5, 7.5, 7.5, 13.5, 1.5, 7.5]
+        if kind eq 'placeholder'
+            i = 0
+            while i lt 4
+                j = (i + 1) % 4
+                c = _dashes[c, p, diamond[2 * i], diamond[2 * i + 1], diamond[2 * j], diamond[2 * j + 1], 1.5, 1.25]
+                i = i + 1
+            return c
+        c = _loop[c, p, diamond]
+        if kind eq 'boolean'
+            return _filled[c, p, [7.5, 1.5, 13.5, 7.5, 7.5, 13.5]]
+        if kind eq 'none'
+            return _stroke[c, p, [4.5, 10.5, 10.5, 4.5]]
+        return c
+    if name eq 'group'
+        for q in range[4]
+            c = _block_turned[c, p, 1.0, 1.0, 3.0, 1.0, 0.0, q]
+            c = _block_turned[c, p, 1.0, 2.0, 1.0, 2.0, 0.0, q]
+            c = _block_turned[c, p, 6.0, 1.0, 3.0, 1.0, 0.0, q]
+        return c
+    if name eq 'mask-on' or name eq 'mask-off'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        if name eq 'mask-on'
+            return _disc[c, p, 7.5, 7.5, 3.5]
+        return _ring[c, p, 7.5, 7.5, 3.5]
+    if name eq 'crop'
+        c = _stroke[c, p, [3.5, 0.5, 3.5, 11.5, 14.5, 11.5]]
+        return _stroke[c, p, [0.5, 3.5, 11.5, 3.5, 11.5, 14.5]]
+    if name eq 'transform'
+        c = _box[c, p, 3.5, 3.5, 8.0, 8.0, 0.0]
+        c = _block[c, p, 2.0, 2.0, 3.0, 3.0, 0.5]
+        c = _block[c, p, 10.0, 2.0, 3.0, 3.0, 0.5]
+        c = _block[c, p, 2.0, 10.0, 3.0, 3.0, 0.5]
+        return _block[c, p, 10.0, 10.0, 3.0, 3.0, 0.5]
+    if name eq 'move'
+        c = _stroke[c, p, [7.5, 1.5, 7.5, 13.5]]
+        c = _stroke[c, p, [1.5, 7.5, 13.5, 7.5]]
+        c = _head[c, p, 7.5, 1.5, -90.0, 2.0]
+        c = _head[c, p, 7.5, 13.5, 90.0, 2.0]
+        c = _head[c, p, 1.5, 7.5, 180.0, 2.0]
+        return _head[c, p, 13.5, 7.5, 0.0, 2.0]
+    if name eq 'angle'
+        c = _stroke[c, p, [13.5, 12.5, 1.5, 12.5, 10.0, 4.0]]
+        return _arc[c, p, 1.5, 12.5, 5.0, -45.0, 0.0]
+    if name eq 'ruler-horizontal'
+        c = _box[c, p, 1.5, 4.5, 12.0, 6.0, 0.5]
+        for k in range[5]
+            reach = 2.0
+            if k % 2 eq 1
+                reach = 3.0
+            c = _stroke[c, p, [3.5 + 2.0 * k, 4.5, 3.5 + 2.0 * k, 4.5 + reach]]
+        return c
+    if name eq 'ruler-square'
+        c = _loop[c, p, [1.5, 1.5, 5.5, 1.5, 5.5, 9.5, 13.5, 9.5, 13.5, 13.5, 1.5, 13.5]]
+        c = _stroke[c, p, [1.5, 4.5, 3.5, 4.5]]
+        c = _stroke[c, p, [1.5, 7.5, 3.5, 7.5]]
+        c = _stroke[c, p, [7.5, 13.5, 7.5, 11.5]]
+        return _stroke[c, p, [10.5, 13.5, 10.5, 11.5]]
+    if name eq 'scissors'
+        c = _ring[c, p, 4.0, 11.0, 2.0]
+        c = _ring[c, p, 11.0, 11.0, 2.0]
+        c = _stroke[c, p, [5.5, 9.5, 11.0, 1.5]]
+        return _stroke[c, p, [9.5, 9.5, 4.0, 1.5]]
+    if name eq 'slash'
+        return _stroke[c, p, [4.5, 13.5, 10.5, 1.5]]
+    if name eq 'symbol'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        return _filled[c, p, [7.5, 4.0, 11.0, 7.5, 7.5, 11.0, 4.0, 7.5]]
+    if name eq 'tokens'
+        c = _ring[c, p, 4.5, 4.5, 2.5]
+        c = _ring[c, p, 10.5, 4.5, 2.5]
+        c = _ring[c, p, 4.5, 10.5, 2.5]
+        return _ring[c, p, 10.5, 10.5, 2.5]
+    if name eq 'value' or name eq 'value-none'
+        c = _box[c, p, 2.5, 2.5, 10.0, 10.0, 3.0]
+        if name eq 'value'
+            return _disc[c, p, 7.5, 7.5, 2.0]
+        return _stroke[c, p, [5.5, 9.5, 9.5, 5.5]]
+    if name eq 'crosshair-1'
+        c = _ring[c, p, 7.5, 7.5, 4.5]
+        c = _stroke[c, p, [7.5, 1.0, 7.5, 5.0]]
+        c = _stroke[c, p, [7.5, 10.0, 7.5, 14.0]]
+        c = _stroke[c, p, [1.0, 7.5, 5.0, 7.5]]
+        return _stroke[c, p, [10.0, 7.5, 14.0, 7.5]]
+    if name eq 'crosshair-2'
+        c = _ring[c, p, 7.5, 7.5, 3.0]
+        c = _stroke[c, p, [7.5, 1.5, 7.5, 13.5]]
+        return _stroke[c, p, [1.5, 7.5, 13.5, 7.5]]
+    if name eq 'target'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        c = _ring[c, p, 7.5, 7.5, 3.0]
+        return _disc[c, p, 7.5, 7.5, 1.0]
+    if name eq 'hobby-knife'
+        c = _loop[c, p, [1.5, 12.0, 3.0, 13.5, 9.0, 7.5, 7.5, 6.0]]
+        return _filled[c, p, [7.5, 6.0, 9.0, 7.5, 13.5, 1.5]]
+    if name eq 'magic-wand'
+        c = _stroke[c, p, [1.5, 13.5, 9.0, 6.0]]
+        c = _stroke[c, p, [11.5, 1.5, 11.5, 5.5]]
+        c = _stroke[c, p, [9.5, 3.5, 13.5, 3.5]]
+        c = _disc[c, p, 8.0, 2.0, 0.6]
+        return _disc[c, p, 13.5, 7.0, 0.6]
+    if name eq 'eraser'
+        c = _loop[c, p, [6.0, 2.0, 13.0, 9.0, 8.5, 13.5, 1.5, 6.5]]
+        return _solid[c, p, [6.0, 2.0, 8.8, 4.8, 4.3, 9.3, 1.5, 6.5]]
+    if name eq 'pencil-1'
+        c = _loop[c, p, [1.5, 13.5, 2.5, 10.0, 10.5, 2.0, 13.0, 4.5, 5.0, 12.5]]
+        c = _stroke[c, p, [2.5, 10.0, 5.0, 12.5]]
+        return _stroke[c, p, [9.0, 3.5, 11.5, 6.0]]
+    if name eq 'pencil-2'
+        c = _loop[c, p, [2.5, 11.0, 3.25, 8.75, 9.5, 2.5, 11.5, 4.5, 5.25, 10.75]]
+        c = _stroke[c, p, [8.25, 3.75, 10.25, 5.75]]
+        return _stroke[c, p, [1.5, 13.5, 13.5, 13.5]]
+    if name eq 'cursor-arrow'
+        return _loop[c, p, [3.5, 1.5, 3.5, 12.0, 6.0, 9.5, 8.0, 13.5, 9.75, 12.75, 7.75, 8.75, 11.5, 8.75]]
+    if name eq 'cursor-text'
+        c = _stroke[c, p, [5.0, 1.5, 6.5, 1.5, 7.5, 2.5, 8.5, 1.5, 10.0, 1.5]]
+        c = _stroke[c, p, [5.0, 13.5, 6.5, 13.5, 7.5, 12.5, 8.5, 13.5, 10.0, 13.5]]
+        return _stroke[c, p, [7.5, 2.5, 7.5, 12.5]]
+    if name eq 'button'
+        c = _box[c, p, 1.5, 3.5, 12.0, 8.0, 1.5]
+        return _stroke[c, p, [5.0, 7.5, 10.0, 7.5]]
+    if name eq 'input'
+        c = _box[c, p, 1.5, 4.5, 12.0, 6.0, 1.0]
+        return _stroke[c, p, [4.5, 6.5, 4.5, 8.5]]
+    if name eq 'checkbox'
+        c = _box[c, p, 2.5, 2.5, 10.0, 10.0, 1.5]
+        return _stroke[c, p, [5.0, 7.75, 6.75, 9.5, 10.0, 5.75]]
+    if name eq 'radiobutton'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        return _disc[c, p, 7.5, 7.5, 2.5]
+    if name eq 'switch'
+        c = _box[c, p, 1.5, 4.5, 12.0, 6.0, 3.0]
+        return _disc[c, p, 10.5, 7.5, 2.0]
+    if name eq 'slider'
+        c = _stroke[c, p, [1.5, 7.5, 13.5, 7.5]]
+        return _disc[c, p, 9.5, 7.5, 2.5]
+    if name eq 'dropdown-menu'
+        c = _box[c, p, 1.5, 1.5, 12.0, 5.0, 1.0]
+        c = _filled[c, p, [9.5, 3.5, 11.5, 3.5, 10.5, 4.5]]
+        c = _stroke[c, p, [1.5, 9.5, 13.5, 9.5]]
+        return _stroke[c, p, [1.5, 12.5, 9.5, 12.5]]
+    if name eq 'color-wheel'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        i = 0
+        while i lt 3
+            a = (-90.0 + 60.0 * i) * pi / 180.0
+            c = _stroke[c, p, [7.5 - 6.0 * cos[a], 7.5 - 6.0 * sin[a], 7.5 + 6.0 * cos[a], 7.5 + 6.0 * sin[a]]]
+            i = i + 1
+        return c
+    if name eq 'eyedropper'
+        c = _loop[c, p, [1.5, 13.5, 2.0, 11.5, 8.0, 5.5, 9.5, 7.0, 3.5, 13.0]]
+        c = _stroke[c, p, [6.5, 4.5, 10.5, 8.5]]
+        return _disc[c, p, 11.25, 3.75, 2.25]
+    if name eq 'palette'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        c = _disc[c, p, 5.0, 5.0, 1.0]
+        c = _disc[c, p, 9.0, 4.25, 1.0]
+        c = _disc[c, p, 11.0, 7.5, 1.0]
+        return _ring[c, p, 6.0, 10.25, 1.25]
+    c
+
+--- three dashes across the square at height y: a dashed line's sample
+fn _dashed_row[c, p, y]
+    c = _block[c, p, 1.0, y, 3.0, 1.0, 0.0]
+    c = _block[c, p, 6.0, y, 3.0, 1.0, 0.0]
+    _block[c, p, 11.0, y, 3.0, 1.0, 0.0]
+
+--- ---- text ----
+
+--- the names of type and text
+fn _text_names[]
+    ['code', 'code-block', 'font-bold', 'font-family', 'font-italic', 'font-roman', 'font-size',
+     'font-style', 'heading', 'indent', 'letter-case-capitalize', 'letter-case-lowercase',
+     'letter-case-toggle', 'letter-case-uppercase', 'letter-spacing', 'line-height',
+     'list-bullet', 'list-check', 'list-numbered', 'outdent', 'overline', 'pilcrow', 'quote',
+     'strikethrough', 'text', 'text-align-bottom', 'text-align-center', 'text-align-justify',
+     'text-align-left', 'text-align-middle', 'text-align-right', 'text-align-top', 'text-none',
+     'underline']
+
+--- the drawings of type and text: fonts' weights and styles, cases,
+--- spacing and lines, text's alignments, its marks, lists and code
+fn _text[c, p, name]
+    if name eq 'font-bold'
+        w = _wide[p, 2.0]
+        c = _stroke[c, w, [4.0, 2.0, 4.0, 13.0]]
+        c = _stroke[c, w, concat[[4.0, 2.0], _arc_points[8.0, 4.75, 2.75, 2.75, -90.0, 90.0], [4.0, 7.5]]]
+        return _stroke[c, w, concat[[4.0, 7.5], _arc_points[8.5, 10.25, 2.75, 2.75, -90.0, 90.0], [4.0, 13.0]]]
+    if name eq 'font-italic'
+        c = _stroke[c, p, [9.5, 2.5, 5.5, 12.5]]
+        c = _stroke[c, p, [7.0, 2.5, 12.0, 2.5]]
+        return _stroke[c, p, [3.0, 12.5, 8.0, 12.5]]
+    if name eq 'font-roman'
+        c = _stroke[c, p, [7.5, 2.5, 7.5, 12.5]]
+        c = _stroke[c, p, [4.5, 2.5, 10.5, 2.5]]
+        return _stroke[c, p, [4.5, 12.5, 10.5, 12.5]]
+    if name eq 'font-style'
+        c = _stroke[c, p, [4.5, 2.5, 13.0, 2.5]]
+        return _stroke[c, p, [8.75, 2.5, 6.0, 12.5]]
+    if name eq 'font-family'
+        c = _cap_a[c, p, 2.75, 12.25, 1.5, 12.5]
+        c = _stroke[c, p, [1.25, 12.5, 4.25, 12.5]]
+        return _stroke[c, p, [10.75, 12.5, 13.75, 12.5]]
+    if name eq 'font-size'
+        c = _stroke[c, p, [1.5, 2.5, 9.5, 2.5]]
+        c = _stroke[c, p, [5.5, 2.5, 5.5, 12.5]]
+        c = _stroke[c, p, [9.5, 6.5, 13.5, 6.5]]
+        return _stroke[c, p, [11.5, 6.5, 11.5, 12.5]]
+    if name eq 'heading'
+        c = _stroke[c, p, [3.5, 2.5, 3.5, 12.5]]
+        c = _stroke[c, p, [11.5, 2.5, 11.5, 12.5]]
+        return _stroke[c, p, [3.5, 7.5, 11.5, 7.5]]
+    if name eq 'letter-case-uppercase'
+        c = _cap_a[c, p, 1.0, 7.0, 3.0, 12.5]
+        return _cap_a[c, p, 8.0, 14.0, 3.0, 12.5]
+    if name eq 'letter-case-lowercase'
+        c = _small_a[c, p, 3.75, 12.5, 2.25]
+        return _small_a[c, p, 10.25, 12.5, 2.25]
+    if name eq 'letter-case-capitalize'
+        c = _cap_a[c, p, 1.0, 7.5, 2.5, 12.5]
+        return _small_a[c, p, 11.0, 12.5, 2.25]
+    if name eq 'letter-case-toggle'
+        c = _small_a[c, p, 3.75, 12.5, 2.25]
+        return _cap_a[c, p, 7.5, 14.0, 2.5, 12.5]
+    if name eq 'letter-spacing'
+        c = _stroke[c, p, [1.5, 2.5, 1.5, 12.5]]
+        c = _stroke[c, p, [13.5, 2.5, 13.5, 12.5]]
+        return _cap_a[c, p, 4.5, 10.5, 3.0, 12.5]
+    if name eq 'line-height'
+        c = _stroke[c, p, [2.5, 2.0, 2.5, 13.0]]
+        c = _head[c, p, 2.5, 2.0, -90.0, 1.75]
+        c = _head[c, p, 2.5, 13.0, 90.0, 1.75]
+        c = _stroke[c, p, [6.5, 3.5, 13.5, 3.5]]
+        c = _stroke[c, p, [6.5, 7.5, 13.5, 7.5]]
+        return _stroke[c, p, [6.5, 11.5, 13.5, 11.5]]
+    if name eq 'overline'
+        c = _stroke[c, p, [2.5, 1.5, 12.5, 1.5]]
+        return _oval[c, p, 7.5, 8.75, 3.5, 4.25]
+    if name eq 'underline'
+        c = _stroke[c, p, concat[[4.5, 2.5], _arc_points[7.5, 8.0, 3.0, 3.0, 180.0, 0.0], [10.5, 2.5]]]
+        return _stroke[c, p, [2.5, 13.5, 12.5, 13.5]]
+    if name eq 'strikethrough'
+        c = _stroke[c, p, _s_points[7.5, 7.5, 6.0, 11.0]]
+        return _stroke[c, p, [2.0, 7.5, 13.0, 7.5]]
+    if name eq 'pilcrow'
+        c = _solid[c, p, _arc_points[8.0, 5.0, 3.0, 3.0, 90.0, 270.0]]
+        c = _stroke[c, p, [8.5, 2.5, 8.5, 12.5]]
+        c = _stroke[c, p, [11.5, 2.5, 11.5, 12.5]]
+        return _stroke[c, p, [8.0, 2.5, 12.5, 2.5]]
+    if name eq 'quote'
+        c = _disc[c, p, 4.5, 5.5, 2.0]
+        c = _stroke[c, p, [6.5, 5.5, 6.0, 8.5, 3.5, 11.0]]
+        c = _disc[c, p, 10.5, 5.5, 2.0]
+        return _stroke[c, p, [12.5, 5.5, 12.0, 8.5, 9.5, 11.0]]
+    if name eq 'text' or name eq 'text-none'
+        c = _stroke[c, p, [2.5, 4.0, 2.5, 2.5, 12.5, 2.5, 12.5, 4.0]]
+        c = _stroke[c, p, [7.5, 2.5, 7.5, 12.5]]
+        c = _stroke[c, p, [5.5, 12.5, 9.5, 12.5]]
+        if name eq 'text-none'
+            return _stroke[c, p, [2.0, 13.0, 13.0, 2.0]]
+        return c
+    if starts[name, 'text-align-']
+        way = slice[name, 11, len[name]]
+        if way eq 'left'
+            return _text_rows[c, p, [1.5, 13.5, 1.5, 9.5, 1.5, 12.5, 1.5, 7.5]]
+        if way eq 'right'
+            return _text_rows[c, p, [1.5, 13.5, 5.5, 13.5, 2.5, 13.5, 7.5, 13.5]]
+        if way eq 'center'
+            return _text_rows[c, p, [1.5, 13.5, 3.5, 11.5, 2.5, 12.5, 4.5, 10.5]]
+        if way eq 'justify'
+            return _text_rows[c, p, [1.5, 13.5, 1.5, 13.5, 1.5, 13.5, 1.5, 7.5]]
+        if way eq 'top'
+            c = _stroke[c, p, [1.5, 1.5, 13.5, 1.5]]
+            c = _stroke[c, p, [3.5, 4.5, 11.5, 4.5]]
+            return _stroke[c, p, [4.5, 7.5, 10.5, 7.5]]
+        if way eq 'middle'
+            c = _stroke[c, p, [1.5, 1.5, 13.5, 1.5]]
+            c = _stroke[c, p, [1.5, 13.5, 13.5, 13.5]]
+            c = _stroke[c, p, [3.5, 5.5, 11.5, 5.5]]
+            return _stroke[c, p, [4.5, 9.5, 10.5, 9.5]]
+        if way eq 'bottom'
+            c = _stroke[c, p, [1.5, 13.5, 13.5, 13.5]]
+            c = _stroke[c, p, [3.5, 7.5, 11.5, 7.5]]
+            return _stroke[c, p, [4.5, 10.5, 10.5, 10.5]]
+        return c
+    if name eq 'list-bullet'
+        for k in range[3]
+            y = 3.5 + 4.0 * k
+            c = _disc[c, p, 2.5, y, 1.0]
+            c = _stroke[c, p, [5.5, y, 13.5, y]]
+        return c
+    if name eq 'list-numbered'
+        t = _wide[p, 0.75]
+        c = _stroke[c, t, [1.75, 2.75, 2.75, 2.0, 2.75, 5.0]]
+        c = _stroke[c, t, [1.5, 6.6, 2.0, 6.0, 3.0, 6.0, 3.5, 6.6, 3.5, 7.1, 1.5, 9.0, 3.5, 9.0]]
+        c = _stroke[c, t, [1.5, 10.0, 3.5, 10.0, 2.4, 11.2, 3.0, 11.3, 3.5, 11.9, 3.4, 12.6, 2.9, 13.0, 2.0, 13.0, 1.5, 12.6]]
+        for k in range[3]
+            y = 3.5 + 4.0 * k
+            c = _stroke[c, p, [5.5, y, 13.5, y]]
+        return c
+    if name eq 'list-check'
+        for k in range[3]
+            y = 3.5 + 4.0 * k
+            c = _stroke[c, p, [1.5, y, 2.5, y + 1.0, 4.25, y - 1.0]]
+            c = _stroke[c, p, [6.5, y, 13.5, y]]
+        return c
+    if name eq 'indent' or name eq 'outdent'
+        c = _stroke[c, p, [1.5, 1.5, 13.5, 1.5]]
+        c = _stroke[c, p, [6.5, 5.5, 13.5, 5.5]]
+        c = _stroke[c, p, [6.5, 9.5, 13.5, 9.5]]
+        c = _stroke[c, p, [1.5, 13.5, 13.5, 13.5]]
+        if name eq 'indent'
+            return _filled[c, p, [1.5, 5.5, 4.0, 7.5, 1.5, 9.5]]
+        return _filled[c, p, [4.0, 5.5, 1.5, 7.5, 4.0, 9.5]]
+    if name eq 'code'
+        c = _stroke[c, p, [4.5, 3.5, 1.0, 7.5, 4.5, 11.5]]
+        c = _stroke[c, p, [10.5, 3.5, 14.0, 7.5, 10.5, 11.5]]
+        return _stroke[c, p, [8.5, 2.0, 6.5, 13.0]]
+    if name eq 'code-block'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.5]
+        c = _stroke[c, p, [6.0, 5.0, 3.75, 7.5, 6.0, 10.0]]
+        return _stroke[c, p, [9.0, 5.0, 11.25, 7.5, 9.0, 10.0]]
+    c
+
+--- four lines of text, at heights 1.5, 5.5, 9.5 and 13.5, each from and
+--- to the x the spans give (x0, x1, …): an alignment's sample
+fn _text_rows[c, p, spans]
+    for k in range[4]
+        y = 1.5 + 4.0 * k
+        c = _stroke[c, p, [spans[2 * k], y, spans[2 * k + 1], y]]
+    c
+
+--- ---- marks ----
+
+--- the names of the marks a control shows
+fn _mark_names[]
+    ['accessibility', 'activity-log', 'avatar', 'badge', 'bell', 'bookmark', 'bookmark-filled',
+     'calendar', 'card-stack', 'card-stack-minus', 'card-stack-plus', 'chat-bubble', 'check',
+     'check-circled', 'circle', 'circle-backslash', 'clock', 'countdown-timer',
+     'counter-clockwise-clock', 'cross-1', 'cross-2', 'cross-circled', 'dash', 'dashboard', 'dot',
+     'dots-horizontal', 'dots-vertical', 'drag-handle-dots-1', 'drag-handle-dots-2',
+     'drag-handle-horizontal', 'drag-handle-vertical', 'exclamation-circled', 'exclamation-mark',
+     'exclamation-triangle', 'eye-closed', 'eye-none', 'eye-open', 'face', 'filter', 'gear',
+     'hamburger-menu', 'heart', 'heart-filled', 'home', 'info-circled', 'lap-timer', 'link-1',
+     'link-2', 'link-break-1', 'link-break-2', 'link-none-1', 'link-none-2', 'loader', 'locate',
+     'lock-closed', 'lock-open-1', 'lock-open-2', 'magnifying-glass', 'minimize', 'minus',
+     'minus-circled', 'mixer-horizontal', 'mixer-vertical', 'people', 'person', 'plus',
+     'plus-circled', 'question-mark', 'question-mark-circled', 'spinner', 'square',
+     'square-minus', 'square-plus', 'star', 'star-filled', 'star-half', 'stopwatch', 'timer',
+     'zoom-in', 'zoom-out']
+
+--- the drawings of the marks a control shows: checks, crosses and pluses
+--- and their circled kinds, dots and handles, stars, hearts and
+--- bookmarks, clocks and timers, eyes, locks and links, people, and the
+--- gauges of a search, a setting or a place
+fn _marks[c, p, name]
+    if name eq 'check'
+        return _stroke[c, p, [3.0, 7.75, 6.0, 10.75, 12.0, 4.25]]
+    if name eq 'check-circled'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        return _stroke[c, p, [4.75, 7.75, 6.75, 9.75, 10.25, 5.5]]
+    if name eq 'cross-1'
+        c = _stroke[c, p, [4.0, 4.0, 11.0, 11.0]]
+        return _stroke[c, p, [11.0, 4.0, 4.0, 11.0]]
+    if name eq 'cross-2'
+        c = _stroke[c, p, [3.0, 3.0, 12.0, 12.0]]
+        return _stroke[c, p, [12.0, 3.0, 3.0, 12.0]]
+    if name eq 'cross-circled'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        c = _stroke[c, p, [5.25, 5.25, 9.75, 9.75]]
+        return _stroke[c, p, [9.75, 5.25, 5.25, 9.75]]
+    if name eq 'plus'
+        c = _stroke[c, p, [7.5, 2.5, 7.5, 12.5]]
+        return _stroke[c, p, [2.5, 7.5, 12.5, 7.5]]
+    if name eq 'minus'
+        return _stroke[c, p, [2.5, 7.5, 12.5, 7.5]]
+    if name eq 'dash'
+        return _stroke[c, p, [4.5, 7.5, 10.5, 7.5]]
+    if name eq 'plus-circled' or name eq 'minus-circled' or name eq 'square-plus' or name eq 'square-minus'
+        if starts[name, 'square']
+            c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.5]
+        if not starts[name, 'square']
+            c = _ring[c, p, 7.5, 7.5, 6.0]
+        if name eq 'plus-circled' or name eq 'square-plus'
+            c = _stroke[c, p, [7.5, 4.5, 7.5, 10.5]]
+        return _stroke[c, p, [4.5, 7.5, 10.5, 7.5]]
+    if name eq 'square'
+        return _box[c, p, 2.5, 2.5, 10.0, 10.0, 0.0]
+    if name eq 'circle'
+        return _ring[c, p, 7.5, 7.5, 6.0]
+    if name eq 'circle-backslash'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        return _stroke[c, p, [3.25, 3.25, 11.75, 11.75]]
+    if name eq 'dot'
+        return _disc[c, p, 7.5, 7.5, 2.25]
+    if name eq 'dots-horizontal'
+        return _dots[c, p, 3.0, 7.5, 12.0, 7.5, 3, 1.25]
+    if name eq 'dots-vertical'
+        return _dots[c, p, 7.5, 3.0, 7.5, 12.0, 3, 1.25]
+    if name eq 'drag-handle-dots-1'
+        c = _dots[c, p, 3.5, 5.5, 11.5, 5.5, 3, 1.0]
+        return _dots[c, p, 3.5, 9.5, 11.5, 9.5, 3, 1.0]
+    if name eq 'drag-handle-dots-2'
+        c = _dots[c, p, 5.5, 3.5, 5.5, 11.5, 3, 1.0]
+        return _dots[c, p, 9.5, 3.5, 9.5, 11.5, 3, 1.0]
+    if name eq 'drag-handle-horizontal'
+        c = _stroke[c, p, [3.5, 5.5, 11.5, 5.5]]
+        return _stroke[c, p, [3.5, 9.5, 11.5, 9.5]]
+    if name eq 'drag-handle-vertical'
+        c = _stroke[c, p, [5.5, 3.5, 5.5, 11.5]]
+        return _stroke[c, p, [9.5, 3.5, 9.5, 11.5]]
+    if name eq 'hamburger-menu'
+        c = _stroke[c, p, [1.5, 3.5, 13.5, 3.5]]
+        c = _stroke[c, p, [1.5, 7.5, 13.5, 7.5]]
+        return _stroke[c, p, [1.5, 11.5, 13.5, 11.5]]
+    if starts[name, 'star']
+        s = _star_points[7.5, 8.0, 6.5, 2.75]
+        if name eq 'star-filled'
+            c = _fan[c, p, 7.5, 8.0, s]
+        if name eq 'star-half'
+            c = _fan[c, p, 7.5, 8.0, concat[slice[s, 10, 20], slice[s, 0, 2]]]
+        return _loop[c, p, s]
+    if starts[name, 'heart']
+        h = concat[[7.5, 13.0], _arc_points[4.5, 5.5, 3.0, 3.0, 135.0, 315.0], [7.5, 4.5], _arc_points[10.5, 5.5, 3.0, 3.0, 225.0, 405.0]]
+        if name eq 'heart-filled'
+            c = _fan[c, p, 7.5, 7.5, h]
+        return _loop[c, p, h]
+    if starts[name, 'bookmark']
+        b = [3.5, 1.5, 11.5, 1.5, 11.5, 13.5, 7.5, 10.0, 3.5, 13.5]
+        if name eq 'bookmark-filled'
+            c = _solid[c, p, b]
+        return _loop[c, p, b]
+    if name eq 'bell'
+        c = _loop[c, p, concat[[2.0, 11.5, 3.5, 10.0], _arc_points[7.5, 6.0, 4.0, 4.0, 180.0, 360.0], [11.5, 10.0, 13.0, 11.5]]]
+        return _arc[c, p, 7.5, 11.5, 1.75, 0.0, 180.0]
+    if name eq 'calendar'
+        c = _box[c, p, 1.5, 2.5, 12.0, 11.0, 1.0]
+        c = _stroke[c, p, [1.5, 5.5, 13.5, 5.5]]
+        c = _stroke[c, p, [4.5, 1.0, 4.5, 3.5]]
+        c = _stroke[c, p, [10.5, 1.0, 10.5, 3.5]]
+        c = _specks[c, p, 4.5, 8.5, 10.5, 8.5, 3]
+        return _specks[c, p, 4.5, 11.5, 7.5, 11.5, 2]
+    if name eq 'clock'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        return _stroke[c, p, [7.5, 4.0, 7.5, 7.5, 10.0, 9.0]]
+    if name eq 'countdown-timer'
+        c = _arc[c, p, 7.5, 7.5, 6.0, -60.0, 240.0]
+        return _stroke[c, p, [7.5, 7.5, 10.0, 5.0]]
+    if name eq 'counter-clockwise-clock'
+        c = _arc_arrow[c, p, 7.5, 7.5, 5.5, 135.0, -150.0, 2.5]
+        return _stroke[c, p, [7.5, 4.5, 7.5, 7.5, 9.5, 9.5]]
+    if name eq 'stopwatch' or name eq 'lap-timer'
+        c = _ring[c, p, 7.5, 8.5, 5.5]
+        c = _stroke[c, p, [6.0, 1.5, 9.0, 1.5]]
+        c = _stroke[c, p, [7.5, 1.5, 7.5, 3.0]]
+        if name eq 'stopwatch'
+            c = _stroke[c, p, [11.75, 3.75, 12.75, 2.75]]
+            return _stroke[c, p, [7.5, 8.5, 7.5, 5.5]]
+        return _solid[c, p, concat[[7.5, 8.5], _arc_points[7.5, 8.5, 4.0, 4.0, -90.0, 0.0]]]
+    if name eq 'timer'
+        c = _stroke[c, p, [3.5, 1.5, 11.5, 1.5]]
+        c = _stroke[c, p, [3.5, 13.5, 11.5, 13.5]]
+        c = _stroke[c, p, [4.5, 1.5, 4.5, 4.0, 7.5, 7.5, 4.5, 11.0, 4.5, 13.5]]
+        c = _stroke[c, p, [10.5, 1.5, 10.5, 4.0, 7.5, 7.5, 10.5, 11.0, 10.5, 13.5]]
+        return _solid[c, p, [5.5, 13.0, 9.5, 13.0, 7.5, 10.5]]
+    if starts[name, 'eye-']
+        if name eq 'eye-closed'
+            c = _stroke[c, p, _curve_points[1.5, 6.0, 7.5, 12.0, 13.5, 6.0]]
+            c = _stroke[c, p, [4.5, 8.25, 3.25, 10.25]]
+            c = _stroke[c, p, [7.5, 9.0, 7.5, 11.5]]
+            return _stroke[c, p, [10.5, 8.25, 11.75, 10.25]]
+        lid = _curve_points[1.0, 7.5, 7.5, 0.5, 14.0, 7.5]
+        under = _curve_points[14.0, 7.5, 7.5, 14.5, 1.0, 7.5]
+        c = _loop[c, p, concat[lid, slice[under, 2, 16]]]
+        c = _ring[c, p, 7.5, 7.5, 2.0]
+        if name eq 'eye-none'
+            return _stroke[c, p, [2.5, 13.5, 12.5, 1.5]]
+        return c
+    if name eq 'filter'
+        return _loop[c, p, [1.5, 2.5, 13.5, 2.5, 9.0, 8.0, 9.0, 12.5, 6.0, 11.0, 6.0, 8.0]]
+    if name eq 'magnifying-glass' or starts[name, 'zoom-']
+        c = _ring[c, p, 6.5, 6.5, 4.5]
+        c = _stroke[c, p, [9.75, 9.75, 13.5, 13.5]]
+        if name eq 'magnifying-glass'
+            return c
+        if name eq 'zoom-in'
+            c = _stroke[c, p, [6.5, 4.5, 6.5, 8.5]]
+        return _stroke[c, p, [4.5, 6.5, 8.5, 6.5]]
+    if name eq 'gear'
+        c = _ring[c, p, 7.5, 7.5, 4.0]
+        c = _ring[c, p, 7.5, 7.5, 1.5]
+        return _rays[c, _wide[p, 2.0], 7.5, 7.5, 5.0, 6.0, 8, 0.0]
+    if name eq 'home'
+        c = _stroke[c, p, [1.5, 7.5, 7.5, 1.5, 13.5, 7.5]]
+        c = _stroke[c, p, [3.5, 6.0, 3.5, 13.5, 11.5, 13.5, 11.5, 6.0]]
+        return _stroke[c, p, [6.5, 13.5, 6.5, 9.5, 8.5, 9.5, 8.5, 13.5]]
+    if name eq 'person'
+        c = _ring[c, p, 7.5, 4.25, 2.25]
+        return _arc[c, p, 7.5, 14.0, 5.25, 180.0, 360.0]
+    if name eq 'avatar'
+        c = _ring[c, p, 7.5, 7.5, 6.5]
+        c = _ring[c, p, 7.5, 6.0, 2.25]
+        return _arc[c, p, 7.5, 13.0, 4.0, 200.0, 340.0]
+    if name eq 'people'
+        c = _ring[c, p, 5.5, 5.0, 2.0]
+        c = _arc[c, p, 5.5, 13.5, 4.25, 180.0, 360.0]
+        c = _ring[c, p, 10.75, 4.0, 1.75]
+        return _arc[c, p, 10.75, 11.5, 3.25, 270.0, 360.0]
+    if name eq 'face'
+        c = _ring[c, p, 7.5, 7.5, 6.5]
+        c = _disc[c, p, 5.25, 6.0, 0.9]
+        c = _disc[c, p, 9.75, 6.0, 0.9]
+        return _arc[c, p, 7.5, 7.5, 3.5, 30.0, 150.0]
+    if name eq 'accessibility'
+        c = _ring[c, p, 7.5, 7.5, 6.5]
+        c = _disc[c, p, 7.5, 4.25, 1.1]
+        c = _stroke[c, p, [4.0, 6.0, 7.5, 6.75, 11.0, 6.0]]
+        c = _stroke[c, p, [7.5, 6.75, 7.5, 9.0]]
+        return _stroke[c, p, [5.5, 12.0, 7.5, 9.0, 9.5, 12.0]]
+    if name eq 'activity-log'
+        c = _stroke[c, p, [2.5, 2.0, 2.5, 13.0]]
+        c = _dots[c, p, 2.5, 3.5, 2.5, 11.5, 3, 1.25]
+        c = _stroke[c, p, [5.5, 3.5, 13.5, 3.5]]
+        c = _stroke[c, p, [5.5, 7.5, 11.5, 7.5]]
+        return _stroke[c, p, [5.5, 11.5, 12.5, 11.5]]
+    if name eq 'badge'
+        c = _box[c, p, 1.5, 4.5, 12.0, 6.0, 3.0]
+        c = _disc[c, p, 4.75, 7.5, 1.0]
+        return _stroke[c, p, [7.0, 7.5, 10.5, 7.5]]
+    if starts[name, 'card-stack']
+        c = _box[c, p, 1.5, 5.5, 12.0, 8.0, 1.0]
+        c = _stroke[c, p, [3.0, 3.5, 12.0, 3.5]]
+        c = _stroke[c, p, [4.5, 1.5, 10.5, 1.5]]
+        if name eq 'card-stack-plus'
+            c = _stroke[c, p, [7.5, 7.5, 7.5, 11.5]]
+        if name ne 'card-stack'
+            return _stroke[c, p, [5.5, 9.5, 9.5, 9.5]]
+        return c
+    if name eq 'chat-bubble'
+        return _loop[c, p, concat[_arc_points[11.5, 3.5, 2.0, 2.0, -90.0, 0.0], _arc_points[11.5, 8.5, 2.0, 2.0, 0.0, 90.0], [6.5, 10.5, 3.5, 13.5], _arc_points[3.5, 8.5, 2.0, 2.0, 90.0, 180.0], _arc_points[3.5, 3.5, 2.0, 2.0, 180.0, 270.0]]]
+    if name eq 'dashboard'
+        c = _box[c, p, 1.5, 1.5, 5.0, 7.0, 0.5]
+        c = _box[c, p, 8.5, 1.5, 5.0, 4.0, 0.5]
+        c = _box[c, p, 1.5, 10.5, 5.0, 3.0, 0.5]
+        return _box[c, p, 8.5, 7.5, 5.0, 6.0, 0.5]
+    if name eq 'exclamation-circled'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        c = _stroke[c, p, [7.5, 4.0, 7.5, 8.25]]
+        return _disc[c, p, 7.5, 10.75, 0.85]
+    if name eq 'exclamation-mark'
+        c = _stroke[c, p, [7.5, 1.5, 7.5, 9.5]]
+        return _disc[c, p, 7.5, 12.75, 1.0]
+    if name eq 'exclamation-triangle'
+        c = _loop[c, p, [7.5, 1.5, 13.75, 12.5, 1.25, 12.5]]
+        c = _stroke[c, p, [7.5, 5.25, 7.5, 8.5]]
+        return _disc[c, p, 7.5, 10.5, 0.8]
+    if name eq 'info-circled'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        c = _disc[c, p, 7.5, 4.5, 0.85]
+        c = _stroke[c, p, [6.5, 6.75, 7.5, 6.75, 7.5, 10.5]]
+        return _stroke[c, p, [6.25, 10.5, 8.75, 10.5]]
+    if name eq 'question-mark'
+        c = _stroke[c, p, concat[_arc_points[7.5, 5.0, 3.25, 3.25, 200.0, 400.0], [8.25, 8.25, 7.5, 9.25, 7.5, 10.0]]]
+        return _disc[c, p, 7.5, 12.75, 0.9]
+    if name eq 'question-mark-circled'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        c = _stroke[c, p, concat[_arc_points[7.5, 5.75, 2.25, 2.25, 200.0, 400.0], [8.0, 8.25, 7.5, 8.75, 7.5, 9.25]]]
+        return _disc[c, p, 7.5, 11.0, 0.8]
+    if starts[name, 'lock-']
+        if name eq 'lock-open-2'
+            c = _box[c, p, 1.5, 6.5, 9.0, 7.0, 1.0]
+            c = _stroke[c, p, concat[[8.5, 6.5], _arc_points[11.0, 4.5, 2.5, 2.5, 180.0, 360.0], [13.5, 5.5]]]
+            return _disc[c, p, 6.0, 10.0, 1.0]
+        c = _box[c, p, 2.5, 6.5, 10.0, 7.0, 1.0]
+        c = _disc[c, p, 7.5, 10.0, 1.0]
+        if name eq 'lock-open-1'
+            return _stroke[c, p, concat[[4.5, 6.5], _arc_points[7.5, 3.75, 3.0, 3.0, 180.0, 360.0], [10.5, 4.75]]]
+        return _stroke[c, p, concat[[4.5, 6.5], _arc_points[7.5, 4.5, 3.0, 3.0, 180.0, 360.0], [10.5, 6.5]]]
+    if starts[name, 'link-']
+        slant = 0.0
+        if slice[name, len[name] - 1, len[name]] eq '2'
+            slant = -45.0
+        if starts[name, 'link-break-']
+            return _link[c, p, 'broken', slant]
+        if starts[name, 'link-none-']
+            return _link[c, p, 'apart', slant]
+        return _link[c, p, 'joined', slant]
+    if name eq 'minimize'
+        c = _stroke[c, p, [13.0, 2.0, 8.5, 6.5]]
+        c = _stroke[c, p, [8.5, 3.5, 8.5, 6.5, 11.5, 6.5]]
+        c = _stroke[c, p, [2.0, 13.0, 6.5, 8.5]]
+        return _stroke[c, p, [3.5, 8.5, 6.5, 8.5, 6.5, 11.5]]
+    if starts[name, 'mixer-']
+        q = 0
+        if name eq 'mixer-vertical'
+            q = 1
+        c = _track[c, p, 1.5, 13.5, 4.5, 5.0, q]
+        return _track[c, p, 1.5, 13.5, 10.5, 10.0, q]
+    if name eq 'spinner'
+        return _arc[c, p, 7.5, 7.5, 6.0, -90.0, 180.0]
+    if name eq 'loader'
+        return _rays[c, p, 7.5, 7.5, 3.0, 6.0, 8, -90.0]
+    if name eq 'locate'
+        c = _ring[c, p, 7.5, 7.5, 4.5]
+        c = _disc[c, p, 7.5, 7.5, 1.5]
+        c = _stroke[c, p, [7.5, 0.75, 7.5, 3.0]]
+        c = _stroke[c, p, [7.5, 12.0, 7.5, 14.25]]
+        c = _stroke[c, p, [0.75, 7.5, 3.0, 7.5]]
+        return _stroke[c, p, [12.0, 7.5, 14.25, 7.5]]
+    c
+
+--- ---- things ----
+
+--- the names of things
+fn _thing_names[]
+    ['backpack', 'backspace', 'bar-chart', 'battery', 'camera', 'clipboard', 'clipboard-copy',
+     'cloud', 'cloud-upload', 'command', 'commit', 'compass', 'control', 'cookie', 'copy',
+     'crumpled-paper', 'cube', 'database', 'desktop', 'disc', 'dollar', 'download',
+     'drawing-pin', 'drawing-pin-filled', 'envelope-closed', 'envelope-open', 'fast-forward',
+     'file', 'file-minus', 'file-plus', 'file-text', 'flag', 'folder', 'folder-open', 'globe',
+     'globe-2', 'hand', 'id-card', 'image', 'keyboard', 'laptop', 'layers', 'lightning-bolt',
+     'map', 'map-pin', 'map-pin-filled', 'microphone', 'mobile', 'moon', 'music', 'navigation',
+     'option', 'paper-plane', 'paperclip', 'pause', 'phone', 'pie-chart', 'play', 'reader',
+     'record', 'resume', 'return', 'rewind', 'rocket', 'server', 'sewing-pin',
+     'sewing-pin-filled', 'shift', 'signal', 'speaker-loud', 'speaker-moderate', 'speaker-off',
+     'speaker-quiet', 'stack', 'stop', 'sun', 'tag', 'track-next', 'track-previous', 'trash',
+     'upload', 'video', 'wifi']
+
+--- the drawings of things: charts, files and folders, mail, devices,
+--- media and their keys, places on a map, the sky, and a keyboard's
+--- keys
+fn _things[c, p, name]
+    if name eq 'bar-chart'
+        c = _block[c, p, 2.0, 8.0, 2.0, 5.0, 0.5]
+        c = _block[c, p, 5.0, 4.0, 2.0, 9.0, 0.5]
+        c = _block[c, p, 8.0, 6.0, 2.0, 7.0, 0.5]
+        return _block[c, p, 11.0, 2.0, 2.0, 11.0, 0.5]
+    if name eq 'signal'
+        c = _block[c, p, 2.0, 10.0, 2.0, 3.0, 0.5]
+        c = _block[c, p, 5.0, 7.0, 2.0, 6.0, 0.5]
+        c = _block[c, p, 8.0, 4.0, 2.0, 9.0, 0.5]
+        return _block[c, p, 11.0, 1.0, 2.0, 12.0, 0.5]
+    if name eq 'pie-chart'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        return _solid[c, p, concat[[7.5, 7.5], _arc_points[7.5, 7.5, 6.0, 6.0, -90.0, 0.0]]]
+    if name eq 'download' or name eq 'upload'
+        c = _stroke[c, p, [1.5, 10.5, 1.5, 13.5, 13.5, 13.5, 13.5, 10.5]]
+        if name eq 'download'
+            c = _stroke[c, p, [7.5, 1.5, 7.5, 9.5]]
+            return _stroke[c, p, [4.5, 6.5, 7.5, 9.5, 10.5, 6.5]]
+        c = _stroke[c, p, [7.5, 10.0, 7.5, 2.0]]
+        return _stroke[c, p, [4.5, 5.0, 7.5, 2.0, 10.5, 5.0]]
+    if name eq 'camera'
+        c = _box[c, p, 1.5, 4.5, 12.0, 9.0, 1.5]
+        c = _stroke[c, p, [5.0, 4.5, 6.0, 2.5, 9.0, 2.5, 10.0, 4.5]]
+        return _ring[c, p, 7.5, 9.0, 2.5]
+    if name eq 'video'
+        c = _box[c, p, 1.5, 3.5, 8.0, 8.0, 1.0]
+        return _loop[c, p, [9.5, 6.0, 13.5, 3.5, 13.5, 11.5, 9.5, 9.0]]
+    if name eq 'envelope-closed'
+        c = _box[c, p, 1.5, 2.5, 12.0, 10.0, 1.0]
+        return _stroke[c, p, [2.0, 3.5, 7.5, 8.5, 13.0, 3.5]]
+    if name eq 'envelope-open'
+        c = _loop[c, p, [1.5, 6.0, 7.5, 1.5, 13.5, 6.0, 13.5, 13.5, 1.5, 13.5]]
+        return _stroke[c, p, [1.5, 6.0, 7.5, 10.5, 13.5, 6.0]]
+    if name eq 'paper-plane'
+        c = _loop[c, p, [1.5, 7.0, 13.5, 1.5, 9.0, 13.5, 7.0, 8.5]]
+        return _stroke[c, p, [7.0, 8.5, 13.5, 1.5]]
+    if name eq 'rocket'
+        --- (drawn standing, and turned to fly up and right)
+        c = _loop[c, p, _rotated[[7.5, 1.5, 9.75, 4.5, 9.75, 10.0, 5.25, 10.0, 5.25, 4.5], 45.0]]
+        c = _stroke[c, p, _rotated[[5.25, 7.25, 3.25, 9.5, 3.25, 12.25, 5.25, 10.0], 45.0]]
+        c = _stroke[c, p, _rotated[[9.75, 7.25, 11.75, 9.5, 11.75, 12.25, 9.75, 10.0], 45.0]]
+        c = _stroke[c, p, _rotated[[6.5, 11.25, 7.5, 13.5, 8.5, 11.25], 45.0]]
+        w = _rotated[[7.5, 5.75], 45.0]
+        return _ring[c, p, w[0], w[1], 1.25]
+    if name eq 'reader'
+        c = _box[c, p, 2.5, 1.5, 10.0, 12.0, 1.0]
+        c = _stroke[c, p, [4.5, 4.5, 10.5, 4.5]]
+        c = _stroke[c, p, [4.5, 7.5, 10.5, 7.5]]
+        return _stroke[c, p, [4.5, 10.5, 8.5, 10.5]]
+    if name eq 'file' or starts[name, 'file-']
+        c = _loop[c, p, [2.5, 1.5, 9.5, 1.5, 12.5, 4.5, 12.5, 13.5, 2.5, 13.5]]
+        c = _stroke[c, p, [9.5, 1.5, 9.5, 4.5, 12.5, 4.5]]
+        if name eq 'file-plus'
+            c = _stroke[c, p, [7.5, 7.5, 7.5, 11.5]]
+        if name eq 'file-plus' or name eq 'file-minus'
+            return _stroke[c, p, [5.5, 9.5, 9.5, 9.5]]
+        if name eq 'file-text'
+            c = _stroke[c, p, [4.5, 4.5, 7.5, 4.5]]
+            c = _stroke[c, p, [4.5, 7.5, 10.5, 7.5]]
+            return _stroke[c, p, [4.5, 10.5, 10.5, 10.5]]
+        return c
+    if name eq 'folder'
+        return _loop[c, p, [1.5, 2.5, 5.5, 2.5, 7.0, 4.5, 13.5, 4.5, 13.5, 12.5, 1.5, 12.5]]
+    if name eq 'folder-open'
+        c = _stroke[c, p, [1.5, 12.5, 1.5, 2.5, 5.5, 2.5, 7.0, 4.5, 11.5, 4.5, 11.5, 6.5]]
+        return _loop[c, p, [1.5, 12.5, 4.0, 6.5, 14.0, 6.5, 11.5, 12.5]]
+    if name eq 'paperclip'
+        return _stroke[c, p, concat[[10.5, 4.0], _arc_points[7.5, 11.0, 3.0, 3.0, 0.0, 180.0], _arc_points[6.5, 3.5, 2.0, 2.0, 180.0, 360.0], [8.5, 9.5]]]
+    if name eq 'cloud' or name eq 'cloud-upload'
+        c = _loop[c, p, concat[_arc_points[11.0, 9.0, 2.5, 2.5, 90.0, -60.0], _arc_points[7.5, 6.5, 3.5, 3.5, -15.0, -165.0], _arc_points[4.0, 9.0, 2.5, 2.5, -120.0, -270.0]]]
+        if name eq 'cloud'
+            return c
+        c = _stroke[c, p, [7.5, 13.5, 7.5, 8.5]]
+        return _stroke[c, p, [5.5, 10.5, 7.5, 8.5, 9.5, 10.5]]
+    if name eq 'map'
+        c = _loop[c, p, [1.5, 3.0, 5.5, 1.5, 9.5, 3.0, 13.5, 1.5, 13.5, 12.0, 9.5, 13.5, 5.5, 12.0, 1.5, 13.5]]
+        c = _stroke[c, p, [5.5, 1.5, 5.5, 12.0]]
+        return _stroke[c, p, [9.5, 3.0, 9.5, 13.5]]
+    if starts[name, 'map-pin']
+        pin = concat[_arc_points[7.5, 6.0, 4.5, 4.5, 150.0, 390.0], [7.5, 13.5]]
+        if name eq 'map-pin-filled'
+            return _filled[c, p, pin]
+        c = _loop[c, p, pin]
+        return _ring[c, p, 7.5, 6.0, 1.5]
+    if name eq 'compass'
+        c = _ring[c, p, 7.5, 7.5, 6.5]
+        c = _filled[c, p, _rotated[[7.5, 3.0, 9.25, 7.5, 5.75, 7.5], 45.0]]
+        return _loop[c, p, _rotated[[5.75, 7.5, 9.25, 7.5, 7.5, 12.0], 45.0]]
+    if name eq 'navigation'
+        n = _rotated[[7.5, 2.0, 11.5, 12.0, 7.5, 9.5, 3.5, 12.0], 45.0]
+        c = _solid[c, p, n]
+        return _loop[c, p, n]
+    if name eq 'record'
+        return _disc[c, p, 7.5, 7.5, 5.0]
+    if name eq 'rewind'
+        c = _filled[c, p, [7.0, 3.5, 7.0, 11.5, 1.5, 7.5]]
+        return _filled[c, p, [13.0, 3.5, 13.0, 11.5, 7.5, 7.5]]
+    if name eq 'fast-forward'
+        c = _filled[c, p, [8.0, 3.5, 8.0, 11.5, 13.5, 7.5]]
+        return _filled[c, p, [2.0, 3.5, 2.0, 11.5, 7.5, 7.5]]
+    if name eq 'track-next'
+        c = _filled[c, p, [2.5, 3.0, 9.5, 7.5, 2.5, 12.0]]
+        return _stroke[c, p, [11.5, 3.0, 11.5, 12.0]]
+    if name eq 'track-previous'
+        c = _filled[c, p, [12.5, 3.0, 5.5, 7.5, 12.5, 12.0]]
+        return _stroke[c, p, [3.5, 3.0, 3.5, 12.0]]
+    if name eq 'play'
+        return _filled[c, p, [3.5, 2.0, 12.5, 7.5, 3.5, 13.0]]
+    if name eq 'pause'
+        c = _block[c, p, 3.0, 2.0, 3.0, 11.0, 0.75]
+        return _block[c, p, 9.0, 2.0, 3.0, 11.0, 0.75]
+    if name eq 'stop'
+        return _block[c, p, 2.0, 2.0, 11.0, 11.0, 1.0]
+    if name eq 'resume'
+        c = _stroke[c, p, [2.5, 2.5, 2.5, 12.5]]
+        return _filled[c, p, [5.0, 2.5, 12.5, 7.5, 5.0, 12.5]]
+    if name eq 'microphone'
+        c = _box[c, p, 5.0, 1.5, 5.0, 8.0, 2.5]
+        c = _arc[c, p, 7.5, 7.0, 4.5, 0.0, 180.0]
+        c = _stroke[c, p, [7.5, 11.5, 7.5, 13.5]]
+        return _stroke[c, p, [5.0, 13.5, 10.0, 13.5]]
+    if name eq 'music'
+        c = _disc[c, p, 4.0, 11.5, 1.75]
+        c = _disc[c, p, 11.0, 9.5, 1.75]
+        c = _stroke[c, p, [5.75, 11.5, 5.75, 3.5]]
+        c = _stroke[c, p, [12.75, 9.5, 12.75, 1.5]]
+        return _stroke[c, _wide[p, 2.0], [5.75, 3.5, 12.75, 1.5]]
+    if starts[name, 'speaker-']
+        c = _loop[c, p, [1.5, 5.5, 4.0, 5.5, 7.5, 2.5, 7.5, 12.5, 4.0, 9.5, 1.5, 9.5]]
+        if name eq 'speaker-off'
+            c = _stroke[c, p, [10.0, 5.75, 13.5, 9.25]]
+            return _stroke[c, p, [13.5, 5.75, 10.0, 9.25]]
+        c = _arc[c, p, 7.5, 7.5, 2.5, -45.0, 45.0]
+        if name eq 'speaker-quiet'
+            return c
+        c = _arc[c, p, 7.5, 7.5, 4.5, -50.0, 50.0]
+        if name eq 'speaker-moderate'
+            return c
+        return _arc[c, p, 7.5, 7.5, 6.5, -55.0, 55.0]
+    if name eq 'stack'
+        c = _box[c, p, 1.5, 1.5, 12.0, 2.0, 0.5]
+        c = _box[c, p, 1.5, 6.5, 12.0, 2.0, 0.5]
+        return _box[c, p, 1.5, 11.5, 12.0, 2.0, 0.5]
+    if name eq 'layers'
+        c = _loop[c, p, [7.5, 1.5, 13.5, 5.0, 7.5, 8.5, 1.5, 5.0]]
+        c = _stroke[c, p, [1.5, 7.5, 7.5, 11.0, 13.5, 7.5]]
+        return _stroke[c, p, [1.5, 10.0, 7.5, 13.5, 13.5, 10.0]]
+    if name eq 'disc'
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        c = _ring[c, p, 7.5, 7.5, 1.5]
+        return _arc[c, p, 7.5, 7.5, 4.0, 200.0, 250.0]
+    if name eq 'commit'
+        c = _ring[c, p, 7.5, 7.5, 2.5]
+        c = _stroke[c, p, [1.0, 7.5, 4.5, 7.5]]
+        return _stroke[c, p, [10.5, 7.5, 14.0, 7.5]]
+    if name eq 'cookie'
+        c = _loop[c, p, concat[_arc_points[7.5, 7.5, 6.0, 6.0, -20.0, 290.0], _arc_points[12.25, 2.75, 2.84, 2.84, 198.2, 71.8]]]
+        c = _disc[c, p, 5.0, 5.5, 0.8]
+        c = _disc[c, p, 9.5, 9.5, 0.8]
+        return _disc[c, p, 5.5, 10.0, 0.8]
+    if name eq 'crumpled-paper'
+        c = _loop[c, p, [2.0, 3.0, 6.0, 1.5, 9.0, 3.0, 13.0, 2.0, 12.5, 7.0, 13.5, 12.0, 9.0, 13.0, 5.0, 12.5, 1.5, 13.0, 2.5, 8.0]]
+        c = _stroke[c, p, [6.0, 1.5, 7.5, 7.0, 5.0, 12.5]]
+        return _stroke[c, p, [7.5, 7.0, 12.5, 7.0]]
+    if name eq 'cube'
+        c = _loop[c, p, [7.5, 1.5, 13.5, 4.5, 13.5, 10.5, 7.5, 13.5, 1.5, 10.5, 1.5, 4.5]]
+        c = _stroke[c, p, [1.5, 4.5, 7.5, 7.5, 13.5, 4.5]]
+        return _stroke[c, p, [7.5, 7.5, 7.5, 13.5]]
+    if name eq 'database'
+        c = _oval[c, p, 7.5, 3.5, 6.0, 2.0]
+        c = _stroke[c, p, [1.5, 3.5, 1.5, 11.5]]
+        c = _stroke[c, p, [13.5, 3.5, 13.5, 11.5]]
+        c = _stroke[c, p, _arc_points[7.5, 7.5, 6.0, 2.0, 0.0, 180.0]]
+        return _stroke[c, p, _arc_points[7.5, 11.5, 6.0, 2.0, 0.0, 180.0]]
+    if name eq 'server'
+        c = _box[c, p, 1.5, 2.5, 12.0, 4.0, 1.0]
+        c = _box[c, p, 1.5, 8.5, 12.0, 4.0, 1.0]
+        c = _disc[c, p, 4.0, 4.5, 0.75]
+        c = _disc[c, p, 4.0, 10.5, 0.75]
+        c = _stroke[c, p, [7.5, 4.5, 11.0, 4.5]]
+        return _stroke[c, p, [7.5, 10.5, 11.0, 10.5]]
+    if name eq 'desktop'
+        c = _box[c, p, 1.5, 1.5, 12.0, 9.0, 1.0]
+        c = _stroke[c, p, [7.5, 10.5, 7.5, 13.0]]
+        return _stroke[c, p, [4.5, 13.5, 10.5, 13.5]]
+    if name eq 'laptop'
+        c = _box[c, p, 2.5, 2.5, 10.0, 7.0, 1.0]
+        return _stroke[c, p, [2.5, 9.5, 1.0, 12.5, 14.0, 12.5, 12.5, 9.5]]
+    if name eq 'mobile'
+        c = _box[c, p, 3.5, 1.5, 8.0, 12.0, 1.5]
+        return _stroke[c, p, [6.5, 11.5, 8.5, 11.5]]
+    if name eq 'phone'
+        return _loop[c, p, [2.0, 3.25, 3.25, 2.0, 5.5, 2.0, 6.5, 5.0, 5.0, 6.5, 8.5, 10.0, 10.0, 8.5, 13.0, 9.5, 13.0, 11.75, 11.75, 13.0, 9.5, 13.0, 2.0, 5.5]]
+    if name eq 'keyboard'
+        c = _box[c, p, 1.5, 3.5, 12.0, 8.0, 1.0]
+        c = _specks[c, p, 3.5, 5.5, 11.5, 5.5, 5]
+        c = _specks[c, p, 3.5, 7.5, 11.5, 7.5, 5]
+        return _stroke[c, p, [5.0, 9.5, 10.0, 9.5]]
+    if name eq 'id-card'
+        c = _box[c, p, 1.5, 2.5, 12.0, 10.0, 1.0]
+        c = _ring[c, p, 5.0, 6.5, 1.5]
+        c = _arc[c, p, 5.0, 11.5, 2.5, 180.0, 360.0]
+        c = _stroke[c, p, [8.5, 5.5, 11.5, 5.5]]
+        return _stroke[c, p, [8.5, 8.5, 11.5, 8.5]]
+    if name eq 'image'
+        c = _box[c, p, 1.5, 1.5, 12.0, 12.0, 1.0]
+        c = _stroke[c, p, [1.5, 11.0, 5.5, 7.0, 8.5, 10.0, 10.5, 8.0, 13.5, 11.0]]
+        return _ring[c, p, 10.0, 4.75, 1.25]
+    if name eq 'lightning-bolt'
+        return _loop[c, p, [9.0, 1.0, 3.0, 8.5, 7.0, 8.5, 6.0, 14.0, 12.0, 6.5, 8.0, 6.5]]
+    if name eq 'moon'
+        return _loop[c, p, concat[_arc_points[7.5, 7.5, 6.0, 6.0, 10.3, 259.7], _arc_points[10.5, 4.5, 5.0, 5.0, 215.5, 54.5]]]
+    if name eq 'sun'
+        c = _ring[c, p, 7.5, 7.5, 2.75]
+        return _rays[c, p, 7.5, 7.5, 4.75, 6.5, 8, 0.0]
+    if starts[name, 'globe']
+        c = _ring[c, p, 7.5, 7.5, 6.0]
+        if name eq 'globe'
+            c = _oval[c, p, 7.5, 7.5, 2.75, 6.0]
+            return _stroke[c, p, [1.5, 7.5, 13.5, 7.5]]
+        c = _stroke[c, p, [7.5, 1.5, 7.5, 13.5]]
+        c = _stroke[c, p, [2.25, 4.5, 12.75, 4.5]]
+        return _stroke[c, p, [2.25, 10.5, 12.75, 10.5]]
+    if name eq 'hand'
+        c = _stroke[c, p, [4.5, 8.0, 4.5, 4.0]]
+        c = _stroke[c, p, [7.0, 7.0, 7.0, 2.0]]
+        c = _stroke[c, p, [9.5, 7.0, 9.5, 2.5]]
+        c = _stroke[c, p, [12.0, 8.0, 12.0, 4.5]]
+        c = _stroke[c, p, concat[[4.5, 8.0], _arc_points[8.25, 9.5, 3.75, 3.75, 180.0, 0.0], [12.0, 8.0]]]
+        return _stroke[c, p, [4.5, 11.0, 2.5, 8.5, 1.5, 7.5]]
+    if starts[name, 'drawing-pin']
+        if name eq 'drawing-pin-filled'
+            c = _solid[c, p, [5.5, 1.5, 9.5, 1.5, 9.5, 5.5, 5.5, 5.5]]
+            c = _solid[c, p, [5.5, 5.5, 9.5, 5.5, 11.5, 8.5, 3.5, 8.5]]
+        c = _loop[c, p, [5.5, 1.5, 9.5, 1.5, 9.5, 5.5, 11.5, 8.5, 3.5, 8.5, 5.5, 5.5]]
+        return _stroke[c, p, [7.5, 8.5, 7.5, 13.5]]
+    if name eq 'sewing-pin'
+        c = _ring[c, p, 7.5, 4.5, 3.0]
+        return _stroke[c, p, [7.5, 7.5, 7.5, 13.5]]
+    if name eq 'sewing-pin-filled'
+        c = _disc[c, p, 7.5, 4.5, 3.5]
+        return _stroke[c, p, [7.5, 8.0, 7.5, 13.5]]
+    if name eq 'backpack'
+        c = _box[c, p, 2.5, 4.5, 10.0, 9.0, 2.5]
+        c = _arc[c, p, 7.5, 4.5, 2.0, 180.0, 360.0]
+        return _box[c, p, 4.5, 9.5, 6.0, 2.0, 0.5]
+    if name eq 'trash'
+        c = _stroke[c, p, [1.5, 3.5, 13.5, 3.5]]
+        c = _stroke[c, p, [5.5, 3.5, 5.5, 1.5, 9.5, 1.5, 9.5, 3.5]]
+        c = _stroke[c, p, [3.0, 3.5, 3.75, 13.5, 11.25, 13.5, 12.0, 3.5]]
+        c = _stroke[c, p, [6.5, 6.0, 6.5, 11.0]]
+        return _stroke[c, p, [8.5, 6.0, 8.5, 11.0]]
+    if name eq 'clipboard'
+        c = _box[c, p, 2.5, 2.5, 10.0, 11.0, 1.0]
+        return _box[c, p, 5.5, 1.5, 4.0, 2.0, 0.5]
+    if name eq 'clipboard-copy'
+        c = _box[c, p, 1.5, 2.5, 9.0, 11.0, 1.0]
+        c = _box[c, p, 3.5, 1.5, 4.0, 2.0, 0.5]
+        c = _stroke[c, p, [6.0, 8.5, 13.5, 8.5]]
+        return _stroke[c, p, [11.0, 6.0, 13.5, 8.5, 11.0, 11.0]]
+    if name eq 'copy'
+        c = _box[c, p, 5.5, 5.5, 8.0, 8.0, 1.0]
+        return _stroke[c, p, [9.5, 3.5, 9.5, 1.5, 1.5, 1.5, 1.5, 9.5, 3.5, 9.5]]
+    if name eq 'tag'
+        c = _loop[c, p, [1.5, 1.5, 7.5, 1.5, 13.5, 7.5, 7.5, 13.5, 1.5, 7.5]]
+        return _ring[c, p, 4.5, 4.5, 1.0]
+    if name eq 'flag'
+        c = _stroke[c, p, [2.5, 1.5, 2.5, 13.5]]
+        return _loop[c, p, [2.5, 1.5, 12.5, 1.5, 9.5, 5.0, 12.5, 8.5, 2.5, 8.5]]
+    if name eq 'dollar'
+        c = _stroke[c, p, _s_points[7.5, 7.5, 6.0, 9.0]]
+        return _stroke[c, p, [7.5, 1.0, 7.5, 14.0]]
+    if name eq 'command'
+        --- (one line: round each corner's loop, then across to the next)
+        return _loop[c, p, concat[_arc_points[3.75, 3.75, 1.75, 1.75, 0.0, -270.0], _arc_points[11.25, 3.75, 1.75, 1.75, 90.0, -180.0], _arc_points[11.25, 11.25, 1.75, 1.75, 180.0, -90.0], _arc_points[3.75, 11.25, 1.75, 1.75, 270.0, 0.0]]]
+    if name eq 'shift'
+        return _loop[c, p, [7.5, 1.5, 13.5, 7.5, 10.5, 7.5, 10.5, 13.5, 4.5, 13.5, 4.5, 7.5, 1.5, 7.5]]
+    if name eq 'option'
+        c = _stroke[c, p, [1.5, 3.5, 5.0, 3.5, 10.0, 11.5, 13.5, 11.5]]
+        return _stroke[c, p, [9.0, 3.5, 13.5, 3.5]]
+    if name eq 'control'
+        return _stroke[c, p, [3.5, 8.5, 7.5, 4.5, 11.5, 8.5]]
+    if name eq 'return'
+        c = _stroke[c, p, [12.5, 2.5, 12.5, 9.5, 2.5, 9.5]]
+        return _stroke[c, p, [5.5, 6.5, 2.5, 9.5, 5.5, 12.5]]
+    if name eq 'backspace'
+        c = _loop[c, p, [5.0, 2.5, 13.5, 2.5, 13.5, 12.5, 5.0, 12.5, 1.0, 7.5]]
+        c = _stroke[c, p, [7.5, 5.75, 11.0, 9.25]]
+        return _stroke[c, p, [11.0, 5.75, 7.5, 9.25]]
+    if name eq 'wifi'
+        c = _arc[c, p, 7.5, 12.0, 3.0, -135.0, -45.0]
+        c = _arc[c, p, 7.5, 12.0, 6.0, -135.0, -45.0]
+        c = _arc[c, p, 7.5, 12.0, 9.0, -135.0, -45.0]
+        return _disc[c, p, 7.5, 12.0, 1.0]
+    if name eq 'battery'
+        c = _box[c, p, 1.5, 4.5, 11.0, 6.0, 1.0]
+        c = _block[c, p, 13.0, 6.0, 1.0, 3.0, 0.0]
+        return _block[c, p, 3.0, 6.0, 5.0, 3.0, 0.5]
+    c
+
+--- ---- tests ----
+
+--- a canvas 400 by 300 with nothing drawn on it
+fn _a_canvas[]
+    lory.begin[json['{"t": 0, "width": 400, "height": 300, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 400, "height": 300, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+
+--- the vertices of the icon `name` drawn alone in black, `size` wide from
+--- (x, y)
+fn _alone[name, x, y, size]
+    c = draw[_a_canvas[], name, x, y, size, lory.black[]]
+    c.verts
+
+--- every drawing the set has, by its own name
+fn _drawings[]
+    concat[_arrow_names[], _layout_names[], _box_names[], _text_names[], _mark_names[], _thing_names[]]
+
+--- whether two lists of vertices are the same
+fn _same[a, b]
+    len[a] eq len[b] and a eq b
+
+--- the names of `wanted` the set does not know, or draws as the square of
+--- a name it does not draw
+fn _undrawn[wanted]
+    unknown = _alone['no-such-icon', 0.0, 0.0, 15.0]
+    missing = for n in wanted
+        if not known[n] or _same[_alone[n, 0.0, 0.0, 15.0], unknown]
+            n
+    join[missing, ' ']
+
+--- the aliases not drawn exactly as the drawings they name
+fn _unlike_aliases[]
+    off = for pair in _aliases[]
+        if not _same[_alone[pair[0], 0.0, 0.0, 15.0], _alone[pair[1], 0.0, 0.0, 15.0]]
+            pair[0]
+    join[off, ' ']
+
+--- whether every vertex (16 numbers each) lies within the square from
+--- (x, y), `size` wide, grown by `margin` on every side
+fn _within[v, x, y, size, margin]
+    i = 0
+    while i lt len[v]
+        if v[i] lt x - margin or v[i] gt x + size + margin or v[i + 1] lt y - margin or v[i + 1] gt y + size + margin
+            return false
+        i = i + 16
+    true
+
+--- the names whose drawing, `size` wide, reaches out of its square
+--- further than half a stroke and the pixel an edge is smoothed over
+fn _outside[size]
+    margin = 0.5 * size / 15.0 + 1.0
+    out = for n in names[]
+        if not _within[_alone[n, 100.0, 50.0, size], 100.0, 50.0, size, margin]
+            n
+    join[out, ' ']
+
+--- whether `b`, drawn twice as large as `a` from the same corner, is `a`
+--- scaled: as many vertices, each of the same kind and colour and twice
+--- as far from the corner, but for the pixel of smoothing an edge keeps
+--- at every size
+fn _twice[a, b]
+    if len[a] ne len[b]
+        return false
+    i = 0
+    while i lt len[a]
+        if abs[b[i] - 2.0 * a[i]] gt 1.0001 or abs[b[i + 1] - 2.0 * a[i + 1]] gt 1.0001
+            return false
+        if floor[a[i + 8]] ne floor[b[i + 8]] or a[i + 7] ne b[i + 7]
+            return false
+        i = i + 16
+    true
+
+--- the drawings not the same at 15 and 30 pixels, up to scale
+fn _unscaled[]
+    off = for n in _drawings[]
+        if not _twice[_alone[n, 0.0, 0.0, 15.0], _alone[n, 0.0, 0.0, 30.0]]
+            n
+    join[off, ' ']
+
+--- a number that differs between two drawings that differ, all but
+--- surely: their vertices' places and kinds, each weighed by where in the
+--- list it comes, and their count (equal numbers are looked at again)
+fn _digest[v]
+    total = 0.0 + len[v]
+    i = 0
+    k = 0
+    while i lt len[v]
+        total = total + v[i] * (1.0 + k % 7) + v[i + 1] * (1.5 + k % 11) + v[i + 8] * (0.25 + k % 5)
+        i = i + 16
+        k = k + 1
+    total
+
+--- the drawings alike to another's, vertex for vertex
+fn _alike[]
+    every = _drawings[]
+    marks = for n in every
+        _digest[_alone[n, 0.0, 0.0, 15.0]]
+    order = sort[marks]
+    twice = []
+    i = 1
+    while i lt len[order]
+        if order[i] eq order[i - 1]
+            twice = push[twice, order[i]]
+        i = i + 1
+    same = for k in range[len[every]]
+        if marks[k] in twice
+            every[k]
+    if len[same] eq 0
+        return ''
+    --- (equal numbers: say only the pairs whose vertices are the same)
+    found = slice[[''], 0, 0]
+    a = 0
+    while a lt len[same]
+        b = a + 1
+        while b lt len[same]
+            if _same[_alone[same[a], 0.0, 0.0, 15.0], _alone[same[b], 0.0, 0.0, 15.0]]
+                found = push[found, '`same[a]`=`same[b]`']
+            b = b + 1
+        a = a + 1
+    join[found, ' ']
+
+--- the most vertices a drawing makes
+fn _heaviest[]
+    most = 0.0
+    for n in _drawings[]
+        most = max[most, len[_alone[n, 0.0, 0.0, 15.0]] / 16.0]
+    most
+
+--- whether every vertex is in the colour
+fn _coloured[v, col]
+    i = 0
+    while i lt len[v]
+        if v[i + 4] ne col.r or v[i + 5] ne col.g or v[i + 6] ne col.b or v[i + 7] ne col.a
+            return false
+        i = i + 16
+    true
+
+--- how many names come right after the same name
+fn _repeats[n]
+    count = 0
+    i = 1
+    while i lt len[n]
+        if n[i] eq n[i - 1]
+            count = count + 1
+        i = i + 1
+    count
+
+--- the vertices of the icon drawn in black 24 pixels wide from (10, 20),
+--- turned by `degrees`
+fn _turned_alone[name, degrees]
+    turned[_a_canvas[], name, 10.0, 20.0, 24.0, lory.black[], degrees].verts
+
+--- the xs of the vertices in order, then their ys: two drawings of the
+--- same shapes have the same, whatever order their corners come in
+fn _places[v]
+    n = len[v] / 16
+    xs = for i in range[n]
+        v[16 * i]
+    ys = for i in range[n]
+        v[16 * i + 1]
+    concat[sort[xs], sort[ys]]
+
+--- the corners a drawing's vertices stand on, each once, to a ten
+--- thousandth of a pixel: two drawings of the same shapes stand on the
+--- same corners, whichever two of a box's corners its triangles share
+fn _corners[v]
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt len[v]
+        x = fmt[v[i], decimals = 4]
+        y = fmt[v[i + 1], decimals = 4]
+        out = push[out, '`x`,`y`']
+        i = i + 16
+    kept = slice[[''], 0, 0]
+    for corner in sort[out]
+        if len[kept] eq 0 or kept[len[kept] - 1] ne corner
+            kept = push[kept, corner]
+    kept
+
+--- whether two lists of numbers are as long and each pair within a
+--- millionth of a pixel
+fn _near[a, b]
+    if len[a] ne len[b]
+        return false
+    for i in range[len[a]]
+        if abs[a[i] - b[i]] gt 0.000001
+            return false
+    true
+
+--- whether `b` is `a` with only its vertices' places changed: what each
+--- is shaded from (its own corner's numbers, colour, kind and clip) kept
+fn _only_moved[a, b]
+    if len[a] ne len[b]
+        return false
+    i = 0
+    while i lt len[a]
+        for k in range[14]
+            if a[i + 2 + k] ne b[i + 2 + k]
+                return false
+        i = i + 16
+    true
+
+--- whether every vertex lies within `reach` pixels of (cx, cy)
+fn _round_about[v, cx, cy, reach]
+    i = 0
+    while i lt len[v]
+        if sqrt[(v[i] - cx) * (v[i] - cx) + (v[i + 1] - cy) * (v[i + 1] - cy)] gt reach
+            return false
+        i = i + 16
+    true
+
+--- a headset's frame: both eyes, the page on its panel
+fn _a_headset[]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": 0, "width": 3360, "height": 1760, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1680, "height": 1760, "projection": `unit`, "camera": `unit`}, {"eye": "right", "x": 1680, "y": 0, "width": 1680, "height": 1760, "projection": `unit`, "camera": `unit`}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+
+--- how many draws of the frame's calls draw `n` vertices from the first
+fn _draws_of[calls, n]
+    count = 0
+    for call in calls
+        if call[0] eq 'drawArrays' and call[2] eq '0' and call[3] eq str[n]
+            count = count + 1
+    count
+
+--- every name of Crow's set (spelled as Crow spells it), of Radix's and
+--- of the kits' is known and drawn, and not as the square of a name the
+--- set does not draw
+test every_name_of_the_three_sets_is_drawn[]
+    _undrawn[concat[_crow_set[], _radix_set[], _kit_set[]]] eq ''
+    len[_crow_set[]] eq 52
+    len[_radix_set[]] eq 318
+    len[_kit_set[]] eq 49
+    len[_drawings[]] eq 371
+    len[names[]] eq 404
+
+--- the names are in order, each once, spelled with hyphens
+test the_names_are_in_order_each_once_with_hyphens[]
+    names[] eq sort[names[]]
+    _repeats[names[]] eq 0
+    replace[join[names[], ' '], '_', ''] eq join[names[], ' ']
+    'eye-off' in names[] and 'close' in names[] and 'check' in names[]
+
+--- a name the set does not draw is a small square's edge, and is not
+--- known
+test a_name_the_set_does_not_draw_is_a_small_square[]
+    v = _alone['no-such-icon', 0.0, 0.0, 15.0]
+    len[v] eq 96
+    floor[v[8]] eq 4.0
+    --- (its edge from 4 to 11 pixels of the 15, a pixel more each way smoothed)
+    v[0] eq 3.0 and v[1] eq 3.0
+    not known['no-such-icon']
+    not known['']
+
+--- a name may be spelled with underscores, as Crow spells it, or with
+--- hyphens, as Radix does; an alias is drawn as the drawing it names
+test underscores_and_aliases_draw_the_drawings_they_name[]
+    known['eye_off'] and known['eye-off'] and known['arrow_up'] and known['drag_handle_dots_2']
+    _same[_alone['eye_off', 0.0, 0.0, 15.0], _alone['eye-none', 0.0, 0.0, 15.0]]
+    _same[_alone['chevron_down', 0.0, 0.0, 15.0], _alone['chevron-down', 0.0, 0.0, 15.0]]
+    _unlike_aliases[] eq ''
+    not _same[_alone['close', 0.0, 0.0, 15.0], _alone['cross-1', 0.0, 0.0, 15.0]]
+
+--- every drawing stays within its square: no vertex further out than
+--- half a stroke and the pixel an edge is smoothed over, at 15 pixels and
+--- at 48
+test every_drawing_stays_within_its_square[]
+    _outside[15.0] eq ''
+    _outside[48.0] eq ''
+
+--- no two drawings are alike: each name's drawing differs from every
+--- other's but its aliases'
+test no_two_drawings_are_alike[]
+    _alike[] eq ''
+
+--- a drawing is the same at every size: drawn 15 and 30 pixels wide it is
+--- the same vertices, the larger's twice as far from the corner but for
+--- the pixel of smoothing an edge keeps at every size
+test every_drawing_is_the_same_at_two_sizes[]
+    _unscaled[] eq ''
+
+--- an icon is drawn in the colour it is given, where it is asked, and no
+--- drawing makes more than 312 vertices (a toolbar of fifty icons is a
+--- few thousand)
+test an_icon_is_drawn_in_its_colour_where_asked_and_modestly[]
+    blue = lory.rgba[0.2, 0.4, 0.6, 1.0]
+    c = draw[_a_canvas[], 'star-half', 10.0, 20.0, 24.0, blue]
+    _coloured[c.verts, blue]
+    _within[c.verts, 10.0, 20.0, 24.0, 1.8]
+    not _within[c.verts, 10.0, 20.0, 12.0, 1.8]
+    _heaviest[] lte 312.0
+
+--- an icon turned is its drawing turned about its square's middle: a
+--- quarter turn of the arrow right is the arrow down, a chevron down
+--- turned half round is the chevron up (a section's chevron as it opens);
+--- only the vertices' places move, a whole turn or none changes nothing,
+--- and a loader turned any way keeps to the circle about its square
+test an_icon_turned_is_its_drawing_turned_about_its_middle[]
+    _near[_places[_turned_alone['arrow-right', 90.0]], _places[_turned_alone['arrow-down', 0.0]]]
+    _near[_places[_turned_alone['chevron-down', 180.0]], _places[_turned_alone['chevron-up', 0.0]]]
+    _near[_places[_turned_alone['caret-left', -90.0]], _places[_turned_alone['caret-down', 0.0]]]
+    not _near[_places[_turned_alone['chevron-down', 90.0]], _places[_turned_alone['chevron-up', 0.0]]]
+    gear = _turned_alone['gear', 0.0]
+    _only_moved[gear, _turned_alone['gear', 33.0]]
+    not _near[_places[gear], _places[_turned_alone['gear', 33.0]]]
+    _turned_alone['gear', 360.0] eq gear
+    _turned_alone['gear', 0.0] eq _alone['gear', 10.0, 20.0, 24.0]
+    --- (four quarter turns come back, to a millionth of a pixel)
+    c = draw[_a_canvas[], 'gear', 10.0, 20.0, 24.0, lory.black[]]
+    for k in range[4]
+        c = _spun[c, 0, 22.0, 32.0, 90.0]
+    _near[c.verts, gear]
+    --- (the square's corners are 17 pixels from its middle, and a pixel and
+    --- a half stroke more are an edge's smoothing)
+    _round_about[_turned_alone['loader', 0.0], 22.0, 32.0, 12.0 * sqrt[2.0] + 1.8]
+    _round_about[_turned_alone['loader', 17.5], 22.0, 32.0, 12.0 * sqrt[2.0] + 1.8]
+    _round_about[_turned_alone['spinner', 250.0], 22.0, 32.0, 12.0 * sqrt[2.0] + 1.8]
+
+--- a loading icon turns at an even pace, once round every two seconds
+--- (semantic-ui-less 2.4.1: `@loadingDuration` 2s, `linear`, 0 to 360
+--- degrees): a quarter turn at half a second, half round at one, round
+--- again at two, and drawn so at its time
+test a_loading_icon_turns_once_every_two_seconds[]
+    _spin[0.0] eq 0.0
+    _spin[500.0] eq 90.0
+    _spin[1000.0] eq 180.0
+    _spin[1500.0] eq 270.0
+    _spin[2000.0] eq 0.0
+    _spin[4250.0] eq 45.0
+    at = spinning[_a_canvas[], 'loader', 10.0, 20.0, 24.0, lory.black[], 2500.0].verts
+    at eq _turned_alone['loader', 90.0]
+    spinning[_a_canvas[], 'loader', 10.0, 20.0, 24.0, lory.black[], 6000.0].verts eq _alone['loader', 10.0, 20.0, 24.0]
+
+--- an icon flipped is its drawing mirrored about its square's middle: the
+--- arrow right flipped horizontally is the arrow left, the chevron down
+--- flipped vertically is the chevron up; only places move, and a flip
+--- twice comes back
+test an_icon_flipped_is_its_drawing_mirrored_about_its_middle[]
+    black = lory.black[]
+    right = flipped[_a_canvas[], 'arrow-right', 10.0, 20.0, 24.0, black, 'horizontally'].verts
+    _corners[right] eq _corners[_turned_alone['arrow-left', 0.0]]
+    down = flipped[_a_canvas[], 'chevron-down', 10.0, 20.0, 24.0, black, 'vertically'].verts
+    _corners[down] eq _corners[_turned_alone['chevron-up', 0.0]]
+    _corners[right] ne _corners[_turned_alone['arrow-right', 0.0]]
+    --- (each vertex is mirrored across the square's middle, 22 pixels in)
+    plain = _turned_alone['arrow-right', 0.0]
+    mirrored = for i in range[len[plain]]
+        if i % 16 eq 0
+            44.0 - plain[i]
+        else
+            plain[i]
+    _near[right, mirrored]
+    --- (the stopwatch's crown is at its top: flipped across, it stays there)
+    watch = _turned_alone['stopwatch', 0.0]
+    across = flipped[_a_canvas[], 'stopwatch', 10.0, 20.0, 24.0, black, 'horizontally'].verts
+    _only_moved[watch, across]
+    twice = _mirror[flipped[_a_canvas[], 'stopwatch', 10.0, 20.0, 24.0, black, 'vertically'], 0, 22.0, 32.0, false]
+    _near[twice.verts, watch]
+    _within[across, 10.0, 20.0, 24.0, 1.8]
+
+--- in a headset an icon is drawn on the page there as on a screen, the
+--- same vertices where it is asked, and each eye draws all of them
+test in_a_headset_an_icon_is_drawn_on_its_page_in_both_eyes[]
+    c = draw[_a_headset[], 'gear', 10.0, 20.0, 24.0, lory.black[]]
+    lory.width[c] eq 1000.0 and lory.height[c] eq 560.0
+    c.verts eq _alone['gear', 10.0, 20.0, 24.0]
+    _draws_of[lory.batch[c], len[c.verts] / 16] eq 2
+    --- (and turned there as on a screen)
+    t = turned[_a_headset[], 'loader', 10.0, 20.0, 24.0, lory.black[], 45.0]
+    t.verts eq _turned_alone['loader', 45.0]

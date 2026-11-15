@@ -7,7 +7,8 @@ use sys
 use math
 use memory
 use lory
-use lory.game
+use game
+use lory.xr
 
 --- something falling: where, how fast, its size, and whether it is an
 --- ember (else a mote)
@@ -134,7 +135,7 @@ fn aim_of[c, k, ox]
         aim = aim - 1.0
     if lory.held_key[c, 'ArrowRight'] or lory.held_key[c, 'KeyD']
         aim = aim + 1.0
-    stick = lory.stick[c, 'right']
+    stick = xr.stick[c, 'right']
     if abs[stick[0]] gt 0.15
         aim = stick[0]
     to = -1.0

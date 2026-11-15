@@ -1,0 +1,247 @@
+--- What lory.datatable makes of fixed rows, written out, to diff the
+--- interpreter's run against the compiled program's: sorted, filtered,
+--- ranked, grouped, expanded, selected, pinned and paged rows, columns and
+--- their headers, facets, and a Grid.js grid's pages.
+use lory.datatable as dt
+
+fn _syllable[n]
+    ['ka', 'lo', 'mi', 'ra', 'ten', 'vo', 'shi', 'an', 'bel', 'dor', 'el', 'fin'][n % 12]
+
+fn _person[i]
+    first = '`upper[_syllable[i * 7]]``_syllable[i * 5 + 3]`'
+    if i % 6 eq 2
+        first = lower[first]
+    last = '`upper[_syllable[i * 3 + 1]]``_syllable[i * 11]``_syllable[i]`'
+    age = dt.number[18 + (i * 37) % 60]
+    if i % 9 eq 4
+        age = dt.missing[]
+    if i % 13 eq 7
+        age = dt.nothing[]
+    tags = slice[[dt.missing[]], 0, 0]
+    for tag in ['red', 'green', 'blue']
+        if (i + len[tag]) % 3 ne 0
+            tags = push[tags, dt.words[tag]]
+    coded = ['A2', 'a10', 'B1', 'b03', '7', 'x9y', 'X10y', 'item 2', 'Item 10'][i % 9]
+    cells = map[first = dt.words[first], last = dt.words[last], age = age, team = dt.words[['red', 'green', 'blue'][i % 3]]]
+    cells = set[cells, 'joined', dt.date[1577836800000.0 + 86400000.0 * (0.0 + (i * 53) % 900)]]
+    cells = set[cells, 'code', dt.words[coded]]
+    cells = set[cells, 'tags', dt.listed[tags]]
+    cells = set[cells, 'score', dt.number[(0.0 + (i * 7) % 10) / 2.0]]
+    dt.row['p`i`', cells]
+
+fn _people[n]
+    out = slice[[_person[0]], 0, 0]
+    for i in range[n]
+        out = push[out, _person[i]]
+    out
+
+fn _columns[]
+    name = dt.column_group['name', 'Name', [dt.column['first', 'First'], dt.column['last', 'Last']]]
+    info = dt.column_group['info', 'Info', [dt.column['age', 'Age', aggregate_with = 'mean'], dt.column['team', 'Team']]]
+    [dt.display_column['pick', 'Pick'], name, info, dt.column['joined', 'Joined'], dt.column['code', 'Code', aggregate_with = 'uniqueCount'], dt.column['tags', 'Tags', aggregate_with = 'unique'], dt.column['score', 'Score', aggregate_with = 'extent']]
+
+fn _tree_row[id, n]
+    dt.row[id, map[name = dt.words['`_syllable[n]``_syllable[n * 3 + 1]`'], amount = dt.number[(0.0 + (n * 29) % 50) / 4.0], kind = dt.words[['a', 'b'][n % 2]]]]
+
+fn _tree[]
+    tops = slice[[_tree_row['t', 0]], 0, 0]
+    for i in range[6]
+        subs = slice[[_tree_row['t', 0]], 0, 0]
+        for j in range[i % 3]
+            id = 't`i`.`j`'
+            leaves = slice[[_tree_row['t', 0]], 0, 0]
+            if (i + j) % 2 eq 0
+                leaves = [_tree_row['`id`.0', i * 5 + j * 3 + 2], _tree_row['`id`.1', i + j + 7]]
+            middle = _tree_row[id, i * 4 + j + 1]
+            subs = push[subs, dt.tree_row[id, middle.cells, leaves]]
+        top = _tree_row['t`i`', i * 2 + 5]
+        tops = push[tops, dt.tree_row['t`i`', top.cells, subs]]
+    dt.new[[dt.column['name', 'Name'], dt.column['amount', 'Amount'], dt.column['kind', 'Kind']], tops]
+
+fn _ids[rows]
+    out = slice[[''], 0, 0]
+    for r in rows
+        out = push[out, '`r.id`:`r.depth`']
+    join[out, ' ']
+
+fn _show[label, t]
+    m = dt.models[t]
+    log['`label` | page `t.state.page_index` of `dt.page_count[t, m]` (`dt.row_count[t, m]` rows): `_ids[m.page.rows]`']
+
+fn _values[t, r, ids]
+    out = slice[[''], 0, 0]
+    for id in ids
+        out = push[out, '`id`=`dt.shown[dt.value_of[r, dt.column_of[t, id]]]`']
+    join[out, ' ']
+
+people = dt.new[_columns[], _people[60]]
+people = dt.page_size_set[people, 60]
+
+--- sorting
+for id in ['first', 'last', 'age', 'joined', 'code', 'tags', 'score']
+    for desc in [false, true]
+        _show['sort `id` desc `desc`', dt.sorted_by[people, [dt.Sort[id, desc]]]]
+_show['sort team then age desc', dt.sorted_by[people, [dt.Sort['team', false], dt.Sort['age', true]]]]
+toggled = people
+for step in [['first', 'alone'], ['age', 'with others'], ['age', 'with others'], ['age', 'with others'], ['code', 'alone']]
+    toggled = dt.sort_toggled[toggled, step[0], step[1] eq 'with others']
+    m = dt.models[toggled]
+    log['toggle `step[0]`: sorted `dt.sort_of[toggled, \'first\']` `dt.sort_of[toggled, \'age\']` `dt.sort_of[toggled, \'code\']`, next `dt.next_sort[toggled, m, \'age\', true]`']
+for name in ['alphanumeric', 'alphanumericCaseSensitive', 'text', 'textCaseSensitive', 'datetime', 'basic']
+    pairs = slice[[''], 0, 0]
+    for pair in [['a2', 'a10'], ['B', 'a'], ['x9y', 'X10y'], ['7', 'item 2'], ['', 'a']]
+        pairs = push[pairs, '`dt.sort_compare[name, dt.words[pair[0]], dt.words[pair[1]]]`']
+    log['`name`: `join[pairs, \' \']`']
+
+--- filtering, the global filter and fuzzy ranks
+_show['filter first ka', dt.filter_set[people, 'first', dt.words['ka']]]
+_show['filter age 30 to 50', dt.filter_set[people, 'age', dt.listed[[dt.number[30], dt.number[50]]]]]
+_show['filter age up to 25', dt.filter_set[people, 'age', dt.listed[[dt.nothing[], dt.number[25]]]]]
+_show['filter tags red', dt.filter_set[people, 'tags', dt.listed[[dt.words['red']]]]]
+_show['filter team and score', dt.filters_set[people, [dt.Filter['team', dt.words['re']], dt.Filter['score', dt.listed[[dt.number[1], dt.number[3]]]]]]]
+_show['search bel', dt.search_set[people, dt.words['bel']]]
+_show['search 3', dt.search_set[people, dt.words['3']]]
+fuzzy = dt.column['first', 'First', filter_with = 'fuzzy', sort_with = 'rank']
+ranked = dt.new[[fuzzy, dt.column['last', 'Last']], _people[60]]
+ranked = dt.page_size_set[ranked, 60]
+for q in ['ka', 'km', 'ra', 'shi', 'zz']
+    t = dt.sorted_by[dt.filter_set[ranked, 'first', dt.words[q]], [dt.Sort['first', false]]]
+    m = dt.models[t]
+    parts = slice[[''], 0, 0]
+    for r in m.page.rows
+        parts = push[parts, '`r.id`=`dt.number_text[r.ranks[\'first\']]`']
+    log['fuzzy `q`: `join[parts, \' \']`']
+for item in ['Kalo Ven', 'crème brûlée', 'Ünal', 'a-b-c']
+    for q in ['kv', 'creme', 'unal', 'abc', 'ven']
+        r = dt.rank_of[dt.words[item], dt.words[q]]
+        log['rank `item` `q`: `dt.number_text[r.rank]` `r.passed`']
+for name in ['includesString', 'equalsString', 'arrIncludesSome', 'inNumberRange', 'weakEquals', 'between']
+    passes = slice[[''], 0, 0]
+    for v in [dt.words['Kalo'], dt.number[3], dt.listed[[dt.words['red']]], dt.nothing[], dt.truth[true], dt.date[0.0]]
+        wanted = dt.resolved_filter[name, dt.words['3']]
+        passes = push[passes, '`dt.filter_passes[name, v, wanted]`']
+    log['`name` 3: `join[passes, \' \']`']
+
+--- grouping and aggregation
+grouped = dt.grouping_set[people, ['team']]
+grouped = dt.all_expansion_set[grouped, true]
+m = dt.models[grouped]
+for r in m.page.flat
+    if dt.is_group[r]
+        log['group `r.id` depth `r.depth` leaves `len[r.leaves]`: `_values[grouped, r, [\'age\', \'code\', \'tags\', \'score\', \'joined\']]`']
+log['footer age `dt.shown[dt.footer_value[grouped, m, \'age\']]`']
+two = dt.sorted_by[dt.grouping_set[people, ['team', 'score']], [dt.Sort['score', true]]]
+m = dt.models[two]
+for r in m.sorted.flat
+    if dt.is_group[r]
+        log['group `r.id` index `r.index` parent `r.parent` subs `len[r.subs]`: `_values[two, r, [\'age\', \'score\']]`']
+for name in ['sum', 'min', 'max', 'extent', 'mean', 'median', 'unique', 'uniqueCount', 'count']
+    v = dt.aggregated[name, [dt.number[3], dt.missing[], dt.number[1.5], dt.words['7'], dt.number[3]]]
+    log['aggregated `name`: `dt.shown[v]`']
+
+--- pages and their resets
+paged = dt.page_size_set[people, 7]
+for step in ['next', 'next', 'last', 'previous', 'first', 'filter', 'next', 'sort', 'next', 'size']
+    if step eq 'next'
+        paged = dt.next_page[paged]
+    if step eq 'last'
+        paged = dt.last_page[paged]
+    if step eq 'previous'
+        paged = dt.previous_page[paged]
+    if step eq 'first'
+        paged = dt.first_page[paged]
+    if step eq 'filter'
+        paged = dt.filter_set[paged, 'last', dt.words['a']]
+    if step eq 'sort'
+        paged = dt.sorted_by[paged, [dt.Sort['joined', true]]]
+    if step eq 'size'
+        paged = dt.page_size_set[paged, 4]
+    m = dt.models[paged]
+    log['`step`: page `paged.state.page_index` of `dt.page_count[paged, m]`, previous `dt.can_previous[paged]` next `dt.can_next[paged, m]`: `_ids[m.page.rows]`']
+
+--- a tree: expanding, filtering from the leaves, selecting and pinning
+tree = dt.page_size_set[_tree[], 5]
+_show['tree', tree]
+tree = dt.row_expansion_toggled[tree, 't2']
+_show['tree t2 open', tree]
+tree = dt.all_expansion_set[tree, true]
+_show['tree all open', tree]
+m = dt.models[tree]
+log['tree depth `dt.expanded_depth[tree, m]` all `dt.all_expanded[tree, m]` page flat `_ids[m.page.flat]`']
+leaves = tree
+leaves.options.from_leaves = true
+leaves = dt.filter_set[leaves, 'name', dt.words['an']]
+log['tree from the leaves: `_ids[dt.models[leaves].filtered.flat]`']
+_show['tree filtered from the root', dt.filter_set[tree, 'name', dt.words['an']]]
+picked = dt.row_selection_toggled[tree, 't4']
+picked = dt.row_selection_toggled[picked, 't4.0']
+picked = dt.row_selection_set[picked, 't2.0.1', true]
+m = dt.models[picked]
+log['selected `join[keys[picked.state.selected], \' \']`: all `dt.all_selected[picked, m]` some `dt.some_selected[picked]` page `dt.all_page_selected[picked, m]` `dt.some_page_selected[picked, m]`']
+for id in ['t2', 't2.0', 't4', 't4.1']
+    log['under `id`: `dt.subs_selected[picked, dt.row_of[m, id]]`']
+picked = dt.page_selection_toggled[picked]
+log['page selected `join[keys[picked.state.selected], \' \']`']
+pinned = dt.row_pinned[tree, 't5', 'top', true, false]
+pinned = dt.row_pinned[pinned, 't2.0.0', 'bottom', false, true]
+m = dt.models[pinned]
+log['pinned top `_ids[dt.top_rows[pinned, m]]` bottom `_ids[dt.bottom_rows[pinned, m]]` center `_ids[dt.center_rows[pinned, m]]`']
+
+--- columns and their headers
+cols = dt.column_pinned[people, 'score', 'start']
+cols = dt.column_pinned[cols, 'name', 'end']
+cols = dt.visibility_toggled[cols, 'tags']
+cols = dt.column_size_set[cols, 'age', 61.5]
+for side in ['all', 'start', 'center', 'end']
+    for g in dt.header_groups[cols, side]
+        heads = slice[[''], 0, 0]
+        for h in g.headers
+            heads = push[heads, '`h.id`(`h.columns`x`h.rows` `dt.number_text[h.size]`@`dt.number_text[h.offset]`)']
+        log['headers `side` `g.id`: `join[heads, \' \']`']
+for c in dt.drawn_columns[cols]
+    log['column `c.id`: `dt.number_text[dt.column_size[cols, c.id]]` at `dt.number_text[dt.column_start[cols, c.id, \'all\']]` pinned `dt.column_pin_of[cols, c.id]` index `dt.column_index[cols, c.id, \'all\']`']
+log['total `dt.number_text[dt.total_size[cols]]` start `dt.number_text[dt.side_size[cols, \'start\']]` end `dt.number_text[dt.side_size[cols, \'end\']]`']
+sized = dt.resize_started[cols, '1_name_first', 100.0]
+sized.options.resize_mode = 'change'
+for x in [130.0, 70.0, 5.0]
+    sized = dt.resize_moved[sized, x]
+    log['resize to `x`: first `dt.number_text[dt.column_size[sized, \'first\']]` last `dt.number_text[dt.column_size[sized, \'last\']]`']
+sized = dt.resize_ended[sized, 120.0]
+log['resize ended: first `dt.number_text[dt.column_size[sized, \'first\']]` resizing `dt.is_resizing[sized, \'first\']`']
+
+--- facets
+faceted = dt.filter_set[people, 'team', dt.words['red']]
+core = dt.core_model[faceted]
+for id in ['team', 'age', 'code']
+    found = slice[[''], 0, 0]
+    for f in dt.faceted_values[faceted, core, id]
+        found = push[found, '`dt.shown[f.value]`:`f.count`']
+    reach = dt.faceted_range[faceted, core, id]
+    log['facets `id`: `join[found, \' \']` range `reach.found` `dt.number_text[reach.least]` `dt.number_text[reach.greatest]`']
+
+--- a Grid.js grid
+cells = slice[[[dt.missing[]]], 0, 0]
+for r in _people[45]
+    cells = push[cells, [r.cells['first'], r.cells['last'], r.cells['code'], r.cells['score']]]
+g = dt.grid[cells, 6, 3]
+lang = dt.grid_language[]
+for step in ['read', 'next', 'next', 'next', 'next', 'last', 'search', 'next', 'sort', 'sort', 'shift sort', 'search none']
+    if step eq 'next'
+        g = dt.grid_next[g]
+    if step eq 'last'
+        g = dt.grid_page_pressed[g, dt.grid_pages[g] - 1]
+    if step eq 'search'
+        g = dt.grid_searched[g, ' KA ']
+    if step eq 'sort'
+        g = dt.grid_sort_pressed[g, 2, false]
+    if step eq 'shift sort'
+        g = dt.grid_sort_pressed[g, 3, true]
+    if step eq 'search none'
+        g = dt.grid_searched[g, 'qqq']
+    words = slice[[''], 0, 0]
+    for b in dt.grid_buttons[g, lang]
+        words = push[words, '`b.label``b.disabled``b.current`']
+    shown = slice[[''], 0, 0]
+    for i in dt.grid_shown[g]
+        shown = push[shown, dt.grid_cell_text[g.rows[i][0]]]
+    log['grid `step`: `dt.grid_summary[g, lang]` | `dt.grid_summary_title[g, lang]` | `join[words, \' \']` | `join[shown, \' \']`']

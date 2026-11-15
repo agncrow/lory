@@ -1,0 +1,410 @@
+--- lory.drag held to the libraries it follows. reference.json is what
+--- SortableJS 1.15.7 did in a browser (reference.py drove it: headless
+--- Chrome, its fallback drag, a step every 50 ms) and what Motion 14.7.1
+--- computed in Node (motion.mjs). Each Sortable scenario builds the same
+--- lists in Lory, takes the same steps (a frame each 50 ms, the pointer's
+--- events in it) and holds every event told (its name, list, item, lists
+--- from and to, indices, pull, swapped item, selection and its indices,
+--- and a move's item and side) and, after every step, each list's order,
+--- every item's box, the dragged item's picture and the scroll, to what
+--- SortableJS did; each of Motion's curves is sampled at its own times
+--- through lory.drag's release (or lory.motion's inertia and springs) and
+--- held to its value and its rest. Run from the repository's root:
+--- `crow test tests/drag/reference.co`.
+---
+--- Where Lory does other than SortableJS on purpose, the scenario says so
+--- in reference.py and the check below is narrowed: AutoScroll's scroll is
+--- held while the pointer is in its zone (SortableJS's keeps going a step
+--- after it leaves, from a timer it did not clear), so the autoscroll
+--- scenario's scrolls are held up to 450 ms and its events to step 8.
+use memory
+use lory
+use lory.gui
+use lory.drag
+use lory.motion
+
+--- a frame of the scenario at `t` ms, with its events
+fn _frame[t, given]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _pointer[on, x, y]
+    '{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+--- the step's events as the page hands them
+fn _input[step]
+    on = '`step[0]`'
+    if on eq 'wait'
+        return '[]'
+    x = 0.0 + step[1]
+    y = 0.0 + step[2]
+    if on eq 'click'
+        d = _pointer['down', x, y]
+        u = _pointer['up', x, y]
+        return '[`d`, `u`]'
+    p = _pointer[on, x, y]
+    '[`p`]'
+
+fn _names[j]
+    out = []
+    for x in j
+        out = push[out, '`x`']
+    join[out, ',']
+
+--- a list as the scenario asks for it, holding `ids` (each item's size
+--- the scenario's)
+fn _list_of[l, ids, sizes]
+    o = l.options
+    shape = l['kind']
+    kind = '`shape`'
+    handle = o.handle.ok
+    blocked = []
+    if o.filter.ok
+        for x in o.filter
+            blocked = push[blocked, '`x`']
+    kids = slice[[gui.space[0.0]], 0, 0]
+    for id in ids
+        h = 40.0
+        w = 0.0
+        base = id
+        if ends[base, ':copy']
+            base = slice[base, 0, len[base] - 5]
+        if base in sizes
+            h = sizes[base][1]
+            w = sizes[base][0]
+        inner = [gui.space[h - 12.0]]
+        if handle
+            inner = [drag.grip[], gui.space[h - 12.0]]
+        it = gui.item[id, inner]
+        if w gt 0.0
+            it = gui.sized[it, w]
+        if id in blocked
+            it = drag.filtered[it]
+        kids = push[kids, _sure_node[it]]
+    columns = 2
+    if l.columns.ok
+        columns = 0 + l.columns
+    n = drag.list['`l.id`', kids, along = kind, gap = 0.0 + l.gap, pad = 0.0 + l.pad, columns = columns, tall = 0.0 + l.tall]
+    if o.group.ok
+        g = o.group
+        if g.name.ok
+            pull = ''
+            take = ''
+            if g.pull.ok
+                if '`g.pull`' eq 'clone'
+                    pull = 'clone'
+                else if '`g.pull`' eq 'false'
+                    pull = 'no'
+                else
+                    pull = _names[g.pull]
+            if g.put.ok
+                if '`g.put`' eq 'false'
+                    take = 'no'
+                else if '`g.put`' eq 'true'
+                    take = 'yes'
+                else
+                    take = _names[g.put]
+            n = drag.grouped[n, '`g.name`', pull = pull, take = take]
+        else
+            n = drag.grouped[n, '`g`']
+    if o.sort.ok and '`o.sort`' eq 'false'
+        n = drag.unsorted[n]
+    if o.animation.ok
+        n = drag.animated[n, 0.0 + o.animation]
+    swap_at = 1.0
+    if o.swapThreshold.ok
+        swap_at = 0.0 + o.swapThreshold
+    invert = o.invertSwap.ok
+    inverted = -1.0
+    if o.invertedSwapThreshold.ok
+        inverted = 0.0 + o.invertedSwapThreshold
+    n = drag.thresholds[n, swap = swap_at, invert = invert, inverted = inverted]
+    if o.swap.ok
+        n = drag.swapping[n]
+    if o.multiDrag.ok
+        n = drag.multiple[n]
+    if o.revertOnSpill.ok
+        n = drag.spilled[n, 'revert']
+    if o.removeOnSpill.ok
+        n = drag.spilled[n, 'remove']
+    if o.delay.ok
+        n = drag.delayed[n, 0.0 + o.delay]
+    if o.fallbackTolerance.ok
+        n = drag.tolerance[n, 0.0 + o.fallbackTolerance]
+    if o.disabled.ok
+        n = drag.disabled[n]
+    if handle
+        n = drag.handled[n]
+    n = gui.sized[n, 0.0 + l.width]
+    --- (gui's grid is as wide as the column it stands in)
+    if kind eq 'grid'
+        n = gui.sized[gui.column[[_sure_node[n]], gap = 0.0], 0.0 + l.width]
+    if l.scroll.ok
+        n = gui.sized[gui.scroll['`l.id`:scroll', 0.0 + l.scroll, [_sure_node[n]]], 0.0 + l.width]
+    n
+
+fn _tree[sc, lists, sizes]
+    kids = slice[[gui.space[0.0]], 0, 0]
+    for l in sc.lists
+        kids = push[kids, _sure_node[_list_of[l, lists['`l.id`'], sizes]]]
+    gui.row[kids, gap = 20.0]
+
+--- a node sure (made from the scenario's numbers, it might have failed)
+fn _sure_node[x]
+    if not x.ok
+        return gui.space[0.0]
+    x
+
+--- an id as both sides name it: a copy's and a clone's marks taken off
+fn _plain[id]
+    out = id
+    if ends[out, '+']
+        out = slice[out, 0, len[out] - 1]
+    if ends[out, ':copy']
+        out = slice[out, 0, len[out] - 5]
+    parts = split[out, '*']
+    parts[0]
+
+fn _text_of[v]
+    if not v.ok
+        return 'null'
+    '`v`'
+
+fn _int_of[v]
+    if not v.ok
+        return -1
+    0 + v
+
+--- a told event as text, as SortableJS's is written (a pull of `true` is
+--- Lory's `yes`; the swapped item only where the scenario swaps, the
+--- selection only where it selects)
+fn _theirs[e, swaps, multi]
+    act = '`e.e`'
+    if act eq 'move'
+        return 'move `e.list` `e.item` from `e.from` to `e.to` over `e.related` after `e.after`'
+    pull = _text_of[e.pull]
+    if pull eq 'true'
+        pull = 'yes'
+    if pull eq 'null'
+        pull = ''
+    words = '`act` `e.list` `e.item` from `e.from` to `e.to` old `_int_of[e.old]` new `_int_of[e.new]` pull `pull`'
+    if swaps
+        swap = ''
+        if e.swap.ok
+            swap = '`e.swap`'
+        words = '`words` swap `swap`'
+    if multi
+        items = []
+        for x in e.items
+            items = push[items, '`x`']
+        olds = []
+        for x in e.olds
+            olds = push[olds, '`_int_of[x]`']
+        news = []
+        for x in e.news
+            news = push[news, '`_int_of[x]`']
+        words = '`words` items `_commas[items]` olds `_commas[olds]` news `_commas[news]`'
+    words
+
+fn _mine[t, swaps, multi]
+    if t.act eq 'move'
+        return 'move `t.list` `t.item` from `t.from` to `t.to` over `t.related` after `t.after`'
+    words = '`t.act` `t.list` `t.item` from `t.from` to `t.to` old `t.old_index` new `t.new_index` pull `t.pull`'
+    if swaps
+        words = '`words` swap `t.swap`'
+    if multi
+        olds = []
+        for x in t.olds
+            olds = push[olds, '`x`']
+        news = []
+        for x in t.news
+            news = push[news, '`x`']
+        words = '`words` items `_commas[t.items]` olds `_commas[olds]` news `_commas[news]`'
+    words
+
+fn _commas[xs]
+    join[xs, ',']
+
+fn _close[a, b]
+    abs[a - b] lte 0.001
+
+--- the scenario run in Lory: what differs from SortableJS, as text
+fn differences[sc]
+    drag.forget[]
+    gui.unfocus[]
+    name = '`sc.name`'
+    swaps = false
+    multi = false
+    lists = map['' = ['']]
+    sizes = map['' = [0.0, 0.0]]
+    for l in sc.lists
+        ids = []
+        for it in l.items
+            ids = push[ids, '`it.id`']
+            sizes['`it.id`'] = [0.0 + it.w, 0.0 + it.h]
+        lists['`l.id`'] = ids
+        if l.options.swap.ok
+            swaps = true
+        if l.options.multiDrag.ok
+            multi = true
+    out = []
+    mine = []
+    steps = sc.steps
+    given = sc.steps_given
+    last_event_step = 1000
+    last_scroll_t = 100000.0
+    if name eq 'autoscroll'
+        last_event_step = 8
+        last_scroll_t = 450.0
+    i = 0
+    while i lt len[steps] and 50.0 * i lte last_scroll_t
+        t = 50 * i
+        given_now = '[]'
+        if i gt 0
+            given_now = _input[given[i - 1]]
+        shown = drag.show[_frame[t, given_now], _tree[sc, lists, sizes]]
+        for told in shown.told
+            if i - 1 lte last_event_step
+                mine = push[mine, '`i - 1` `_mine[told, swaps, multi]`']
+            lists = drag.after[lists, told]
+        st = steps[i]
+        --- (the orders)
+        for l in sc.lists
+            id = '`l.id`'
+            theirs = []
+            for x in st.orders[id]
+                theirs = push[theirs, _plain['`x`']]
+            got = []
+            for x in drag.shown_order[id]
+                got = push[got, _plain[x]]
+            if _commas[theirs] ne _commas[got]
+                out = push[out, '`name` at `t`: `id` is `_commas[got]`, SortableJS has `_commas[theirs]`']
+        --- (the boxes: each item's, the lists', the picture dragged)
+        if st.rects.ok
+            seen = []
+            twice = []
+            for l in sc.lists
+                for x in st.orders['`l.id`']
+                    p = _plain['`x`']
+                    if p in seen
+                        twice = push[twice, p]
+                    seen = push[seen, p]
+            for key in keys[st.rects]
+                r = st.rects[key]
+                mine_key = key
+                if ends[key, '+']
+                    mine_key = '`slice[key, 0, len[key] - 1]`:copy'
+                if key eq 'ghost'
+                    mine_key = 'drag:image'
+                if not (_plain[key] in twice)
+                    if not (mine_key in shown.boxes)
+                        out = push[out, '`name` at `t`: no box for `key`']
+                    else
+                        b = shown.boxes[mine_key]
+                        if not (_close[b[0], 0.0 + r[0]] and _close[b[1], 0.0 + r[1]] and _close[b[2], 0.0 + r[2]] and _close[b[3], 0.0 + r[3]])
+                            out = push[out, '`name` at `t`: `key` at `b`, SortableJS has `r`']
+        --- (the scroll)
+        if st.scrolls.ok and 0.0 + t lte last_scroll_t
+            for key in keys[st.scrolls]
+                want = 0.0 + st.scrolls[key]
+                first = slice[key, 0, len[key] - 7]
+                got = shown.boxes[key][1] - shown.boxes[first][1]
+                if not _close[got, want]
+                    out = push[out, '`name` at `t`: `key` scrolled `got`, SortableJS has `want`']
+        i = i + 1
+    theirs = []
+    for e in sc.told
+        if 0 + e.step lte last_event_step
+            theirs = push[theirs, '`e.step` `_theirs[e, swaps, multi]`']
+    n = max[len[mine], len[theirs]]
+    j = 0
+    while j lt n
+        a = '(none)'
+        if j lt len[mine]
+            a = mine[j]
+        b = '(none)'
+        if j lt len[theirs]
+            b = theirs[j]
+        if a ne b
+            out = push[out, '`name` told `j`: Lory `a`; SortableJS `b`']
+            j = n
+        j = j + 1
+    out
+
+fn _reference[]
+    json[read['tests/drag/reference.json']]
+
+--- every SortableJS scenario: the same events, orders, boxes and scrolls
+test every_sortable_scenario_is_sortables[]
+    j = _reference[]
+    wrong = []
+    for sc in j.sortable.scenarios
+        for f in differences[sc]
+            if len[wrong] lt 60
+                wrong = push[wrong, f]
+    assert[len[wrong] eq 0, join[wrong, '\n']]
+
+--- a value of Motion's and Lory's the same, to a billionth of its size
+fn _same[a, b]
+    abs[a - b] lte 0.000000001 * max[1.0, abs[b]]
+
+fn _given_num[g, key, otherwise]
+    v = g[key]
+    if v.ok
+        return 0.0 + v
+    otherwise
+
+fn _given_flag[g, key, otherwise]
+    v = g[key]
+    if v.ok
+        return '`v`' eq 'true'
+    otherwise
+
+--- the curve sampled through Lory at Motion's times: what differs
+fn curve_differences[cv]
+    out = []
+    g = cv.given
+    name = '`cv.name` (`cv.step` ms)'
+    shape = cv['kind']
+    form = '`shape`'
+    if form eq 'spring'
+        sp = motion.spring[_given_num[g, 'stiffness', 100.0], _given_num[g, 'damping', 10.0], _given_num[g, 'mass', 1.0]]
+        for s in cv.samples
+            at = motion.spring_sample[sp, 0.0 + g.from, 0.0 + g.to, 0.0 + g.velocity, 0.0 + s[0]]
+            if not _same[at.value, 0.0 + s[1]] or at.done ne ('`s[2]`' eq 'true')
+                out = push[out, '`name` at `s[0]`: Lory `at.value` `at.done`, Motion `s[1]` `s[2]`']
+        return out
+    th = motion.inertia[0.0 + g.value, 0.0 + g.velocity]
+    if form eq 'released'
+        th = drag.released[0.0 + g.value, 0.0 + g.velocity, low = _given_num[g, 'min', -1000000000.0], high = _given_num[g, 'max', 1000000000.0], elastic = _given_flag[g, 'elastic', true], snap = _given_flag[g, 'snap', false], momentum = _given_flag[g, 'momentum', true]]
+    else
+        th.high = _given_num[g, 'max', inf]
+        th.power = _given_num[g, 'power', 0.8]
+        th.time_constant = _given_num[g, 'timeConstant', 325.0]
+    gl = motion.glide[th]
+    for s in cv.samples
+        gl = motion.glided[th, gl, 0.0 + s[0]]
+        if not _same[gl.value, 0.0 + s[1]] or gl.done ne ('`s[2]`' eq 'true')
+            out = push[out, '`name` at `s[0]`: Lory `gl.value` `gl.done`, Motion `s[1]` `s[2]`']
+    out
+
+--- every curve of Motion's: a drag let go (thrown, bounced off its
+--- bounds, snapped home, without momentum), inertia at its defaults, and
+--- the springs: each sample's value and rest
+test every_motion_curve_is_motions[]
+    j = _reference[]
+    wrong = []
+    for cv in j.motion.curves
+        for f in curve_differences[cv]
+            if len[wrong] lt 40
+                wrong = push[wrong, f]
+    assert[len[wrong] eq 0, join[wrong, '\n']]
+
+--- the elastic pull past a bound, at five elasticities
+test the_pull_past_a_bound_is_motions[]
+    j = _reference[]
+    wrong = []
+    for row in j.motion.elastic
+        got = drag.pulled[0.0 + row[1], -100.0, 100.0, 0.0 + row[0]]
+        if not _same[got, 0.0 + row[2]]
+            wrong = push[wrong, 'elastic `row[0]` at `row[1]`: Lory `got`, Motion `row[2]`']
+    assert[len[wrong] eq 0, join[wrong, '\n']]

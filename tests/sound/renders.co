@@ -1,0 +1,357 @@
+--- Lory's sound renders held to what Tone.js 15.1.22 rendered offline in
+--- headless Chrome at 16 kHz (reference.json; reference.py ran
+--- reference.js). Each test renders the same patch here, from the same
+--- start on the page's clock, and holds it within the tolerance it names;
+--- docs/components/sound.md says why each tolerance is what it is. Run
+--- from the repository's root: `crow test tests/sound/renders.co`.
+use math
+use sound
+use sound.source
+use sound.filter
+use sound.signal
+use sound.synth
+use sound.effect
+use sound.dynamics
+use sound.channel
+use sound.analysis
+
+fn _reference[]
+    json[read['tests/sound/reference.json']]
+
+fn _floats[j]
+    out = for x in j
+        0.0 + x
+    out
+
+--- JSON numbers as samples (an array of numbers)
+fn _samples[j]
+    out = zeros[len[j]]
+    i = 0
+    while i lt len[j]
+        out[i] = 0.0 + j[i]
+        i = i + 1
+    out
+
+--- the largest difference between two runs of numbers, over the shorter
+fn _worst[a, b]
+    n = min[len[a], len[b]]
+    worst = 0.0
+    i = 0
+    while i lt n
+        worst = max[worst, abs[a[i] - b[i]]]
+        i = i + 1
+    worst
+
+--- `wrong` with a line added where `mine` is further than `within` from
+--- `theirs`
+fn _held[wrong, label, mine, theirs, within]
+    if abs[mine - theirs] lte within
+        return wrong
+    push[wrong, '`label`: Lory `mine`, Tone `theirs` (within `within`)']
+
+--- `wrong` with a line added where two runs differ by more than `within`
+fn _held_all[wrong, label, mine, theirs, within]
+    w = _worst[mine, theirs]
+    if w lte within
+        return wrong
+    push[wrong, '`label`: differs by `w` (within `within`)']
+
+fn _none[]
+    slice[[''], 0, 0]
+
+--- the effects' input: a 440 Hz sine of 0.5 for 0.15 s, faded in and out
+--- over 5 ms, as reference.js lays it
+fn _effect_input[rate]
+    n = 2400
+    i = 0.0 + range[n]
+    up = i / 80.0
+    down = (n - 1.0 - i) / 80.0
+    g = clip[where[up - down lt 0.0, up, down], 0.0, 1.0]
+    sound.mono[rate, sin[i * (2.0 * pi * 440.0 / rate)] * 0.5 .* g]
+
+--- the effects in reference.js's order, with its settings
+fn _effects[]
+    [effect.auto_filter[], effect.with_frequency[effect.auto_panner[], 4.0], effect.auto_wah[], effect.with_bits[effect.bit_crusher[], 4.0], effect.with_order[effect.chebyshev[], 3.0], effect.chorus[], effect.with_amount[effect.distortion[], 0.8], effect.with_wet[effect.with_delay[effect.feedback_delay[], 0.0625, 0.5], 0.5], effect.with_delay[effect.ping_pong_delay[], 0.0625, 0.5], effect.freeverb[], effect.jc_reverb[], effect.with_decay[effect.reverb[], 0.3, 0.01], effect.with_frequency[effect.frequency_shifter[], 100.0], effect.phaser[], effect.with_pitch[effect.pitch_shift[], 7.0], effect.with_width[effect.stereo_widener[], 0.8], effect.tremolo[], effect.vibrato[]]
+
+--- the level (dB per 10 log10 of power) of a band of a spectrum, as
+--- reference.js's noise slope reads it
+fn _band_db[mags, rate, size, a, b]
+    if b lte a or rate lte 0.0
+        return 0.0
+    from = round[a * size / rate]
+    to = round[b * size / rate]
+    part = slice[mags, from, to]
+    10.0 * log10[sum[part .* part] / ((b - a) * size / rate)]
+
+test oscillators_and_the_lfo_are_tones_sample_for_sample[]
+    j = _reference[]
+    rate = 16000.0
+    wrong = _none[]
+    for c in j.oscillators
+        name = '`c.name`'
+        o = source.oscillator[name]
+        if name eq 'custom'
+            o = source.with_partials[source.oscillator['sine'], [1.0, 0.5, 0.25]]
+        if name eq 'sine phase 90'
+            o = source.with_phase[source.oscillator['sine'], 90.0]
+        if name eq 'pulse'
+            o = source.with_width[source.oscillator['pulse'], 0.3]
+        within = 0.0005
+        if name eq 'pulse'
+            within = 0.002
+        wrong = _held_all[wrong, name, source.steady[o, 0.0 + c.hz, 0.025, rate], _floats[c.samples], within]
+    lj = j.lfo
+    lv = source.lfo[0.0 + lj.frequency, 0.0 + lj.min, 0.0 + lj.max, 0.0 + lj.phase, 0.5, rate]
+    picked = for i in range[len[lj.values]]
+        lv[i * 200]
+    wrong = _held_all[wrong, 'lfo', picked, _floats[lj.values], 0.0001]
+    len[j.oscillators] eq 12
+    wrong eq _none[]
+
+test filters_are_tones_response_and_impulse[]
+    j = _reference[]
+    rate = 16000.0
+    wrong = _none[]
+    freqs = _floats[j.filters.freqs]
+    for c in j.filters.cases
+        f = filter.with_rolloff[filter.with_q[filter.filter['`c.type`', 0.0 + c.frequency], 0.0 + c.Q], c.rolloff]
+        if c.gain.ok
+            f = filter.with_gain[f, 0.0 + c.gain]
+        mine = filter.frequency_response[f, rate, freqs]
+        i = 0
+        while i lt len[freqs]
+            theirs = c.response[i]
+            if theirs.ok
+                wrong = _held[wrong, '`c.type` `c.frequency` at `freqs[i]` Hz', mine[i], 0.0 + theirs, 0.00001 * max[1.0, abs[mine[i]]]]
+            i = i + 1
+        wrong = _held_all[wrong, '`c.type` `c.frequency` impulse', filter.impulse_response[f, rate, 64], _floats[c.impulse], 0.000001]
+    click = concat[[1.0], zeros[799]]
+    wrong = _held_all[wrong, 'comb', filter.comb[click, rate, 0.01, 0.5], _floats[j.filters.comb], 0.000001]
+    wrong = _held_all[wrong, 'lowpass comb', filter.lowpass_comb[click, rate, 0.01, 0.5, 2000.0], _floats[j.filters.lowpass_comb], 0.000001]
+    wrong = _held_all[wrong, 'one-pole lowpass', filter.one_pole['lowpass', 500.0, slice[click, 0, 32], rate], _floats[j.filters.one_pole_low], 0.000001]
+    wrong = _held_all[wrong, 'one-pole highpass', filter.one_pole['highpass', 500.0, slice[click, 0, 32], rate], _floats[j.filters.one_pole_high], 0.000001]
+    wrong = _held_all[wrong, 'eq3', filter.equalized[slice[click, 0, 128], rate, -6.0, 3.0, 0.0, 400.0, 2500.0], _floats[j.filters.eq3], 0.000001]
+    ir = _floats[j.filters.convolver_ir]
+    convolved = filter.convolved[slice[click, 0, 96], ir] * filter.convolver_scale[ir, 1, rate]
+    wrong = _held_all[wrong, 'convolver', convolved, _floats[j.filters.convolver], 0.000001]
+    len[j.filters.cases] eq 10
+    wrong eq _none[]
+
+test signal_maths_is_tones[]
+    j = _reference[]
+    sg = j.signals
+    xs = _samples[sg.input]
+    cube = (0.0 + range[1024]) / 1023.0 * 2.0 - 1.0
+    wrong = _none[]
+    wrong = _held_all[wrong, 'scale', signal.scale[xs, 10.0, 30.0], _floats[sg.scale], 0.00002]
+    wrong = _held_all[wrong, 'scale_exp', signal.scale_exp[xs, 10.0, 30.0, 2.0], _floats[sg.scale_exp], 0.00002]
+    wrong = _held_all[wrong, 'pow', signal.power[xs, 3.0], _floats[sg.pow], 0.000001]
+    wrong = _held_all[wrong, 'abs', signal.size_of[xs], _floats[sg.abs], 0.000001]
+    wrong = _held_all[wrong, 'negate', signal.negated[xs], _floats[sg.negate], 0.000001]
+    wrong = _held_all[wrong, 'audio to gain', signal.audio_to_gain[xs], _floats[sg.audio_to_gain], 0.000001]
+    wrong = _held_all[wrong, 'gain to audio', signal.gain_to_audio[xs], _floats[sg.gain_to_audio], 0.000001]
+    wrong = _held_all[wrong, 'greater than', signal.greater_than[xs, 0.25], _floats[sg.greater_than], 0.0]
+    wrong = _held_all[wrong, 'greater than zero', signal.greater_than[xs, 0.0], _floats[sg.greater_than_zero], 0.0]
+    wrong = _held_all[wrong, 'waveshaper', signal.waveshaped[xs, cube .* cube .* cube], _floats[sg.shaper], 0.000001]
+    wrong eq _none[]
+
+test players_are_tones_sample_for_sample[]
+    j = _reference[]
+    rate = 16000.0
+    data = _floats[j.players.data]
+    wrong = _none[]
+    for c in j.players.cases
+        name = '`c.name`'
+        p = source.player[sound.mono[rate, data]]
+        if name eq 'faster'
+            p = source.at_pace[p, 1.5]
+        if name eq 'reversed'
+            p = source.backwards[p]
+        if name eq 'looped'
+            p = source.looped_between[p, 0.002, 0.008]
+        if name eq 'faded'
+            p = source.with_fades[p, 0.003, 0.004]
+        mine = source.played[p, 0.0 + c.offset, 0.0 + c.duration, rate]
+        wrong = _held_all[wrong, name, concat[mine, zeros[800]], _floats[c.samples], 0.000001]
+    len[j.players.cases] eq 5
+    wrong eq _none[]
+
+test the_analyser_and_meter_read_as_tones[]
+    j = _reference[]
+    rate = 16000.0
+    t = (0.0 + range[2304]) / rate
+    xs = sin[t * (2.0 * pi * 1000.0)] * 0.5 + sin[t * (2.0 * pi * 3000.0)] * 0.25
+    first = analysis.analysed[analysis.analyser['fft', 256], slice[xs, 0, 1536]]
+    second = analysis.analysed[first.analyser, xs]
+    m1 = analysis.metered[analysis.meter[], slice[xs, 0, 1536]]
+    m2 = analysis.metered[m1.meter, xs]
+    wrong = _none[]
+    readings = [first.values, second.values]
+    meters = [m1.db, m2.db]
+    k = 0
+    while k lt 2
+        r = j.analysis.reads[k]
+        theirs = _floats[r.fft]
+        band = 0
+        while band lt 256
+            if theirs[band] gt -100.0
+                wrong = _held[wrong, 'read `k` band `band`', readings[k][band], theirs[band], 0.0001]
+            band = band + 1
+        wrong = _held[wrong, 'meter `k`', meters[k], 0.0 + r.meter, 0.00001]
+        k = k + 1
+    wave = analysis.values_of[analysis.analyser['waveform', 256], xs]
+    wrong = _held_all[wrong, 'waveform', wave, _floats[j.analysis.reads[1].waveform], 0.000001]
+    wrong eq _none[]
+
+test places_and_pans_are_the_pages[]
+    j = _reference[]
+    wrong = _none[]
+    for c in j.positions
+        pl = channel.place[0.0 + c.panner.positionX, 0.0 + c.panner.positionY, 0.0 + c.panner.positionZ]
+        if c.panner.distanceModel.ok
+            pl = channel.with_distance[pl, '`c.panner.distanceModel`', 1.0, 0.0 + c.panner.rolloffFactor]
+        if c.panner.maxDistance.ok
+            pl = channel.Place[pl.position, pl.orientation, pl.distance_model, pl.reference, 0.0 + c.panner.maxDistance, pl.rolloff, pl.inner_angle, pl.outer_angle, pl.outer_gain]
+        if c.panner.coneInnerAngle.ok
+            pl = channel.with_cone[pl, 0.0 + c.panner.orientationX, 0.0 + c.panner.orientationY, 0.0 + c.panner.orientationZ, 0.0 + c.panner.coneInnerAngle, 0.0 + c.panner.coneOuterAngle, 0.0 + c.panner.coneOuterGain]
+        l = channel.listener[]
+        if c.listener.positionX.ok
+            l = channel.Listener[[0.0 + c.listener.positionX, 0.0 + c.listener.positionY, 0.0 + c.listener.positionZ], [0.0 + c.listener.forwardX, 0.0 + c.listener.forwardY, 0.0 + c.listener.forwardZ], [0.0, 1.0, 0.0]]
+        if c.listener.upX.ok
+            l = channel.Listener[l.position, l.forward, [0.0 + c.listener.upX, 0.0 + c.listener.upY, 0.0 + c.listener.upZ]]
+        g = channel.gains_of[pl, l]
+        wrong = _held[wrong, '`c.name` left', g[0], 0.0 + c.left, 0.000001]
+        wrong = _held[wrong, '`c.name` right', g[1], 0.0 + c.right, 0.000001]
+    for c in j.pans
+        p = channel.panned[sound.mono[16000.0, [1.0]], 0.0 + c.pan]
+        wrong = _held[wrong, 'pan `c.pan` left', p.left[0], 0.0 + c.left, 0.000001]
+        wrong = _held[wrong, 'pan `c.pan` right', p.right[0], 0.0 + c.right, 0.000001]
+    len[j.positions] eq 9
+    wrong eq _none[]
+
+test synths_measure_as_tones[]
+    j = _reference[]
+    rate = 16000.0
+    names = ['Synth', 'MonoSynth', 'FMSynth', 'AMSynth', 'DuoSynth', 'MembraneSynth', 'MetalSynth', 'NoiseSynth', 'PluckSynth']
+    wrong = _none[]
+    k = 0
+    while k lt 9
+        c = j.synths[k]
+        name = names[k]
+        hz = 0.0 + c.note
+        xs = synth.played_from[synth.named[name], [synth.hit[0.05, hz, 0.15, 1.0]], 0.05, rate].left
+        m = analysis.measured[concat[xs, zeros[8000]], rate, 0.03, 0.13, hz]
+        theirs_rms = _floats[c.rms]
+        pitched = name ne 'MetalSynth' and name ne 'NoiseSynth' and name ne 'PluckSynth'
+        if pitched
+            wrong = _held[wrong, '`name` level', m.level, 0.0 + c.level, 0.1]
+            wrong = _held[wrong, '`name` fundamental', m.fundamental, 0.0 + c.fundamental, 0.02]
+            wrong = _held[wrong, '`name` centroid', m.centroid, 0.0 + c.centroid, 0.005 * c.centroid]
+            wrong = _held_all[wrong, '`name` 10 ms RMS', m.rms, theirs_rms, 0.05]
+            h = 0
+            while h lt len[c.harmonics]
+                if c.harmonics[h] gt -60.0
+                    wrong = _held[wrong, '`name` harmonic `h + 1`', m.harmonics[h], 0.0 + c.harmonics[h], 0.5]
+                h = h + 1
+        if name eq 'MetalSynth'
+            --- (silent while its highpass is above the top frequency the rate
+            --- holds, then as loud within 3 dB)
+            wrong = _held[wrong, 'MetalSynth level', m.level, 0.0 + c.level, 3.0]
+            wrong = _held_all[wrong, 'MetalSynth silent from 10 ms to 100 ms', slice[m.rms, 1, 10], slice[theirs_rms, 1, 10], 0.0]
+        if name eq 'NoiseSynth'
+            wrong = _held[wrong, 'NoiseSynth level', m.level, 0.0 + c.level, 1.5]
+            wrong = _held[wrong, 'NoiseSynth silent after 110 ms', sum[slice[m.rms, 11, 30]], 0.0, 0.0]
+        if name eq 'PluckSynth'
+            --- (a burst of 61 samples of noise: Tone's own renders differ
+            --- by 5 dB from one to the next)
+            wrong = _held[wrong, 'PluckSynth level', m.level, 0.0 + c.level, 6.0]
+            wrong = _held[wrong, 'PluckSynth fundamental', m.fundamental, 0.0 + c.fundamental, 0.05]
+            --- (how fast it dies, five windows on: what its comb sets)
+            wrong = _held[wrong, 'PluckSynth fall', 20.0 * log10[m.rms[5] / m.rms[0]], 20.0 * log10[theirs_rms[5] / theirs_rms[0]], 3.0]
+        k = k + 1
+    rec = sin[(0.0 + range[6400]) * (2.0 * pi * 220.0 / rate)] * 0.5 .* clip[(0.0 + range[6400]) / 80.0, 0.0, 1.0]
+    sp = synth.sampler[[synth.recording['A3', sound.mono[rate, rec]]]]
+    ys = synth.sampled[sp, synth.hit[0.05, 261.6255653005986, 0.15, 1.0], rate]
+    m = analysis.measured[concat[ys, zeros[4000]], rate, 0.03, 0.13, 261.6255653005986]
+    c = j.synths[9]
+    wrong = _held[wrong, 'Sampler level', m.level, 0.0 + c.level, 0.001]
+    wrong = _held[wrong, 'Sampler fundamental', m.fundamental, 0.0 + c.fundamental, 0.001]
+    wrong = _held_all[wrong, 'Sampler 10 ms RMS', m.rms, _floats[c.rms], 0.001]
+    len[j.synths] eq 10
+    wrong eq _none[]
+
+test effects_measure_as_tones[]
+    j = _reference[]
+    rate = 16000.0
+    heard = _effect_input[rate]
+    units = _effects[]
+    wrong = _none[]
+    k = 0
+    while k lt len[units]
+        c = j.effects[k]
+        unit = units[k]
+        name = unit.name
+        out = effect.applied_over[unit, heard, 0.05, 0.35]
+        left = analysis.windows[out.left, 160]
+        right = analysis.windows[out.right, 160]
+        hz = 440.0
+        if name eq 'frequency_shifter'
+            hz = 540.0
+        m = analysis.measured[out.left, rate, 0.02, 0.14, hz]
+        plain = name ne 'reverb' and name ne 'frequency_shifter' and name ne 'pitch_shift'
+        if plain
+            wrong = _held_all[wrong, '`name` left RMS', left, _floats[c.left_rms], 0.00002]
+            wrong = _held_all[wrong, '`name` right RMS', right, _floats[c.right_rms], 0.00002]
+            wrong = _held_all[wrong, '`name` first left samples', slice[out.left, 0, 480], _floats[c.left], 0.0002]
+            wrong = _held_all[wrong, '`name` first right samples', slice[out.right, 0, 480], _floats[c.right], 0.0002]
+            wrong = _held[wrong, '`name` level', m.level, 0.0 + c.left_measure.level, 0.0001]
+            wrong = _held[wrong, '`name` fundamental', m.fundamental, 0.0 + c.left_measure.fundamental, 0.0001]
+        if name eq 'pitch_shift'
+            wrong = _held_all[wrong, 'pitch_shift left RMS', left, _floats[c.left_rms], 0.001]
+            wrong = _held_all[wrong, 'pitch_shift first samples', slice[out.left, 0, 480], _floats[c.left], 0.01]
+            wrong = _held[wrong, 'pitch_shift level', m.level, 0.0 + c.left_measure.level, 0.01]
+        if name eq 'frequency_shifter'
+            wrong = _held_all[wrong, 'frequency_shifter left RMS after 10 ms', slice[left, 1, len[left]], slice[_floats[c.left_rms], 1, len[left]], 0.01]
+            wrong = _held[wrong, 'frequency_shifter level', m.level, 0.0 + c.left_measure.level, 0.05]
+            wrong = _held[wrong, 'frequency_shifter fundamental', m.fundamental, 0.0 + c.left_measure.fundamental, 0.01]
+        k = k + 1
+    click = zeros[6400]
+    click[0] = 1.0
+    answer = effect.applied[units[11], sound.mono[rate, click], 0.0]
+    energy = sum[answer.left .* answer.left]
+    wrong = _held[wrong, 'reverb click energy', energy, 0.0 + j.reverb_click_energy, 0.05 * j.reverb_click_energy]
+    len[j.effects] eq 18
+    wrong eq _none[]
+
+test dynamics_settle_where_tones_settle[]
+    j = _reference[]
+    rate = 16000.0
+    xs = sin[(0.0 + range[8000]) * (2.0 * pi * 200.0 / rate)] * 0.9
+    loud = sound.mono[rate, xs]
+    outs = [dynamics.compressed[dynamics.compressor[], loud], dynamics.compressed[dynamics.compressor_of[-20.0, 4.0, 0.01, 0.1, 0.0], loud], dynamics.limited[-12.0, loud], dynamics.gated[dynamics.gate_of[-10.0, 0.05], loud]]
+    theirs = [j.dynamics.compressor.peak, j.dynamics.compressor_hard.peak, j.dynamics.limiter.peak, j.dynamics.gate.peak]
+    labels = ['compressor', 'hard compressor', 'limiter', 'gate']
+    wrong = _none[]
+    k = 0
+    while k lt 4
+        peak = max[abs[slice[outs[k].left, 5600, 7200]]]
+        wrong = _held[wrong, '`labels[k]` settled peak (dB)', 20.0 * log10[peak], 20.0 * log10[0.0 + theirs[k]], 1.0]
+        k = k + 1
+    wrong eq _none[]
+
+test noise_is_as_loud_and_as_tilted_as_tones[]
+    j = _reference[]
+    rate = 16000.0
+    wrong = _none[]
+    kinds = ['white', 'pink', 'brown']
+    k = 0
+    while k lt 3
+        c = j.noises[k]
+        kind = kinds[k]
+        xs = source.noise_heard[kind, 16000, 3]
+        mags = analysis.spectrum[slice[xs, 0, 8192], 8192]
+        slope = (_band_db[mags, rate, 8192, 2000.0, 4000.0] - _band_db[mags, rate, 8192, 250.0, 500.0]) / 3.0
+        wrong = _held[wrong, '`kind` RMS', analysis.rms[xs], 0.0 + c.rms, 0.1 * c.rms]
+        wrong = _held[wrong, '`kind` slope (dB an octave)', slope, 0.0 + c.slope, 1.0]
+        k = k + 1
+    wrong eq _none[]

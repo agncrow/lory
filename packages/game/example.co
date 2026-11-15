@@ -1,0 +1,122 @@
+--- Lory's games at work outside a browser, with the same output in both
+--- modes (`crow test --packages` runs this interpreted and compiled and
+--- compares the two): a game's clock stepping a ball at a fixed rate over
+--- frames of uneven lengths, shapes that meet, a value eased and held in
+--- bounds, sparks flung, falling and spent, and sounds asked of the page.
+--- Nothing here needs a page: what a frame would paint is read back as a
+--- test reads it.
+use math
+use lory
+use game
+
+--- a frame as the page hands it, `t` milliseconds in
+fn screen[t]
+    json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+--- the vertices drawn so far
+fn drawn[c]
+    len[c.verts] / lory.floats[]
+
+fn two[v]
+    fmt[v, decimals = 2]
+
+--- ---- a clock ----
+
+log['--- a clock']
+c = lory.begin[screen[0]]
+first = game.steps[c, 'play', 120.0]
+lory.end[c]
+log['a first frame steps a game at 120 a second `first` times: there was no frame before it']
+c = lory.begin[screen[40]]
+steps = game.steps[c, 'play', 120.0]
+lory.end[c]
+c = lory.begin[screen[60]]
+again = game.steps[c, 'play', 120.0]
+lory.end[c]
+log['a frame 40 ms later steps it `steps` times, one 20 ms after that `again` times (what was left carried)']
+c = lory.begin[screen[1060]]
+paused = game.steps[c, 'play', 120.0]
+lory.end[c]
+log['a frame after a pause of a second steps it `paused` times: at most eight, so a slow machine slows the game rather than stalling it']
+
+--- a ball dropped onto a floor: its height and speed, and whether it has
+--- landed
+struct Ball [y, vy, landed]
+
+--- the ball a step of `dt` seconds later, pulled down at 400 units a
+--- second, a second; it lands on the floor's box (100 down, 20 deep)
+fn fell[b, dt]
+    if not b.landed
+        b.vy = b.vy + 400.0 * dt
+        b.y = b.y + b.vy * dt
+        if game.circle_meets_box[0.0, b.y, 5.0, -50.0, 100.0, 100.0, 20.0]
+            b.y = 95.0
+            b.vy = 0.0
+            b.landed = true
+    b
+
+--- a ball played on frames `ms` apart from a frame at `t0` until it lands,
+--- on a clock of its own: the frames it took, the steps, and the time the
+--- last frame was at
+struct Played [frames, steps, t]
+
+fn played[id, t0, ms]
+    b = Ball[0.0, 0.0, false]
+    t = t0
+    frames = 0
+    steps = 0
+    while b.landed eq false and frames lt 1000
+        t = t + ms
+        c = lory.begin[screen[t]]
+        n = game.steps[c, id, 120.0]
+        for i in range[n]
+            if not b.landed
+                steps = steps + 1
+            b = fell[b, 1.0 / 120.0]
+        lory.end[c]
+        frames = frames + 1
+    Played[frames, steps, t]
+
+fast = played['fast', 1060, 16]
+slow = played['slow', fast.t, 33]
+log['a ball dropped 95 units lands in `fast.frames` frames 16 ms apart and in `slow.frames` frames 33 ms apart: `fast.steps` and `slow.steps` steps of the game, the same whatever the frames']
+
+--- ---- shapes that meet ----
+
+log['--- shapes that meet']
+log['circles 1.5 apart, each of radius 1, meet: `game.circles_meet[0.0, 0.0, 1.0, 1.5, 0.0, 1.0]`; 2.5 apart: `game.circles_meet[0.0, 0.0, 1.0, 2.5, 0.0, 1.0]`']
+log['two boxes overlapping: `game.boxes_meet[0.0, 0.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0]`; sharing an edge only: `game.boxes_meet[0.0, 0.0, 2.0, 2.0, 2.0, 0.0, 2.0, 2.0]`']
+log['a circle half a unit from a box is clear of it: `game.circle_meets_box[3.0, 1.0, 0.5, 0.0, 0.0, 2.0, 2.0]`; a tenth of a unit in: `game.circle_meets_box[2.4, 1.0, 0.5, 0.0, 0.0, 2.0, 2.0]`']
+
+--- ---- eased and held ----
+
+log['--- eased and held']
+log['10 moved toward 20 at a rate of 2 for a second: `two[game.toward[10.0, 20.0, 2.0, 1.0]]`; for two halves of one: `two[game.toward[game.toward[10.0, 20.0, 2.0, 0.5], 20.0, 2.0, 0.5]]`']
+log['7 held to 0..5: `game.clamp[7.0, 0.0, 5.0]`; 3: `game.clamp[3.0, 0.0, 5.0]`']
+
+--- ---- sparks ----
+
+log['--- sparks']
+seed[7]
+sparks = game.burst[[], 100.0, 100.0, 40, 200.0, lory.hex['#ffd43b']]
+log['a burst of `len[sparks]` sparks']
+for i in range[30]
+    sparks = game.moved[sparks, 1.0 / 60.0, 400.0]
+log['half a second later `len[sparks]` are left']
+c = lory.begin[screen[2000]]
+c = game.drawn[c, sparks, 3.0]
+log['drawn as `drawn[c]` vertices, each fading as its time runs out']
+for i in range[60]
+    sparks = game.moved[sparks, 1.0 / 60.0, 400.0]
+log['a second after that `len[sparks]` are left']
+
+--- ---- sounds ----
+
+log['--- sounds']
+c = game.sound[c, 'pick']
+c = game.sound[c, 'hit']
+c = game.sound[c, 'start']
+c = game.sound[c, 'over']
+log['four sounds asked of the page with the frame: `len[c.asks]` calls']
+for call in c.asks
+    log['  `call[0]` at `call[1]` Hz for `call[2]` s']

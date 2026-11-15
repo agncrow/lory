@@ -1,0 +1,387 @@
+--- Lory's model files held to three.js's own: reference.json is what three
+--- r187's loaders answered for each file in tests/models/files/ and what
+--- its exporters wrote for each model (reference.mjs ran them in node).
+--- Lory must read each file into three's objects — their names and kinds,
+--- every position, normal, colour and uv the same single-precision float
+--- three answered, to the last bit, their indices and groups, and their
+--- materials — and write three's text and bytes exactly. A material's
+--- colours three keeps in double precision, worked out through V8's
+--- `Math.pow`, which is not rounded as the machine's own `pow` is: they are
+--- held to the last bit where the two agree and within one unit in the last
+--- place where they do not, and the program says how many. Run from the
+--- repository's root: `crow test tests/models/reference.co` holds it
+--- interpreted, and `crow run tests/models/reference.co` compiles the same
+--- comparison and says what it found.
+use sys
+use lory.models
+use lory.geometry
+
+--- what a comparison found: its differences as text (the first 40), how
+--- many numbers it held to the last bit, how many within one unit in the
+--- last place, how many cases, how many texts and byte strings Lory wrote
+--- as three wrote them, and how many three's exporters could not write
+struct Held [wrong, count, near, cases, written, unwritten]
+
+fn _nothing_held[]
+    Held[slice[[''], 0, 0], 0, 0, 0, 0, 0]
+
+--- two comparisons as one
+fn _both[a, b]
+    wrong = a.wrong
+    for w in b.wrong
+        if len[wrong] lt 40
+            wrong = push[wrong, w]
+    Held[wrong, a.count + b.count, a.near + b.near, a.cases + b.cases, a.written + b.written, a.unwritten + b.unwritten]
+
+--- a comparison that found one difference
+fn _one_wrong[words]
+    Held[push[slice[[''], 0, 0], words], 0, 0, 0, 0, 0]
+
+--- a comparison that held `n` numbers
+fn _held_numbers[n]
+    Held[slice[[''], 0, 0], n, 0, 0, 0, 0]
+
+--- a file's text ('' where it cannot be read)
+fn _text_of[path]
+    t = read[path]
+    if not t.ok
+        return ''
+    t
+
+--- a file's bytes (none where it cannot be read)
+fn _bytes_of[path]
+    b = sys.file[path]
+    if not b.ok
+        return sys.bytes['']
+    b
+
+--- the floats three wrote as base64, `width` bytes each (none where it
+--- wrote none)
+fn _floats_of[encoded, width]
+    out = []
+    if len[encoded] eq 0
+        return out
+    decoded = sys.unbase64[encoded]
+    if not decoded.ok
+        return out
+    sys.float_values[decoded, 0, len[decoded] / width, width, true]
+
+--- Lory's doubles held to three's to the last bit (one number and minus
+--- itself, or two that are not numbers, as one)
+fn _exact_held[name, what, mine, encoded]
+    theirs = _floats_of[encoded, 8]
+    if len[mine] ne len[theirs]
+        return _one_wrong['`name`: three has `len[theirs]` `what`, Lory `len[mine]`']
+    if len[theirs] eq 0
+        return _nothing_held[]
+    if sys.float_bytes[mine, 8, true] eq sys.unbase64[encoded]
+        return _held_numbers[len[theirs]]
+    out = slice[[''], 0, 0]
+    for i in range[len[theirs]]
+        if _ulps[mine[i], theirs[i]] ne 0
+            if len[out] lt 6
+                out = push[out, '`name` `what`[`i`]: three has `theirs[i]`, Lory `mine[i]`']
+    Held[out, len[theirs] - len[out], 0, 0, 0, 0]
+
+--- an attribute of Lory's held to three's: where three keeps it in single
+--- precision, to the bit; where it keeps doubles or whole numbers, what
+--- three's accessor reads from them (a normalized array's over its
+--- type's largest), to the bit of the double
+fn _attribute_held[name, what, mine, t]
+    doubles = '`t.values`'
+    if doubles eq ''
+        return _singles_held[name, what, models.singles[mine], '`t.bits`']
+    _exact_held[name, what, mine, doubles]
+
+--- whether two numbers have the same single-precision bits
+fn _same_single[a, b]
+    sys.ieee[a, 4, true] eq sys.ieee[b, 4, true]
+
+--- where Lory's single-precision floats differ from three's, to the bit
+fn _singles_held[name, what, mine, encoded]
+    theirs = _floats_of[encoded, 4]
+    if len[mine] ne len[theirs]
+        return _one_wrong['`name`: three has `len[theirs]` `what`, Lory `len[mine]`']
+    if len[theirs] eq 0
+        return _nothing_held[]
+    if sys.float_bytes[mine, 4, true] eq sys.unbase64[encoded]
+        return _held_numbers[len[theirs]]
+    out = slice[[''], 0, 0]
+    for i in range[len[theirs]]
+        if not _same_single[mine[i], theirs[i]]
+            if len[out] lt 6
+                out = push[out, '`name` `what`[`i`]: three has `theirs[i]`, Lory `mine[i]`']
+    Held[out, len[theirs] - len[out], 0, 0, 0, 0]
+
+--- how many units in the last place two doubles are apart (0 where they
+--- are one number, or neither is a number)
+fn _ulps[a, b]
+    if a eq b or (a ne a and b ne b)
+        return 0
+    ia = sys.unpack[sys.ieee[a, 8, true], 0, 8, little = true]
+    ib = sys.unpack[sys.ieee[b, 8, true], 0, 8, little = true]
+    abs[ia - ib]
+
+--- Lory's doubles held to three's: to the bit, or within one unit in the
+--- last place (counted as near)
+fn _doubles_held[name, what, mine, encoded]
+    theirs = _floats_of[encoded, 8]
+    if len[mine] ne len[theirs]
+        return _one_wrong['`name`: three has `len[theirs]` `what`, Lory `len[mine]`']
+    out = slice[[''], 0, 0]
+    exact = 0
+    near = 0
+    for i in range[len[theirs]]
+        apart = _ulps[mine[i], theirs[i]]
+        if apart eq 0
+            exact = exact + 1
+        else if apart eq 1
+            near = near + 1
+        else if len[out] lt 6
+            out = push[out, '`name` `what`[`i`]: three has `theirs[i]`, Lory `mine[i]`']
+    Held[out, exact, near, 0, 0, 0]
+
+--- where Lory's whole numbers differ from three's
+fn _wholes_held[name, what, mine, theirs]
+    if len[mine] ne len[theirs]
+        return _one_wrong['`name`: three has `len[theirs]` `what`, Lory `len[mine]`']
+    out = slice[[''], 0, 0]
+    for i in range[len[theirs]]
+        if mine[i] ne floor[0.0 + theirs[i]]
+            if len[out] lt 6
+                out = push[out, '`name` `what`[`i`]: three has `theirs[i]`, Lory `mine[i]`']
+    Held[out, len[theirs] - len[out], 0, 0, 0, 0]
+
+--- a truth three and Lory must share
+fn _truth_held[name, what, mine, theirs]
+    if mine eq theirs
+        return _nothing_held[]
+    _one_wrong['`name`: three has `what` `theirs`, Lory `mine`']
+
+--- a text three and Lory must share
+fn _words_held[name, what, mine, theirs]
+    if mine eq theirs
+        return _nothing_held[]
+    _one_wrong['`name`: three has `what` \'`theirs`\', Lory \'`mine`\'']
+
+--- a material held to three's: its name, colour and opacity, and a Phong
+--- material's highlight, glow and shininess, whether it is blended or flat,
+--- and its picture
+fn _material_held[name, m, t]
+    at = '`name` material \'`m.name`\''
+    h = _words_held[name, 'a material', m.name, '`t.name`']
+    h = _both[h, _doubles_held[at, 'colour', m.color, '`t.color`']]
+    phong = '`t.specular`'
+    if phong ne ''
+        h = _both[h, _doubles_held[at, 'highlight', m.specular, phong]]
+        h = _both[h, _doubles_held[at, 'glow', m.emissive, '`t.emissive`']]
+        h = _both[h, _doubles_held[at, 'shininess', [m.shininess], '`t.shininess`']]
+    h = _both[h, _doubles_held[at, 'opacity', [m.opacity], '`t.opacity`']]
+    h = _both[h, _truth_held[at, 'blending', m.transparent, t.transparent eq true]]
+    h = _both[h, _truth_held[at, 'flat shading', not m.smooth, t.flat eq true]]
+    _both[h, _words_held[at, 'the picture', m.texture, '`t.texture`']]
+
+--- a part held to the object three read
+fn _part_held[name, p, t]
+    at = '`name` \'`t.name`\''
+    h = _words_held[name, 'a part', p.name, '`t.name`']
+    form = '`t.form`'
+    if form ne ''
+        h = _both[h, _words_held[at, 'the form', p.form, form]]
+    g = p.geometry
+    h = _both[h, _attribute_held[at, 'positions', g.positions, t.positions]]
+    h = _both[h, _attribute_held[at, 'normals', g.normals, t.normals]]
+    h = _both[h, _attribute_held[at, 'colours', p.colors, t.colors]]
+    h = _both[h, _attribute_held[at, 'uvs', g.uvs, t.uvs]]
+    h = _both[h, _wholes_held[at, 'indices', g.indices, t.indices]]
+    h = _both[h, _wholes_held[at, 'groups', g.groups, t.groups]]
+    if len[t.materials] gt 0
+        if len[p.materials] ne len[t.materials]
+            return _both[h, _one_wrong['`at`: three has `len[t.materials]` materials, Lory `len[p.materials]`']]
+        for i in range[len[t.materials]]
+            h = _both[h, _material_held[at, p.materials[i], t.materials[i]]]
+    h
+
+--- the model Lory reads from a case's file, as three read it
+fn _model_read[c]
+    reader = '`c.reader`'
+    path = 'tests/models/files/`c.file`'
+    if reader eq 'obj'
+        mtl_file = '`c.mtl`'
+        mtl = ''
+        if mtl_file ne ''
+            mtl = _text_of['tests/models/files/`mtl_file`']
+        return models.read_obj[_text_of[path], mtl]
+    models.model_of['`c.file`', _bytes_of[path]]
+
+--- one file read by Lory held to what three read from it
+fn _read_held[c]
+    name = '`c.name`'
+    reader = '`c.reader`'
+    if reader eq 'mtl'
+        known = models.read_mtl[_text_of['tests/models/files/`c.file`']]
+        if len[known] ne len[c.materials]
+            return _one_wrong['`name`: three has `len[c.materials]` materials, Lory `len[known]`']
+        h = _nothing_held[]
+        for i in range[len[c.materials]]
+            h = _both[h, _material_held[name, known[i], c.materials[i]]]
+        h.cases = 1
+        return h
+    m = _model_read[c]
+    h = _nothing_held[]
+    if c.error.ok
+        if models.readable[m]
+            return _one_wrong['`name`: three could not read it (`c.error`), Lory did']
+        h.cases = 1
+        return h
+    if not models.readable[m]
+        return _one_wrong['`name`: Lory could not read it: `m.failure`']
+    if c.group_names.ok
+        named = slice[[''], 0, 0]
+        for part in m.parts
+            for material in part.materials
+                named = push[named, material.name]
+        theirs = slice[[''], 0, 0]
+        for x in c.group_names
+            theirs = push[theirs, '`x`']
+        if len[theirs] gt 0
+            h = _both[h, _words_held[name, 'the solids\' names', join[named, ' | '], join[theirs, ' | ']]]
+    if c.libraries.ok
+        mine = join[m.libraries, ', ']
+        theirs = slice[[''], 0, 0]
+        for x in c.libraries
+            theirs = push[theirs, '`x`']
+        h = _both[h, _words_held[name, 'the libraries', mine, join[theirs, ', ']]]
+    if len[m.parts] ne len[c.parts]
+        return _both[h, _one_wrong['`name`: three has `len[c.parts]` parts, Lory `len[m.parts]`']]
+    for i in range[len[c.parts]]
+        h = _both[h, _part_held[name, m.parts[i], c.parts[i]]]
+    h.cases = 1
+    h
+
+--- a text Lory wrote held to three's: the same text, but where a number
+--- three worked out through V8's `Math.pow` (a colour taken into sRGB)
+--- lies within one unit in the last place of Lory's, counted as near
+fn _text_held[name, what, mine, theirs]
+    if starts[theirs, 'threw: ']
+        h = _nothing_held[]
+        h.unwritten = 1
+        return h
+    h = _nothing_held[]
+    h.written = 1
+    if mine eq theirs
+        return h
+    ours = split[mine, '\n']
+    others = split[theirs, '\n']
+    if len[ours] ne len[others]
+        return _one_wrong['`name` `what`: three wrote `len[others]` lines, Lory `len[ours]`']
+    for i in range[len[others]]
+        if ours[i] ne others[i]
+            a = split[ours[i], ' ']
+            b = split[others[i], ' ']
+            if len[a] ne len[b]
+                return _one_wrong['`name` `what` line `i + 1`: three wrote \'`others[i]`\', Lory \'`ours[i]`\'']
+            for k in range[len[b]]
+                if a[k] ne b[k]
+                    x = models.js_float[a[k]]
+                    y = models.js_float[b[k]]
+                    if _ulps[x, y] eq 1
+                        h.near = h.near + 1
+                    else
+                        return _one_wrong['`name` `what` line `i + 1`: three wrote \'`others[i]`\', Lory \'`ours[i]`\'']
+    h
+
+--- glTF Lory wrote held to three's: the same text, but where a number
+--- three worked out through V8's `Math.pow` (a material's colour) lies
+--- within one unit in the last place of Lory's; its buffer's bytes (a
+--- data URI) to the byte
+fn _json_held[name, mine, theirs]
+    if mine eq theirs
+        h = _nothing_held[]
+        h.written = 1
+        return h
+    ours = split[mine, ',']
+    others = split[theirs, ',']
+    if len[ours] ne len[others]
+        return _one_wrong['`name` as glTF: three wrote `len[others]` pieces, Lory `len[ours]`']
+    h = _nothing_held[]
+    h.written = 1
+    for i in range[len[others]]
+        if ours[i] ne others[i]
+            x = models.js_float[replace[replace[ours[i], '[', ''], ']', '']]
+            y = models.js_float[replace[replace[others[i], '[', ''], ']', '']]
+            if _ulps[x, y] eq 1
+                h.near = h.near + 1
+            else
+                return _one_wrong['`name` as glTF, piece `i`: three wrote \'`others[i]`\', Lory \'`ours[i]`\'']
+    h
+
+--- bytes Lory wrote held to three's (as base64), to the byte
+fn _bytes_held[name, what, mine, theirs]
+    if starts[theirs, 'threw: ']
+        h = _nothing_held[]
+        h.unwritten = 1
+        return h
+    want = sys.unbase64[theirs]
+    if not want.ok
+        return _one_wrong['`name` `what`: three\'s bytes are no base64']
+    if len[mine] ne len[want]
+        return _one_wrong['`name` `what`: three wrote `len[want]` bytes, Lory `len[mine]`']
+    if mine ne want
+        for i in range[len[want]]
+            if sys.byte[mine, i] ne sys.byte[want, i]
+                return _one_wrong['`name` `what`: byte `i` differs, three wrote `sys.byte[want, i]`, Lory `sys.byte[mine, i]`']
+    h = _nothing_held[]
+    h.written = 1
+    h
+
+--- the model Lory writes for a case: read from its file, or built
+fn _model_written[c]
+    reader = '`c.reader`'
+    if reader eq 'box'
+        return models.mesh_model[geometry.box[0.0 + c.sizes[0], 0.0 + c.sizes[1], 0.0 + c.sizes[2], floor[0.0 + c.sizes[3]], floor[0.0 + c.sizes[4]], floor[0.0 + c.sizes[5]]]]
+    if reader eq 'sphere'
+        return models.mesh_model[geometry.sphere[0.0 + c.sizes[0], floor[0.0 + c.sizes[1]], floor[0.0 + c.sizes[2]]]]
+    _model_read[c]
+
+--- one model written by Lory held to what three's exporters wrote of it
+fn _write_held[c]
+    name = '`c.name`'
+    m = _model_written[c]
+    if not models.readable[m]
+        return _one_wrong['`name`: Lory could not read it: `m.failure`']
+    h = _text_held[name, 'as OBJ', models.obj_text[m], '`c.obj`']
+    h = _both[h, _text_held[name, 'as STL', models.stl_text[m], '`c.stl`']]
+    h = _both[h, _bytes_held[name, 'as binary STL', models.stl_bytes[m], '`c.stl_bytes`']]
+    h = _both[h, _text_held[name, 'as PLY', models.ply_text[m], '`c.ply`']]
+    h = _both[h, _bytes_held[name, 'as big-endian PLY', models.ply_bytes[m], '`c.ply_big`']]
+    h = _both[h, _bytes_held[name, 'as little-endian PLY', models.ply_bytes[m, little = true], '`c.ply_little`']]
+    gltf = '`c.gltf`'
+    if gltf ne ''
+        h = _both[h, _json_held[name, models.gltf_text[m, generator = 'THREE.GLTFExporter r187'], gltf]]
+    h.cases = 1
+    h
+
+--- every case of the reference held to three's
+fn _compared[]
+    j = json[read['tests/models/reference.json']]
+    h = _nothing_held[]
+    for c in j.reads
+        h = _both[h, _read_held[c]]
+    for c in j.writes
+        h = _both[h, _write_held[c]]
+    h
+
+test every_file_is_read_as_three_reads_it[]
+    found = _compared[]
+    assert[len[found.wrong] eq 0, join[found.wrong, '\n']]
+    found.cases eq 41
+
+--- (run as a program, `crow run tests/models/reference.co`, the same
+--- comparison is compiled and says what it found)
+held = _compared[]
+if len[held.wrong] eq 0
+    log['`held.cases` cases: `held.count` numbers as three made them to the last bit, `held.near` within one unit in the last place; `held.written` texts and byte strings as three wrote them (`held.unwritten` three could not write)']
+else
+    listed = join[held.wrong, '\n']
+    log['`held.cases` cases, `held.count` numbers held, these differ (the first 40):\n`listed`']

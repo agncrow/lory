@@ -1,0 +1,3564 @@
+--- Lory's scrolling (docs/components/scrolling.md): what a page does as it
+--- is scrolled, and the scrolling itself.
+---
+--- - Reveal on scroll (AOS 2.3.4 and 3.0.0-beta.6): where an element's
+---   animation starts and ends by its offset, anchor and placement, `once`
+---   and `mirror`, the duration, delay and easing AOS's stylesheet gives
+---   it, the transition the browser runs (turned back halfway as CSS turns
+---   one back), and each animation's look on its way: `reveals`, `reveal`,
+---   `reveal_shown`, `reveal_step`, `reveal_pose`.
+--- - Scroll-linked progress (Motion 14.7.1's `scroll`): a target's
+---   progress through its offsets, with `vh` and `vw`, and a page's:
+---   `linked_progress`, `page_progress`.
+--- - Smooth scrolling (Lenis 1.3.27): a wheel's scroll eased frame by
+---   frame, a scroll to a place over a time: `smooth`, `smooth_wheel`,
+---   `smooth_to`, `smooth_frame`.
+--- - A scroll area (Radix's): a viewport the program holds, scrolled by the
+---   wheel, the keys, a thumbstick and its own bar (shown over it, on hover
+---   by default, hidden 600 ms after), a thumb to drag and a track to
+---   press: `area`, `scrolled`, `viewport`, `measured`.
+--- - Full-page sections (fullPage.js 4.0.41's behaviour: it is GPLv3 or
+---   commercial, so only its behaviour is re-implemented, from running it,
+---   never its code): sections moved one at a time at a speed and an
+---   easing, the keyboard, the wheel's rule, navigation dots and anchors,
+---   loops and continuous scrolling, slides with arrows, fitting to a
+---   section, the responsive fallback, lazy loading, sections taller than
+---   the page, callbacks as events: `pages`, `paged`, `pages_view`,
+---   `pages_heard`.
+--- - Virtual lists and grids (TanStack Virtual's and Vuetify's windows),
+---   an infinite feed (Vuetify's `v-infinite-scroll`), pull to refresh,
+---   sticky elements (Semantic UI's), parallax, visibility events
+---   (Semantic UI's `visibility`, Vuetify's `v-lazy`), scroll spy and
+---   progress.
+---
+--- Each is arithmetic on numbers the program holds (scroll positions, box
+--- tops and heights in CSS pixels, times in milliseconds), and the parts
+--- that draw are built of Lory's controls (`lory.gui`). The program holds
+--- each record between frames and hands it back, as it holds the rest of
+--- what it shows:
+---
+---     s = scrolling.scrolled[c, s]             --- the wheel, keys, the bar
+---     shown = gui.show[c, view[s]]             --- view: scrolling.viewport[s, rows]
+---     s = scrolling.measured[s, shown]         --- where its rows stood
+---
+--- lory.motion owns what this module computes with and does not write
+--- again: easings and their names (AOS's, CSS's), AOS 2's line and rule
+--- (`motion.reveal_line`, `motion.revealed`), Motion's scroll offsets and
+--- progress (`motion.scroll_progress`), anime.js's scroll window, and
+--- tweens and springs. This module owns the page around them: AOS 3's
+--- rules (`mirror`, the way out, the page's placement), AOS's stylesheet
+--- (its durations, delays and looks) and the transition the browser runs
+--- (Chrome's solving of a bézier, its turning back), Motion's `vh` and
+--- `vw`, Lenis's frames, and everything that scrolls.
+---
+--- tests/scrolling/reference.co holds this module to what the libraries
+--- answered in a browser (reference.json, written by reference.py), number
+--- for number.
+
+use memory
+use lory
+use gui
+use motion
+
+--- ---- numbers and words ----
+
+fn _nums[]
+    out = []
+    for i in range[0]
+        out = push[out, 0.0]
+    out
+
+fn _texts[]
+    slice[[''], 0, 0]
+
+fn _flags[]
+    slice[[false], 0, 0]
+
+fn _four[a, b, c, d]
+    push[push[push[push[_nums[], a], b], c], d]
+
+--- `n` copies of a number, of words, of a flag
+fn _filled[n, x]
+    out = _nums[]
+    i = 0
+    while i lt n
+        out = push[out, x]
+        i = i + 1
+    out
+
+fn _worded_n[n, w]
+    out = _texts[]
+    i = 0
+    while i lt n
+        out = push[out, w]
+        i = i + 1
+    out
+
+fn _flagged_n[n, yes]
+    out = _flags[]
+    i = 0
+    while i lt n
+        out = push[out, yes]
+        i = i + 1
+    out
+
+--- the number words hold, or `otherwise` where they hold none
+fn _number_or[words, otherwise]
+    n = float[trim[words]]
+    if not n.ok
+        return otherwise
+    0.0 + n
+
+--- a whole number as JavaScript writes one into words ('400', not '400.0')
+fn _js_number[x]
+    if x eq floor[x]
+        whole = int[x]
+        return '`whole`'
+    '`x`'
+
+--- JavaScript's Math.round: half a step rounds up
+fn _js_round[x]
+    floor[x + 0.5]
+
+fn _clamped[lo, hi, x]
+    max[lo, min[hi, x]]
+
+--- ---- easings ----
+---
+--- An easing's curve is lory.motion's (`aos_curve` reads its four numbers
+--- from `motion.ease`). What is solved here is what the browser solves: a
+--- CSS transition runs as Chrome solves its bézier (`bezier`), which stops
+--- nearer than 1e-7 where Motion's solver (`motion.eased`) goes on, so the
+--- two land up to 1e-8 apart; and AOS's `linear` is a bézier the browser
+--- solves (0.25 0.25 0.75 0.75), which Motion takes for a straight line.
+--- fullPage's scroll by script eases with jQuery's easeInOutCubic and Lenis
+--- with its own exponential, both written as those libraries write them.
+
+--- a cubic bézier easing's value at `x` (its time, 0 to 1), the curve's
+--- control points `x1, y1` and `x2, y2`, solved as Chrome solves the curve
+--- a stylesheet names: a first guess between eleven samples of the curve,
+--- up to four of Newton's steps, and halving where they fail
+fn bezier[x1, y1, x2, y2, x]
+    if x lte 0.0
+        return 0.0
+    if x gte 1.0
+        return 1.0
+    cx = 3.0 * x1
+    bx = 3.0 * (x2 - x1) - cx
+    ax = 1.0 - cx - bx
+    cy = 3.0 * y1
+    by = 3.0 * (y2 - y1) - cy
+    ay = 1.0 - cy - by
+    t = _bezier_t[ax, bx, cx, x]
+    ((ay * t + by) * t + cy) * t
+
+fn _bezier_x[ax, bx, cx, t]
+    ((ax * t + bx) * t + cx) * t
+
+--- the time at which the curve reaches `x` across
+fn _bezier_t[ax, bx, cx, x]
+    eps = 0.0000001
+    t0 = 0.0
+    t1 = 0.0
+    t2 = x
+    piece = 1.0 / 10.0
+    before = 0.0
+    i = 1
+    found = false
+    while i lt 11 and not found
+        here = _bezier_x[ax, bx, cx, (0.0 + i) * piece]
+        if x lte here
+            t1 = piece * (0.0 + i)
+            t0 = t1 - piece
+            t2 = t0 + (t1 - t0) * (x - before) / (here - before)
+            found = true
+        before = here
+        i = i + 1
+    x2 = 0.0
+    k = 0
+    while k lt 4
+        x2 = _bezier_x[ax, bx, cx, t2] - x
+        if abs[x2] lt eps
+            return t2
+        d2 = (3.0 * ax * t2 + 2.0 * bx) * t2 + cx
+        if abs[d2] lt eps
+            k = 4
+        else
+            t2 = t2 - x2 / d2
+            k = k + 1
+    if abs[x2] lt eps
+        return t2
+    while t0 lt t1
+        x2 = _bezier_x[ax, bx, cx, t2]
+        if abs[x2 - x] lt eps
+            return t2
+        if x gt x2
+            t0 = t2
+        else
+            t1 = t2
+        t2 = (t1 + t0) * 0.5
+    t2
+
+--- the four numbers of a CSS easing (`ease`, `ease-in`, `ease-out`,
+--- `ease-in-out`, `cubic-bezier(a, b, c, d)`; `linear` is the straight
+--- line, 0 0 1 1); words it does not know are `ease`
+fn css_curve[words]
+    name = trim[words]
+    if name eq 'linear'
+        return _four[0.0, 0.0, 1.0, 1.0]
+    if name eq 'ease-in'
+        return _four[0.42, 0.0, 1.0, 1.0]
+    if name eq 'ease-out'
+        return _four[0.0, 0.0, 0.58, 1.0]
+    if name eq 'ease-in-out'
+        return _four[0.42, 0.0, 0.58, 1.0]
+    if starts[name, 'cubic-bezier(']
+        inside = replace[slice[name, 13, len[name]], ')', '']
+        pieces = split[inside, ',']
+        if len[pieces] eq 4
+            return _four[_number_or[pieces[0], 0.25], _number_or[pieces[1], 0.1], _number_or[pieces[2], 0.25], _number_or[pieces[3], 1.0]]
+    _four[0.25, 0.1, 0.25, 1.0]
+
+--- a CSS easing's value at `x`: CSS's `linear` exactly, a bézier as the
+--- browser solves it
+fn css_eased[words, x]
+    if trim[words] eq 'linear'
+        return _clamped[0.0, 1.0, x]
+    p = css_curve[words]
+    bezier[p[0], p[1], p[2], p[3], x]
+
+--- the easings AOS's stylesheet names (`data-aos-easing`), and the curve
+--- each is (lory.motion's: AOS's cubic and quart curves are its quad
+--- ones), but for its `linear`, a bézier the browser solves
+fn aos_easings[]
+    ['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out', 'ease-in-back', 'ease-out-back', 'ease-in-out-back', 'ease-in-sine', 'ease-out-sine', 'ease-in-out-sine', 'ease-in-quad', 'ease-out-quad', 'ease-in-out-quad', 'ease-in-cubic', 'ease-out-cubic', 'ease-in-out-cubic', 'ease-in-quart', 'ease-out-quart', 'ease-in-out-quart']
+
+fn aos_known[name]
+    name in aos_easings[]
+
+fn aos_curve[name]
+    if name eq 'linear'
+        return _four[0.25, 0.25, 0.75, 0.75]
+    if aos_known[name]
+        e = motion.ease[name]
+        if e.curve eq 'bezier' and len[e.p] eq 4
+            return e.p
+    css_curve[name]
+
+--- fullPage's easing where it scrolls by script, jQuery's easeInOutCubic
+--- as jQuery writes it: `elapsed` milliseconds of `d`, from `b` by `change`
+fn in_out_cubic[elapsed, b, change, d]
+    t = elapsed / (d / 2.0)
+    if t lt 1.0
+        return change / 2.0 * t * t * t + b
+    t = t - 2.0
+    change / 2.0 * (t * t * t + 2.0) + b
+
+--- Lenis's easing for a scroll given a duration and no easing of its own
+fn lenis_eased[t]
+    min[1.0, 1.001 - 2.0 ^ (-10.0 * t)]
+
+--- ---- reveal on scroll (AOS) ----
+---
+--- AOS's settings, as `AOS.init` takes them: the offset (CSS pixels) and
+--- anchor placement an element takes where it names none, the delay,
+--- duration and easing written on the page's body (which an element's own
+--- attributes override, where its stylesheet knows them), whether an
+--- element shows `once` and stays, whether it hides again past its end
+--- (`mirror`, AOS 3), and which AOS it is (`version` 2 or 3)
+struct Reveals [offset, delay, duration, easing, once, mirror, placement, version]
+
+fn reveals[offset = 120.0, delay = 0.0, duration = 400.0, easing = 'ease', once = false, mirror = false, placement = 'top-bottom', version = 3]
+    Reveals[offset, delay, duration, easing, once, mirror, placement, version]
+
+--- one element AOS reveals: its id, its animation (`look`: `fade-up`,
+--- `zoom-in`, `flip-left`, `slide-right` …), its box down the page (`top`
+--- and `tall`, CSS pixels from the page's top; `wide`, which a slide across
+--- moves by), and its attributes as they
+--- are written (AOS reads words: '' where one is not given; a duration or
+--- delay is one its stylesheet knows only at 50, 100 … 3000): `offset`,
+--- `delay`, `duration`, `easing`, `placement` (where on it and on the
+--- window the trigger is: `top-bottom`, `center-bottom`, `bottom-bottom`,
+--- `top-center`, `center-center`, `bottom-center`, `top-top`, `center-top`,
+--- `bottom-top`), `once` and `mirror` ('true', 'false'); and the box of
+--- the element it is anchored to (`reveal_anchor`), whose place triggers it
+struct Reveal [id, look, top, tall, wide, offset, delay, duration, easing, placement, once, mirror, anchored, anchor_top, anchor_tall]
+
+fn reveal[id, look, top, tall, wide = 0.0, offset = '', delay = '', duration = '', easing = '', placement = '', once = '', mirror = '']
+    Reveal[id, look, top, tall, wide, offset, delay, duration, easing, placement, once, mirror, false, 0.0, 0.0]
+
+fn reveal_anchor[r, top, tall]
+    r.anchored = true
+    r.anchor_top = top
+    r.anchor_tall = tall
+    r
+
+fn _anchor_top[r]
+    if r.anchored
+        return r.anchor_top
+    r.top
+
+fn _anchor_tall[r]
+    if r.anchored
+        return r.anchor_tall
+    r.tall
+
+--- where the element is shown: in AOS 2, the line down the page the
+--- window's bottom must pass (lory.motion's `reveal_line`); in AOS 3, the
+--- scroll from which it is shown (the window `view_tall` tall): the same
+--- line drawn from the anchor's top less the window, with the page's
+--- placement and offset where the element names none. An element's own
+--- placement with no offset of its own takes none, as AOS does.
+fn reveal_in[o, r, view_tall]
+    top = _anchor_top[r]
+    tall = _anchor_tall[r]
+    if o.version eq 2
+        extra = 0.0
+        if r.offset ne ''
+            extra = floor[_number_or[r.offset, 0.0]]
+        if r.placement eq '' and r.offset eq ''
+            extra = o.offset
+        return motion.reveal_line[top, tall, view_tall, r.placement, extra]
+    placement = o.placement
+    extra = o.offset
+    if r.placement ne ''
+        placement = r.placement
+        extra = 0.0
+    if r.offset ne ''
+        extra = _number_or[r.offset, 0.0]
+    motion.reveal_line[top - view_tall, tall, view_tall, placement, extra]
+
+--- where an element mirrored is hidden again, scrolled past (AOS 3): its
+--- bottom less its offset
+fn reveal_out[o, r]
+    extra = o.offset
+    if r.offset ne ''
+        extra = _number_or[r.offset, 0.0]
+    _anchor_top[r] + _anchor_tall[r] - extra
+
+fn _said[words, otherwise]
+    if words eq 'true'
+        return true
+    if words eq 'false'
+        return false
+    otherwise
+
+fn reveal_once[o, r]
+    _said[r.once, o.once]
+
+fn reveal_mirror[o, r]
+    _said[r.mirror, o.mirror]
+
+--- whether AOS shows the element with the page scrolled to `scroll` (the
+--- window `view` tall), as it was shown or not before (`was`): shown from
+--- its trigger on, hidden again above it unless `once`, and in AOS 3
+--- `mirror`ed: hidden again past its end
+fn reveal_shown[o, r, scroll, view_tall, was]
+    if o.version eq 2
+        if motion.revealed[scroll, view_tall, reveal_in[o, r, view_tall]]
+            return true
+        if r.once eq 'false' or (not o.once and r.once ne 'true')
+            return false
+        return was
+    once = reveal_once[o, r]
+    if reveal_mirror[o, r] and not once and scroll gte reveal_out[o, r]
+        return false
+    if scroll gte reveal_in[o, r, view_tall]
+        return true
+    if was and not once
+        return false
+    was
+
+--- the number AOS's stylesheet knows a duration or delay by (50, 100 …
+--- 3000, written so), or -1 where it knows none
+fn _aos_step[words]
+    k = 1
+    while k lte 60
+        n = k * 50
+        if words eq '`n`'
+            return 0.0 + n
+        k = k + 1
+    -1.0
+
+--- an element's transition, as AOS's stylesheet gives it: its duration
+--- (its own, else the page's, else none), its delay (only on the way in:
+--- the way out starts at once), its easing (its own, else the page's,
+--- else CSS's `ease`), in milliseconds
+fn reveal_duration[o, r]
+    own = _aos_step[r.duration]
+    if own gte 0.0
+        return own
+    page = _aos_step[_js_number[o.duration]]
+    if page gte 0.0
+        return page
+    0.0
+
+fn reveal_delay[o, r, shown]
+    if not shown
+        return 0.0
+    own = _aos_step[r.delay]
+    if own gte 0.0
+        return own
+    page = _aos_step[_js_number[o.delay]]
+    if page gte 0.0
+        return page
+    0.0
+
+fn reveal_easing[o, r]
+    if aos_known[r.easing]
+        return r.easing
+    if aos_known[o.easing]
+        return o.easing
+    'ease'
+
+--- ---- a transition between hidden and shown, as CSS runs one ----
+
+--- where an element's look stands between hidden (0) and shown (1) and
+--- where it is going: from `from` to `to`, started at `begun` (ms) after
+--- `delay`, over `lasting`, along the bézier `curve`; and what CSS keeps to
+--- turn it back: its shortening factor and the value a turn back returns to
+struct Going [origin, to, begun, delay, lasting, curve, factor, back_to]
+
+--- an element at rest, shown or hidden
+fn going_still[shown]
+    v = 0.0
+    if shown
+        v = 1.0
+    Going[v, v, 0.0, 0.0, 0.0, aos_curve['ease'], 1.0, v]
+
+--- how far along its curve the transition is at `t` (its output progress)
+fn _going_eased[g, t]
+    if t lt g.begun + g.delay
+        return 0.0
+    if g.lasting lte 0.0
+        return 1.0
+    p = (t - g.begun - g.delay) / g.lasting
+    if p gte 1.0
+        return 1.0
+    c = g.curve
+    bezier[c[0], c[1], c[2], c[3], p]
+
+fn going_value[g, t]
+    g.origin + (g.to - g.origin) * _going_eased[g, t]
+
+fn going_running[g, t]
+    t lt g.begun + g.delay + g.lasting and g.origin ne g.to
+
+--- the transition sent toward `to` at `t`: from where it stands; a turn
+--- back to where a running one came from is shortened as CSS shortens it
+--- (by how far the running one had gone), and one already going there is
+--- left to run
+fn going_to[g, t, to, delay, lasting, curve]
+    if to eq g.to
+        return g
+    now_v = going_value[g, t]
+    factor = 1.0
+    back_to = now_v
+    if going_running[g, t] and to eq g.back_to
+        factor = abs[_going_eased[g, t] * g.factor + 1.0 - g.factor]
+        factor = _clamped[0.0, 1.0, factor]
+        back_to = g.to
+        lasting = lasting * factor
+        if delay lt 0.0
+            delay = delay * factor
+    Going[now_v, to, t, delay, lasting, curve, factor, back_to]
+
+--- ---- each animation's look ----
+
+--- how an element looks on its way: its opacity, where it is moved (CSS
+--- pixels), how it is scaled, its turn about the page's x or y axis in
+--- degrees (seen through a perspective 2500 px away), and whether it is
+--- drawn at all (AOS 3 hides a slide until it moves)
+struct Pose [opacity, x, y, scale, turn_x, turn_y, visible]
+
+fn _pose_hidden[look, wide, tall, version]
+    p = Pose[1.0, 0.0, 0.0, 1.0, 0.0, 0.0, true]
+    if starts[look, 'fade'] or starts[look, 'zoom']
+        p.opacity = 0.0
+    if look eq 'fade-up' or look eq 'zoom-in-up' or look eq 'zoom-out-up' or look eq 'fade-up-right' or look eq 'fade-up-left'
+        p.y = 100.0
+    if look eq 'fade-down' or look eq 'zoom-in-down' or look eq 'zoom-out-down' or look eq 'fade-down-right' or look eq 'fade-down-left'
+        p.y = -100.0
+    if look eq 'fade-left' or look eq 'zoom-in-left' or look eq 'zoom-out-left' or look eq 'fade-up-left' or look eq 'fade-down-left'
+        p.x = 100.0
+    if look eq 'fade-right' or look eq 'zoom-in-right' or look eq 'zoom-out-right' or look eq 'fade-up-right' or look eq 'fade-down-right'
+        p.x = -100.0
+    if starts[look, 'zoom-in']
+        p.scale = 0.6
+    if starts[look, 'zoom-out']
+        p.scale = 1.2
+    if look eq 'slide-up'
+        p.y = tall
+    if look eq 'slide-down'
+        p.y = 0.0 - tall
+    if look eq 'slide-left'
+        p.x = wide
+    if look eq 'slide-right'
+        p.x = 0.0 - wide
+    if starts[look, 'slide'] and version gte 3
+        p.visible = false
+    if look eq 'flip-up'
+        p.turn_x = -100.0
+    if look eq 'flip-down'
+        p.turn_x = 100.0
+    if look eq 'flip-left'
+        p.turn_y = -100.0
+    if look eq 'flip-right'
+        p.turn_y = 100.0
+    p
+
+--- the look `v` of the way from hidden (0) to shown (1), an element
+--- `wide` by `tall` (a slide moves by its own size)
+fn reveal_pose[look, v, wide, tall, version]
+    h = _pose_hidden[look, wide, tall, version]
+    k = 1.0 - v
+    Pose[h.opacity + (1.0 - h.opacity) * v, h.x * k, h.y * k, h.scale + (1.0 - h.scale) * v, h.turn_x * k, h.turn_y * k, h.visible or v gt 0.0]
+
+fn _is_flip[look]
+    starts[look, 'flip']
+
+--- the look as the browser's matrix (16 numbers, column by column, as a
+--- DOMMatrix lists them): moved and scaled, or turned in perspective
+fn pose_matrix[look, p]
+    m = _filled[16, 0.0]
+    m[0] = 1.0
+    m[5] = 1.0
+    m[10] = 1.0
+    m[15] = 1.0
+    if _is_flip[look]
+        d = 2500.0
+        if look eq 'flip-up' or look eq 'flip-down'
+            a = p.turn_x * 3.141592653589793 / 180.0
+            m[5] = cos[a]
+            m[6] = sin[a]
+            m[9] = 0.0 - sin[a]
+            m[10] = cos[a]
+            m[7] = 0.0 - sin[a] / d
+            m[11] = 0.0 - cos[a] / d
+            return m
+        a = p.turn_y * 3.141592653589793 / 180.0
+        m[0] = cos[a]
+        m[2] = 0.0 - sin[a]
+        m[8] = sin[a]
+        m[10] = cos[a]
+        m[3] = sin[a] / d
+        m[11] = 0.0 - cos[a] / d
+        return m
+    m[0] = p.scale
+    m[5] = p.scale
+    m[12] = p.x
+    m[13] = p.y
+    m
+
+--- a control drawn in a look: faded, moved and scaled as gui draws them
+--- (a turn in perspective is drawn as gui can: faded as it turns away,
+--- gone past its edge, as a face whose back is hidden is)
+fn posed[n, look, p]
+    if not p.visible
+        return gui.faded[n, 0.0]
+    alpha = p.opacity
+    if _is_flip[look]
+        turn = abs[p.turn_x] + abs[p.turn_y]
+        alpha = alpha * max[0.0, cos[turn * 3.141592653589793 / 180.0]]
+    out = n
+    if p.scale ne 1.0
+        out = gui.scaled[out, p.scale]
+    if p.x ne 0.0 or p.y ne 0.0
+        out = gui.moved[out, p.x, p.y]
+    if alpha lt 1.0
+        out = gui.faded[out, alpha]
+    out
+
+--- ---- an element revealed, frame by frame ----
+
+--- what is held for one element between frames: whether AOS shows it, and
+--- its look's transition
+struct Revealing [shown, going]
+
+fn revealing[]
+    Revealing[false, going_still[false]]
+
+--- the element with the page at `scroll` at `t`: shown or hidden by AOS's
+--- rule, its transition sent the new way with the duration, delay and
+--- easing its stylesheet gives (AOS's `aos:in` and `aos:out` are its
+--- `shown` turning: `reveal_told`)
+fn reveal_step[o, r, held, scroll, view_tall, t]
+    now_shown = reveal_shown[o, r, scroll, view_tall, held.shown]
+    if now_shown eq held.shown
+        return held
+    to = 0.0
+    if now_shown
+        to = 1.0
+    held.going = going_to[held.going, t, to, reveal_delay[o, r, now_shown], reveal_duration[o, r], aos_curve[reveal_easing[o, r]]]
+    held.shown = now_shown
+    held
+
+--- `in` where the element was shown between two frames, `out` where it
+--- was hidden, '' where neither
+fn reveal_told[before, after]
+    if after.shown and not before.shown
+        return 'in'
+    if before.shown and not after.shown
+        return 'out'
+    ''
+
+--- the element's look at `t`
+fn reveal_look[o, r, held, t]
+    reveal_pose[r.look, going_value[held.going, t], r.wide, r.tall, o.version]
+
+--- ---- scroll-linked progress (Motion's `scroll`) ----
+---
+--- lory.motion owns Motion's offsets and the progress through them
+--- (`motion.scroll_progress`), anime.js's window of scroll
+--- (`motion.scroll_window`) and the values moved by a progress
+--- (`motion.map_range`, `motion.blend`). What is added here is what a
+--- page needs around them: Motion's `vh` and `vw` edges (a percentage of
+--- the page, which motion does not read: they are written as pixels for
+--- it), and the progress of a page's own scroll.
+---
+--- An offset is where a target meets its scroll container, as Motion
+--- writes one: two edges, the target's then the container's ('start end':
+--- the target's top at the container's bottom), each `start`, `center`,
+--- `end`, a fraction ('0.25'), pixels ('100px'), a percentage of its
+--- length ('25%') or of the page's ('50vh', '10vw'); Motion's plain
+--- numbers (`[0, 1]`) are written twice ('0 0', '1 1').
+
+--- an edge in `vh` or `vw` written as the pixels it is on a page `page_w`
+--- by `page_h` CSS pixels; any other edge as it is
+fn _page_edge[edge, page_w, page_h]
+    n = len[edge]
+    if ends[edge, 'vw']
+        px = _number_or[slice[edge, 0, n - 2], 0.0] / 100.0 * page_w
+        return '`px`px'
+    if ends[edge, 'vh']
+        px = _number_or[slice[edge, 0, n - 2], 0.0] / 100.0 * page_h
+        return '`px`px'
+    edge
+
+fn _page_offset[offset, page_w, page_h]
+    words = trim[offset]
+    pair = split[words, ' ']
+    if len[pair] lt 2
+        return _page_edge[words, page_w, page_h]
+    first = _page_edge[pair[0], page_w, page_h]
+    second = _page_edge[pair[1], page_w, page_h]
+    '`first` `second`'
+
+--- how far a target has come through its container (0 to 1) with the
+--- container scrolled to `scroll`: the container `container` long, the
+--- target `target` long and `inset` down the container's content, by its
+--- offsets (none: ['start start', 'end end']), on a page `page_w` by
+--- `page_h` (for `vw` and `vh`)
+fn linked_progress[scroll, container, target, inset, offsets, page_w = 0.0, page_h = 0.0]
+    words = _texts[]
+    for o in offsets
+        words = push[words, _page_offset[o, page_w, page_h]]
+    motion.scroll_progress[scroll, container, target, inset, words]
+
+--- how far a page or an area is through all it scrolls (0 to 1): its
+--- content `content` tall in a view `view_tall`
+fn page_progress[scroll, content, view_tall]
+    motion.scroll_progress[scroll, view_tall, content, 0.0, _texts[]]
+--- ---- smooth scrolling (Lenis) ----
+---
+--- A scroll eased toward where it is aimed, frame by frame: each wheel's
+--- turn moves the aim, and the scroll shown follows it by a damped step
+--- each frame (`lerp`: a tenth of the way in a 60th of a second), or over
+--- a `duration` along an easing; a scroll to a place (`smooth_to`) is the
+--- same with its own duration, easing or step, and a turn of the wheel
+--- during it takes over from where it is.
+
+--- the scroll shown (`at`) and aimed at (`aim`), how far the last frame
+--- moved it (`velocity`) and which way (`direction`, -1, 0, 1); Lenis's
+--- options: its damping (`lerp`), the wheel's multiplier, a `duration`
+--- and easing (`curve`: '' none, `lenis` its own, or a CSS easing's
+--- words) a wheel's scroll takes instead, and the most it scrolls
+--- (`limit`); the run under way (from, to, time gone, its own damping,
+--- duration and easing, whether a scroll to a place asked it); whether it
+--- is moving, stopped (`smooth_stop`), the last frame's time, and the
+--- sizes a wheel's lines and pages are
+struct Smooth [at, aim, velocity, direction, lerp, multiplier, duration, curve, limit, origin, to, elapsed, running, run_lerp, run_duration, run_curve, asked, moving, stopped, time, line, page]
+
+fn smooth[limit, lerp = 0.1, multiplier = 1.0, duration = 0.0, curve = '', page = 713.0, at = 0.0]
+    Smooth[at, at, 0.0, 0.0, lerp, multiplier, duration, curve, limit, at, at, 0.0, false, lerp, 0.0, '', false, false, false, -1.0, 100.0 / 6.0, page]
+
+--- the scroll come to rest where it stands
+fn _smooth_rest[s]
+    s.running = false
+    s.moving = false
+    s.aim = s.at
+    s.velocity = 0.0
+    s
+
+--- a wheel's turn, `dy` CSS pixels (`mode` 1: lines, 2: pages, as a
+--- wheel event's deltaMode says), unless it is stopped
+fn smooth_wheel[s, dy, mode]
+    if s.stopped
+        return s
+    k = 1.0
+    if mode eq 1
+        k = s.line
+    if mode eq 2
+        k = s.page
+    d = dy * k
+    d = d * s.multiplier
+    _smooth_go[s, s.aim + d, 0.0, false, false, s.lerp, s.duration, s.curve]
+
+--- a scroll to `target` (and `offset` past it), over `duration` seconds
+--- along `curve` (a duration with no easing takes Lenis's own; an easing
+--- with no duration takes a second), or damped by `lerp` (-1: the
+--- options'), or at once (`immediate`); a turn of the wheel takes over
+fn smooth_to[s, target, offset = 0.0, duration = -1.0, curve = '', lerp = -1.0, immediate = false]
+    if s.stopped
+        return s
+    d = duration
+    if d lt 0.0
+        d = s.duration
+    e = curve
+    if e eq '' and duration lt 0.0
+        e = s.curve
+    k = lerp
+    if k lt 0.0
+        k = s.lerp
+    _smooth_go[s, target, offset, true, immediate, k, d, e]
+
+fn _smooth_go[s, target, offset, asked, immediate, k, d, e]
+    goal = _clamped[0.0, s.limit, target + offset]
+    if goal eq s.aim
+        return s
+    if immediate
+        s.at = goal
+        return _smooth_rest[s]
+    if not asked
+        s.aim = goal
+    if d gt 0.0 and e eq ''
+        e = 'lenis'
+    else if e ne '' and d lte 0.0
+        d = 1.0
+    s.origin = s.at
+    s.to = goal
+    s.elapsed = 0.0
+    s.run_lerp = k
+    s.run_duration = d
+    s.run_curve = e
+    s.asked = asked
+    s.running = true
+    s.moving = true
+    s
+
+fn _smooth_ease[curve, t]
+    if curve eq 'lenis'
+        return lenis_eased[t]
+    css_eased[curve, t]
+
+--- a step of Lenis's damping: `x` toward `y`, `rate` a second, over `dt`
+--- seconds
+fn _damp[x, y, rate, dt]
+    t = 1.0 - exp[0.0 - rate * dt]
+    (1.0 - t) * x + t * y
+
+--- the frame at `time` (ms): the scroll moved on by the time since the
+--- last (none on the first)
+fn smooth_frame[s, time]
+    dt = 0.0
+    if s.time gte 0.0
+        dt = time - s.time
+    s.time = time
+    _smooth_advanced[s, dt * 0.001]
+
+fn _smooth_advanced[s, dt]
+    if not s.running
+        return s
+    done = false
+    v = s.at
+    if s.run_duration gt 0.0 and s.run_curve ne ''
+        s.elapsed = s.elapsed + dt
+        p = _clamped[0.0, 1.0, s.elapsed / s.run_duration]
+        done = p gte 1.0
+        e = 1.0
+        if not done
+            e = _smooth_ease[s.run_curve, p]
+        v = s.origin + (s.to - s.origin) * e
+    else if s.run_lerp gt 0.0
+        v = _damp[s.at, s.to, s.run_lerp * 60.0, dt]
+        if _js_round[v] eq _js_round[s.to]
+            v = s.to
+            done = true
+    else
+        v = s.to
+        done = true
+    s.velocity = v - s.at
+    s.direction = 0.0
+    if s.velocity gt 0.0
+        s.direction = 1.0
+    if s.velocity lt 0.0
+        s.direction = -1.0
+    s.at = v
+    if s.asked
+        s.aim = v
+    if done
+        --- (come to rest, Lenis reads the scroll back from the page, which
+        --- keeps it in whole pixels)
+        s.at = _js_round[v]
+        return _smooth_rest[s]
+    s
+
+--- stopped, a smoothed scroll takes no wheel and no scroll to a place
+--- until it is started again (each comes to rest where it stands)
+fn smooth_stop[s]
+    s = _smooth_rest[s]
+    s.stopped = true
+    s
+
+fn smooth_start[s]
+    s = _smooth_rest[s]
+    s.stopped = false
+    s
+
+--- how far along all it scrolls the scroll shown is (0 to 1)
+fn smooth_progress[s]
+    if s.limit eq 0.0
+        return 1.0
+    s.at / s.limit
+
+--- the most it scrolls changed (its content or its view resized)
+fn smooth_limit[s, limit]
+    s.limit = max[0.0, limit]
+    if s.at gt s.limit
+        s.at = s.limit
+    if s.aim gt s.limit
+        s.aim = s.limit
+    s
+
+
+--- ---- full-page sections (fullPage.js 4.0.41's behaviour) ----
+---
+--- A page cut into sections the reader moves through one at a time, as
+--- fullPage moves them: the keys (the arrows, Page Up and Page Down, Home
+--- and End, Space), the wheel by fullPage's rule (it moves on a turn that
+--- grows or holds, not on one dying away), navigation dots, a menu and
+--- anchors in the address, loops top and bottom and continuous scrolling,
+--- slides across with arrows and dots, sections taller than the page
+--- scrolled inside first, the page scrolled freely and fitted to the
+--- nearest section after a pause, the responsive fallback, lazy loading,
+--- and fullPage's callbacks, told as events at the times fullPage calls
+--- them. fullPage.js is GPLv3 or commercial: what is here was learnt by
+--- running it (tests/scrolling/pages/fullpage.html), never from its code.
+---
+---     p = scrolling.pages[[scrolling.section[name = 'one'], …], 1000.0, 713.0, scrolling.page_options[]]
+---     p = scrolling.paged[c, p]               --- keys, the wheel, the time
+---     shown = gui.show[c, scrolling.pages_view[p, faces]]
+---     p = scrolling.pages_heard[p, shown]     --- its dots and arrows pressed
+---     for e in p.told: …                      --- before_leave, after_load …
+---
+--- Every act takes the time it happens at (milliseconds, the frame's
+--- `lory.time`), and `pages_at` lets the time pass: moves end, a pause
+--- fits the page to its section.
+
+--- one of the sections a page is cut into: its anchor (`name`, '' for
+--- none), its height (`tall`, 0: the page's; fullPage's `fp-auto-height`
+--- is a section of its own height), its slides (how many, 0 for none) and
+--- their anchors (`slide_names`, words apart), whether it is hidden (not
+--- moved to, not dotted), whether it keeps its content still (`noscroll`,
+--- fullPage's `fp-noscroll`), how tall its content is where that is taller
+--- than the section (`content`; 0: it fits), its dot's tooltip, its colour
+--- ('#rrggbb', fullPage's `sectionsColor`) and whether its media plays
+--- while it is shown (`autoplay`)
+struct Section [name, tall, slides, slide_names, hidden, noscroll, content, tooltip, color, autoplay]
+
+fn section[name = '', tall = 0.0, slides = 0, slide_names = '', hidden = false, noscroll = false, content = 0.0, tooltip = '', color = '', autoplay = false]
+    Section[name, tall, slides, slide_names, hidden, noscroll, content, tooltip, color, autoplay]
+
+--- fullPage's options, by its names where Lory's are shorter: the time a
+--- move takes (`speed`, scrollingSpeed) and the CSS easing it moves with
+--- (`easing`, easingcss3); loopTop, loopBottom, continuousVertical and
+--- loopHorizontal (`loop_slides`); keyboardScrolling; lockAnchors,
+--- recordHistory, animateAnchor; autoScrolling (`auto`: false scrolls the
+--- page freely), fitToSection and its delay; responsiveWidth and
+--- responsiveHeight (below them the page scrolls freely); lazyLoadThreshold
+--- (`lazy_ahead`); scrollBar; css3 false (`by_script`: moved by script, not
+--- by the stylesheet); the dots (`nav`, `nav_side`, showActiveTooltip and
+--- the tooltips, `slides_nav`), the slides' arrows and their colour; and
+--- scrollOverflowReset
+struct PageOptions [speed, easing, loop_top, loop_bottom, continuous, loop_slides, keyboard, lock_anchors, record_history, animate_anchor, auto, fit, fit_delay, responsive_w, responsive_h, lazy_ahead, scroll_bar, by_script, nav, nav_side, show_tooltip, tooltips, slides_nav, arrows, arrow_color, overflow_reset]
+
+fn page_options[speed = 700.0, easing = 'ease', loop_top = false, loop_bottom = false, continuous = false, loop_slides = true, keyboard = true, lock_anchors = false, record_history = true, animate_anchor = true, auto = true, fit = true, fit_delay = 600.0, responsive_w = 0.0, responsive_h = 0.0, lazy_ahead = 0, scroll_bar = false, by_script = false, nav = false, nav_side = 'right', show_tooltip = false, tooltips = '', slides_nav = false, arrows = true, arrow_color = '#ffffff', overflow_reset = false]
+    PageOptions[speed, easing, loop_top, loop_bottom, continuous, loop_slides, keyboard, lock_anchors, record_history, animate_anchor, auto, fit, fit_delay, responsive_w, responsive_h, lazy_ahead, scroll_bar, by_script, nav, nav_side, show_tooltip, tooltips, slides_nav, arrows, arrow_color, overflow_reset]
+
+--- one of fullPage's callbacks, told: its name (`before_leave`,
+--- `on_leave`, `after_load`, `on_slide_leave`, `after_slide_load`,
+--- `after_render`, `after_responsive`, `on_scroll_overflow`, and Lory's
+--- `media_play` and `media_pause`), when (ms), the section (its place
+--- among the sections shown) and where to, the slide and where to (-1:
+--- none), the direction ('down', 'up', 'left', 'right', 'none', '' at the
+--- start), what moved it (`trigger`: 'keydown', 'wheel', 'verticalNav',
+--- 'horizontalNav', 'slideArrow', 'menu'; '' for none; fullPage keeps the
+--- last one for a move the program or the address asks for) and a number
+--- (a section's inner scroll, `after_responsive`'s 1 or 0)
+struct Told [name, t, section, to, slide, to_slide, direction, trigger, num]
+
+--- a move under way: what moves (`section`, `slide` or `fit`; '' none),
+--- the section whose slides move, from and to (sections by their own
+--- index, slides by theirs), its direction and trigger, when it began and
+--- how long it lasts, the wrapper's (or the page's) offsets from and to,
+--- the slides' offsets from and to, when fullPage tells its end (-1: told)
+--- and a slide to move to once it ends (-1: none)
+struct Move [what, section, origin, to, slide_origin, slide_to, direction, trigger, begun, lasting, from_y, to_y, from_x, to_x, ends_at, then_slide]
+
+--- what a move refused puts back
+struct Undo [at, slides_at, move, busy, order, top, hash, history, history_at, transition, told]
+
+--- the sections and where they stand: the options, the sections, the
+--- page (`view_w` by `view_h` CSS pixels), the section shown (its own
+--- index) and the slide shown in each, the move under way, the last
+--- trigger, the wheel's recent sizes and its last time, until when keys
+--- and the wheel are refused (`busy`), the address's hash and its history
+--- (and where in it the page is), the callbacks told since the program
+--- last read them (`told`), each section's inner scroll, the media
+--- loaded ('2', '1_0': a section's, a slide's), the order the sections
+--- are laid in (continuous scrolling lays the first last while it
+--- moves), when the reader last scrolled the page freely (-1: not since a
+--- fit), where the wrapper stands now (`y`, CSS pixels down; the page's
+--- scroll where it scrolls freely) and is going (`top`), whether the page
+--- is narrower or lower than its responsive bounds, the wrapper's CSS
+--- transition as fullPage writes it, what a refusal puts back, the time
+--- it was last brought to, and its box on the page when last shown (CSS
+--- pixels; none before it is shown)
+struct Pages [o, sections, view_w, view_h, at, slides_at, move, trigger, sizes, wheel_t, busy, hash, history, history_at, told, inner, loaded, order, scrolled_t, y, top, responsive, transition, undo, now, box]
+
+fn _no_told[]
+    slice[[Told['', 0.0, -1, -1, -1, -1, '', '', 0.0]], 0, 0]
+
+fn _no_move[]
+    Move['', -1, -1, -1, -1, -1, '', '', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, -1]
+
+fn _ints[]
+    out = slice[[0], 0, 0]
+    out
+
+fn _tell[p, name, t, sec, to, slide, to_slide, direction, trigger, num]
+    p.told = push[p.told, Told[name, t, sec, to, slide, to_slide, direction, trigger, num]]
+    p
+
+--- the sections a page is cut into, `view_w` by `view_h` CSS pixels, with
+--- fullPage's options, opened at `t` with `address` its hash ('' or
+--- '#three'): fullPage tells `after_load` and `after_render` (and
+--- `after_responsive` where the page is under its bounds), or moves to
+--- the anchor the address names
+fn pages[sections, view_w, view_h, o, t = 0.0, address = '']
+    slides_at = _ints[]
+    inner = _nums[]
+    order = _ints[]
+    i = 0
+    while i lt len[sections]
+        slides_at = push[slides_at, 0]
+        inner = push[inner, 0.0]
+        if not sections[i].hidden
+            order = push[order, i]
+        i = i + 1
+    history = push[push[_texts[], ''], address]
+    p = Pages[o, sections, view_w, view_h, 0, slides_at, _no_move[], '', _nums[], -1000000.0, -1.0, address, history, 1, _no_told[], inner, _texts[], order, -1.0, 0.0, 0.0, false, '', Undo[0, slides_at, _no_move[], -1.0, order, 0.0, address, history, 1, '', 0], t, _nums[]]
+    if len[order] gt 0
+        p.at = order[0]
+    p.responsive = _under_bounds[o, view_w, view_h]
+    if p.responsive
+        p = _tell[p, 'after_responsive', t, -1, -1, -1, -1, '', '', 1.0]
+    p = _lazy_section[p, p.at]
+    named = _hashed_section[p, address]
+    if named lt 0 or named eq p.at
+        p = _tell[p, 'after_load', t, _position[p, p.at], _position[p, p.at], -1, -1, '', '', 0.0]
+    p = _tell[p, 'after_render', t, _position[p, p.at], -1, -1, -1, '', '', 0.0]
+    if named gte 0 and named ne p.at
+        how = 'move'
+        if not o.animate_anchor
+            how = 'silent'
+        p = _go[p, named, _hashed_slide[p, named, address], t, p.trigger, how]
+    p
+
+--- whether a page `w` by `h` is under the responsive bounds (fullPage's
+--- `responsiveWidth`, `responsiveHeight`: strictly under)
+fn _under_bounds[o, w, h]
+    (o.responsive_w gt 0.0 and w lt o.responsive_w) or (o.responsive_h gt 0.0 and h lt o.responsive_h)
+
+--- whether the page scrolls freely: autoScrolling off, or under its
+--- responsive bounds
+fn page_free[p]
+    p.responsive or not p.o.auto
+
+--- how a move is drawn: by the stylesheet's transition (`css`), by script
+--- on the wrapper (`script`), on the page's own scroll bar (`bar`), or
+--- scrolling the page freely (`free`)
+fn page_mode[p]
+    if page_free[p]
+        return 'free'
+    if p.o.scroll_bar
+        return 'bar'
+    if p.o.by_script
+        return 'script'
+    'css'
+
+--- the callbacks told since they were last taken, and the pages without
+--- them
+fn pages_taken[p]
+    p.told = _no_told[]
+    p
+
+--- ---- sections and their places ----
+
+fn _shown_list[p]
+    out = _ints[]
+    i = 0
+    while i lt len[p.sections]
+        if not p.sections[i].hidden
+            out = push[out, i]
+        i = i + 1
+    out
+
+--- a section's place among those shown (-1: hidden or none)
+fn _position[p, i]
+    k = 0
+    n = 0
+    while k lt len[p.sections]
+        if k eq i
+            if p.sections[k].hidden
+                return -1
+            return n
+        if not p.sections[k].hidden
+            n = n + 1
+        k = k + 1
+    -1
+
+fn _tall_of[p, i]
+    s = p.sections[i]
+    if s.tall gt 0.0
+        return s.tall
+    p.view_h
+
+--- how tall all the sections shown are, laid end to end
+fn pages_tall[p]
+    h = 0.0
+    for i in p.order
+        h = h + _tall_of[p, i]
+    h
+
+--- where a section stands down the sections laid in `order`
+fn _top_in[p, order, i]
+    h = 0.0
+    k = 0
+    while k lt len[order]
+        if order[k] eq i
+            return h
+        h = h + _tall_of[p, order[k]]
+        k = k + 1
+    h
+
+--- the offset that shows section `i` laid in `order`: its top, but never
+--- past the last section's foot (a last section shorter than the page
+--- stands at its foot)
+fn _offset_in[p, order, i]
+    whole = 0.0
+    for k in order
+        whole = whole + _tall_of[p, k]
+    _clamped[0.0, max[0.0, whole - p.view_h], _top_in[p, order, i]]
+
+fn _offset_of[p, i]
+    _offset_in[p, _shown_list[p], i]
+
+--- the section shown before and after `i` (-1: none)
+fn _before[p, i]
+    shown = _shown_list[p]
+    k = 0
+    while k lt len[shown]
+        if shown[k] eq i
+            if k eq 0
+                return -1
+            return shown[k - 1]
+        k = k + 1
+    -1
+
+fn _after[p, i]
+    shown = _shown_list[p]
+    k = 0
+    while k lt len[shown]
+        if shown[k] eq i
+            if k + 1 gte len[shown]
+                return -1
+            return shown[k + 1]
+        k = k + 1
+    -1
+
+fn _first_shown[p]
+    shown = _shown_list[p]
+    if len[shown] eq 0
+        return -1
+    shown[0]
+
+fn _last_shown[p]
+    shown = _shown_list[p]
+    if len[shown] eq 0
+        return -1
+    shown[len[shown] - 1]
+
+--- the slide's anchor, or its number
+fn _slide_word[p, i, k]
+    names = split[trim[p.sections[i].slide_names], ' ']
+    if k lt len[names] and trim[p.sections[i].slide_names] ne ''
+        return names[k]
+    '`k`'
+
+fn _section_word[p, i]
+    if p.sections[i].name ne ''
+        return p.sections[i].name
+    '`i`'
+
+--- what fullPage writes on the body for the section and slide shown
+--- (`fp-viewing-` and this): the section's anchor or number, and its
+--- slide's where it has slides ('two-s2', '1-0')
+fn page_viewing[p]
+    i = p.at
+    if i lt 0
+        return ''
+    w = _section_word[p, i]
+    if p.sections[i].slides gt 0
+        sw = _slide_word[p, i, p.slides_at[i]]
+        return '`w`-`sw`'
+    w
+
+--- whether the sections have anchors (and so a hash in the address)
+fn _anchored[p]
+    for s in p.sections
+        if s.name ne ''
+            return true
+    false
+
+--- the hash fullPage writes for a section and slide: '#two', '#two/s2'
+--- ('#two/2' where the slides have no anchors); a first slide is not
+--- written
+fn _hash_of[p, i, k]
+    if not _anchored[p]
+        return ''
+    w = p.sections[i].name
+    if w eq ''
+        w = '`i`'
+    if p.sections[i].slides gt 0 and k gt 0
+        sw = _slide_word[p, i, k]
+        return '#`w`/`sw`'
+    '#`w`'
+
+--- the section an address's hash names (-1: none it knows)
+fn _hashed_section[p, address]
+    words = replace[trim[address], '#', '']
+    if words eq ''
+        return -1
+    first_word = split[words, '/'][0]
+    i = 0
+    while i lt len[p.sections]
+        if p.sections[i].name eq first_word and not p.sections[i].hidden
+            return i
+        i = i + 1
+    -1
+
+--- the slide an address's hash names in section `i` (-1: none): by its
+--- anchor, or by its number
+fn _hashed_slide[p, i, address]
+    words = replace[trim[address], '#', '']
+    parts = split[words, '/']
+    if len[parts] lt 2 or i lt 0
+        return -1
+    want = parts[1]
+    k = 0
+    while k lt p.sections[i].slides
+        if _slide_word[p, i, k] eq want
+            return k
+        k = k + 1
+    n = float[want]
+    if n.ok
+        whole = int[0.0 + n]
+        if whole gte 0 and whole lt p.sections[i].slides
+            return whole
+    -1
+
+--- the address's hash written by fullPage: a new entry in its history,
+--- or (recordHistory off) the one it is on rewritten; nothing where it is
+--- already so
+fn _hash_set[p, words]
+    if words eq '' or words eq p.hash
+        return p
+    p.hash = words
+    if p.o.record_history
+        p.history = push[slice[p.history, 0, p.history_at + 1], words]
+        p.history_at = p.history_at + 1
+    else
+        h = p.history
+        h[p.history_at] = words
+        p.history = h
+    p
+
+--- ---- moving ----
+
+fn _keep_undo[p]
+    p.undo = Undo[p.at, p.slides_at, p.move, p.busy, p.order, p.top, p.hash, p.history, p.history_at, p.transition, len[p.told]]
+    p
+
+--- the wrapper's transition as fullPage writes it ('transform 700ms', with
+--- its easing where it is not `ease`; 'transform' for a move at once)
+fn _transition_of[p, silent]
+    if silent
+        return 'transform'
+    ms = _js_number[p.o.speed]
+    e = trim[p.o.easing]
+    if e eq 'ease'
+        return 'transform `ms`ms'
+    if starts[e, 'cubic-bezier(']
+        q = css_curve[e]
+        a = _js_number[q[0]]
+        b = _js_number[q[1]]
+        c2 = _js_number[q[2]]
+        d = _js_number[q[3]]
+        e = 'cubic-bezier(`a`, `b`, `c2`, `d`)'
+    'transform `ms`ms `e`'
+
+--- how long after a move begins fullPage tells its end: the move's time,
+--- 20 ms more where it scrolls by script, 50 where it scrolls the page's
+--- bar
+fn _end_after[p]
+    m = page_mode[p]
+    if m eq 'bar'
+        return p.o.speed + 50.0
+    if m eq 'script' or m eq 'free'
+        return p.o.speed + 20.0
+    p.o.speed
+
+--- media loaded for a section arrived at (fullPage's lazy loading): its
+--- own, or its slide's where it has slides, and as many sections on as
+--- `lazy_ahead` says
+fn _lazy_one[p, i]
+    if i lt 0
+        return p
+    key = '`i`'
+    if p.sections[i].slides gt 0
+        k = p.slides_at[i]
+        key = '`i`_`k`'
+    if not (key in p.loaded)
+        p.loaded = push[p.loaded, key]
+    p
+
+fn _lazy_section[p, i]
+    p = _lazy_one[p, i]
+    k = 0
+    before = i
+    after = i
+    while k lt p.o.lazy_ahead
+        before = _before[p, before]
+        after = _after[p, after]
+        p = _lazy_one[p, after]
+        p = _lazy_one[p, before]
+        k = k + 1
+    p
+
+fn _lazy_slide[p, i, j]
+    k = -p.o.lazy_ahead
+    while k lte p.o.lazy_ahead
+        n = j + k
+        if n gte 0 and n lt p.sections[i].slides
+            key = '`i`_`n`'
+            if not (key in p.loaded)
+                p.loaded = push[p.loaded, key]
+        k = k + 1
+    p
+
+--- where the wrapper stands at `t`: on its way along the move's curve
+--- (the stylesheet's easing, or jQuery's easeInOutCubic by script; the
+--- page's scroll, by script, rounded to whole pixels), or at rest
+fn _y_at[p, t]
+    m = p.move
+    if m.what ne 'section' and m.what ne 'fit'
+        return p.top
+    if m.lasting lte 0.0 or t gte m.begun + m.lasting
+        return m.to_y
+    if t lte m.begun
+        return m.from_y
+    mode = page_mode[p]
+    if mode eq 'css'
+        k = (t - m.begun) / m.lasting
+        return m.from_y + (m.to_y - m.from_y) * css_eased[p.o.easing, k]
+    v = in_out_cubic[t - m.begun, m.from_y, m.to_y - m.from_y, m.lasting]
+    if mode eq 'script'
+        return v
+    _js_round[v]
+
+--- where the slides of section `i` stand at `t` (CSS pixels across)
+fn _x_at[p, i, t]
+    m = p.move
+    rest = (0.0 + p.slides_at[i]) * p.view_w
+    if m.what ne 'slide' or m.section ne i
+        return rest
+    if m.lasting lte 0.0 or t gte m.begun + m.lasting
+        return m.to_x
+    k = (t - m.begun) / m.lasting
+    if page_mode[p] eq 'script'
+        return in_out_cubic[t - m.begun, m.from_x, m.to_x - m.from_x, m.lasting]
+    m.from_x + (m.to_x - m.from_x) * css_eased[p.o.easing, k]
+
+--- the move to section `to` (and then slide `slide`, -1 for none) begun at
+--- `t`: told `before_leave` and `on_leave`, the hash written, the media
+--- loaded; `how` is `move` (over the options' speed) or `silent` (at once,
+--- fullPage's silentMoveTo). A move asked while one runs replaces it:
+--- the one replaced tells no end.
+fn _go[p, to, slide, t, trigger, how]
+    if to lt 0
+        return p
+    if to eq p.at
+        if slide gte 0
+            return _slide_go[p, to, slide, t, trigger, how]
+        return p
+    origin = p.at
+    direction = 'up'
+    if _position[p, to] gt _position[p, origin]
+        direction = 'down'
+    p = _go_from[p, origin, to, slide, t, trigger, how, direction, false]
+    p
+
+--- (the move itself, its direction given: a loop's runs against the
+--- order; `around` lays the first section last while it moves, as
+--- continuous scrolling does)
+fn _go_from[p, origin, to, slide, t, trigger, how, direction, around]
+    p = _keep_undo[p]
+    po = _position[p, origin]
+    pt = _position[p, to]
+    p = _tell[p, 'before_leave', t, po, pt, -1, -1, direction, trigger, 0.0]
+    p = _tell[p, 'on_leave', t, po, pt, -1, -1, direction, trigger, 0.0]
+    if p.sections[origin].autoplay
+        p = _tell[p, 'media_pause', t, po, -1, -1, -1, direction, trigger, 0.0]
+    silent = how eq 'silent'
+    from_y = _y_at[p, t]
+    order = _shown_list[p]
+    if around
+        first = order[0]
+        order = push[slice[order, 1, len[order]], first]
+        from_y = _offset_in[p, order, origin]
+    to_y = _offset_in[p, order, to]
+    p.order = order
+    p.at = to
+    if p.o.overflow_reset
+        inner = p.inner
+        inner[to] = 0.0
+        p.inner = inner
+    p = _lazy_section[p, to]
+    p = _hash_set[p, _hash_of[p, to, p.slides_at[to]]]
+    lasting = p.o.speed
+    ends_t = t + _end_after[p]
+    if silent
+        lasting = 0.0
+        ends_t = t
+    p.move = Move['section', to, origin, to, -1, slide, direction, trigger, t, lasting, from_y, to_y, 0.0, 0.0, ends_t, slide]
+    p.top = to_y
+    p.transition = _transition_of[p, silent]
+    p.busy = ends_t
+    if page_mode[p] eq 'free' or page_mode[p] eq 'bar'
+        p.scrolled_t = -1.0
+    if silent
+        p = _ended[p, t]
+    p
+
+--- the slides of section `i` moved to slide `to` at `t` (`none` where it
+--- is already there: fullPage then tells only its end)
+fn _slide_go[p, i, to, t, trigger, how]
+    if i lt 0 or to lt 0 or to gte p.sections[i].slides
+        return p
+    p = _keep_undo[p]
+    origin = p.slides_at[i]
+    direction = 'none'
+    if to gt origin
+        direction = 'right'
+    if to lt origin
+        direction = 'left'
+    p = _slide_from[p, i, origin, to, t, trigger, how, direction]
+    p
+
+fn _slide_from[p, i, origin, to, t, trigger, how, direction]
+    pos_i = _position[p, i]
+    if direction ne 'none'
+        p = _tell[p, 'on_slide_leave', t, pos_i, -1, origin, to, direction, trigger, 0.0]
+    silent = how eq 'silent'
+    from_x = _x_at[p, i, t]
+    at = p.slides_at
+    at[i] = to
+    p.slides_at = at
+    p = _lazy_slide[p, i, to]
+    p = _hash_set[p, _hash_of[p, i, to]]
+    lasting = p.o.speed
+    ends_t = t + p.o.speed
+    if silent
+        lasting = 0.0
+        ends_t = t
+    p.move = Move['slide', i, i, i, origin, to, direction, trigger, t, lasting, 0.0, 0.0, from_x, (0.0 + to) * p.view_w, ends_t, -1]
+    p.busy = ends_t
+    if silent
+        p = _ended[p, t]
+    p
+
+--- a move's end, told at its time: `after_load` or `after_slide_load`;
+--- continuous scrolling lays its sections back in order; a slide asked
+--- with the section is moved to once the section is there
+fn _ended[p, t]
+    m = p.move
+    at_t = m.ends_at
+    if m.what eq 'section'
+        p = _tell[p, 'after_load', at_t, _position[p, m.origin], _position[p, m.to], -1, -1, m.direction, m.trigger, 0.0]
+        if p.sections[m.to].autoplay
+            p = _tell[p, 'media_play', at_t, _position[p, m.to], -1, -1, -1, m.direction, m.trigger, 0.0]
+        p.order = _shown_list[p]
+        p.top = _offset_of[p, m.to]
+        after_slide = m.then_slide
+        m.ends_at = -1.0
+        m.what = ''
+        p.move = m
+        p.y = p.top
+        if after_slide gte 0
+            p = _slide_then[p, m.to, after_slide, at_t, m.trigger]
+        return p
+    if m.what eq 'slide'
+        p = _tell[p, 'after_slide_load', at_t, _position[p, m.section], -1, m.slide_origin, m.slide_to, m.direction, m.trigger, 0.0]
+    m.ends_at = -1.0
+    m.what = ''
+    p.move = m
+    p
+
+--- (a slide asked with its section: moved to once the section is there;
+--- one already there is moved to all the same, telling only its end)
+fn _slide_then[p, i, to, t, trigger]
+    origin = p.slides_at[i]
+    direction = 'none'
+    if to gt origin
+        direction = 'right'
+    if to lt origin
+        direction = 'left'
+    _slide_from[p, i, origin, to, t, trigger, 'move', direction]
+
+--- the time passed to `t`: moves that end by then end, telling their
+--- ends; the page scrolled freely is fitted to its section after its
+--- pause; the wrapper stands where it is by then
+fn pages_at[p, t]
+    guard = 0
+    while p.move.what ne '' and p.move.ends_at gte 0.0 and t gte p.move.ends_at and guard lt 8
+        p = _ended[p, t]
+        guard = guard + 1
+    mode = page_mode[p]
+    fits = p.o.fit and not p.responsive
+    if (mode eq 'free' or mode eq 'bar') and fits and p.scrolled_t gte 0.0 and p.move.what eq '' and t gte p.scrolled_t + p.o.fit_delay
+        to_y = _offset_of[p, p.at]
+        if to_y ne p.y
+            p.move = Move['fit', p.at, p.at, p.at, -1, -1, '', '', t, p.o.speed, p.y, to_y, 0.0, 0.0, t + p.o.speed, -1]
+            p.top = to_y
+        p.scrolled_t = -1.0
+    if p.move.what eq 'fit' and t gte p.move.begun + p.move.lasting
+        m = p.move
+        m.what = ''
+        m.ends_at = -1.0
+        p.move = m
+    p.y = _y_at[p, t]
+    p.now = max[p.now, t]
+    p
+
+--- ---- what moves it ----
+
+--- the section after the one shown, as a key, the wheel or the program
+--- asks: past the last, back to the first where it loops or scrolls
+--- continuously (continuously, the first laid after the last)
+fn _down[p, t, trigger]
+    nxt = _after[p, p.at]
+    if nxt gte 0
+        return _go[p, nxt, -1, t, trigger, 'move']
+    first = _first_shown[p]
+    if first eq p.at
+        return p
+    if p.o.continuous
+        return _go_from[p, p.at, first, -1, t, trigger, 'move', 'down', true]
+    if p.o.loop_bottom
+        return _go_from[p, p.at, first, -1, t, trigger, 'move', 'down', false]
+    p
+
+fn _up[p, t, trigger]
+    prv = _before[p, p.at]
+    if prv gte 0
+        return _go[p, prv, -1, t, trigger, 'move']
+    last = _last_shown[p]
+    if last eq p.at
+        return p
+    if p.o.continuous
+        return _go_from[p, p.at, last, -1, t, trigger, 'move', 'up', true]
+    if p.o.loop_top
+        return _go_from[p, p.at, last, -1, t, trigger, 'move', 'up', false]
+    p
+
+--- the slide after (or before) the one shown in the section shown, round
+--- to the first where the slides loop
+fn _slide_step[p, t, trigger, delta]
+    i = p.at
+    n = p.sections[i].slides
+    if n eq 0
+        return p
+    origin = p.slides_at[i]
+    to = origin + delta
+    direction = 'right'
+    if delta lt 0
+        direction = 'left'
+    if to lt 0 or to gte n
+        if not p.o.loop_slides
+            return p
+        if to lt 0
+            to = n - 1
+        else
+            to = 0
+    p = _keep_undo[p]
+    _slide_from[p, i, origin, to, t, trigger, 'move', direction]
+
+--- the inner scroll of a section taller than the page: how far it goes
+fn _inner_most[p, i]
+    s = p.sections[i]
+    if s.noscroll or s.content lte 0.0
+        return 0.0
+    max[0.0, s.content - _tall_of[p, i]]
+
+--- the section shown scrolled inside to `y` (as the reader scrolls it):
+--- fullPage tells `on_scroll_overflow` with where it is and its direction,
+--- and moves on at once where the scroll comes to its end that way
+fn page_inner[p, y, t]
+    p = pages_at[p, t]
+    i = p.at
+    was = p.inner[i]
+    at = _clamped[0.0, _inner_most[p, i], y]
+    if at eq was
+        return p
+    inner = p.inner
+    inner[i] = at
+    p.inner = inner
+    direction = 'down'
+    if at lt was
+        direction = 'up'
+    slide = -1
+    if p.sections[i].slides gt 0
+        slide = p.slides_at[i]
+    p = _tell[p, 'on_scroll_overflow', t, _position[p, i], -1, slide, -1, direction, '', at]
+    if t lt p.busy
+        return p
+    if direction eq 'down' and at gte _inner_most[p, i]
+        return _down[p, t, p.trigger]
+    if direction eq 'up' and at lte 0.0
+        return _up[p, t, p.trigger]
+    p
+
+--- whether a section is scrolled inside as far as it goes that way
+fn _inner_at_edge[p, delta]
+    i = p.at
+    most = _inner_most[p, i]
+    if most lte 0.0
+        return true
+    if delta gt 0.0
+        return p.inner[i] gte most
+    p.inner[i] lte 0.0
+
+--- a key pressed at `t` (its name as the page has it: 'ArrowDown', ' ',
+--- 'PageUp' …; `shift` held): the arrows up and down, Page Up and Page
+--- Down and Space move a section (Shift and Space back), Home and End to
+--- the first and last, the arrows left and right a slide. Keys are not
+--- taken while a move runs. A section taller than the page scrolls
+--- inside first (40 pixels an arrow, most of a page a Page key), as the
+--- browser scrolls it.
+fn page_key[p, key, t, shift = false]
+    p = pages_at[p, t]
+    if not p.o.keyboard
+        return p
+    if page_free[p] and p.responsive
+        return _free_key[p, key, t, shift]
+    if t lt p.busy
+        return p
+    going_down = key eq 'ArrowDown' or key eq 'PageDown' or ((key eq ' ' or key eq 'Space') and not shift)
+    going_up = key eq 'ArrowUp' or key eq 'PageUp' or ((key eq ' ' or key eq 'Space') and shift)
+    stride = 40.0
+    if key ne 'ArrowDown' and key ne 'ArrowUp'
+        stride = p.view_h * 0.875
+    p.trigger = 'keydown'
+    if going_down
+        if not _inner_at_edge[p, 1.0]
+            return page_inner[p, p.inner[p.at] + stride, t]
+        return _down[p, t, 'keydown']
+    if going_up
+        if not _inner_at_edge[p, -1.0]
+            return page_inner[p, p.inner[p.at] - stride, t]
+        return _up[p, t, 'keydown']
+    if key eq 'Home'
+        return _go[p, _first_shown[p], -1, t, 'keydown', 'move']
+    if key eq 'End'
+        return _go[p, _last_shown[p], -1, t, 'keydown', 'move']
+    if key eq 'ArrowRight'
+        return _slide_step[p, t, 'keydown', 1]
+    if key eq 'ArrowLeft'
+        return _slide_step[p, t, 'keydown', -1]
+    p
+
+--- (a key on a page that scrolls freely under its bounds: the browser's
+--- scroll, as a page scrolls)
+fn _free_key[p, key, t, shift]
+    delta = 0.0
+    if key eq 'ArrowDown'
+        delta = 40.0
+    if key eq 'ArrowUp'
+        delta = -40.0
+    if key eq 'PageDown' or ((key eq ' ' or key eq 'Space') and not shift)
+        delta = p.view_h * 0.875
+    if key eq 'PageUp' or ((key eq ' ' or key eq 'Space') and shift)
+        delta = 0.0 - p.view_h * 0.875
+    if key eq 'Home'
+        return page_scrolled[p, 0.0, t]
+    if key eq 'End'
+        return page_scrolled[p, pages_tall[p] - p.view_h, t]
+    if delta eq 0.0
+        return p
+    page_scrolled[p, p.y + delta, t]
+
+--- the wheel turned by `dy` CSS pixels at `t`, as fullPage reads a turn: a
+--- moment's sizes (a wheel's delta as the browser reports it, 1.2 times
+--- the pixels) are kept, a pause of 200 ms forgets them, and a section is
+--- moved when the last ten average no less than the last seventy (the
+--- first of a turn left out): a turn that grows or holds moves, one dying
+--- away does not; none is taken while a move runs. A section taller than
+--- the page scrolls inside first. Where the page scrolls freely, the
+--- wheel scrolls it.
+fn page_wheel[p, dy, t]
+    p = pages_at[p, t]
+    if page_free[p]
+        return page_scrolled[p, p.y + dy, t]
+    p.trigger = 'wheel'
+    v = abs[_js_round[1.2 * dy]]
+    sizes = p.sizes
+    if t - p.wheel_t gt 200.0
+        sizes = _nums[]
+    if len[sizes] gt 149
+        sizes = slice[sizes, 1, len[sizes]]
+    sizes = push[sizes, v]
+    p.sizes = sizes
+    p.wheel_t = t
+    if dy eq 0.0
+        return p
+    if not _inner_at_edge[p, dy]
+        return page_inner[p, p.inner[p.at] + dy, t]
+    if t lt p.busy
+        return p
+    n = len[sizes]
+    e = 0.0 - floor[0.0 - _sum_from[sizes, max[n - 10, 1]] / 10.0]
+    m = 0.0 - floor[0.0 - _sum_from[sizes, max[n - 70, 1]] / 70.0]
+    if e lt m
+        return p
+    p.sizes = _nums[]
+    before = p.at
+    if dy gt 0.0
+        p = _down[p, t, 'wheel']
+    else
+        p = _up[p, t, 'wheel']
+    if p.at eq before and p.move.what ne 'section'
+        p.sizes = sizes
+    p
+
+fn _sum_from[xs, from]
+    total = 0.0
+    k = from
+    while k lt len[xs]
+        total = total + xs[k]
+        k = k + 1
+    total
+
+--- the page scrolled freely to `y` (the reader's scroll, where autoScrolling
+--- is off or the page is under its responsive bounds): the section whose
+--- part of the page holds the page's middle is shown, fullPage telling its
+--- callbacks at once, and the page is fitted to it after the pause
+fn page_scrolled[p, y, t]
+    p = pages_at[p, t]
+    most = max[0.0, pages_tall[p] - p.view_h]
+    at = _clamped[0.0, most, y]
+    if p.move.what eq 'fit'
+        p.move = _no_move[]
+    p.y = at
+    p.top = at
+    p.scrolled_t = t
+    middle = at + p.view_h / 2.0
+    found = p.at
+    for i in p.order
+        top = _top_in[p, p.order, i]
+        if middle gte top and middle lt top + _tall_of[p, i]
+            found = i
+    if found ne p.at
+        p = _keep_undo[p]
+        origin = p.at
+        direction = 'up'
+        if _position[p, found] gt _position[p, origin]
+            direction = 'down'
+        po = _position[p, origin]
+        pf = _position[p, found]
+        p = _tell[p, 'before_leave', t, po, pf, -1, -1, direction, p.trigger, 0.0]
+        p = _tell[p, 'on_leave', t, po, pf, -1, -1, direction, p.trigger, 0.0]
+        p.at = found
+        p = _lazy_section[p, found]
+        p = _hash_set[p, _hash_of[p, found, p.slides_at[found]]]
+        p = _tell[p, 'after_load', t, po, pf, -1, -1, direction, p.trigger, 0.0]
+    p
+
+--- ---- what the program and the address ask ----
+
+--- fullPage's moveSectionDown and moveSectionUp (taken while a move runs:
+--- the program's moves are not refused)
+fn page_down[p, t]
+    _down[pages_at[p, t], t, p.trigger]
+
+fn page_up[p, t]
+    _up[pages_at[p, t], t, p.trigger]
+
+--- fullPage's moveTo: section `i` (its own index), and slide `slide`
+--- (-1: as it is) once there
+fn page_move_to[p, i, t, slide = -1]
+    p = pages_at[p, t]
+    _go[p, i, slide, t, p.trigger, 'move']
+
+--- fullPage's silentMoveTo: the same, at once
+fn page_silent_to[p, i, t, slide = -1]
+    p = pages_at[p, t]
+    _go[p, i, slide, t, p.trigger, 'silent']
+
+--- the section an anchor names (its own index; -1: none)
+fn page_named[p, name]
+    _hashed_section[p, '#`name`']
+
+--- fullPage's moveSlideRight, moveSlideLeft, and a slide by number
+fn page_slide_right[p, t]
+    p = pages_at[p, t]
+    _slide_step[p, t, p.trigger, 1]
+
+fn page_slide_left[p, t]
+    p = pages_at[p, t]
+    _slide_step[p, t, p.trigger, -1]
+
+fn page_slide_to[p, k, t]
+    p = pages_at[p, t]
+    _slide_go[p, p.at, k, t, p.trigger, 'move']
+
+--- the address's hash changed (the reader's link, the program's): a new
+--- entry in its history, and fullPage moves to what it names unless its
+--- anchors are locked (a hash it does not know moves nothing)
+fn page_hash[p, words, t]
+    p = pages_at[p, t]
+    if words ne p.hash
+        p.history = push[slice[p.history, 0, p.history_at + 1], words]
+        p.history_at = p.history_at + 1
+        p.hash = words
+    _hash_moved[p, t]
+
+fn _hash_moved[p, t]
+    if p.o.lock_anchors
+        return p
+    i = _hashed_section[p, p.hash]
+    if i lt 0
+        return p
+    _go[p, i, _hashed_slide[p, i, p.hash], t, p.trigger, 'move']
+
+--- the history moved back one entry (the browser's back): its hash, and
+--- fullPage moving to it
+fn page_back[p, t]
+    p = pages_at[p, t]
+    if p.history_at lte 0
+        return p
+    p.history_at = p.history_at - 1
+    p.hash = p.history[p.history_at]
+    _hash_moved[p, t]
+
+--- a navigation dot pressed (its place among the sections shown), a
+--- slide's dot, an arrow ('prev', 'next'), a menu's anchor: taken as the
+--- reader's acts, not while a move runs
+fn page_dot[p, k, t]
+    p = pages_at[p, t]
+    shown = _shown_list[p]
+    if k lt 0 or k gte len[shown] or t lt p.busy
+        return p
+    p.trigger = 'verticalNav'
+    _go[p, shown[k], -1, t, 'verticalNav', 'move']
+
+fn page_slide_dot[p, k, t]
+    p = pages_at[p, t]
+    if t lt p.busy
+        return p
+    p.trigger = 'horizontalNav'
+    _slide_go[p, p.at, k, t, 'horizontalNav', 'move']
+
+fn page_arrow[p, side, t]
+    p = pages_at[p, t]
+    if t lt p.busy
+        return p
+    p.trigger = 'slideArrow'
+    delta = 1
+    if side eq 'prev'
+        delta = -1
+    _slide_step[p, t, 'slideArrow', delta]
+
+fn page_menu[p, name, t]
+    p = pages_at[p, t]
+    if t lt p.busy
+        return p
+    i = page_named[p, name]
+    if i lt 0
+        return p
+    p.trigger = 'menu'
+    _go[p, i, -1, t, 'menu', 'move']
+
+--- the move begun since the last callbacks were read refused, as a
+--- callback answering false refuses it: `before_leave` (its `on_leave`
+--- not told) or `on_leave`
+fn pages_refuse[p, at = 'before_leave']
+    u = p.undo
+    kept = slice[p.told, 0, u.told]
+    k = u.told
+    while k lt len[p.told]
+        e = p.told[k]
+        if e.name eq 'before_leave'
+            kept = push[kept, e]
+        if e.name eq 'on_leave' and at eq 'on_leave'
+            kept = push[kept, e]
+        k = k + 1
+    p.told = kept
+    p.at = u.at
+    p.slides_at = u.slides_at
+    p.move = u.move
+    p.busy = u.busy
+    p.order = u.order
+    p.top = u.top
+    p.hash = u.hash
+    p.history = u.history
+    p.history_at = u.history_at
+    p.transition = u.transition
+    p
+
+--- fullPage's setScrollingSpeed, setLockAnchors, setRecordHistory,
+--- setResponsive, and a page resized (`after_responsive` told where it
+--- crosses its bounds)
+fn page_speed[p, ms]
+    o = p.o
+    o.speed = ms
+    p.o = o
+    p
+
+fn page_lock_anchors[p, yes]
+    o = p.o
+    o.lock_anchors = yes
+    p.o = o
+    p
+
+fn page_record_history[p, yes]
+    o = p.o
+    o.record_history = yes
+    p.o = o
+    p
+
+fn page_responsive[p, yes, t]
+    if yes eq p.responsive
+        return p
+    p.responsive = yes
+    num = 0.0
+    if yes
+        num = 1.0
+    p = _tell[p, 'after_responsive', t, -1, -1, -1, -1, '', '', num]
+    if not yes
+        p.top = _offset_of[p, p.at]
+        p.y = p.top
+    p
+
+fn page_resized[p, w, h, t]
+    p.view_w = w
+    p.view_h = h
+    p = page_responsive[p, _under_bounds[p.o, w, h], t]
+    p.top = _offset_of[p, p.at]
+    p.y = p.top
+    p
+
+--- ---- what fullPage shows ----
+
+--- the wrapper's offset fullPage has written (CSS pixels up: its
+--- `translate3d(0, -y, 0)`), and the slides' in section `i` (pixels left)
+fn page_offset[p]
+    p.top
+
+fn page_slides_offset[p, i]
+    (0.0 + p.slides_at[i]) * p.view_w
+
+--- the section shown, as fullPage numbers it (its place among those shown)
+fn page_index[p]
+    _position[p, p.at]
+
+--- the slide shown in the section shown (-1: it has none)
+fn page_slide[p]
+    if p.sections[p.at].slides eq 0
+        return -1
+    p.slides_at[p.at]
+
+--- the menu's item shown active: the anchor of the section shown
+fn page_menu_active[p]
+    p.sections[p.at].name
+
+--- the navigation dots' box (x, y, w, h, CSS pixels in the page): 28
+--- wide, 17 from the page's edge, the middle of its height; and dot `k`'s
+--- box (the active one 12 across, the rest 4)
+fn page_nav_box[p]
+    n = 0.0 + len[_shown_list[p]]
+    h = 14.0 + 13.0 * n + 7.0 * max[0.0, n - 1.0]
+    x = p.view_w - 17.0 - 28.0
+    if p.o.nav_side eq 'left'
+        x = 17.0
+    _four[x, (p.view_h - h) / 2.0, 28.0, h]
+
+fn page_dot_box[p, k]
+    b = page_nav_box[p]
+    y = b[1] + 7.0 + 20.0 * (0.0 + k)
+    if k eq _position[p, p.at]
+        return _four[b[0] + 8.0, y + 0.5, 12.0, 12.0]
+    _four[b[0] + 12.0, y + 4.5, 4.0, 4.0]
+
+--- (a dot's place in its list: the item it stands in, 14 by 13)
+fn page_dot_item[p, k]
+    b = page_nav_box[p]
+    _four[b[0] + 7.0, b[1] + 7.0 + 20.0 * (0.0 + k), 14.0, 13.0]
+
+--- dot `k`'s tooltip: the options' `tooltips` (words apart, '_' for a
+--- space), '' for none
+fn page_tooltip[p, k]
+    words = split[trim[p.o.tooltips], ' ']
+    if trim[p.o.tooltips] eq '' or k gte len[words]
+        return ''
+    replace[words[k], '_', ' ']
+
+--- the slides' arrows' boxes in their section (34 by 76, 15 from its
+--- sides, the middle of its height), and the slide dots' (14 by 13, 28
+--- apart from 7 across, 17 from its foot)
+fn page_arrow_box[p, side]
+    y = (p.view_h - 76.0) / 2.0
+    if side eq 'prev'
+        return _four[15.0, y, 34.0, 76.0]
+    _four[p.view_w - 15.0 - 34.0, y, 34.0, 76.0]
+
+fn page_slide_dot_box[p, k]
+    _four[7.0 + 28.0 * (0.0 + k), p.view_h - 17.0 - 31.0 + 7.0, 14.0, 13.0]
+
+--- whether an arrow is shown: where the slides do not loop, none past
+--- the first or the last
+fn page_arrow_shown[p, side]
+    i = p.at
+    n = p.sections[i].slides
+    if n eq 0 or not p.o.arrows
+        return false
+    if p.o.loop_slides
+        return true
+    if side eq 'prev'
+        return p.slides_at[i] gt 0
+    p.slides_at[i] lt n - 1
+
+--- where the wrapper (or the page, where it scrolls freely) stands at
+--- `t` with the move under way (CSS pixels down), and the slides of
+--- section `i` (across)
+fn page_y_at[p, t]
+    _y_at[p, t]
+
+fn page_x_at[p, i, t]
+    _x_at[p, i, t]
+
+--- how many navigation dots there are (a dot for each section shown)
+fn page_dots[p]
+    len[_shown_list[p]]
+
+--- how far the section shown scrolls inside (0: it fits, or keeps still)
+fn page_inner_most[p]
+    _inner_most[p, p.at]
+
+--- where section `i` stands down the sections and how tall it is
+fn page_section_top[p, i]
+    _top_in[p, p.order, i]
+
+fn page_section_tall[p, i]
+    _tall_of[p, i]
+
+--- ---- full-page sections, drawn and heard ----
+
+--- the frame's keys and wheel taken by the sections (the wheel only over
+--- them, once they have been shown), and the time brought to the frame's;
+--- in a headset a thumbstick pushed is a wheel turned where the ray rests
+fn paged[c, p]
+    t = lory.time[c]
+    s = lory.px[c]
+    p = pages_at[p, t]
+    for e in lory.events[c]
+        if e.on eq 'key'
+            p = page_key[p, e.key, t, shift = e.shift]
+        if e.on eq 'wheel' and _over_box[p.box, e.x / s, e.y / s]
+            p = page_wheel[p, e.dy / s, t]
+    p
+
+fn _over_box[box, x, y]
+    if len[box] lt 4
+        return true
+    x gte box[0] and x lt box[0] + box[2] and y gte box[1] and y lt box[1] + box[3]
+
+--- the sections drawn with Lory's controls, `p.view_w` by `p.view_h` CSS
+--- pixels: each section a face of the program's (`faces`: one for each
+--- section in order, and for a section with slides one for each slide),
+--- laid where the wrapper stands, its slides across where they stand, its
+--- content moved up by its inner scroll, on its colour; sections far from
+--- the page are room only. Over them, as the options ask: the navigation
+--- dots (`id`:dots, its tooltips beside them), the slides' arrows
+--- (`id`:prev, `id`:next) and their dots (`id`:slide_dots). With
+--- `fading` (fullPage's fading effect), a section moved to does not slide
+--- in: it is drawn over the one left, fading in as the move goes.
+fn pages_view[p, faces, id = 'pages', fading = false]
+    firsts = _ints[]
+    k = 0
+    for s in p.sections
+        firsts = push[firsts, k]
+        k = k + max[1, s.slides]
+    laid = [gui.space[0.0]]
+    laid = slice[laid, 0, 0]
+    for i in p.order
+        top = _top_in[p, p.order, i]
+        tall = _tall_of[p, i]
+        if top + tall lt p.y - p.view_h or top gt p.y + 2.0 * p.view_h
+            laid = push[laid, gui.space[tall]]
+        else
+            laid = push[laid, _section_drawn[p, faces, i, firsts[i], id]]
+    column = gui.moved[gui.sized[gui.column[laid, gap = 0.0], p.view_w], 0.0, 0.0 - p.y]
+    if fading
+        f = page_fading[p, p.now]
+        left = _section_drawn[p, faces, f.from, firsts[f.from], id]
+        column = gui.sized[gui.column[[left], gap = 0.0], p.view_w]
+        if f.to ne f.from
+            come = gui.faded[_section_drawn[p, faces, f.to, firsts[f.to], id], f.share]
+            column = gui.overlay[column, gui.sized[gui.column[[come], gap = 0.0], p.view_w], anchor = 'top_left']
+    body = gui.scroll[id, p.view_h, [gui.overlay[_ground[p.view_w, p.view_h, ''], column, anchor = 'top_left']]]
+    i = p.at
+    if p.sections[i].slides gt 0 and p.move.what ne 'section'
+        if page_arrow_shown[p, 'prev']
+            body = gui.overlay[body, gui.drawn['`id`:prev', 0.0, 49.0, 76.0, _arrow_painted, words = 'prev `p.o.arrow_color`'], anchor = 'left']
+        if page_arrow_shown[p, 'next']
+            body = gui.overlay[body, gui.drawn['`id`:next', 0.0, 49.0, 76.0, _arrow_painted, words = 'next `p.o.arrow_color`'], anchor = 'right']
+        if p.o.slides_nav
+            n = p.sections[i].slides
+            dots = gui.drawn['`id`:slide_dots', 0.0 + p.slides_at[i], 14.0 + 28.0 * (0.0 + n), 48.0, _slide_dots_painted, hi = 0.0 + n]
+            body = gui.overlay[body, dots, anchor = 'bottom_left']
+    if p.o.nav
+        n = page_dots[p]
+        b = page_nav_box[p]
+        tips = _nav_words[p]
+        dots = gui.drawn['`id`:dots', 0.0 + page_index[p], 45.0 + 160.0, b[3], _dots_painted, hi = 0.0 + n, words = tips]
+        side = 'right'
+        if p.o.nav_side eq 'left'
+            side = 'left'
+        body = gui.overlay[body, dots, anchor = side]
+    body
+
+--- the fading effect's sections at `t`: the one left, the one come to,
+--- and how far the one come to has faded in (the move's own share, eased
+--- as the move is); at rest the section shown, wholly
+struct Fade [from, to, share]
+
+fn page_fading[p, t]
+    m = p.move
+    if m.what ne 'section' or m.to_y eq m.from_y
+        return Fade[p.at, p.at, 1.0]
+    share = _clamped[0.0, 1.0, (_y_at[p, t] - m.from_y) / (m.to_y - m.from_y)]
+    Fade[m.origin, m.to, share]
+
+--- (the dots' words for their painter: the side, whether the active
+--- one's tooltip shows, and each dot's tooltip, '|' apart)
+fn _nav_words[p]
+    show = '0'
+    if p.o.show_tooltip
+        show = '1'
+    out = '`p.o.nav_side`|`show`'
+    k = 0
+    while k lt page_dots[p]
+        tip = page_tooltip[p, k]
+        out = '`out`|`tip`'
+        k = k + 1
+    out
+
+fn _section_drawn[p, faces, i, first, id]
+    s = p.sections[i]
+    tall = _tall_of[p, i]
+    top = gui.space[0.0]
+    if s.slides eq 0
+        top = gui.moved[gui.sized[gui.column[[faces[first]], gap = 0.0], p.view_w], 0.0, 0.0 - p.inner[i]]
+    else
+        slides = [gui.space[0.0]]
+        slides = slice[slides, 0, 0]
+        k = 0
+        while k lt s.slides
+            slides = push[slides, gui.sized[gui.column[[faces[first + k]], gap = 0.0], p.view_w]]
+            k = k + 1
+        top = gui.moved[gui.row[slides, gap = 0.0], 0.0 - _x_at[p, i, p.now], 0.0]
+    gui.scroll['`id`:`i`', tall, [gui.overlay[_ground[p.view_w, tall, s.color], top, anchor = 'top_left']]]
+
+--- a box of a colour (none: '') the size of a section, under its face
+fn _ground[w, h, color]
+    gui.drawn['', 0.0, w, h, _ground_painted, words = color]
+
+fn _ground_painted[d]
+    if d.words eq ''
+        return d
+    d.c = lory.rect[d.c, d.x, d.y, d.w, d.h, lory.hex[d.words]]
+    d
+
+--- the navigation dots, as fullPage draws them: 4 across, the active one
+--- 12; a tooltip beside the active one (where asked) and the one under
+--- the pointer; pressing a dot tells `dot` and its place
+fn _dots_painted[d]
+    s = d.s
+    words = split[d.words, '|']
+    left = words[0] eq 'left'
+    n = int[d.hi]
+    active = int[d.num]
+    dx = d.x + (d.w - 45.0 * s)
+    if left
+        dx = d.x + 17.0 * s
+    over = -1
+    if d.hover or d.pressed
+        k = floor[(d.py / s - 7.0) / 20.0]
+        if k gte 0.0 and k lt 0.0 + n
+            over = int[k]
+    i = 0
+    while i lt n
+        cx = dx + 14.0 * s
+        cy = d.y + (7.0 + 20.0 * (0.0 + i) + 6.5) * s
+        r = 2.0 * s
+        if i eq active
+            r = 6.0 * s
+        if i eq over and i ne active
+            r = 4.0 * s
+        d.c = lory.circle[d.c, cx, cy, r, d.look.ink]
+        tip = ''
+        if i + 2 lt len[words]
+            tip = words[i + 2]
+        if tip ne '' and (i eq over or (i eq active and words[1] eq '1'))
+            if left
+                d.c = lory.text[d.c, dx + 34.0 * s, cy - 7.0 * s, tip, 14.0 * s, d.look.ink]
+            else
+                d.c = lory.text_right[d.c, dx - 6.0 * s, cy - 7.0 * s, tip, 14.0 * s, d.look.ink]
+        i = i + 1
+    if d.pressed and over gte 0
+        d = gui.tell[d, 'dot', '', 0.0 + over]
+    d
+
+--- a slide's arrow, a triangle 34 by 76 pointing its way, 15 from the side
+fn _arrow_painted[d]
+    s = d.s
+    words = split[d.words, ' ']
+    color = lory.hex[words[1]]
+    if words[0] eq 'prev'
+        x = d.x + 15.0 * s
+        d.c = lory.triangle[d.c, x + 34.0 * s, d.y, x + 34.0 * s, d.y + 76.0 * s, x, d.y + 38.0 * s, color]
+    else
+        x = d.x
+        d.c = lory.triangle[d.c, x, d.y, x, d.y + 76.0 * s, x + 34.0 * s, d.y + 38.0 * s, color]
+    if d.pressed
+        d = gui.tell[d, 'press', words[0], 0.0]
+    d
+
+--- the slides' dots, 28 apart from 7 across, the slide shown's larger;
+--- pressing one tells `slide_dot` and its place
+fn _slide_dots_painted[d]
+    s = d.s
+    n = int[d.hi]
+    over = -1
+    if d.hover or d.pressed
+        k = floor[(d.px / s - 7.0) / 28.0]
+        if k gte 0.0 and k lt 0.0 + n
+            over = int[k]
+    i = 0
+    while i lt n
+        cx = d.x + (7.0 + 28.0 * (0.0 + i) + 7.0) * s
+        cy = d.y + (7.0 + 6.5) * s
+        r = 2.0 * s
+        if i eq int[d.num]
+            r = 6.0 * s
+        d.c = lory.circle[d.c, cx, cy, r, d.look.ink]
+        i = i + 1
+    if d.pressed and over gte 0
+        d = gui.tell[d, 'slide_dot', '', 0.0 + over]
+    d
+
+--- the sections' controls heard: a dot, an arrow, a slide's dot pressed
+--- (as the reader's acts, at the time the sections were brought to), and
+--- where the sections stood on the page
+fn pages_heard[p, shown, id = 'pages']
+    if id in shown.boxes
+        p.box = shown.boxes[id]
+    for e in shown.events
+        if e.id eq '`id`:dots' and e.act eq 'dot'
+            p = page_dot[p, int[e.num], p.now]
+        if (e.id eq '`id`:prev' or e.id eq '`id`:next') and e.act eq 'press'
+            p = page_arrow[p, e.words, p.now]
+        if e.id eq '`id`:slide_dots' and e.act eq 'slide_dot'
+            p = page_slide_dot[p, int[e.num], p.now]
+    p
+
+--- ---- a scroll area (Radix's): its own bar over the content ----
+
+--- what a scroll area holds between frames: how far it is scrolled
+--- (`top`, CSS pixels), its content's height and its own as last shown,
+--- when its bar shows (`bar`, Radix's `type`: 'hover', as Radix's default, while the
+--- pointer is over it; 'scroll' while it scrolls; 'auto' while its content
+--- overflows; 'always'), how long the bar stays after (`delay`, 600 ms as
+--- Radix's), whether the pointer is over it, when it last left or last
+--- scrolled, the frame's time, its box on the page, and the smooth scroll
+--- it runs where asked (`glide`: Lenis's; none: false)
+struct Area [top, content, tall, bar, delay, over, left_t, scrolled_t, now, box, smooth, gliding]
+
+fn area_of[bar = 'hover', delay = 600.0, glide = false]
+    Area[0.0, 0.0, 0.0, bar, delay, false, -1000000.0, -1000000.0, 0.0, _nums[], glide, smooth[0.0]]
+
+--- how far it can scroll
+fn area_most[a]
+    max[0.0, a.content - a.tall]
+
+--- whether its bar shows at the time it was last brought to
+fn area_bar_shown[a]
+    if area_most[a] lte 0.0
+        return false
+    if a.bar eq 'always' or a.bar eq 'auto'
+        return true
+    if a.bar eq 'scroll'
+        return a.now - a.scrolled_t lt a.delay
+    a.over or a.now - a.left_t lt a.delay
+
+--- the thumb's top and height on a track `track` high: its share of the
+--- track as the view's of the content, never under 18 (as Radix's)
+fn area_thumb[a, track]
+    if a.content lte 0.0
+        return [0.0, track]
+    size = max[18.0, min[track, track * a.tall / a.content]]
+    most = area_most[a]
+    at = 0.0
+    if most gt 0.0
+        at = (track - size) * a.top / most
+    [at, size]
+
+--- where the thumb dragged puts the scroll: the pointer `y` on the track
+--- (from its top), held where it was grabbed (`grab` from the thumb's top)
+fn area_from_thumb[a, track, y, grab]
+    t = area_thumb[a, track]
+    room = track - t[1]
+    if room lte 0.0
+        return 0.0
+    _clamped[0.0, area_most[a], (y - grab) / room * area_most[a]]
+
+--- scrolled to `top` (kept within it) at `t`
+fn area_to[a, top, t]
+    a.top = _clamped[0.0, area_most[a], top]
+    a.scrolled_t = t
+    a
+
+--- the keys a focused area takes: the arrows 40 pixels, Page Up and Page
+--- Down seven eighths of its height, Home and End, Space down a page
+fn area_key[a, key, t, shift = false]
+    page = 0.875 * a.tall
+    by = 0.0
+    if key eq 'ArrowDown'
+        by = 40.0
+    if key eq 'ArrowUp'
+        by = -40.0
+    if key eq 'PageDown' or (key eq ' ' and not shift)
+        by = page
+    if key eq 'PageUp' or (key eq ' ' and shift)
+        by = 0.0 - page
+    if key eq 'Home'
+        return area_to[a, 0.0, t]
+    if key eq 'End'
+        return area_to[a, area_most[a], t]
+    if by eq 0.0
+        return a
+    _area_by[a, by, t]
+
+fn _area_by[a, by, t]
+    if a.smooth
+        g = smooth_limit[a.gliding, area_most[a]]
+        if g.time lt 0.0
+            g = smooth_frame[g, t]
+        a.gliding = smooth_wheel[g, by, 0]
+        a.scrolled_t = t
+        return a
+    area_to[a, a.top + by, t]
+
+--- the wheel turned over it `dy` CSS pixels at `t`
+fn area_wheel[a, dy, t]
+    _area_by[a, dy, t]
+
+--- brought to `t`: a smooth scroll run on
+fn area_at[a, t]
+    a.now = max[a.now, t]
+    if a.smooth
+        g = smooth_frame[smooth_limit[a.gliding, area_most[a]], t]
+        if g.moving
+            a.scrolled_t = t
+        a.gliding = g
+        a.top = _clamped[0.0, area_most[a], g.at]
+    a
+
+--- the frame taken by the area: its time, the pointer over it or gone,
+--- the wheel over it (a thumbstick's too, in a headset)
+fn area_scrolled[c, a]
+    t = lory.time[c]
+    s = lory.px[c]
+    a = area_at[a, t]
+    if len[a.box] lt 4
+        return a
+    over = a.over
+    if c.there
+        over = _over_box[a.box, lory.pointer_x[c] / s, lory.pointer_y[c] / s]
+    for e in lory.events[c]
+        if e.on eq 'move' or e.on eq 'down' or e.on eq 'up'
+            over = _over_box[a.box, e.x / s, e.y / s]
+        if e.on eq 'leave'
+            over = false
+        if e.on eq 'wheel' and _over_box[a.box, e.x / s, e.y / s]
+            a = area_wheel[a, e.dy / s, t]
+    if a.over and not over
+        a.left_t = t
+    a.over = over
+    a
+
+--- the area drawn: its content (`kids`, a column) `tall` high, moved up
+--- by how far it is scrolled and clipped, the bar over its right side
+--- (`id`:bar: the thumb dragged, the track pressed, the keys while it has
+--- the focus), two marks that measure the content (`id`:top, `id`:end)
+fn area_view[a, id, tall, kids]
+    marked = push[push[[gui.area['`id`:top', 0.0, 0.0]], gui.column[kids]], gui.area['`id`:end', 0.0, 0.0]]
+    inner = gui.moved[gui.column[marked, gap = 0.0], 0.0, 0.0 - a.top]
+    --- (laid over room its own height, so that gui's scroll only clips it)
+    body = gui.scroll[id, tall, [gui.overlay[_ground[0.0, tall, ''], inner, anchor = 'top_left']]]
+    if not area_bar_shown[a]
+        return body
+    words = '`a.content` `a.tall`'
+    bar = gui.drawn['`id`:bar', a.top, 10.0, tall, _area_bar_painted, lo = 0.0, hi = area_most[a], words = words]
+    gui.overlay[body, bar, anchor = 'top_right']
+
+--- the bar: a track 10 wide, its thumb; a press on the thumb grabs it
+--- where pressed, one on the track centres the thumb there; dragged, it
+--- tells its new place as a change (and so do the keys)
+fn _area_bar_painted[d]
+    s = d.s
+    words = split[d.words, ' ']
+    a = area_of[]
+    a.content = _words_num[words[0]]
+    a.tall = _words_num[words[1]]
+    a.top = d.num
+    track = d.h / s
+    t = area_thumb[a, track]
+    key = 'lory.scrolling.grab:`d.id`'
+    grab = recall[key, Grab[-1.0]].at
+    y = d.py / s
+    if d.down
+        if grab lt 0.0
+            grab = t[1] / 2.0
+            if y gte t[0] and y lt t[0] + t[1]
+                grab = y - t[0]
+            remember[key, Grab[grab]]
+        d.num = area_from_thumb[a, track, y, grab]
+        t = area_thumb[a, d.num * 0.0 + track]
+    else
+        if grab gte 0.0
+            remember[key, Grab[-1.0]]
+    for k in d.keys
+        moved = area_key[area_to[a, d.num, 0.0], k, 0.0]
+        d.num = moved.top
+    a.top = d.num
+    t = area_thumb[a, track]
+    d.c = lory.round_rect[d.c, d.x + 2.0 * s, d.y + t[0] * s + 2.0 * s, 6.0 * s, t[1] * s - 4.0 * s, 3.0 * s, lory.fade[d.look.muted, 0.7]]
+    d
+
+--- (where the thumb was grabbed, kept from the press to the release)
+struct Grab [at]
+
+fn _words_num[w]
+    v = json[w]
+    if not v.ok
+        return 0.0
+    0.0 + v
+
+--- the area's controls heard: its content measured, its box, the bar
+--- dragged or keyed, at the time it was brought to
+fn area_heard[a, shown, id]
+    if id in shown.boxes
+        b = shown.boxes[id]
+        a.box = b
+        a.tall = b[3]
+    top_id = '`id`:top'
+    end_id = '`id`:end'
+    if top_id in shown.boxes and end_id in shown.boxes
+        a.content = shown.boxes[end_id][1] - shown.boxes[top_id][1]
+    for e in shown.events
+        if e.id eq '`id`:bar' and e.act eq 'change'
+            a = area_to[a, e.num, a.now]
+            if a.smooth
+                a.gliding = smooth_to[smooth_limit[a.gliding, area_most[a]], a.top, immediate = true]
+    a.top = _clamped[0.0, area_most[a], a.top]
+    a
+
+--- ---- virtual lists (TanStack Virtual's, Vuetify's v-virtual-scroll) ----
+---
+--- Only the rows near the view are drawn: each row stands where the rows
+--- before it end (its own size measured once drawn, the estimate until
+--- then), the view's rows are found by a binary search for the first row
+--- that starts at or before the scroll, and `overscan` more rows each way
+--- are drawn too (TanStack's default 1). Room stands for the rest above
+--- and below. A row measured anew above the scroll moves the scroll by
+--- its change, so that what is in view stays put.
+
+--- the rows' count, their estimated size, the sizes measured so far (rows
+--- `measured` in order, `sizes` theirs), the gap between rows, rows drawn
+--- past the view each way, room before the first and after the last, the
+--- scroll area it scrolls in, and the scroll its last measuring asked
+struct Virtual [count, estimate, measured, sizes, gap, overscan, pad_start, pad_end, area, adjust]
+
+fn virtual_of[count, estimate, overscan = 1, gap = 0.0, pad_start = 0.0, pad_end = 0.0, bar = 'hover']
+    Virtual[count, estimate, _ints[], _nums[], gap, overscan, pad_start, pad_end, area_of[bar = bar], 0.0]
+
+--- the size of row `i`: measured, or the estimate
+fn virtual_size[v, i]
+    k = 0
+    for j in v.measured
+        if j eq i
+            return v.sizes[k]
+        k = k + 1
+    v.estimate
+
+--- where row `i` starts
+fn virtual_start[v, i]
+    at = v.pad_start + (0.0 + i) * (v.estimate + v.gap)
+    k = 0
+    for j in v.measured
+        if j lt i
+            at = at + v.sizes[k] - v.estimate
+        k = k + 1
+    at
+
+--- all the rows' height, with the room before and after
+fn virtual_total[v]
+    if v.count eq 0
+        return v.pad_start + v.pad_end
+    last = v.count - 1
+    virtual_start[v, last] + virtual_size[v, last] + v.pad_end
+
+--- (TanStack's search: the row starting at `value`, else the last one
+--- starting before it)
+fn _nearest[v, value]
+    low = 0
+    high = v.count - 1
+    while low lte high
+        middle = (low + high) / 2
+        at = virtual_start[v, middle]
+        if at lt value
+            low = middle + 1
+        else if at gt value
+            high = middle - 1
+        else
+            return middle
+    if low gt 0
+        return low - 1
+    0
+
+--- the rows in view at a scroll of `top` in a view `tall` high, without
+--- the overscan: [first, last]
+fn virtual_in_view[v, top, tall]
+    if v.count eq 0
+        return [0, -1]
+    if v.count eq 1
+        return [0, 0]
+    first = _nearest[v, top]
+    last = first
+    while last lt v.count - 1 and virtual_start[v, last] + virtual_size[v, last] lt top + tall
+        last = last + 1
+    [first, last]
+
+--- the rows drawn: those in view and the overscan each way
+fn virtual_range[v, top, tall]
+    r = virtual_in_view[v, top, tall]
+    if r[1] lt r[0]
+        return r
+    [max[0, r[0] - v.overscan], min[v.count - 1, r[1] + v.overscan]]
+
+--- the rows drawn at the list's own scroll
+fn virtual_rows[v]
+    virtual_range[v, v.area.top, v.area.tall]
+
+--- row `i` measured `size` high: where it starts above the scroll, the
+--- scroll is asked to move by its change (`adjust`)
+fn virtual_measured[v, i, size]
+    before = virtual_size[v, i]
+    if size eq before
+        return v
+    if virtual_start[v, i] lt v.area.top + v.adjust
+        v.adjust = v.adjust + size - before
+    at = 0
+    k = 0
+    found = -1
+    for j in v.measured
+        if j eq i
+            found = k
+        if j lt i
+            at = k + 1
+        k = k + 1
+    if found gte 0
+        s = v.sizes
+        s[found] = size
+        v.sizes = s
+        return v
+    v.measured = concat[push[slice[v.measured, 0, at], i], slice[v.measured, at, len[v.measured]]]
+    v.sizes = concat[push[slice[v.sizes, 0, at], size], slice[v.sizes, at, len[v.sizes]]]
+    v
+
+--- where the scroll goes for row `i` to show: at the view's `start`, its
+--- `center`, its `end`, or (`auto`) the nearest edge it is past, if any
+fn virtual_scroll_for[v, i, align = 'auto']
+    a = v.area
+    start = virtual_start[v, i]
+    size = virtual_size[v, i]
+    to = start
+    side = align
+    if align eq 'auto'
+        if start + size gte a.top + a.tall
+            side = 'end'
+        else if start lte a.top
+            side = 'start'
+        else
+            return a.top
+    if side eq 'end'
+        to = start + size - a.tall
+    if side eq 'center'
+        to = start + size / 2.0 - a.tall / 2.0
+    _clamped[0.0, max[0.0, virtual_total[v] - a.tall], to]
+
+fn virtual_scroll_to[v, i, t, align = 'auto']
+    v.area = area_to[v.area, virtual_scroll_for[v, i, align = align], t]
+    v
+
+--- whether the scroll is within `within` pixels of the list's end (where
+--- an endless list asks for more)
+fn virtual_near_end[v, within = 500.0]
+    virtual_total[v] - (v.area.top + v.area.tall) lte within
+
+--- more rows come (an endless list's next page)
+fn virtual_count[v, count]
+    v.count = count
+    v
+
+--- the frame taken by the list (its scroll area's)
+fn virtual_scrolled[c, v]
+    v.area = area_scrolled[c, v.area]
+    v
+
+--- the list drawn in its scroll area: room before, the rows drawn
+--- (`faces`, one for each of `virtual_rows`, in order) with a mark before
+--- each and after the last that measures them, and room after
+fn virtual_view[v, id, tall, faces]
+    r = virtual_rows[v]
+    kids = [gui.space[0.0]]
+    kids = slice[kids, 0, 0]
+    if r[1] lt r[0]
+        return area_view[v.area, id, tall, kids]
+    kids = push[kids, gui.space[virtual_start[v, r[0]]]]
+    i = r[0]
+    while i lte r[1]
+        kids = push[kids, gui.area['`id`:row:`i`', 0.0, 0.0]]
+        kids = push[kids, faces[i - r[0]]]
+        if v.gap gt 0.0 and i lt v.count - 1
+            kids = push[kids, gui.space[v.gap]]
+        i = i + 1
+    kids = push[kids, gui.area['`id`:row:end', 0.0, 0.0]]
+    last = r[1]
+    kids = push[kids, gui.space[max[0.0, virtual_total[v] - virtual_start[v, last] - virtual_size[v, last]]]]
+    area_view[v.area, id, tall, [gui.column[kids, gap = 0.0]]]
+
+--- the list's controls heard: its scroll area's, the rows drawn measured
+--- (the scroll moved as their changes ask)
+fn virtual_heard[v, shown, id]
+    r = virtual_rows[v]
+    v.area = area_heard[v.area, shown, id]
+    v.adjust = 0.0
+    i = r[0]
+    while i lte r[1] and r[1] gte r[0]
+        here = '`id`:row:`i`'
+        next = '`id`:row:`i + 1`'
+        if i eq r[1]
+            next = '`id`:row:end'
+        if here in shown.boxes and next in shown.boxes
+            size = shown.boxes[next][1] - shown.boxes[here][1]
+            if v.gap gt 0.0 and i lt v.count - 1
+                size = size - v.gap
+            v = virtual_measured[v, i, size]
+        i = i + 1
+    if v.adjust ne 0.0
+        a = v.area
+        a.top = a.top + v.adjust
+        v.area = a
+    v
+
+--- ---- virtual grids: rows and columns ----
+
+--- rows and columns each a virtual list (the columns across, their
+--- `estimate` a width), scrolled across by `left` in a view `wide` across
+struct Grid [rows, cols, left, wide]
+
+fn grid_of[rows, cols, row_size, col_size, overscan_rows = 5, overscan_cols = 3]
+    Grid[virtual_of[rows, row_size, overscan = overscan_rows], virtual_of[cols, col_size, overscan = overscan_cols], 0.0, 0.0]
+
+--- the columns drawn at a scroll across of `left` in a view `wide` across
+fn grid_cols[g]
+    virtual_range[g.cols, g.left, g.wide]
+
+fn grid_rows[g]
+    virtual_rows[g.rows]
+
+fn grid_left[g, left]
+    most = max[0.0, virtual_total[g.cols] - g.wide]
+    g.left = _clamped[0.0, most, left]
+    g
+
+--- the frame taken by the grid: its rows' scroll, and the wheel across
+--- (or with Shift) over it moving it across
+fn grid_scrolled[c, g]
+    s = lory.px[c]
+    rows = g.rows
+    box = rows.area.box
+    g.rows = virtual_scrolled[c, rows]
+    for e in lory.events[c]
+        if e.on eq 'wheel' and len[box] eq 4 and _over_box[box, e.x / s, e.y / s]
+            by = e.dx / s
+            if e.shift
+                by = e.dy / s
+            g = grid_left[g, g.left + by]
+    g
+
+--- the grid drawn: for each row drawn, room before the first column
+--- drawn, its cells (`cells`: for each row of `grid_rows`, a list for each
+--- column of `grid_cols`, each sized to its column), room after
+fn grid_view[g, id, tall, cells]
+    rr = grid_rows[g]
+    cr = grid_cols[g]
+    faces = [gui.space[0.0]]
+    faces = slice[faces, 0, 0]
+    r = rr[0]
+    while r lte rr[1] and rr[1] gte rr[0]
+        line = [gui.area['', virtual_start[g.cols, cr[0]], 1.0]]
+        k = cr[0]
+        while k lte cr[1] and cr[1] gte cr[0]
+            line = push[line, gui.sized[cells[r - rr[0]][k - cr[0]], virtual_size[g.cols, k]]]
+            k = k + 1
+        faces = push[faces, gui.moved[gui.row[line, gap = 0.0], 0.0 - g.left, 0.0]]
+        r = r + 1
+    virtual_view[g.rows, id, tall, faces]
+
+fn grid_heard[g, shown, id]
+    g.rows = virtual_heard[g.rows, shown, id]
+    if id in shown.boxes
+        g.wide = shown.boxes[id][2]
+    g
+
+--- ---- endless feeds (Vuetify's v-infinite-scroll) ----
+---
+--- A side ('start', 'end' or 'both') asks for more when its edge comes
+--- within `margin` of the view (`intersect` mode) or its button is pressed
+--- (`manual`); while it loads it asks no more; told `ok` it may ask again,
+--- told `empty` it shows "No more" and asks no more, told `error` it shows
+--- the program's error until reset. Content put before (at the start)
+--- keeps what is in view where it was.
+
+struct Feed [side, mode, margin, start, end, before, area]
+
+fn feed_of[side = 'end', mode = 'intersect', margin = 0.0, bar = 'hover']
+    Feed[side, mode, margin, 'ok', 'ok', 0.0, area_of[bar = bar]]
+
+fn feed_status[f, side]
+    if side eq 'start'
+        return f.start
+    f.end
+
+fn _feed_set[f, side, status]
+    if side eq 'start' or side eq 'both'
+        f.start = status
+    if side eq 'end' or side eq 'both'
+        f.end = status
+    f
+
+fn _feed_has[f, side]
+    f.side eq side or f.side eq 'both'
+
+--- whether a side's edge is within the margin of the view
+fn feed_near[f, side]
+    a = f.area
+    if side eq 'start'
+        return a.top lte f.margin
+    a.content - (a.top + a.tall) lte f.margin
+
+--- the sides that ask for more now (each then loading): in `intersect`
+--- mode those near the view, idle and not empty
+fn feed_wants[f]
+    out = _texts[]
+    if f.mode ne 'intersect'
+        return out
+    for side in ['start', 'end']
+        if _feed_has[f, side] and feed_near[f, side] and feed_status[f, side] eq 'ok'
+            out = push[out, side]
+    out
+
+--- a side asks for more (its button, or `feed_wants`): it is loading;
+--- the content's height then is kept to hold the view at the start
+fn feed_load[f, side]
+    s = feed_status[f, side]
+    if s eq 'empty' or s eq 'loading'
+        return f
+    f.before = f.area.content
+    _feed_set[f, side, 'loading']
+
+--- the program's answer for a side: 'ok', 'empty' or 'error'
+fn feed_done[f, side, status]
+    f = _feed_set[f, side, status]
+    f
+
+--- a side (or the feed's own sides: '') made idle again
+fn feed_reset[f, side = '']
+    which = side
+    if which eq ''
+        which = f.side
+    _feed_set[f, which, 'ok']
+
+fn feed_scrolled[c, f]
+    f.area = area_scrolled[c, f.area]
+    f
+
+--- the feed drawn: each side's footing (a "Load more" button in manual
+--- mode, Loading while it loads, "No more" once empty, the program's
+--- `failed` words and a Retry button on an error) and the program's `kids`
+--- between
+fn feed_view[f, id, tall, kids, failed = 'Something went wrong']
+    out = [gui.space[0.0]]
+    out = slice[out, 0, 0]
+    if _feed_has[f, 'start']
+        out = push[out, _feed_foot[f, id, 'start', failed]]
+    for k in kids
+        out = push[out, k]
+    if _feed_has[f, 'end']
+        out = push[out, _feed_foot[f, id, 'end', failed]]
+    area_view[f.area, id, tall, out]
+
+fn _feed_foot[f, id, side, failed]
+    s = feed_status[f, side]
+    if s eq 'error'
+        return gui.column[[gui.text[failed, tone = 'danger'], gui.button['`id`:retry:`side`', 'Retry']]]
+    if s eq 'empty'
+        return gui.text['No more', tone = 'muted']
+    if s eq 'loading'
+        return gui.text['Loading…', tone = 'muted']
+    if f.mode eq 'manual'
+        return gui.button['`id`:more:`side`', 'Load more']
+    gui.space[0.0]
+
+--- the feed's controls heard: its scroll area's (content put at the
+--- start keeping the view), and its buttons asking for more
+fn feed_heard[f, shown, id]
+    before = f.area.content
+    f.area = area_heard[f.area, shown, id]
+    if f.start eq 'ok' and f.before gt 0.0 and f.area.content gt before and before gt 0.0
+        a = f.area
+        a.top = a.top + f.area.content - before
+        f.area = a
+        f.before = 0.0
+    for e in shown.events
+        for side in ['start', 'end']
+            if e.id eq '`id`:more:`side`' or e.id eq '`id`:retry:`side`'
+                f = feed_load[_feed_set[f, side, 'ok'], side]
+    f
+
+--- ---- pull to refresh (Vuetify's v-pull-to-refresh) ----
+---
+--- Pulled down from the top (only while its scroll is at the top), the
+--- content follows the pointer up to `threshold` pixels (64); let go past
+--- it, it refreshes until the program is done; let go short, it goes back.
+
+struct Pull [threshold, pulled, touching, refreshing, from_y, going_up]
+
+fn pull_of[threshold = 64.0]
+    Pull[threshold, 0.0, false, false, 0.0, false]
+
+--- how far the content stands down
+fn pull_offset[p]
+    _clamped[0.0, p.threshold, p.pulled]
+
+fn pull_can_refresh[p]
+    p.pulled gte p.threshold and not p.refreshing
+
+fn pull_down[p, y]
+    if p.refreshing
+        return p
+    p.touching = true
+    p.from_y = y
+    p
+
+--- the pointer moved to `y`, the scroll at `top`
+fn pull_move[p, y, top]
+    if p.refreshing or not p.touching
+        return p
+    if top eq 0.0
+        before = pull_offset[p]
+        p.pulled = y - p.from_y
+        p.going_up = pull_offset[p] lt before
+    p
+
+--- let go: whether it now refreshes (the program loads, then `pull_done`)
+fn pull_up[p]
+    if p.refreshing
+        return p
+    p.touching = false
+    if pull_can_refresh[p]
+        p.refreshing = true
+        return p
+    p.pulled = 0.0
+    p
+
+fn pull_done[p]
+    if not p.refreshing
+        return p
+    p.pulled = 0.0
+    p.refreshing = false
+    p
+
+--- the frame's presses, moves and releases over the box `box` (CSS
+--- pixels) taken, the scroll at `top`
+fn pull_heard[c, p, box, top]
+    s = lory.px[c]
+    for e in lory.events[c]
+        if e.on eq 'down' and _over_box[box, e.x / s, e.y / s]
+            p = pull_down[p, e.y / s]
+        if e.on eq 'move'
+            p = pull_move[p, e.y / s, top]
+        if e.on eq 'up' or e.on eq 'leave'
+            if p.touching
+                p = pull_up[p]
+    p
+
+--- the content drawn down by the pull, the panel above it showing which
+--- way to pull or that it refreshes
+fn pull_view[p, kids]
+    sign = '↓'
+    if pull_can_refresh[p] or p.going_up
+        sign = '↑'
+    if p.refreshing
+        sign = 'Refreshing…'
+    off = pull_offset[p]
+    panel = gui.moved[gui.text[sign, tone = 'muted'], 0.0, off - p.threshold]
+    gui.overlay[gui.moved[gui.column[kids], 0.0, off], panel, anchor = 'top']
+
+--- ---- sticky (Semantic UI's) ----
+---
+--- A block that stays in view while its context scrolls past: where it
+--- stood (`free`), fixed to the view's top `offset` below it (`top`),
+--- bound to its context's bottom (`bound`), or (pushing, scrolled back up
+--- from the bottom) fixed to the view's bottom `bottom_offset` above it
+--- (`bottom`). A block taller than the view scrolls within itself while
+--- fixed. It tells `stick`, `unstick` and `bottom` as Semantic's
+--- callbacks are called (`onStick`, `onUnstick`, `onBottom`).
+
+struct Stuck [state, last, inner, told]
+
+fn stuck_of[]
+    Stuck['free', -1.0, 0.0, _texts[]]
+
+--- the block (`top`, `tall` where it stands unfixed) in its context
+--- (`from`, `to`) with the view `view_tall` high scrolled to `scroll`
+fn sticky_at[s, scroll, view_tall, top, tall, from, to, offset = 0.0, bottom_offset = 0.0, pushing = false]
+    s.told = _texts[]
+    bottomish = s.state eq 'bottom' or s.state eq 'bound'
+    off = offset
+    if bottomish and pushing
+        off = bottom_offset
+    st = scroll + off
+    sb = scroll + off + view_tall
+    fits = tall + offset lte view_tall
+    ctx_bottom = to
+    inner = 0.0
+    if not fits
+        delta = 0.0
+        if s.last gte 0.0
+            delta = st - s.last
+        most = tall - view_tall + offset
+        inner = _clamped[0.0, most, s.inner + delta]
+    if tall eq 0.0
+        return s
+    if s.state eq 'free'
+        if st gte ctx_bottom
+            s = _bind_bottom[s]
+        else if st gt top
+            if tall + st - inner gte ctx_bottom
+                s = _bind_bottom[s]
+            else
+                s = _fix[s, 'top']
+    else if s.state eq 'top'
+        if st lte top
+            s = _unfix[s]
+        else if tall + st - inner gte ctx_bottom
+            s = _bind_bottom[s]
+        else if not fits
+            s.inner = inner
+            s.last = st
+    else if s.state eq 'bottom'
+        if sb - tall lte top
+            s = _unfix[s]
+        else if sb gte ctx_bottom
+            s = _bind_bottom[s]
+        else if not fits
+            s.inner = inner
+            s.last = st
+    else if s.state eq 'bound'
+        if st lte top
+            s = _unfix[s]
+        else if pushing
+            if sb lte ctx_bottom
+                s = _fix[s, 'bottom']
+        else if st lte ctx_bottom - tall
+            s = _fix[s, 'top']
+    s
+
+fn _fix[s, side]
+    s.state = side
+    s.told = push[s.told, 'stick']
+    s
+
+fn _bind_bottom[s]
+    s.state = 'bound'
+    s.inner = 0.0
+    s.told = push[s.told, 'bottom']
+    s.told = push[s.told, 'unstick']
+    s
+
+fn _unfix[s]
+    was = s.state eq 'top' or s.state eq 'bottom'
+    s.state = 'free'
+    s.inner = 0.0
+    s.last = -1.0
+    if was
+        s.told = push[s.told, 'unstick']
+    s
+
+--- where the block is drawn on the page, as it stands
+fn sticky_y[s, scroll, view_tall, top, tall, to, offset = 0.0, bottom_offset = 0.0]
+    if s.state eq 'top'
+        return scroll + offset - s.inner
+    if s.state eq 'bottom'
+        return scroll + view_tall - tall - bottom_offset
+    if s.state eq 'bound'
+        return to - tall
+    top
+
+--- ---- visibility (Semantic UI's, Vuetify's v-lazy) ----
+---
+--- A block's place against the view: its top or bottom visible or passed,
+--- passing (its top passed, its bottom not), on or off the screen, how far
+--- it has passed; each told once (`once`, Semantic's default) or once
+--- each time it comes true again, and each reverse told when it stops
+--- being true after it was. As Semantic's, being on screen reads whether
+--- it was passing at the last check.
+
+struct Seen [occurred, passing, told, passed, share]
+
+fn seen_of[]
+    Seen[_texts[], false, _texts[], 0.0, 0.0]
+
+fn _was[s, name]
+    for n in s.occurred
+        if n eq name
+            return true
+    false
+
+fn _occur[s, name]
+    if not _was[s, name]
+        s.occurred = push[s.occurred, name]
+    s
+
+fn _unoccur[s, name]
+    out = _texts[]
+    for n in s.occurred
+        if n ne name
+            out = push[out, n]
+    s.occurred = out
+    s
+
+fn _check[s, name, yes, once, continuous]
+    if yes
+        if continuous or not _was[s, name]
+            s.told = push[s.told, name]
+        return _occur[s, name]
+    if not once
+        return _unoccur[s, name]
+    s
+
+fn _check_reverse[s, name, of, yes, once, continuous]
+    if not yes
+        if _was[s, of]
+            if continuous or not _was[s, name]
+                s.told = push[s.told, name]
+            s = _occur[s, name]
+        return s
+    if not once
+        return _unoccur[s, name]
+    s
+
+--- the block (`top`, `tall`) checked against the view scrolled to
+--- `scroll` (and `offset` more), `view_tall` high
+fn seen_at[s, scroll, view_tall, top, tall, offset = 0.0, once = true, continuous = false]
+    s.told = _texts[]
+    st = scroll + offset
+    sb = st + view_tall
+    bottom = top + tall
+    top_passed = st gte top
+    bottom_passed = st gte bottom
+    top_visible = sb gte top and not top_passed
+    bottom_visible = sb gte bottom and not bottom_passed
+    on_screen = (top_visible or s.passing) and not bottom_passed
+    passing = top_passed and not bottom_passed
+    s.passed = 0.0
+    s.share = 0.0
+    if passing
+        s.passed = st - top
+        s.share = (st - top) / tall
+    s = _check_reverse[s, 'passing_reverse', 'passing', passing, once, continuous]
+    s = _check_reverse[s, 'top_visible_reverse', 'top_visible', top_visible, once, continuous]
+    s = _check_reverse[s, 'bottom_visible_reverse', 'bottom_visible', bottom_visible, once, continuous]
+    s = _check_reverse[s, 'top_passed_reverse', 'top_passed', top_passed, once, continuous]
+    s = _check_reverse[s, 'bottom_passed_reverse', 'bottom_passed', bottom_passed, once, continuous]
+    s = _check[s, 'on_screen', on_screen, once, continuous]
+    s = _check[s, 'off_screen', not on_screen, once, continuous]
+    s = _check[s, 'passing', passing, once, continuous]
+    s = _check[s, 'top_visible', top_visible, once, continuous]
+    s = _check[s, 'bottom_visible', bottom_visible, once, continuous]
+    s = _check[s, 'top_passed', top_passed, once, continuous]
+    s = _check[s, 'bottom_passed', bottom_passed, once, continuous]
+    s.passing = passing
+    s
+
+--- Vuetify's v-lazy: whether the block has come into the view (at least
+--- `threshold` of it shown, 0: any of it), once and for good
+fn lazy_shown[was, scroll, view_tall, top, tall, threshold = 0.0]
+    if was
+        return true
+    seen = min[scroll + view_tall, top + tall] - max[scroll, top]
+    if tall lte 0.0
+        return seen gte 0.0 and top gte scroll and top lte scroll + view_tall
+    if threshold lte 0.0
+        return seen gt 0.0
+    seen / tall gte threshold
+
+--- ---- parallax ----
+
+--- Vuetify's v-parallax: the picture moved down and grown as its block
+--- (`top`, `tall`) passes the view: [translate, scale] for `scale` (0.5,
+--- Vuetify's default: how far the picture keeps up with the page)
+fn vuetify_parallax[scroll, view_tall, top, tall, scale = 0.5]
+    k = 1.0 - _clamped[0.0, 1.0, scale]
+    centre = top + (tall - view_tall) / 2.0
+    moved = (scroll - centre) * k
+    shift_by = 0.0
+    if moved gt 0.0
+        shift_by = floor[moved]
+    if moved lt 0.0
+        shift_by = 0.0 - floor[0.0 - moved]
+    grown = max[1.0, (k * (view_tall - tall) + tall) / tall]
+    [shift_by, grown]
+
+--- Motion's way: a layer moved by the scroll times its factor (a factor
+--- under 1 lags behind the page, over 1 runs ahead, negative goes against)
+fn parallax_y[scroll, factor]
+    scroll * factor
+
+--- fullPage's parallax: a section's ground moved by `percentage` (62 by
+--- default) of how far its section stands from the view, against the
+--- scroll (`reveal`, the ground uncovered by the section going) or with
+--- it (`cover`, the ground covered by the section coming)
+fn page_parallax[p, i, percentage = 62.0, cover = false]
+    away = page_section_top[p, i] - p.y
+    k = percentage / 100.0
+    if cover
+        return 0.0 - away * k
+    if away lt 0.0
+        return 0.0 - away * k
+    0.0
+
+--- ---- scroll spy, progress, back to top ----
+
+--- which of the blocks starting at `tops` (in order) the view scrolled to
+--- `scroll` reads now: the last whose top is at or above `scroll` plus
+--- `offset` (-1: above them all); at the page's end the last
+fn spy_at[tops, scroll, view_tall, content, offset = 0.0]
+    if len[tops] eq 0
+        return -1
+    if content gt 0.0 and scroll + view_tall gte content - 1.0
+        return len[tops] - 1
+    at = -1
+    k = 0
+    for t in tops
+        if t lte scroll + offset
+            at = k
+        k = k + 1
+    at
+
+--- how far down the page the scroll is, 0 to 1
+fn scrolled_share[scroll, view_tall, content]
+    most = content - view_tall
+    if most lte 0.0
+        return 1.0
+    _clamped[0.0, 1.0, scroll / most]
+
+--- whether a "back to top" button shows: past `after` pixels down
+fn back_to_top_shown[scroll, after = 400.0]
+    scroll gt after
+
+--- ---- offset sections (fullPage's) ----
+
+--- a section of `percentage` of the view's height (fullPage's
+--- `data-percentage`), and the scroll that shows it: at its top, or
+--- centred (`data-centered`) in the view
+fn offset_tall[view_tall, percentage]
+    view_tall * percentage / 100.0
+
+fn offset_scroll[top, tall, view_tall, whole, centered = false]
+    to = top
+    if centered
+        to = top - (view_tall - tall) / 2.0
+    _clamped[0.0, max[0.0, whole - view_tall], to]
+
+--- ---- media in sections (fullPage's lazy loading and autoplay) ----
+
+--- what a section's media does on a move: a section left pauses its
+--- media; one arrived plays what is marked to play (`autoplay`), loading
+--- first what it has not loaded
+fn page_media[p, before, after]
+    out = _texts[]
+    if before gte 0 and before ne after
+        out = push[out, 'pause:`before`']
+    if after gte 0 and p.sections[after].autoplay
+        out = push[out, 'play:`after`']
+    out
+
+--- ---- tests: frames as a page hands them ----
+
+fn _frame_of[t, items]
+    inner = join[items, ', ']
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": [`inner`], "pointers": [], "controllers": [], "said": []}']]
+
+fn _mouse[on, x, y]
+    '{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+fn _clicked[x, y]
+    [_mouse['move', x, y], _mouse['down', x, y], _mouse['up', x, y]]
+
+fn _key_of[name]
+    '{"type": "key", "key": "`name`", "code": "`name`", "shift": false}'
+
+fn _wheel_of[x, y, dy]
+    '{"type": "wheel", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "dx": 0, "dy": `dy`}'
+
+--- a headset's frame at `t`, the right hand's ray at (x, y) on its page of
+--- 1000 by 560, its thumbstick pushed `forward` (-1 up to 1)
+fn _headset_at[t, x, y, given, forward = 0.0]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    ox = x * 0.002 - 1.0
+    oy = 1.8 - y * 0.002
+    inner = join[given, ', ']
+    lory.begin[json['{"t": `t`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": [`inner`], "pointers": [], "controllers": [{"hand": "right", "origin": [`ox`, `oy`, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, `forward`]}], "said": []}']]
+
+fn _ray[on]
+    '{"type": "`on`", "device": "ray", "id": "right"}'
+
+fn _three[]
+    [section[name = 'one', color = '#203040'], section[name = 'two', color = '#304050'], section[name = 'three', slides = 2, color = '#405060']]
+
+fn _faces[]
+    [gui.text['one'], gui.text['two'], gui.text['three a'], gui.text['three b']]
+
+--- a frame heard: the sections brought to it, shown and their controls heard
+fn _framed[p, c]
+    p = paged[c, p]
+    shown = gui.show_at[c, pages_view[p, _faces[]], 0.0, 0.0, lory.width[c] / lory.px[c], gui.dark[]]
+    ended = lory.end[shown.canvas]
+    p.now = p.now + 0.0 * ended
+    pages_heard[p, shown]
+
+test pages_are_drawn_with_their_dots_and_a_dot_pressed_moves_there[]
+    p = pages[_three[], 900.0, 700.0, page_options[nav = true], t = 0.0]
+    p = _framed[p, _frame_of[0.0, []]]
+    p.box eq [0.0, 0.0, 900.0, 700.0]
+    b = page_dot_box[p, 2]
+    p = _framed[p, _frame_of[100.0, _clicked[b[0] + b[2] / 2.0, b[1] + b[3] / 2.0]]]
+    p.move.to eq 2
+    p = _framed[p, _frame_of[1000.0, []]]
+    page_index[p] eq 2 and page_offset[p] eq 1400.0
+
+test the_keys_and_the_wheel_move_the_sections[]
+    p = pages[_three[], 900.0, 700.0, page_options[], t = 0.0]
+    p = _framed[p, _frame_of[0.0, []]]
+    p = _framed[p, _frame_of[100.0, [_key_of['ArrowDown']]]]
+    p = _framed[p, _frame_of[1000.0, []]]
+    page_index[p] eq 1
+    p = _framed[p, _frame_of[1100.0, [_wheel_of[450.0, 350.0, 100.0]]]]
+    p = _framed[p, _frame_of[2000.0, []]]
+    page_index[p] eq 2
+
+test a_slide_arrow_pressed_moves_the_slide[]
+    p = pages[_three[], 900.0, 700.0, page_options[], t = 0.0]
+    p = page_silent_to[p, 2, 0.0]
+    p = _framed[p, _frame_of[0.0, []]]
+    p = _framed[p, _frame_of[100.0, _clicked[880.0, 350.0]]]
+    p = _framed[p, _frame_of[1000.0, []]]
+    page_slide[p] eq 1
+
+--- in a headset the thumbstick pushed is a wheel over the sections, and
+--- the ray pressed on a navigation dot moves there
+test in_a_headset_the_stick_scrolls_the_sections_and_the_ray_reaches_the_dots[]
+    gui.unfocus[]
+    p = pages[_three[], 1000.0, 560.0, page_options[nav = true], t = 0.0]
+    p = _framed[p, _headset_at[2000.0, 500.0, 280.0, [], forward = 0.0]]
+    p = _framed[p, _headset_at[2100.0, 500.0, 280.0, [], forward = 0.5]]
+    p.move.to eq 1
+    p = _framed[p, _headset_at[3000.0, 500.0, 280.0, [], forward = 0.0]]
+    page_index[p] eq 1
+    b = page_dot_box[p, 0]
+    x = b[0] + b[2] / 2.0
+    y = b[1] + b[3] / 2.0
+    p = _framed[p, _headset_at[3100.0, x, y, []]]
+    p = _framed[p, _headset_at[3200.0, x, y, [_ray['down'], _ray['up']]]]
+    p = _framed[p, _headset_at[4200.0, x, y, []]]
+    page_index[p] eq 0
+
+fn _rows[n]
+    out = [gui.text['row 0']]
+    k = 1
+    while k lt n
+        out = push[out, gui.text['row `k`']]
+        k = k + 1
+    out
+
+fn _area_framed[a, c]
+    a = area_scrolled[c, a]
+    shown = gui.show_at[c, gui.sized[area_view[a, 'list', 200.0, _rows[40]], 300.0], 0.0, 0.0, lory.width[c] / lory.px[c], gui.dark[]]
+    ended = lory.end[shown.canvas]
+    a.now = a.now + 0.0 * ended
+    area_heard[a, shown, 'list']
+
+test a_scroll_area_measures_its_content_and_the_wheel_scrolls_it[]
+    a = _area_framed[area_of[], _frame_of[0.0, []]]
+    a.tall eq 200.0 and a.content gt 400.0
+    not area_bar_shown[a]
+    a = _area_framed[a, _frame_of[100.0, [_mouse['move', 100.0, 100.0], _wheel_of[100.0, 100.0, 120.0]]]]
+    a.top eq 120.0 and area_bar_shown[a]
+    a = _area_framed[a, _frame_of[200.0, [_wheel_of[100.0, 100.0, 100000.0]]]]
+    a.top eq area_most[a]
+
+--- Radix's hover type: shown while the pointer is over it, hidden 600 ms
+--- after it leaves
+test a_scroll_areas_bar_hides_600_ms_after_the_pointer_leaves[]
+    a = _area_framed[area_of[], _frame_of[0.0, []]]
+    a = _area_framed[a, _frame_of[100.0, [_mouse['move', 100.0, 100.0]]]]
+    area_bar_shown[a]
+    a = _area_framed[a, _frame_of[200.0, [_mouse['move', 600.0, 600.0]]]]
+    a = _area_framed[a, _frame_of[799.0, []]]
+    area_bar_shown[a]
+    a = _area_framed[a, _frame_of[800.0, []]]
+    not area_bar_shown[a]
+    always = _area_framed[area_of[bar = 'always'], _frame_of[0.0, []]]
+    area_bar_shown[always]
+    scrolled = _area_framed[area_of[bar = 'scroll'], _frame_of[0.0, [_mouse['move', 100.0, 100.0]]]]
+    not area_bar_shown[scrolled]
+
+test a_scroll_areas_thumb_is_its_share_of_the_track_never_under_18[]
+    a = area_of[]
+    a.content = 1000.0
+    a.tall = 200.0
+    area_thumb[a, 200.0] eq [0.0, 40.0]
+    a.top = 800.0
+    area_thumb[a, 200.0] eq [160.0, 40.0]
+    a.content = 100000.0
+    area_thumb[a, 200.0][1] eq 18.0
+    --- (a thumb grabbed 10 below its top, dragged to 90, puts its top at 80)
+    a.content = 1000.0
+    area_from_thumb[a, 200.0, 90.0, 10.0] eq 400.0
+
+test a_scroll_areas_track_pressed_centres_the_thumb_and_the_thumb_drags[]
+    a = _area_framed[area_of[bar = 'always'], _frame_of[0.0, []]]
+    b = [a.box[0] + a.box[2] - 5.0, 0.0]
+    a = _area_framed[a, _frame_of[100.0, [_mouse['move', b[0], 100.0], _mouse['down', b[0], 100.0]]]]
+    t = area_thumb[a, 200.0]
+    abs[t[0] + t[1] / 2.0 - 100.0] lt 0.001
+    a = _area_framed[a, _frame_of[150.0, [_mouse['move', b[0], 120.0]]]]
+    t = area_thumb[a, 200.0]
+    abs[t[0] + t[1] / 2.0 - 120.0] lt 0.001
+    a = _area_framed[a, _frame_of[200.0, [_mouse['up', b[0], 120.0]]]]
+    a = _area_framed[a, _frame_of[300.0, [_key_of['Home']]]]
+    a.top eq 0.0
+    a = _area_framed[a, _frame_of[400.0, [_key_of['ArrowDown'], _key_of['PageDown']]]]
+    a.top eq 40.0 + 175.0
+
+test a_smooth_scroll_area_glides_after_the_wheel[]
+    a = _area_framed[area_of[glide = true], _frame_of[0.0, []]]
+    a = _area_framed[a, _frame_of[16.0, [_mouse['move', 100.0, 100.0], _wheel_of[100.0, 100.0, 100.0]]]]
+    a.top eq 0.0
+    a = _area_framed[a, _frame_of[32.0, []]]
+    a.top gt 0.0 and a.top lt 100.0
+    a = _area_framed[a, _frame_of[3000.0, []]]
+    a.top eq 100.0
+
+test in_a_headset_the_stick_scrolls_a_scroll_area[]
+    a = _area_framed[area_of[], _headset_at[2000.0, 100.0, 100.0, []]]
+    a = _area_framed[a, _headset_at[2100.0, 100.0, 100.0, [], forward = 0.5]]
+    a.top eq 60.0
+
+--- (TanStack's example: 50,000 rows of 35, 5 rows drawn past each way)
+fn _big[]
+    v = virtual_of[50000, 35.0, overscan = 5]
+    a = v.area
+    a.tall = 400.0
+    a.content = virtual_total[v]
+    v.area = a
+    v
+
+test a_virtual_list_draws_the_rows_in_view_and_its_overscan[]
+    v = _big[]
+    virtual_total[v] eq 1750000.0
+    virtual_in_view[v, 0.0, 400.0] eq [0, 11]
+    virtual_rows[v] eq [0, 16]
+    virtual_range[v, 35000.0, 400.0] eq [995, 1016]
+    virtual_range[v, 35010.0, 400.0] eq [995, 1016]
+    virtual_range[v, 35030.0, 400.0] eq [995, 1017]
+    virtual_range[v, 1750000.0 - 400.0, 400.0] eq [49983, 49999]
+    near = v
+    near.area = area_to[v.area, virtual_total[v] - 400.0 - 500.0, 0.0]
+    virtual_near_end[near] and not virtual_near_end[v]
+
+test a_row_measured_above_the_scroll_moves_it_by_its_change[]
+    v = _big[]
+    v.area = area_to[v.area, 100.0, 0.0]
+    v = virtual_measured[v, 0, 50.0]
+    v.adjust eq 15.0
+    virtual_start[v, 1] eq 50.0 and virtual_size[v, 0] eq 50.0
+    v = virtual_measured[v, 20, 10.0]
+    v.adjust eq 15.0 and virtual_start[v, 21] eq 50.0 + 20.0 * 35.0 - 25.0
+    v = virtual_measured[v, 5, 35.0]
+    v.measured eq [0, 20]
+
+test a_virtual_list_scrolls_to_a_row_by_its_alignment[]
+    v = _big[]
+    virtual_scroll_for[v, 100, align = 'start'] eq 3500.0
+    virtual_scroll_for[v, 100, align = 'end'] eq 3500.0 + 35.0 - 400.0
+    virtual_scroll_for[v, 100, align = 'center'] eq 3500.0 + 17.5 - 200.0
+    virtual_scroll_for[v, 100] eq 3135.0
+    virtual_scroll_for[v, 3] eq 0.0
+
+fn _list_framed[v, c]
+    v = virtual_scrolled[c, v]
+    faces = [gui.space[0.0]]
+    faces = slice[faces, 0, 0]
+    r = virtual_rows[v]
+    i = r[0]
+    while i lte r[1]
+        faces = push[faces, gui.text['row `i`']]
+        i = i + 1
+    shown = gui.show_at[c, virtual_view[v, 'rows', 300.0, faces], 0.0, 0.0, lory.width[c] / lory.px[c], gui.dark[]]
+    ended = lory.end[shown.canvas]
+    v.adjust = v.adjust + 0.0 * ended
+    virtual_heard[v, shown, 'rows']
+
+test a_virtual_list_shown_measures_its_rows_and_the_wheel_scrolls_it[]
+    v = _list_framed[virtual_of[1000, 50.0, overscan = 2], _frame_of[0.0, []]]
+    v.area.tall eq 300.0
+    len[v.measured] gt 0 and v.sizes[0] lt 50.0
+    v.area.content eq virtual_total[v]
+    v = _list_framed[v, _frame_of[100.0, [_mouse['move', 100.0, 100.0], _wheel_of[100.0, 100.0, 400.0]]]]
+    --- (the rows drawn above the scroll measured, the scroll keeps them)
+    v.area.top eq 400.0 + v.adjust and v.adjust lt 0.0
+    virtual_rows[v][0] gt 2
+
+test in_a_headset_the_stick_scrolls_a_virtual_list[]
+    v = _list_framed[virtual_of[1000, 50.0], _headset_at[2000.0, 100.0, 100.0, []]]
+    v = _list_framed[v, _headset_at[2100.0, 100.0, 100.0, [], forward = 1.0]]
+    v.area.top eq 120.0 + v.adjust
+
+test a_virtual_grid_draws_its_rows_and_columns_in_view_and_overscan[]
+    g = grid_of[50000, 1000, 35.0, 100.0]
+    a = g.rows.area
+    a.tall = 400.0
+    rows = g.rows
+    rows.area = a
+    g.rows = rows
+    g.wide = 400.0
+    grid_rows[g] eq [0, 16]
+    grid_cols[g] eq [0, 6]
+    g = grid_left[g, 5000.0]
+    grid_cols[g] eq [47, 56]
+    g = grid_left[g, 1000000.0]
+    g.left eq 100000.0 - 400.0
+
+test an_endless_feed_asks_for_more_and_is_told_ok_empty_or_error[]
+    f = feed_of[]
+    a = f.area
+    a.content = 1000.0
+    a.tall = 400.0
+    f.area = a
+    feed_wants[f] eq _texts[]
+    f.area = area_to[f.area, 600.0, 0.0]
+    feed_wants[f] eq ['end']
+    f = feed_load[f, 'end']
+    feed_status[f, 'end'] eq 'loading' and feed_wants[f] eq _texts[]
+    f = feed_done[f, 'end', 'ok']
+    feed_wants[f] eq ['end']
+    f = feed_done[feed_load[f, 'end'], 'end', 'empty']
+    feed_wants[f] eq _texts[]
+    f = feed_load[f, 'end']
+    feed_status[f, 'end'] eq 'empty'
+    f = feed_reset[f]
+    feed_status[f, 'end'] eq 'ok'
+    both = feed_of[side = 'both', margin = 100.0]
+    both.area = f.area
+    feed_wants[both] eq ['end']
+    both.area = area_to[f.area, 50.0, 0.0]
+    feed_wants[both] eq ['start']
+    manual = feed_of[mode = 'manual']
+    manual.area = f.area
+    feed_wants[manual] eq _texts[]
+
+fn _feed_framed[f, c]
+    f = feed_scrolled[c, f]
+    shown = gui.show_at[c, feed_view[f, 'feed', 300.0, _rows[3]], 0.0, 0.0, lory.width[c] / lory.px[c], gui.dark[]]
+    ended = lory.end[shown.canvas]
+    f.margin = f.margin + 0.0 * ended
+    feed_heard[f, shown, 'feed']
+
+test a_manual_feeds_button_asks_for_more_and_retry_after_an_error[]
+    f = _feed_framed[feed_of[mode = 'manual'], _frame_of[0.0, []]]
+    shown = gui.show_at[_frame_of[50.0, []], feed_view[f, 'feed', 300.0, _rows[3]], 0.0, 0.0, 900.0, gui.dark[]]
+    b = shown.boxes['feed:more:end']
+    x = b[0] + b[2] / 2.0
+    y = b[1] + b[3] / 2.0
+    f = _feed_framed[f, _frame_of[100.0, _clicked[x, y]]]
+    feed_status[f, 'end'] eq 'loading'
+    f = _feed_framed[feed_done[f, 'end', 'error'], _frame_of[200.0, []]]
+    shown = gui.show_at[_frame_of[250.0, []], feed_view[f, 'feed', 300.0, _rows[3]], 0.0, 0.0, 900.0, gui.dark[]]
+    r = shown.boxes['feed:retry:end']
+    f = _feed_framed[f, _frame_of[300.0, _clicked[r[0] + 4.0, r[1] + 4.0]]]
+    feed_status[f, 'end'] eq 'loading'
+
+test pull_to_refresh_pulls_only_from_the_top_up_to_its_threshold[]
+    p = pull_down[pull_of[], 10.0]
+    p = pull_move[p, 40.0, 0.0]
+    pull_offset[p] eq 30.0 and not pull_can_refresh[p]
+    p = pull_move[p, 200.0, 0.0]
+    pull_offset[p] eq 64.0 and pull_can_refresh[p]
+    p = pull_up[p]
+    p.refreshing and pull_offset[p] eq 64.0
+    p = pull_move[pull_down[p, 0.0], 10.0, 0.0]
+    p.refreshing and pull_offset[p] eq 64.0
+    p = pull_done[p]
+    not p.refreshing and pull_offset[p] eq 0.0
+    short = pull_up[pull_move[pull_down[pull_of[], 0.0], 30.0, 0.0]]
+    not short.refreshing and pull_offset[short] eq 0.0
+    down = pull_move[pull_down[pull_of[], 0.0], 300.0, 20.0]
+    pull_offset[down] eq 0.0
+
+fn _stick_along[ys, offset, pushing]
+    s = stuck_of[]
+    out = _texts[]
+    for y in ys
+        s = sticky_at[s, y, 400.0, 100.0, 200.0, 0.0, 1000.0, offset = offset, pushing = pushing]
+        told = join[s.told, '+']
+        out = push[out, '`s.state`:`told`']
+    out
+
+--- (a block 200 high at 100 in a context to 1000, the view 400 high;
+--- pushing, fixed to the view's bottom, it lets go only once the view's
+--- bottom less its height is back at its place, as Semantic's)
+test a_sticky_block_fixes_to_the_top_binds_to_its_context_and_lets_go[]
+    _stick_along[[0.0, 150.0, 500.0, 800.0, 900.0, 700.0, 50.0], 0.0, false] eq ['free:', 'top:stick', 'top:', 'bound:bottom+unstick', 'bound:', 'top:stick', 'free:unstick']
+    _stick_along[[0.0, 150.0, 800.0, 500.0, 50.0], 0.0, true] eq ['free:', 'top:stick', 'bound:bottom+unstick', 'bottom:stick', 'bottom:']
+    _stick_along[[0.0, 80.0], 30.0, false] eq ['free:', 'top:stick']
+    s = sticky_at[stuck_of[], 150.0, 400.0, 100.0, 200.0, 0.0, 1000.0, offset = 30.0]
+    sticky_y[s, 150.0, 400.0, 100.0, 200.0, 1000.0, offset = 30.0] eq 180.0
+    b = sticky_at[stuck_of[], 900.0, 400.0, 100.0, 200.0, 0.0, 1000.0]
+    sticky_y[b, 900.0, 400.0, 100.0, 200.0, 1000.0] eq 800.0
+
+fn _seen_along[ys, once]
+    s = seen_of[]
+    out = _texts[]
+    for y in ys
+        s = seen_at[s, y, 400.0, 500.0, 200.0, once = once]
+        out = push[out, join[s.told, '+']]
+    out
+
+--- (a block 200 high at 500, the view 400 high)
+test visibility_tells_each_place_once_and_its_reverse[]
+    _seen_along[[0.0, 200.0, 550.0, 800.0, 200.0], true] eq ['off_screen', 'on_screen+top_visible', 'top_visible_reverse+passing+bottom_visible+top_passed', 'passing_reverse+bottom_visible_reverse+bottom_passed', 'top_passed_reverse+bottom_passed_reverse']
+    _seen_along[[200.0, 0.0, 200.0], false] eq ['on_screen+top_visible', 'top_visible_reverse+off_screen', 'on_screen+top_visible']
+    s = seen_at[seen_of[], 550.0, 400.0, 500.0, 200.0]
+    s.passed eq 50.0 and s.share eq 0.25
+
+test a_lazy_block_shows_once_it_comes_into_view[]
+    not lazy_shown[false, 0.0, 400.0, 500.0, 200.0]
+    lazy_shown[false, 150.0, 400.0, 500.0, 200.0]
+    not lazy_shown[false, 150.0, 400.0, 500.0, 200.0, threshold = 0.5]
+    lazy_shown[false, 200.0, 400.0, 500.0, 200.0, threshold = 0.5]
+    lazy_shown[true, 0.0, 400.0, 5000.0, 200.0]
+
+test parallax_moves_a_picture_as_vuetify_motion_and_fullpage_do[]
+    vuetify_parallax[1000.0, 800.0, 1000.0, 500.0] eq [75.0, 1.3]
+    vuetify_parallax[0.0, 800.0, 1000.0, 500.0] eq [-425.0, 1.3]
+    vuetify_parallax[1000.0, 800.0, 1000.0, 500.0, scale = 1.0] eq [0.0, 1.0]
+    parallax_y[300.0, 0.5] eq 150.0 and parallax_y[300.0, -0.2] eq -60.0
+    p = pages[_three[], 900.0, 700.0, page_options[], t = 0.0]
+    p = pages_at[page_silent_to[p, 1, 0.0], 0.0]
+    page_parallax[p, 0] eq 700.0 * 0.62
+    page_parallax[p, 1] eq 0.0
+    page_parallax[p, 2, cover = true] eq 0.0 - 700.0 * 0.62
+
+test scroll_spy_progress_and_back_to_top[]
+    spy_at[[0.0, 500.0, 1200.0], 0.0, 400.0, 2000.0] eq 0
+    spy_at[[100.0, 500.0, 1200.0], 0.0, 400.0, 2000.0] eq -1
+    spy_at[[0.0, 500.0, 1200.0], 450.0, 400.0, 2000.0, offset = 60.0] eq 1
+    spy_at[[0.0, 500.0, 1900.0], 1600.0, 400.0, 2000.0] eq 2
+    scrolled_share[800.0, 400.0, 2000.0] eq 0.5
+    scrolled_share[0.0, 400.0, 300.0] eq 1.0
+    back_to_top_shown[401.0] and not back_to_top_shown[400.0]
+
+test offset_sections_are_a_share_of_the_view_and_may_centre[]
+    offset_tall[800.0, 80.0] eq 640.0
+    offset_scroll[800.0, 640.0, 800.0, 3000.0] eq 800.0
+    offset_scroll[800.0, 640.0, 800.0, 3000.0, centered = true] eq 720.0
+    offset_scroll[2800.0, 200.0, 800.0, 3000.0] eq 2200.0
+
+test a_sections_media_pauses_as_it_is_left_and_plays_as_it_is_reached[]
+    secs = [section[name = 'a'], section[name = 'b', autoplay = true]]
+    p = pages[secs, 900.0, 700.0, page_options[], t = 0.0]
+    page_media[p, 0, 1] eq ['pause:0', 'play:1']
+    page_media[p, 1, 0] eq ['pause:1']
+    page_media[p, -1, 1] eq ['play:1']
+
+--- fullPage's fading effect: the section come to fades in over the one
+--- left as the move goes, eased as the move is
+test with_the_fading_effect_a_section_fades_in_over_the_one_left[]
+    p = pages[_three[], 900.0, 700.0, page_options[], t = 0.0]
+    page_fading[p, 0.0] eq Fade[0, 0, 1.0]
+    p = page_key[p, 'ArrowDown', 100.0]
+    f = page_fading[p, 450.0]
+    f.from eq 0 and f.to eq 1 and f.share gt 0.0 and f.share lt 1.0
+    f.share eq (page_y_at[p, 450.0] - 0.0) / 700.0
+    p = pages_at[p, 450.0]
+    shown = gui.show_at[_frame_of[450.0, []], pages_view[p, _faces[], fading = true], 0.0, 0.0, 900.0, gui.dark[]]
+    shown.boxes['pages:1'][1] eq 0.0
+    p = pages_at[p, 1000.0]
+    page_fading[p, 1000.0] eq Fade[1, 1, 1.0]

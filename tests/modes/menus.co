@@ -1,0 +1,219 @@
+--- What lory.menus, lory.overlays and lory.disclosure compute on fixed
+--- inputs, written out to diff the interpreter's run against the compiled
+--- program's (tests/modes.sh): cmdk's scores and a palette's order, the
+--- typeahead's matches, a submenu's grace, a tooltip's hull, a toast's
+--- swipe, an accordion's folds, a tree laid flat and its ticks, and a
+--- page of menus, a palette, toasts, an accordion and a tree laid out and
+--- answering frames of presses and keys.
+use lory
+use lory.gui
+use lory.menus
+use lory.overlays
+use lory.disclosure
+
+fn _digits[x]
+    fmt[x, decimals = 12]
+
+fn _all[xs]
+    out = slice[[''], 0, 0]
+    for x in xs
+        out = push[out, _digits[x]]
+    join[out, ' ']
+
+fn _frame[t, given]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _pressed[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _key[name]
+    '[{"type": "key", "key": "`name`", "code": "`name`"}]'
+
+fn _told[shown]
+    out = slice[[''], 0, 0]
+    for e in shown.events
+        out = push[out, '`e.id`/`e.act`/`e.words`/`_digits[e.num]`']
+    join[out, ' ']
+
+fn _box[shown, id]
+    if id in shown.boxes
+        return _all[shown.boxes[id]]
+    'none'
+
+--- cmdk's scores, and a palette's order of them
+cmds = [menus.command['open', 'Open file'], menus.command['recent', 'Open recent', keywords = 'history'], menus.command['save', 'Save'], menus.command['side', 'Toggle sidebar', keywords = 'panel', family = 'View'], menus.command['term', 'Toggle terminal', keywords = 'console shell', family = 'View'], menus.command['def', 'Go to definition', keywords = 'jump', family = 'Go'], menus.command['line', 'Go to line', family = 'Go'], menus.command['theme', 'Change theme', keywords = 'dark light'], menus.command['cal', 'Calculator', off = true]]
+for q in ['', 'o', 'of', 'tsb', 'go to', 'gt', 'dark', 'sa', 'xyz', 'TOGGLE', 'cal']
+    scores = slice[[0.0], 0, 0]
+    for c in cmds
+        scores = push[scores, menus.command_score[c.words, q, c.keywords]]
+    order = slice[[''], 0, 0]
+    for c in menus.ranked[cmds, q]
+        order = push[order, c.id]
+    ranks = join[order, ' ']
+    log['score “`q`”: `_all[scores]`; ranked `ranks`']
+
+--- the typeahead
+names = ['New Tab', 'New Window', 'New Private Window', 'Show Bookmarks', 'Developer Tools']
+for search in ['n', 'nn', 'nnn', 'new p', 's', 'D', 'x', 'show b']
+    for current in ['', 'New Tab', 'New Window', 'Developer Tools']
+        log['match “`search`” from “`current`”: “`menus.next_match[names, search, current]`”']
+
+--- a submenu's grace area and points in it
+for one in [[200.0, 120.0, 1.0], [400.0, 100.0, 0.0]]
+    right = one[2] gt 0.5
+    box = [210.0, 60.0, 180.0, 240.0]
+    if not right
+        box = [200.0, 90.0, 190.0, 160.0]
+    area = menus.grace_area[one[0], one[1], box, right]
+    inside = slice[[''], 0, 0]
+    gy = 0.0
+    while gy lte 340.0
+        row = ''
+        gx = 160.0
+        while gx lte 440.0
+            if menus.inside_polygon[gx, gy, area]
+                row = '`row`#'
+            else
+                row = '`row`.'
+            gx = gx + 20.0
+        inside = push[inside, row]
+        gy = gy + 34.0
+    pictured = join[inside, ' ']
+    log['grace `_all[area]`: `pictured`']
+
+--- a tooltip's exit, its padded points and its hull
+trigger = [100.0, 100.0, 120.0, 40.0]
+for p in [[100.0, 120.0], [220.0, 120.0], [160.0, 100.0], [160.0, 140.0], [100.0, 100.0], [219.0, 139.0]]
+    side = overlays.exit_side[p[0], p[1], trigger]
+    log['exit `_all[p]`: `side` `_all[overlays.padded_exit[p[0], p[1], side]]`; hull `_all[overlays.grace_hull[p[0], p[1], trigger, [120.0, 150.0, 80.0, 30.0]]]`']
+log['hull of a line and repeats: `_all[overlays.hull[[0.0, 0.0, 10.0, 10.0, 20.0, 20.0, 10.0, 10.0, 5.0, 15.0, 15.0, 5.0]]]`']
+
+--- a toast's swipe
+for way in ['right', 'left', 'up', 'down']
+    row = slice[[''], 0, 0]
+    for d in [[49.0, 0.0], [51.0, 0.0], [-51.0, 0.0], [51.0, 51.0], [0.0, 51.0], [0.0, -51.0], [3.0, 1.0]]
+        row = push[row, '`overlays.swiped_past[d[0], d[1], way, 50.0]`']
+    went = join[row, ' ']
+    log['swipe `way`: `went`']
+touch = _digits[overlays.swipe_start['touch']]
+mouse = _digits[overlays.swipe_start['mouse']]
+log['swipe starts: touch `touch` mouse `mouse`']
+
+--- an accordion's folds
+--- (each: the folds open, a space between; the one pressed; multiple;
+--- collapsible)
+for one in [['', 'a', '0', '0'], ['a', 'b', '0', '0'], ['a', 'a', '0', '0'], ['a', 'a', '0', '1'], ['a', 'b', '1', '0'], ['a b', 'a', '1', '0']]
+    was = slice[[''], 0, 0]
+    for w in split[one[0], ' ']
+        if w ne ''
+            was = push[was, w]
+    after = join[disclosure.folds_after[was, one[1], one[2] eq '1', one[3] eq '1'], ',']
+    log['folds `one[0]` + `one[1]` multiple `one[2]` collapsible `one[3]`: `after`']
+
+--- a tree laid flat, and its ticks as Vuetify's classic choosing answers
+lib = disclosure.branch['lib', 'lib', [disclosure.leaf['gui', 'gui.co'], disclosure.leaf['xr', 'xr.co']]]
+src = disclosure.branch['src', 'src', [lib, disclosure.leaf['main', 'main.co'], disclosure.leaf['old', 'old.co', off = true]]]
+files = [src, disclosure.branch['docs', 'docs', [disclosure.leaf['guide', 'guide.md']]], disclosure.leaf['readme', 'README.md']]
+lines = disclosure.flat[files]
+for l in lines
+    log['line `l.id` depth `l.depth` folder `l.folder` parent `l.parent` under `l.under` off `l.off`']
+ticks = map['' = 'off']
+for step in [[1, 1], [4, 1], [2, 0], [0, 1], [3, 0], [6, 1], [0, 0]]
+    ticks = disclosure.ticked_after[lines, ticks, step[0], step[1] eq 1]
+    row = slice[[''], 0, 0]
+    for l in lines
+        state = 'off'
+        if l.id in ticks
+            state = ticks[l.id]
+        row = push[row, '`l.id`=`state`']
+    states = join[row, ' ']
+    log['tick `lines[step[0]].id` `step[1]`: `states`']
+
+--- a page laid out and answering frames
+entries = [menus.item['new', 'New file', shortcut = 'Ctrl+N'], menus.item['open', 'Open'], menus.separator[], menus.check['wrap', 'Wrap lines', true], menus.item['quit', 'Quit', off = true]]
+folds = [disclosure.fold['a', 'Is it accessible?', [gui.text['Yes.']]], disclosure.fold['b', 'Is it styled?', [gui.text['Yes, by its look.']]]]
+
+fn _page[c, entries, folds, open, notices]
+    menu = menus.dropdown[c, 'file', 'File', entries]
+    acc = disclosure.accordion[c, 'faq', folds, open, collapsible = true]
+    tree = disclosure.tree[c, 'files', [disclosure.branch['src', 'src', [disclosure.leaf['main', 'main.co']]], disclosure.leaf['readme', 'README.md']], checks = true]
+    shelf = overlays.toasts[c, 'shelf', notices]
+    gui.column[[menu, acc, tree, gui.button['after', 'After'], shelf]]
+
+notices = [overlays.notice['saved', 'Saved', words = 'Your file is saved.'], overlays.notice['sent', 'Sent', act = 'Undo']]
+open = slice[[''], 0, 0]
+t = 0.0
+first = gui.show[_frame[t, '[]'], _page[_frame[t, '[]'], entries, folds, open, notices]]
+for id in ['file', 'faq:a', 'faq:b', 'files', 'after', 'shelf:saved', 'shelf:sent']
+    log['box `id`: `_box[first, id]`']
+--- (each step: a press on a box of the frame before, a key, or nothing)
+steps = ['press file', '', 'key ArrowDown', 'key Enter', '', 'press faq:a', '', 'key ArrowDown', '', '', '', '', 'press files', '', 'key ArrowDown', 'key  ', 'key Home', 'key ArrowLeft', 'key *', 'press faq:a', '', '', '', '']
+shown = first
+for step in steps
+    t = t + 100.0
+    given = '[]'
+    if starts[step, 'press ']
+        b = shown.boxes[slice[step, 6, len[step]]]
+        given = _pressed[b[0] + 20.0, b[1] + 16.0]
+    if starts[step, 'key ']
+        given = _key[slice[step, 4, len[step]]]
+    c = _frame[t, given]
+    shown = gui.show[c, _page[c, entries, folds, open, notices]]
+    open = disclosure.folds_open[shown, 'faq', open]
+    words = _told[shown]
+    folds_now = join[open, ',']
+    menu_now = menus.opened['file']
+    log['t `_digits[t]` “`step`”: told “`words`” open `folds_now` menu `menu_now` vertices `len[shown.canvas.verts]`']
+    level = _box[shown, 'file:level:0']
+    trigger_box = _box[shown, 'faq:b']
+    tree_box = _box[shown, 'files']
+    log['  boxes: file `level` faq:b `trigger_box` files `tree_box`']
+opened = join[disclosure.tree_open['files'], ',']
+ticked = join[disclosure.tree_ticked['files'], ',']
+src_tick = disclosure.tick_of['files', 'src']
+log['tree open `opened` ticked `ticked` src `src_tick`']
+
+--- a tooltip and a hover card over time, a dialog and snackbars,
+--- answering frames
+fn _second[c, open]
+    tip = overlays.tooltip[c, gui.button['bold', 'Bold'], 'Make the words bold']
+    card = overlays.hover_card[c, 'who', '@lory', [gui.text['A drawn toolkit.']], 'bottom', 'center']
+    box = overlays.dialog[c, 'edit', 'Edit profile', [gui.field['name', 'Ada'], gui.button['save', 'Save']], open]
+    snacks = overlays.snackbars[c, 'snacks', [overlays.notice['one', 'First saved'], overlays.notice['two', 'Second saved', act = 'Undo']]]
+    --- (the snackbars before the dialog: gui's Escape goes to the last layer
+    --- laid that keeps the pointer, docs/components/menus.md)
+    gui.column[[gui.row[[tip, card, gui.button['opener', 'Open']]], snacks, box]]
+
+dialog_open = false
+t = 0.0
+c = _frame[t, '[]']
+shown = gui.show[c, _second[c, dialog_open]]
+for id in ['bold', 'who', 'opener', 'snacks:one']
+    log['second box `id`: `_box[shown, id]`']
+moves = ['over bold', '', '', '', '', '', '', '', 'over who', '', '', '', '', '', '', '', 'over opener', '', '', '', 'press opener', 'open', '', '', 'key Tab', 'key Escape', 'shut', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+for step in moves
+    t = t + 100.0
+    given = '[]'
+    if starts[step, 'key ']
+        given = _key[slice[step, 4, len[step]]]
+    if starts[step, 'over ']
+        b = shown.boxes[slice[step, 5, len[step]]]
+        mx = b[0] + 10.0
+        my = b[1] + 10.0
+        given = '[{"type": "move", "device": "mouse", "id": 1, "x": `mx`, "y": `my`, "button": 0}]'
+    if starts[step, 'press ']
+        b = shown.boxes[slice[step, 6, len[step]]]
+        given = _pressed[b[0] + 10.0, b[1] + 10.0]
+    if step eq 'open'
+        dialog_open = true
+    if step eq 'shut'
+        dialog_open = false
+    c = _frame[t, given]
+    shown = gui.show[c, _second[c, dialog_open]]
+    words = _told[shown]
+    tip_now = overlays.tip_open[]
+    card_now = overlays.card_open['who']
+    snack_one = _box[shown, 'snacks:one']
+    snack_two = _box[shown, 'snacks:two']
+    edit_box = _box[shown, 'edit']
+    log['second t `_digits[t]` “`step`”: told “`words`” tip “`tip_now`” card `card_now` dialog `edit_box` snacks `snack_one` / `snack_two`']

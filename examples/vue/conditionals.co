@@ -1,0 +1,64 @@
+--- Conditionals and Loops: a list shown while it is to be shown and holds
+--- numbers, and words in its place when it does not; buttons toggle it,
+--- push the next number, pop the last and turn the list round.
+use lory
+use lory.gui
+use common
+
+struct Conditionals [show, list]
+
+fn fresh[]
+    Conditionals[true, [1, 2, 3]]
+
+fn ticked[s, c]
+    s
+
+fn controls[s, c, room]
+    buttons = gui.row[[gui.button['conditionals-and-loops:toggle', 'Toggle List'], gui.button['conditionals-and-loops:push', 'Push Number'], gui.button['conditionals-and-loops:pop', 'Pop Number'], gui.button['conditionals-and-loops:reverse', 'Reverse List']]]
+    kids = [buttons]
+    if s.show and len[s.list] gt 0
+        rows = slice[[gui.space[0.0]], 0, 0]
+        i = 0
+        while i lt len[s.list]
+            n = s.list[i]
+            rows = push[rows, common.named[gui.text['•  `n`'], 'conditionals-and-loops:item:`i`']]
+            i = i + 1
+        kids = push[kids, common.named[gui.column[rows, gap = 4.0], 'conditionals-and-loops:list']]
+    else
+        words = 'List is empty.'
+        if len[s.list] gt 0
+            words = 'List is not empty, but hidden.'
+        kids = push[kids, common.named[gui.text[words], 'conditionals-and-loops:message']]
+    gui.column[kids, gap = 14.0]
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if ev.act eq 'press'
+            if ev.id eq 'conditionals-and-loops:toggle'
+                s.show = not s.show
+            if ev.id eq 'conditionals-and-loops:push'
+                s.list = push[s.list, len[s.list] + 1]
+            if ev.id eq 'conditionals-and-loops:pop' and len[s.list] gt 0
+                s.list = slice[s.list, 0, len[s.list] - 1]
+            if ev.id eq 'conditionals-and-loops:reverse'
+                s.list = reverse[s.list]
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    items = slice[[''], 0, 0]
+    i = 0
+    while common.holds[tree, 'conditionals-and-loops:item:`i`']
+        shown = common.words_by[tree, 'conditionals-and-loops:item:`i`']
+        items = push[items, trim[slice[shown, 1, len[shown]]]]
+        i = i + 1
+    out['items'] = join[items, '\n']
+    out['message'] = common.words_by[tree, 'conditionals-and-loops:message']
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

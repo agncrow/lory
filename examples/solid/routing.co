@@ -1,0 +1,114 @@
+--- Solid's Simple Routing (solid-site's routing example): three links,
+--- Home, Profile and Settings, and under them the section the address's
+--- hash names. The hash is read as the example opens ("home" where there
+--- is none) and again at every change of it, when a hash that names no
+--- section shows none. Lory's page has no address of its own to read, so
+--- the example keeps one: a link sets it, and the address field, Enter
+--- pressed in it, goes where it says, as the browser's address bar does.
+--- The hash changes only when it is another, as a page tells
+--- `hashchange` only then. (The sections' words are this example's own.)
+use lory
+use lory.gui
+
+--- the address's hash ('' or a `#` and a name) and the section it names
+struct State [hash, location]
+
+fn fresh[at]
+    State['', 'home']
+
+fn before[s, at]
+    s
+
+--- the hash an address goes to, as a page's `location.hash` is written:
+--- a `#` before its name, and '' for none
+fn hash_of[to]
+    if to eq '' or to eq '#'
+        return ''
+    if slice[to, 0, 1] eq '#'
+        return to
+    '#`to`'
+
+--- the example gone to an address: where the hash is another, it is
+--- that, and the section is read from it anew ('' where it names none)
+fn went[s, to]
+    h = hash_of[to]
+    if h ne s.hash
+        s.hash = h
+        s.location = slice[h, min[1, len[h]], len[h]]
+    s
+
+--- the section shown: the one of the three the location names, '' for none
+fn shown_of[s]
+    if s.location in ['home', 'profile', 'settings']
+        return s.location
+    ''
+
+fn _places[]
+    ['home', 'profile', 'settings']
+
+fn _named[place]
+    if place eq 'home'
+        return 'Home'
+    if place eq 'profile'
+        return 'Profile'
+    'Settings'
+
+--- a section's heading and its words
+fn _section[place]
+    if place eq 'home'
+        return gui.column[[gui.text['Home', 26.0], gui.text['You are at the start. Each link above goes to its own section.']]]
+    if place eq 'profile'
+        return gui.column[[gui.text['Profile', 26.0], gui.text['A page about the reader would stand here.']]]
+    if place eq 'settings'
+        return gui.column[[gui.text['Settings', 26.0], gui.text['The choices a reader can make would stand here.']]]
+    gui.space[0.0]
+
+fn _link[place, at]
+    gui.item['routing.`place`', [gui.text[_named[place], tone = 'accent']], chosen = place eq at, words = _named[place]]
+
+fn tree[s, at, dark]
+    here = shown_of[s]
+    links = for place in _places[]
+        _link[place, here]
+    address = gui.row[[gui.label['Address'], gui.sized[gui.field['routing.address', s.hash, hint = '#home'], 240.0]]]
+    gui.column[[gui.sized[gui.roving['routing.links', links], 200.0], address, gui.divider[], _section[here]], gap = 14.0]
+
+--- a link pressed goes to its hash; Enter in the address goes to what it
+--- holds
+fn after[s, shown, at]
+    for e in shown.events
+        for place in _places[]
+            if e.act eq 'press' and e.id eq 'routing.`place`'
+                s = went[s, '#`place`']
+        if e.id eq 'routing.address' and e.act eq 'submit'
+            s = went[s, e.words]
+    s
+
+--- what the example shows, as tests/solid/reference.json records Solid's
+fn seen[s, at]
+    here = shown_of[s]
+    '{"t": `encode[at]`, "hash": `encode[s.hash]`, "shown": `encode[here]`}'
+
+test an_address_is_written_as_a_page_writes_its_hash[]
+    hash_of['profile'] eq '#profile'
+    hash_of['#home'] eq '#home'
+    hash_of['#'] eq ''
+    hash_of[''] eq ''
+
+test a_hash_that_names_no_section_shows_none[]
+    s = went[fresh[0.0], '#nowhere']
+    shown_of[s] eq ''
+    shown_of[went[s, '#settings']] eq 'settings'
+
+test the_address_left_empty_shows_no_section_but_at_the_start[]
+    shown_of[fresh[0.0]] eq 'home'
+    shown_of[went[went[fresh[0.0], '#profile'], '']] eq ''
+
+--- a page 1000 by 900 at `t` ms with no input, as the page hands a frame
+fn _page[t]
+    json['{"t": `t`, "width": 1000, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 900, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+test its_links_and_address_are_drawn[]
+    shown = gui.show[lory.begin[_page[0.0]], tree[fresh[0.0], 0.0, false]]
+    'routing.profile' in shown.boxes
+    'routing.address' in shown.boxes

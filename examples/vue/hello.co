@@ -1,0 +1,30 @@
+--- Hello World: a heading that shows the message the example holds.
+use lory
+use lory.gui
+use common
+
+struct Hello [message]
+
+fn fresh[]
+    Hello['Hello World!']
+
+fn ticked[s, c]
+    s
+
+fn controls[s, c, room]
+    common.named[common.titled['', s.message, 32.0, c], 'hello-world:heading']
+
+fn handled[s, shown, c]
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['heading'] = common.words_by[tree, 'hello-world:heading']
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

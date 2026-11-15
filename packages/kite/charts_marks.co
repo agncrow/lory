@@ -1,0 +1,1111 @@
+--- The marks a laid chart draws, where Chart.js places them: each
+--- dataset's bars (where a bar stands across its slot, how far it runs
+--- from its base, whether its corners may be rounded and which edges its
+--- border leaves out), its points (where each stands, whether it is a
+--- gap, whether its line breaks before it, and the control points a
+--- curved line is drawn through) and its arcs (centre, angles, radii).
+--- These are what a pointer finds, a tooltip tells of and an animation
+--- moves.
+---
+--- These are Chart.js 4.5.1's rules for its bar, line, scatter, bubble,
+--- doughnut, pie, polar area and radar charts, read from it and written
+--- anew (see charts_model.co).
+use math
+use lory
+use charts_model
+use charts_scales
+use charts_fit
+
+--- a mark: what it is (bar, point, arc), its dataset and its place there;
+--- where it stands (`x`, `y`: a bar's end and the middle of its width, a
+--- point, an arc's centre); a bar's base, width and height, whether it
+--- runs across (`horizontal`), whether its corners may be rounded
+--- (`rounded`) and the edges its border leaves out (`skipped`, of t, r, b,
+--- l); whether a point is a gap (`skip`) and whether its line breaks
+--- before it (`stop`); a curve's control points before and after it (nan
+--- for none); a point's radius, the reach a pointer finds it from and its
+--- radius under the pointer; an arc's start and end angles (radians from
+--- the right, turning clockwise), its inner and outer radii, how far round
+--- it goes and how far it stands out from the centre; a radar point's
+--- angle; and the colours it is filled and edged with
+struct Mark [what, set, index, x, y, base, width, height, horizontal, rounded, skipped, skip, stop, cp1x, cp1y, cp2x, cp2y, radius, reach, hover_radius, start_angle, end_angle, inner, outer, circumference, offset, angle, fill, edge]
+
+--- a dataset's marks as its chart draws them: its place and kind, its
+--- marks, and the run of them drawn (`first`, `count`: a line is drawn
+--- over the points within its index axis's range only)
+struct Layer [set, what, marks, first, count]
+
+--- what a dataset's bars share across their slots: the least room
+--- between two of them (`least`), the pixel of each value along the index
+--- axis, how many stacks share a slot, the share of the slot a bar takes
+--- (`ratio`) and the axis's ends
+struct Ruler [least, pixels, stack_count, ratio, start, end]
+
+--- ---- every dataset ----
+
+--- the marks of every dataset of the chart, laid as `laid` (from
+--- `charts_layout.laid_out`), in the datasets' order; `reset`: as they
+--- stand when they start to move in (bars at their base, points on it,
+--- arcs not yet turned out)
+fn marked[ch, laid, reset]
+    ps = charts_scales.parsed_of[ch, laid.scales]
+    out = slice[[_no_layer[]], 0, 0]
+    d = 0
+    while d lt len[ch.sets]
+        out = push[out, layer_of[ch, laid, ps, d, reset]]
+        d = d + 1
+    out
+
+--- the marks of the dataset at `d`
+fn layer_of[ch, laid, ps, d, reset]
+    p = ps[d]
+    form = p.form
+    marks = _no_marks[]
+    if form eq 'bar'
+        marks = bars_of[ch, laid, ps, d, reset]
+    else if form eq 'pie' or form eq 'doughnut'
+        marks = doughnut_arcs[ch, laid, ps, d, reset]
+    else if form eq 'polarArea'
+        marks = polar_arcs[ch, laid, ps, d, reset]
+    else if form eq 'radar'
+        marks = radar_points[ch, laid, ps, d, reset]
+    else if form eq 'bubble'
+        marks = bubbles_of[ch, laid, ps, d, reset]
+    else
+        marks = points_of[ch, laid, ps, d, reset]
+    j = 0
+    while j lt len[marks]
+        m = marks[j]
+        m.fill = charts_model.fill_at[ch, d, j]
+        m.edge = charts_model.edge_at[ch, d, j]
+        marks[j] = m
+        j = j + 1
+    shown = _drawn_run[ch, laid, ps, d, len[marks]]
+    Layer[d, form, marks, shown[0], shown[1]]
+
+fn _no_layer[]
+    Layer[0, '', _no_marks[], 0, 0]
+
+--- no layers: what a chart's marks start from before it is laid
+fn no_layers[]
+    slice[[_no_layer[]], 0, 0]
+
+fn _no_marks[]
+    slice[[_mark['point', 0, 0]], 0, 0]
+
+--- a mark of nothing yet: every number nan
+fn _mark[what, d, j]
+    clear = lory.rgba[0, 0, 0, 0.0]
+    Mark[what, d, j, nan, nan, nan, nan, nan, false, false, '', false, false, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, 0.0, nan, clear, clear]
+
+--- whether a value is none: missing, or a naught a logarithmic axis
+--- cannot show
+fn _none[v]
+    v ne v or v eq 0.0 - inf
+
+--- ---- bars ----
+
+--- the bars of the dataset at `d`
+fn bars_of[ch, laid, ps, d, reset]
+    p = ps[d]
+    s = ch.sets[d]
+    out = _no_marks[]
+    ki = charts_scales.scale_at[laid.scales, p.i_id]
+    kv = charts_scales.scale_at[laid.scales, p.v_id]
+    if ki lt 0 or kv lt 0
+        return out
+    isc = laid.scales[ki]
+    vsc = laid.scales[kv]
+    ruler = _ruler[ch, ps, laid.scales, d, isc]
+    order = charts_scales.visible_order[ch, ps]
+    base = charts_scales.base_pixel[vsc]
+    j = 0
+    while j lt len[p.vvs]
+        m = _mark['bar', d, j]
+        head = base
+        size = nan
+        m.base = base
+        if not reset and not _none[p.vvs[j]]
+            vp = _value_pixels[ch, ps, order, d, j, vsc]
+            m.base = vp[0]
+            head = vp[1]
+            size = vp[2]
+        ip = _index_pixels[ch, ps, laid.scales, d, j, isc, ruler]
+        m.horizontal = vsc.horizontal
+        top = -1
+        bottom = -1
+        if p.stacked
+            top = charts_scales.stack_end[ch, ps, laid.scales, d, p.ivs[j], true]
+            bottom = charts_scales.stack_end[ch, ps, laid.scales, d, p.ivs[j], false]
+        m.rounded = not p.stacked or charts_scales.floats[p, j] or d eq top or d eq bottom
+        if m.horizontal
+            m.x = head
+            m.y = ip[0]
+            m.height = ip[1]
+            m.width = abs[size]
+        else
+            m.x = ip[0]
+            m.y = head
+            m.height = abs[size]
+            m.width = ip[1]
+        m = _skipped_set[m, s.skipped, p.stacked, top, bottom, d]
+        out = push[out, m]
+        j = j + 1
+    out
+
+--- what the dataset's bars share: Chart.js's ruler
+fn _ruler[ch, ps, scales, d, isc]
+    s = ch.sets[d]
+    p = ps[d]
+    pixels = charts_model.no_numbers[]
+    j = 0
+    while j lt len[p.ivs]
+        pixels = push[pixels, charts_scales.pixel[isc, p.ivs[j]]]
+        j = j + 1
+    least = nan
+    ratio = 1.0
+    if s.bar_thickness gt 0.0
+        least = s.bar_thickness
+    else if s.bar_thickness ne -1.0
+        least = _least_room[ch, ps, isc, p.form]
+        ratio = s.category_percentage * s.bar_percentage
+    count = len[_stacks[ch, ps, isc, d, -1, -1]]
+    Ruler[least, pixels, count, ratio, isc.start_pixel, isc.end_pixel]
+
+--- the least room between two neighbouring values of the axis's shown
+--- datasets of that kind, or between two of its ticks: the room a bar's
+--- slot is cut from
+fn _least_room[ch, ps, isc, form]
+    found = charts_scales.matching[ch, ps, isc, form]
+    found_values = charts_model.no_numbers[]
+    k = 0
+    while k lt len[found]
+        q = ps[found[k]]
+        j = 0
+        while j lt len[q.ivs]
+            if charts_model.finite[q.ivs[j]]
+                found_values = push[found_values, q.ivs[j]]
+            j = j + 1
+        k = k + 1
+    spots = _sorted_unique[found_values]
+    least = isc.length
+    pixels = charts_model.no_numbers[]
+    i = 0
+    while i lt len[spots]
+        pixels = push[pixels, charts_scales.pixel[isc, spots[i]]]
+        i = i + 1
+    least = _least_gap[least, pixels]
+    ticks = charts_model.no_numbers[]
+    i = 0
+    while i lt len[isc.ticks]
+        ticks = push[ticks, charts_scales.tick_pixel[isc, i]]
+        i = i + 1
+    _least_gap[least, ticks]
+
+--- the least gap between neighbours of `pixels` (those clamped to the
+--- canvas's limits left out; a gap of naught or none counts as `least`)
+fn _least_gap[least0, pixels]
+    least = least0
+    have = false
+    before = 0.0
+    i = 0
+    while i lt len[pixels]
+        here = pixels[i]
+        if here ne 32767.0 and here ne -32768.0
+            if have
+                gap = abs[here - before]
+                if gap ne gap or gap eq 0.0
+                    gap = least
+                least = min[least, gap]
+            before = here
+            have = true
+        i = i + 1
+    least
+
+--- the numbers in rising order, each once
+fn _sorted_unique[vs]
+    out = charts_model.no_numbers[]
+    rest = vs
+    while len[rest] gt 0
+        k = 0
+        i = 1
+        while i lt len[rest]
+            if rest[i] lt rest[k]
+                k = i
+            i = i + 1
+        low = rest[k]
+        if len[out] eq 0 or out[len[out] - 1] ne low
+            out = push[out, low]
+        kept = charts_model.no_numbers[]
+        i = 0
+        while i lt len[rest]
+            if i ne k
+                kept = push[kept, rest[i]]
+            i = i + 1
+        rest = kept
+    out
+
+--- the stacks the dataset's kind of bars are grouped in along their
+--- index axis, in the order they are found, up to the dataset at `last`
+--- (-1: all of them); at the `j`th value (-1: any), datasets with no
+--- value there are left out (as where a dataset skips nulls); '' is a
+--- dataset of no stack
+fn _stacks[ch, ps, isc, d, last, j]
+    p = ps[d]
+    how = ch.axes[isc.place].stacked
+    found = charts_scales.matching[ch, ps, isc, p.form]
+    iv = nan
+    if j gte 0
+        iv = p.ivs[j]
+    out = slice[[''], 0, 0]
+    done = false
+    k = 0
+    while k lt len[found] and not done
+        o = found[k]
+        if ch.sets[o].grouped and not (j gte 0 and _no_value_at[ps[o], iv])
+            name = ch.sets[o].stack
+            if how eq 'false' or not _named[out, name] or (how eq '' and name eq '')
+                out = push[out, name]
+            done = o eq last
+        k = k + 1
+    if len[out] eq 0
+        out = push[out, '']
+    out
+
+fn _named[names, name]
+    for n in names
+        if n eq name
+            return true
+    false
+
+--- whether the dataset has no value where it first stands at index
+--- value `iv`
+fn _no_value_at[q, iv]
+    i = 0
+    while i lt len[q.ivs]
+        if q.ivs[i] eq iv
+            return q.vvs[i] ne q.vvs[i]
+        i = i + 1
+    true
+
+--- the place of the dataset's stack among those found up to it (the
+--- last where it has none of its own)
+fn _stack_index[ch, ps, isc, d, j]
+    stacks = _stacks[ch, ps, isc, d, d, j]
+    name = ch.sets[d].stack
+    if name ne ''
+        i = 0
+        while i lt len[stacks]
+            if stacks[i] eq name
+                return i
+            i = i + 1
+    len[stacks] - 1
+
+--- the index axes the chart's datasets are laid along, by id, in the
+--- order found: bars along different axes share a slot side by side
+fn _index_axes[ch]
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt len[ch.sets]
+        id = charts_model.axis_id_of[ch, ch.sets[i], ch.index_axis]
+        if not _named[out, id]
+            out = push[out, id]
+        i = i + 1
+    out
+
+--- where the dataset's `j`th bar stands across its slot: its middle and
+--- its width (its height, running across)
+fn _index_pixels[ch, ps, scales, d, j, isc, ruler]
+    s = ch.sets[d]
+    p = ps[d]
+    most = s.max_bar_thickness
+    if most ne most
+        most = inf
+    if not s.grouped
+        centre = charts_scales.pixel[isc, p.ivs[j]]
+        return [centre, min[most, ruler.least * ruler.ratio]]
+    count = ruler.stack_count
+    if s.skip_null
+        count = len[_stacks[ch, ps, isc, d, -1, j]]
+    axes = _index_axes[ch]
+    parts = 0.0 + count * len[axes]
+    traits = _fit_traits[s, ruler, j, parts]
+    if s.bar_thickness eq -1.0
+        traits = _flex_traits[s, ruler, j, parts]
+    id = charts_model.axis_id_of[ch, s, ch.index_axis]
+    axis_number = 0
+    i = 0
+    while i lt len[axes]
+        if axes[i] eq id
+            axis_number = i
+        i = i + 1
+    at = -1
+    if s.skip_null
+        at = j
+    place = _stack_index[ch, ps, isc, d, at] + axis_number
+    chunk = traits[0]
+    centre = traits[2] + chunk * place + chunk / 2.0
+    [centre, min[most, chunk * traits[1]]]
+
+--- a slot cut from the least room between values: each part's width,
+--- the share of it a bar takes and where the slot starts
+fn _fit_traits[s, ruler, j, parts]
+    size = 0.0
+    ratio = 1.0
+    if s.bar_thickness ne s.bar_thickness
+        size = ruler.least * s.category_percentage
+        ratio = s.bar_percentage
+    else
+        size = s.bar_thickness * parts
+    [size / parts, ratio, ruler.pixels[j] - size / 2.0]
+
+--- a slot reaching halfway to each neighbour ('flex')
+fn _flex_traits[s, ruler, j, parts]
+    pixels = ruler.pixels
+    here = pixels[j]
+    n = len[pixels]
+    have_before = j gt 0
+    have_after = j lt n - 1
+    before = 0.0
+    after = 0.0
+    if have_before
+        before = pixels[j - 1]
+    if have_after
+        after = pixels[j + 1]
+    if not have_before
+        if have_after
+            before = here - (after - here)
+        else
+            before = here - (ruler.end - ruler.start)
+    if not have_after
+        after = here + here - before
+    share = s.category_percentage
+    start = here - (here - min[before, after]) / 2.0 * share
+    size = abs[after - before] / 2.0 * share
+    [size / parts, s.bar_percentage, start]
+
+--- where the dataset's `j`th bar runs along its value axis: its base,
+--- its end (`head`) and its signed length
+fn _value_pixels[ch, ps, order, d, j, vsc]
+    s = ch.sets[d]
+    p = ps[d]
+    real_base = s.base
+    if real_base ne real_base
+        real_base = 0.0
+    value = p.vvs[j]
+    start = 0.0
+    length = value
+    if p.stacked
+        length = charts_scales.stacked_value[ps, order, d, j, p.single]
+    if length ne value
+        start = length - value
+        length = value
+    floating = charts_scales.floats[p, j]
+    if floating
+        from = charts_scales.bar_start[p, j]
+        till = value
+        value = from
+        length = till - from
+        if value ne 0.0 and charts_model.sign_of[value] ne charts_model.sign_of[till]
+            start = 0.0
+        start = start + value
+    start_value = start
+    if s.base eq s.base and not floating
+        start_value = s.base
+    base = charts_scales.pixel[vsc, start_value]
+    head = base
+    if not charts_model.point_hidden[ch, j]
+        head = charts_scales.pixel[vsc, start + length]
+    size = head - base
+    if abs[size] lt s.min_bar_length
+        size = _bar_sign[size, vsc, real_base] * s.min_bar_length
+        if value eq real_base
+            base = base - size / 2.0
+        a = charts_scales.decimal_pixel[vsc, 0.0]
+        b = charts_scales.decimal_pixel[vsc, 1.0]
+        base = max[min[base, max[a, b]], min[a, b]]
+        head = base + size
+    if base eq charts_scales.pixel[vsc, real_base]
+        a = ch.axes[vsc.place]
+        half = charts_model.sign_of[size] * charts_scales.line_width_at[vsc, a, real_base] / 2.0
+        base = base + half
+        size = size - half
+    [base, head, size]
+
+--- which way a bar too short to see is drawn out to its least length
+fn _bar_sign[size, vsc, real_base]
+    if size ne 0.0
+        return charts_model.sign_of[size]
+    way = -1.0
+    if vsc.horizontal
+        way = 1.0
+    if vsc.min gte real_base
+        return way
+    0.0 - way
+
+--- the edges a bar's border leaves out: the edge it starts from
+--- ('start'), the one it ends at ('end'), in a stack the edges it meets
+--- its neighbours at ('middle'), a side by name, none or all; a stacked
+--- bar's rounding as 'middle' asks
+fn _skipped_set[m0, edge0, stacked, top, bottom, d]
+    m = m0
+    if edge0 eq 'none' or edge0 eq ''
+        m.skipped = ''
+        return m
+    if edge0 eq 'all'
+        m.skipped = 'trbl'
+        return m
+    backwards = false
+    start = 'bottom'
+    finish = 'top'
+    if m.horizontal
+        backwards = m.base gt m.x
+        start = 'left'
+        finish = 'right'
+    else
+        backwards = m.base lt m.y
+    up = 'start'
+    down = 'end'
+    if backwards
+        up = 'end'
+        down = 'start'
+    edge = edge0
+    sides = slice[[''], 0, 0]
+    if edge eq 'middle' and stacked
+        m.rounded = true
+        if max[top, 0] eq d
+            edge = up
+        else if max[bottom, 0] eq d
+            edge = down
+        else
+            sides = push[sides, _edge_of[down, start, finish, backwards]]
+            edge = up
+    sides = push[sides, _edge_of[edge, start, finish, backwards]]
+    m.skipped = _letters_of[sides]
+    m
+
+--- a named edge as the side it is: start and end are the bar's own
+--- ends, turned where it runs backwards
+fn _edge_of[edge0, a, b, backwards]
+    edge = edge0
+    if backwards
+        if edge eq a
+            edge = b
+        else if edge eq b
+            edge = a
+        return _start_end[edge, b, a]
+    _start_end[edge, a, b]
+
+fn _start_end[edge, start, finish]
+    if edge eq 'start'
+        return start
+    if edge eq 'end'
+        return finish
+    edge
+
+--- the sides as their first letters, in the order top, right, bottom,
+--- left
+fn _letters_of[sides]
+    out = ''
+    if _named[sides, 'top']
+        out = '`out`t'
+    if _named[sides, 'right']
+        out = '`out`r'
+    if _named[sides, 'bottom']
+        out = '`out`b'
+    if _named[sides, 'left']
+        out = '`out`l'
+    out
+
+--- ---- points ----
+
+--- the points of a line or scatter dataset at `d`, with the control
+--- points of its curve
+fn points_of[ch, laid, ps, d, reset]
+    p = ps[d]
+    s = ch.sets[d]
+    out = _no_marks[]
+    ki = charts_scales.scale_at[laid.scales, p.i_id]
+    kv = charts_scales.scale_at[laid.scales, p.v_id]
+    if ki lt 0 or kv lt 0
+        return out
+    isc = laid.scales[ki]
+    vsc = laid.scales[kv]
+    order = charts_scales.visible_order[ch, ps]
+    widest_gap = s.span_gaps
+    if widest_gap eq 0.0
+        widest_gap = inf
+    base = charts_scales.base_pixel[vsc]
+    j = 0
+    while j lt len[p.vvs]
+        m = _mark['point', d, j]
+        v = p.vvs[j]
+        missing = _none[v]
+        along = charts_scales.pixel[isc, p.ivs[j]]
+        across = base
+        if not reset and not missing
+            w = v
+            if p.stacked
+                w = charts_scales.stacked_value[ps, order, d, j, p.single]
+            across = charts_scales.pixel[vsc, w]
+        if isc.horizontal
+            m.x = along
+            m.y = across
+        else
+            m.x = across
+            m.y = along
+        m.skip = along ne along or across ne across or missing
+        m.stop = j gt 0 and abs[p.ivs[j] - p.ivs[j - 1]] gt widest_gap
+        m.radius = s.point_radius
+        m.reach = s.hit_radius
+        m.hover_radius = s.hover_radius
+        out = push[out, m]
+        j = j + 1
+    if (p.form ne 'scatter' or s.show_line) and s.stepped eq '' and (s.tension ne 0.0 or s.monotone)
+        out = curved[out, s, laid.area, false, isc.axis]
+    out
+
+--- the bubbles of the dataset at `d`: points whose radius is their value's
+fn bubbles_of[ch, laid, ps, d, reset]
+    p = ps[d]
+    s = ch.sets[d]
+    out = _no_marks[]
+    ki = charts_scales.scale_at[laid.scales, p.i_id]
+    kv = charts_scales.scale_at[laid.scales, p.v_id]
+    if ki lt 0 or kv lt 0
+        return out
+    isc = laid.scales[ki]
+    vsc = laid.scales[kv]
+    j = 0
+    while j lt len[p.vvs]
+        m = _mark['point', d, j]
+        along = charts_scales.pixel[isc, p.ivs[j]]
+        across = charts_scales.pixel[vsc, p.vvs[j]]
+        if reset
+            along = charts_scales.decimal_pixel[isc, 0.5]
+            across = charts_scales.base_pixel[vsc]
+        if isc.horizontal
+            m.x = along
+            m.y = across
+        else
+            m.x = across
+            m.y = along
+        m.skip = along ne along or across ne across
+        r = s.point_radius
+        if j lt len[p.rs] and p.rs[j] eq p.rs[j]
+            r = p.rs[j]
+        m.radius = r
+        if reset
+            m.radius = 0.0
+        m.reach = s.hit_radius
+        m.hover_radius = s.hover_radius + r
+        out = push[out, m]
+        j = j + 1
+    out
+
+--- the points of a radar's dataset at `d`, each on its spoke
+fn radar_points[ch, laid, ps, d, reset]
+    p = ps[d]
+    s = ch.sets[d]
+    out = _no_marks[]
+    k = charts_scales.scale_at[laid.scales, p.i_id]
+    if k lt 0
+        return out
+    sc = laid.scales[k]
+    a = ch.axes[sc.place]
+    j = 0
+    while j lt len[p.vvs]
+        m = _mark['point', d, j]
+        at = charts_fit.point_at[sc, a, j, charts_fit.distance_of[sc, a, p.vvs[j]], 0.0]
+        m.x = at[0]
+        m.y = at[1]
+        m.angle = at[2]
+        if reset
+            m.x = sc.x_center
+            m.y = sc.y_center
+        m.skip = m.x ne m.x or m.y ne m.y
+        m.radius = s.point_radius
+        m.reach = s.hit_radius
+        m.hover_radius = s.hover_radius
+        out = push[out, m]
+        j = j + 1
+    whole = len[sc.point_labels] eq len[p.vvs]
+    loop = whole
+    if s.span_gaps gt 0.0
+        loop = true
+    if s.stepped eq '' and (s.tension ne 0.0 or s.monotone)
+        out = curved[out, s, laid.area, loop, 'x']
+    out
+
+--- the run of the dataset's marks drawn: a sorted line only over the
+--- points within its index axis's range asked for (and, spanning gaps,
+--- out to the nearest values beyond it)
+fn _drawn_run[ch, laid, ps, d, n]
+    p = ps[d]
+    if not p.sorted or n eq 0 or p.form eq 'bar' or charts_model.arcs_kind[p.form] or p.form eq 'radar'
+        return [0, n]
+    ki = charts_scales.scale_at[laid.scales, p.i_id]
+    if ki lt 0
+        return [0, n]
+    sc = laid.scales[ki]
+    spans = ch.sets[d].span_gaps gt 0.0
+    first = 0
+    count = n
+    if charts_model.finite[sc.user_min]
+        first = _lookup[p.ivs, sc.user_min, false][0]
+        if spans
+            back = 0
+            while first - back gt 0 and p.vvs[first - back] ne p.vvs[first - back]
+                back = back + 1
+            if p.vvs[first - back] eq p.vvs[first - back]
+                first = first - back
+        first = max[0, min[first, n - 1]]
+    if charts_model.finite[sc.user_max]
+        till = _lookup[p.ivs, sc.user_max, true][1] + 1
+        if spans
+            ahead = 0
+            while till - 1 + ahead lt n - 1 and p.vvs[till - 1 + ahead] ne p.vvs[till - 1 + ahead]
+                ahead = ahead + 1
+            if p.vvs[till - 1 + ahead] eq p.vvs[till - 1 + ahead]
+                till = till + ahead
+        count = max[first, min[till, n]] - first
+    else
+        count = n - first
+    [first, count]
+
+--- the two places either side of value `v` in the rising values `vs`
+--- (found by halving; `last`: past those equal to it)
+fn _lookup[vs, v, last]
+    lo = 0
+    hi = len[vs] - 1
+    while hi - lo gt 1
+        mid = (lo + hi) / 2
+        below = vs[mid] lt v
+        if last and vs[mid] eq v and vs[mid + 1] eq v
+            below = true
+        if below
+            lo = mid
+        else
+            hi = mid
+    [lo, hi]
+
+--- ---- curves ----
+
+--- the points with the control points a curved line is drawn through:
+--- a tension's spline, or a monotone cubic that never overshoots; gaps
+--- are passed over where the line spans them; control points are kept
+--- within the area (`area`: left, top, right, bottom)
+fn curved[points, s, area, loop, index_axis]
+    places = []
+    for i in range[0]
+        places = push[places, 0]
+    i = 0
+    while i lt len[points]
+        if not (s.span_gaps gt 0.0 and points[i].skip)
+            places = push[places, i]
+        i = i + 1
+    out = points
+    if s.monotone
+        out = _monotone[out, places, index_axis]
+    else
+        out = _splined[out, places, s.tension, loop]
+    _capped[out, places, area]
+
+--- each point's control points from its neighbours, `tension` of the way
+--- along the line between them
+fn _splined[points, places, tension, loop]
+    out = points
+    n = len[places]
+    if n eq 0
+        return out
+    before = out[places[0]]
+    if loop
+        before = out[places[n - 1]]
+    k = 0
+    while k lt n
+        here = out[places[k]]
+        lastk = n - 1
+        if loop
+            lastk = n
+        after = out[places[min[k + 1, lastk] % n]]
+        cps = _spline[before, here, after, tension]
+        here.cp1x = cps[0]
+        here.cp1y = cps[1]
+        here.cp2x = cps[2]
+        here.cp2y = cps[3]
+        out[places[k]] = here
+        before = here
+        k = k + 1
+    out
+
+--- the control points before and after `here`: its neighbours' line,
+--- shared out by their distances (a neighbour that is a gap is `here`)
+fn _spline[before0, here, after0, tension]
+    before = before0
+    if before.skip
+        before = here
+    after = after0
+    if after.skip
+        after = here
+    d01 = sqrt[(here.x - before.x) ^ 2.0 + (here.y - before.y) ^ 2.0]
+    d12 = sqrt[(after.x - here.x) ^ 2.0 + (after.y - here.y) ^ 2.0]
+    s01 = d01 / (d01 + d12)
+    s12 = d12 / (d01 + d12)
+    if s01 ne s01
+        s01 = 0.0
+    if s12 ne s12
+        s12 = 0.0
+    fa = tension * s01
+    fb = tension * s12
+    [here.x - fa * (after.x - before.x), here.y - fa * (after.y - before.y), here.x + fb * (after.x - before.x), here.y + fb * (after.y - before.y)]
+
+--- a monotone cubic's control points (Fritsch and Carlson): each point's
+--- slope the mean of its two sides', naught where they differ in sign,
+--- eased where the curve would overshoot
+fn _monotone[points, places, index_axis]
+    out = points
+    n = len[places]
+    slopes = charts_model.no_numbers[]
+    tangents = charts_model.no_numbers[]
+    k = 0
+    while k lt n
+        slopes = push[slopes, 0.0]
+        tangents = push[tangents, nan]
+        k = k + 1
+    k = 0
+    while k lt n
+        here = out[places[k]]
+        if not here.skip
+            has_after = k + 1 lt n and not out[places[k + 1]].skip
+            has_before = k gt 0 and not out[places[k - 1]].skip
+            if has_after
+                after = out[places[k + 1]]
+                run = _along[after, index_axis] - _along[here, index_axis]
+                if run ne 0.0
+                    slopes[k] = (_across[after, index_axis] - _across[here, index_axis]) / run
+            if not has_before
+                tangents[k] = slopes[k]
+            else if not has_after
+                tangents[k] = slopes[k - 1]
+            else if charts_model.sign_of[slopes[k - 1]] ne charts_model.sign_of[slopes[k]]
+                tangents[k] = 0.0
+            else
+                tangents[k] = (slopes[k - 1] + slopes[k]) / 2.0
+        k = k + 1
+    k = 0
+    while k lt n - 1
+        if not out[places[k]].skip and not out[places[k + 1]].skip
+            if abs[slopes[k]] lt 0.0000000000000002220446049250313
+                tangents[k] = 0.0
+                tangents[k + 1] = 0.0
+            else
+                alpha = tangents[k] / slopes[k]
+                beta = tangents[k + 1] / slopes[k]
+                square = alpha ^ 2.0 + beta ^ 2.0
+                if square gt 9.0
+                    tau = 3.0 / sqrt[square]
+                    tangents[k] = alpha * tau * slopes[k]
+                    tangents[k + 1] = beta * tau * slopes[k]
+        k = k + 1
+    k = 0
+    while k lt n
+        here = out[places[k]]
+        if not here.skip
+            i_here = _along[here, index_axis]
+            v_here = _across[here, index_axis]
+            if k gt 0 and not out[places[k - 1]].skip
+                delta = (i_here - _along[out[places[k - 1]], index_axis]) / 3.0
+                here = _control[here, 1, index_axis, i_here - delta, v_here - delta * tangents[k]]
+            if k + 1 lt n and not out[places[k + 1]].skip
+                delta = (_along[out[places[k + 1]], index_axis] - i_here) / 3.0
+                here = _control[here, 2, index_axis, i_here + delta, v_here + delta * tangents[k]]
+            out[places[k]] = here
+        k = k + 1
+    out
+
+fn _along[m, index_axis]
+    if index_axis eq 'y'
+        return m.y
+    m.x
+
+fn _across[m, index_axis]
+    if index_axis eq 'y'
+        return m.x
+    m.y
+
+--- the point with its control point before (1) or after (2) it set,
+--- given along and across its index axis
+fn _control[m0, which, index_axis, along, across]
+    m = m0
+    x = along
+    y = across
+    if index_axis eq 'y'
+        x = across
+        y = along
+    if which eq 1
+        m.cp1x = x
+        m.cp1y = y
+    else
+        m.cp2x = x
+        m.cp2y = y
+    m
+
+--- control points kept within the area, where the point and its
+--- neighbour on that side are within it (half a pixel's grace)
+fn _capped[points, places, area]
+    out = points
+    n = len[places]
+    if n eq 0
+        return out
+    inside_before = false
+    inside = false
+    inside_after = _in_area[out[places[0]], area]
+    k = 0
+    while k lt n
+        inside_before = inside
+        inside = inside_after
+        inside_after = k lt n - 1 and _in_area[out[places[k + 1]], area]
+        if inside
+            m = out[places[k]]
+            if inside_before
+                m.cp1x = _cap[m.cp1x, area[0], area[2]]
+                m.cp1y = _cap[m.cp1y, area[1], area[3]]
+            if inside_after
+                m.cp2x = _cap[m.cp2x, area[0], area[2]]
+                m.cp2y = _cap[m.cp2y, area[1], area[3]]
+            out[places[k]] = m
+        k = k + 1
+    out
+
+fn _cap[v, lo, hi]
+    if v ne v
+        return v
+    max[min[v, hi], lo]
+
+--- whether a mark stands within the area, half a pixel's grace about it
+fn _in_area[m, area]
+    m.x gt area[0] - 0.5 and m.x lt area[2] + 0.5 and m.y gt area[1] - 0.5 and m.y lt area[3] + 0.5
+
+--- ---- arcs ----
+
+--- the arcs of a pie's or a doughnut's dataset at `d`: its ring, the
+--- share of the turn each value takes
+fn doughnut_arcs[ch, laid, ps, d, reset]
+    p = ps[d]
+    s = ch.sets[d]
+    area = laid.area
+    out = _no_marks[]
+    width = area[2] - area[0]
+    height = area[3] - area[1]
+    room = _widest_edge[ch] + _widest_offset[s] + s.spacing
+    most = max[(min[width, height] - room) / 2.0, 0.0]
+    hole = ch.cutout
+    if not ch.cutout_share
+        hole = ch.cutout / most
+    hole = min[hole, 1.0]
+    turn = _turn_extents[ch, ps]
+    ro = _ratio_and_offset[turn[0], turn[1], hole]
+    most_wide = (width - room) / ro[0]
+    most_high = (height - room) / ro[1]
+    radius_most = max[min[most_wide, most_high] / 2.0, 0.0]
+    outer = ch.radius_share * radius_most
+    inner = max[outer * hole, 0.0]
+    ring = (outer - inner) / _weights_before[ch, ps, len[ch.sets]]
+    shift_x = ro[2] * outer
+    shift_y = ro[3] * outer
+    total = _total[ch, p]
+    ring_outer = outer - ring * _weights_before[ch, ps, d]
+    ring_inner = max[ring_outer - ring * max[s.weight, 0.0], 0.0]
+    cx = (area[0] + area[2]) / 2.0
+    cy = (area[1] + area[3]) / 2.0
+    if reset and ch.animate_scale
+        ring_outer = 0.0
+        ring_inner = 0.0
+    circle = charts_model.radians[ch.circumference]
+    angle = charts_model.radians[ch.rotation - 90.0]
+    j = 0
+    while j lt len[p.vvs]
+        m = _mark['arc', d, j]
+        sweep = 0.0
+        v = p.vvs[j]
+        if not (reset and ch.animate_rotate) and not charts_model.point_hidden[ch, j] and v eq v and total gt 0.0
+            share = v * circle / (pi * 2.0)
+            sweep = pi * 2.0 * (abs[share] / total)
+        m.x = cx + shift_x
+        m.y = cy + shift_y
+        m.start_angle = angle
+        m.end_angle = angle + sweep
+        m.circumference = sweep
+        m.outer = ring_outer
+        m.inner = ring_inner
+        m.offset = _offset_at[s, j]
+        angle = angle + sweep
+        out = push[out, m]
+        j = j + 1
+    out
+
+--- the widest border among the first shown dataset's arcs (all its arcs
+--- share one width here)
+fn _widest_edge[ch]
+    i = 0
+    while i lt len[ch.sets]
+        if not ch.sets[i].hidden
+            return ch.sets[i].edge_width
+        i = i + 1
+    0.0
+
+--- the furthest an arc of the dataset stands out, at rest or under the
+--- pointer
+fn _widest_offset[s]
+    most = max[0.0, s.hover_offset]
+    for o in s.offsets
+        most = max[most, o]
+    most
+
+fn _offset_at[s, j]
+    n = len[s.offsets]
+    if n eq 0
+        return 0.0
+    s.offsets[j % n]
+
+--- where the shown doughnuts start turning and how far round they go
+--- (radians), all of them together
+fn _turn_extents[ch, ps]
+    lo = pi * 2.0
+    hi = 0.0 - pi * 2.0
+    i = 0
+    while i lt len[ch.sets]
+        if ps[i].visible and (ps[i].form eq 'pie' or ps[i].form eq 'doughnut')
+            start = charts_model.radians[ch.rotation - 90.0]
+            sweep = charts_model.radians[ch.circumference]
+            lo = min[lo, start]
+            hi = max[hi, start + sweep]
+        i = i + 1
+    [lo, hi - lo]
+
+--- how much of a whole circle's room a part of a turn takes across and
+--- down, and how far its centre is moved to sit it in the middle (shares
+--- of its radius): ratio x, ratio y, offset x, offset y
+fn _ratio_and_offset[rotation, sweep, hole]
+    if not (sweep lt pi * 2.0)
+        return [1.0, 1.0, 0.0, 0.0]
+    start = rotation
+    finish = start + sweep
+    sx = cos[start]
+    sy = sin[start]
+    ex = cos[finish]
+    ey = sin[finish]
+    max_x = _reach_most[0.0, start, finish, sx, ex, hole]
+    max_y = _reach_most[pi / 2.0, start, finish, sy, ey, hole]
+    min_x = _reach_least[pi, start, finish, sx, ex, hole]
+    min_y = _reach_least[pi + pi / 2.0, start, finish, sy, ey, hole]
+    [(max_x - min_x) / 2.0, (max_y - min_y) / 2.0, 0.0 - (max_x + min_x) / 2.0, 0.0 - (max_y + min_y) / 2.0]
+
+fn _reach_most[angle, start, finish, a, b, hole]
+    if charts_model.angle_between[angle, start, finish, true]
+        return 1.0
+    max[max[a, a * hole], max[b, b * hole]]
+
+fn _reach_least[angle, start, finish, a, b, hole]
+    if charts_model.angle_between[angle, start, finish, true]
+        return -1.0
+    min[min[a, a * hole], min[b, b * hole]]
+
+--- the weights of the shown rings before the dataset at `d` (all of
+--- them: `d` past the last; 1 where they weigh nothing)
+fn _weights_before[ch, ps, d]
+    total = 0.0
+    i = 0
+    while i lt d
+        if ps[i].visible
+            total = total + max[ch.sets[i].weight, 0.0]
+        i = i + 1
+    if d eq len[ch.sets] and total eq 0.0
+        return 1.0
+    total
+
+--- the sum of the dataset's shown values, each as its size
+fn _total[ch, p]
+    total = 0.0
+    j = 0
+    while j lt len[p.vvs]
+        v = p.vvs[j]
+        if v eq v and not charts_model.point_hidden[ch, j]
+            total = total + abs[v]
+        j = j + 1
+    total
+
+--- the arcs of a polar area's dataset at `d`: equal turns, each as long
+--- as its value is from the centre
+fn polar_arcs[ch, laid, ps, d, reset]
+    p = ps[d]
+    out = _no_marks[]
+    k = charts_scales.scale_at[laid.scales, p.i_id]
+    if k lt 0
+        return out
+    sc = laid.scales[k]
+    a = ch.axes[sc.place]
+    first_angle = charts_fit.index_angle[sc, a, 0] - 0.5 * pi
+    shown = 0
+    j = 0
+    while j lt len[p.vvs]
+        if p.vvs[j] eq p.vvs[j] and not charts_model.point_hidden[ch, j]
+            shown = shown + 1
+        j = j + 1
+    each = 360.0 / (0.0 + shown)
+    angle = first_angle
+    j = 0
+    while j lt len[p.vvs]
+        m = _mark['arc', d, j]
+        start = angle
+        sweep = 0.0
+        if not charts_model.point_hidden[ch, j]
+            sweep = charts_model.radians[each]
+        finish = angle + sweep
+        outer = 0.0
+        if not charts_model.point_hidden[ch, j]
+            outer = charts_fit.distance_of[sc, a, p.vvs[j]]
+        angle = finish
+        if reset
+            if ch.animate_scale
+                outer = 0.0
+            if ch.animate_rotate
+                start = first_angle
+                finish = first_angle
+        m.x = sc.x_center
+        m.y = sc.y_center
+        m.inner = 0.0
+        m.outer = outer
+        m.start_angle = start
+        m.end_angle = finish
+        m.offset = _offset_at[ch.sets[d], j]
+        out = push[out, m]
+        j = j + 1
+    out
+
+--- ---- truths ----
+
+test bars_find_their_least_room_and_their_stacks[]
+    _least_gap[100.0, [10.0, 30.0, 35.0, 35.0, 80.0]] eq 5.0
+    _least_gap[100.0, [10.0, 32767.0, 30.0]] eq 20.0
+    _sorted_unique[[3.0, 1.0, 2.0, 1.0, 3.0]] eq [1.0, 2.0, 3.0]
+    _letters_of[['left', 'top']] eq 'tl'
+    _edge_of['start', 'bottom', 'top', false] eq 'bottom'
+    _edge_of['start', 'bottom', 'top', true] eq 'top'
+    _edge_of['left', 'left', 'right', true] eq 'right'
+
+test lines_are_found_by_halving_and_curve_through_their_neighbours[]
+    _lookup[[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 1.0, false] eq [0, 1]
+    _lookup[[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 5.0, true] eq [4, 5]
+    a = _mark['point', 0, 0]
+    a.x = 0.0
+    a.y = 0.0
+    b = _mark['point', 0, 1]
+    b.x = 10.0
+    b.y = 10.0
+    c = _mark['point', 0, 2]
+    c.x = 20.0
+    c.y = 0.0
+    cps = _spline[a, b, c, 0.5]
+    cps eq [5.0, 10.0, 15.0, 10.0]
+    _ratio_and_offset[0.0 - pi / 2.0, pi * 2.0, 0.5] eq [1.0, 1.0, 0.0, 0.0]

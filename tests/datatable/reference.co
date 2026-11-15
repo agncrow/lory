@@ -1,0 +1,1194 @@
+--- lory.datatable held to the libraries it follows. reference.json is what
+--- TanStack Table's table-core 9.3.1, match-sorter-utils 9.2.6 and Grid.js
+--- 6.2.0 answered on fixed generated data (reference.mjs ran them), and
+--- each block below builds the same table, takes the same steps through
+--- lory.datatable and holds every answer to the library's: the same row
+--- ids in the same order at the same depths, the same pages, groups and
+--- aggregates, the same flags for each row and column, the same header
+--- groups and sizes, the same ranks, the same buttons and words. Run from
+--- the repository's root: `crow test tests/datatable/reference.co`.
+---
+--- One thing is the library's and not the table's: TanStack's grouping
+--- writes a row's grouped depth and parent into the row objects it shares
+--- with the data and the filtered rows, so once a table has been drawn
+--- grouped, those rows report the grouped depth wherever they appear. A
+--- step of a sequence reads each row's depth as the grouped rows hold it
+--- (`dt.row_of`), which is what the library's shared rows show; a case of
+--- one state reads each model's rows as they are, as the library's do
+--- before its grouped rows have been made. In the same way a data row
+--- the filters made anew (one that passes with rows under it) keeps its
+--- own parent while its grouped copy names its group, and the library asks
+--- the data row whether its parents are expanded (`_parents_expanded`).
+use lory.datatable as dt
+
+--- What a block held: how many values, and the ones that differ.
+struct Tally [held, wrong]
+
+fn _reference[]
+    json[read['tests/datatable/reference.json']]
+
+fn _no_texts[]
+    slice[[''], 0, 0]
+
+fn _begun[]
+    Tally[0, _no_texts[]]
+
+--- One value held: the library's and Lory's, each as text.
+fn _with[k, label, want, got]
+    k.held = k.held + 1
+    if want ne got
+        k.wrong = push[k.wrong, '`label`: the library has `want`, Lory has `got`']
+    k
+
+--- The block's verdict: every value held the same (the differences, the
+--- first forty, are shown when one is not), and how many values were held,
+--- which each block holds to the count it had when it was written, so a
+--- reading that came to compare less would fail too.
+fn _verdict[k, what]
+    log['`what`: `k.held` values held, `len[k.wrong]` differ']
+    shown = _no_texts[]
+    for w in k.wrong
+        if len[shown] lt 40
+            shown = push[shown, w]
+    assert[len[k.wrong] eq 0, join[shown, '\n']]
+    k.held
+
+fn _whole[n]
+    dt.number_text[0.0 + n]
+
+fn _real[x]
+    dt.number_text[x]
+
+fn _flag_text[b]
+    if b
+        return 'true'
+    'false'
+
+--- A side or a direction where the library answers false for none.
+fn _or_false[s]
+    if s eq ''
+        return 'false'
+    s
+
+--- A JSON value as text: numbers as JavaScript writes them, null as 'null'.
+fn _text[j]
+    kind = type[j]
+    if kind eq 'error'
+        return 'null'
+    if kind eq 'bool'
+        if j
+            return 'true'
+        return 'false'
+    if kind eq 'int' or kind eq 'float'
+        return dt.number_text[0.0 + j]
+    if kind eq 'array' or kind eq 'map'
+        return encode[j]
+    '`j`'
+
+fn _flag[j]
+    if j
+        return true
+    false
+
+fn _words[j]
+    out = _no_texts[]
+    for x in j
+        out = push[out, '`x`']
+    out
+
+fn _given[j, name]
+    if name in j
+        return type[j[name]] ne 'error'
+    false
+
+fn _part[j, name]
+    if name in j
+        return j[name]
+    json['{}']
+
+fn _list_held[k, label, want, got]
+    n = len[want]
+    if n ne len[got]
+        k.held = k.held + n
+        w = encode[want]
+        g = join[got, ' ']
+        k.wrong = push[k.wrong, '`label`: the library has `n` items `w`, Lory has `len[got]`: `g`']
+        return k
+    i = 0
+    while i lt n
+        k = _with[k, '`label`[`i`]', _text[want[i]], got[i]]
+        i = i + 1
+    k
+
+-------------------------------------------------------------------- values
+
+--- A cell as the reference writes one: which JavaScript value it was, and the value.
+fn value_from[j]
+    t = '`j.t`'
+    if t eq 'missing'
+        return dt.missing[]
+    if t eq 'null'
+        return dt.nothing[]
+    if t eq 'number'
+        if type[j.v] eq 'str'
+            s = '`j.v`'
+            if s eq 'NaN'
+                return dt.number[0.0 / 0.0]
+            if s eq 'inf'
+                return dt.number[1.0 / 0.0]
+            return dt.number[-1.0 / 0.0]
+        return dt.number[0.0 + j.v]
+    if t eq 'text'
+        return dt.words['`j.v`']
+    if t eq 'bool'
+        return dt.truth[_flag[j.v]]
+    if t eq 'date'
+        return dt.date[0.0 + j.v]
+    items = slice[[dt.missing[]], 0, 0]
+    for x in j.v
+        items = push[items, value_from[x]]
+    dt.listed[items]
+
+--- A value as text that tells every kind and number apart.
+fn value_text[v]
+    if v.is eq 'list'
+        parts = _no_texts[]
+        for x in v.items
+            parts = push[parts, value_text[x]]
+        inside = join[parts, ', ']
+        return 'list[`inside`]'
+    if v.is eq 'number'
+        return 'number `dt.number_text[v.num]`'
+    if v.is eq 'text'
+        return 'text "`v.words`"'
+    if v.is eq 'bool'
+        return 'bool `_flag_text[v.num ne 0.0]`'
+    if v.is eq 'date'
+        return 'date `dt.number_text[v.num]`'
+    v.is
+
+fn _value_held[k, label, want, got]
+    _with[k, label, value_text[value_from[want]], value_text[got]]
+
+-------------------------------------------------------------------- tables as the cases make them
+
+fn _cells[j]
+    out = map['' = dt.missing[]]
+    out = del[out, '']
+    for key in keys[j]
+        out = set[out, '`key`', value_from[j[key]]]
+    out
+
+fn rows_from[j]
+    out = slice[[dt.row['', _cells[json['{}']]]], 0, 0]
+    for r in j
+        out = push[out, dt.tree_row['`r.id`', _cells[r.cells], rows_from[r.subs]]]
+    out
+
+fn _yes_no[j]
+    if j
+        return 'yes'
+    'no'
+
+fn _changed[col, ch]
+    c = col
+    if 'sortFn' in ch
+        c.sort_with = '`ch.sortFn`'
+    if 'sortUndefined' in ch
+        u = ch.sortUndefined
+        if type[u] eq 'bool'
+            c.absent = 'compared'
+        else if type[u] eq 'str'
+            c.absent = '`u`'
+        else if 0.0 + u lt 0.0
+            c.absent = 'smaller'
+        else
+            c.absent = 'greater'
+    if 'invertSorting' in ch
+        c.invert = _flag[ch.invertSorting]
+    if 'sortDescFirst' in ch
+        c.first = 'asc'
+        if ch.sortDescFirst
+            c.first = 'desc'
+    if 'enableSorting' in ch
+        c.sortable = _flag[ch.enableSorting]
+    if 'enableMultiSort' in ch
+        c.multi = _yes_no[ch.enableMultiSort]
+    if 'filterFn' in ch
+        c.filter_with = '`ch.filterFn`'
+    if 'enableColumnFilter' in ch
+        c.filterable = _flag[ch.enableColumnFilter]
+    if 'enableGlobalFilter' in ch
+        c.searchable = _yes_no[ch.enableGlobalFilter]
+    if 'aggregationFn' in ch
+        c.aggregate_with = '`ch.aggregationFn`'
+    if 'size' in ch
+        c.size = 0.0 + ch.size
+    if 'minSize' in ch
+        c.smallest = 0.0 + ch.minSize
+    if 'maxSize' in ch
+        c.largest = 0.0 + ch.maxSize
+    if 'enableHiding' in ch
+        c.hideable = _flag[ch.enableHiding]
+    if 'enablePinning' in ch
+        c.pinnable = _flag[ch.enablePinning]
+    if 'enableResizing' in ch
+        c.resizable = _flag[ch.enableResizing]
+    c
+
+fn columns_from[j, changes]
+    out = slice[[dt.display_column['']], 0, 0]
+    for c in j
+        col = dt.display_column['`c.id`', '`c.header`']
+        if 'columns' in c
+            col = dt.column_group['`c.id`', '`c.header`', columns_from[c.columns, changes]]
+        else if 'accessorKey' in c
+            col = dt.column['`c.accessorKey`', '`c.header`']
+        if col.id in changes
+            col = _changed[col, changes[col.id]]
+        out = push[out, col]
+    out
+
+fn options_from[j]
+    o = dt.options[]
+    if 'enableSorting' in j
+        o.sortable = _flag[j.enableSorting]
+    if 'enableMultiSort' in j
+        o.multi = _yes_no[j.enableMultiSort]
+    if 'enableSortingRemoval' in j
+        o.removable = _flag[j.enableSortingRemoval]
+    if 'enableMultiRemove' in j
+        o.multi_removable = _flag[j.enableMultiRemove]
+    if 'maxMultiSortColCount' in j
+        o.most_sorted = int[j.maxMultiSortColCount]
+    if 'sortDescFirst' in j
+        o.first = 'asc'
+        if j.sortDescFirst
+            o.first = 'desc'
+    if 'enableGlobalFilter' in j
+        o.searching = _flag[j.enableGlobalFilter]
+    if 'globalFilterFn' in j
+        o.search_filter = '`j.globalFilterFn`'
+    if 'filterFromLeafRows' in j
+        o.from_leaves = _flag[j.filterFromLeafRows]
+    if 'maxLeafRowFilterDepth' in j
+        o.filter_depth = int[j.maxLeafRowFilterDepth]
+    if 'groupedColumnMode' in j
+        if type[j.groupedColumnMode] eq 'bool'
+            o.grouped_columns = 'keep'
+        else
+            o.grouped_columns = '`j.groupedColumnMode`'
+    if 'enableExpanding' in j
+        o.expandable = _flag[j.enableExpanding]
+    if 'paginateExpandedRows' in j
+        o.page_expanded = _flag[j.paginateExpandedRows]
+    if 'autoResetExpanded' in j
+        o.reset_expanded = _yes_no[j.autoResetExpanded]
+    if 'autoResetPageIndex' in j
+        o.reset_pages = _yes_no[j.autoResetPageIndex]
+    if 'manualSorting' in j
+        o.manual_sorting = _flag[j.manualSorting]
+    if 'manualFiltering' in j
+        o.manual_filtering = _flag[j.manualFiltering]
+    if 'manualGrouping' in j
+        o.manual_grouping = _flag[j.manualGrouping]
+    if 'manualExpanding' in j
+        o.manual_expanding = _flag[j.manualExpanding]
+    if 'manualPagination' in j
+        o.manual_pages = _flag[j.manualPagination]
+    if 'pageCount' in j
+        o.known_pages = int[j.pageCount]
+    if 'rowCount' in j
+        o.known_rows = int[j.rowCount]
+    if 'enableMultiRowSelection' in j
+        o.multi_select = _flag[j.enableMultiRowSelection]
+    if 'enableSubRowSelection' in j
+        o.select_subs = _flag[j.enableSubRowSelection]
+    if 'unselectable' in j
+        o.unselectable = _words[j.unselectable]
+    if 'closed' in j
+        o.closed = _words[j.closed]
+    if 'unpinnable' in j
+        o.unpinnable = _words[j.unpinnable]
+    if 'keepPinnedRows' in j
+        o.keep_pinned = _flag[j.keepPinnedRows]
+    if 'enableHiding' in j
+        o.hideable = _flag[j.enableHiding]
+    if 'columnResizeMode' in j
+        o.resize_mode = 'end'
+        if '`j.columnResizeMode`' eq 'onChange'
+            o.resize_mode = 'change'
+    if 'columnResizeDirection' in j
+        o.resize_direction = '`j.columnResizeDirection`'
+    o
+
+fn _sorting_from[j]
+    out = slice[[dt.Sort['', false]], 0, 0]
+    for s in j
+        out = push[out, dt.Sort['`s.id`', _flag[s.desc]]]
+    out
+
+fn _filters_from[j]
+    out = slice[[dt.Filter['', dt.missing[]]], 0, 0]
+    for f in j
+        out = push[out, dt.Filter['`f.id`', value_from[f.value]]]
+    out
+
+fn _opened_from[j]
+    out = map['' = false]
+    out = del[out, '']
+    for id in keys[j]
+        if j[id]
+            out = set[out, '`id`', true]
+    out
+
+fn state_from[j]
+    s = dt.empty_state[]
+    if 'sorting' in j
+        s.sorting = _sorting_from[j.sorting]
+    if 'columnFilters' in j
+        s.filters = _filters_from[j.columnFilters]
+    if 'globalFilter' in j
+        s.search = value_from[j.globalFilter]
+    if 'grouping' in j
+        s.grouping = _words[j.grouping]
+    if 'expanded' in j
+        if type[j.expanded] eq 'bool'
+            s.expanded_all = _flag[j.expanded]
+        else
+            s.expanded = _opened_from[j.expanded]
+    if 'pagination' in j
+        s.page_index = int[j.pagination.pageIndex]
+        s.page_size = int[j.pagination.pageSize]
+    if 'columnVisibility' in j
+        seen = map['' = false]
+        seen = del[seen, '']
+        for id in keys[j.columnVisibility]
+            seen = set[seen, '`id`', _flag[j.columnVisibility[id]]]
+        s.visible = seen
+    if 'columnOrder' in j
+        s.order = _words[j.columnOrder]
+    if 'columnPinning' in j
+        if 'start' in j.columnPinning
+            s.start = _words[j.columnPinning.start]
+        if 'end' in j.columnPinning
+            s.end = _words[j.columnPinning.end]
+    if 'columnSizing' in j
+        sizes = map['' = 0.0]
+        sizes = del[sizes, '']
+        for id in keys[j.columnSizing]
+            sizes = set[sizes, '`id`', 0.0 + j.columnSizing[id]]
+        s.sizes = sizes
+    s
+
+--- The table a case builds: its data, its columns with their changes, its options and its first state.
+fn table_from[j, spec]
+    data = '`spec.data`'
+    rows = rows_from[j.data[data]]
+    columns = columns_from[j.columns[data], _part[spec, 'changes']]
+    dt.made[columns, rows, options_from[_part[spec, 'options']], state_from[_part[spec, 'state']]]
+
+-------------------------------------------------------------------- reading a table as the reference does
+
+--- A row as 'id:depth': in a sequence at the depth the grouped rows give it.
+fn _id_depth[m, r, sequence]
+    if sequence
+        d = dt.row_of[m, r.id].depth
+        return '`r.id`:`d`'
+    '`r.id`:`r.depth`'
+
+fn _pre[m, rows, sequence]
+    out = _no_texts[]
+    for r in rows
+        out = push[out, _id_depth[m, r, sequence]]
+        if len[r.subs] gt 0
+            out = concat[out, _pre[m, r.subs, sequence]]
+    out
+
+fn _ids[m, rows, sequence]
+    out = _no_texts[]
+    for r in rows
+        out = push[out, _id_depth[m, r, sequence]]
+    out
+
+fn _column_ids[columns]
+    out = _no_texts[]
+    for c in columns
+        out = push[out, c.id]
+    out
+
+fn _models_held[k, label, t, m, out, sequence]
+    k = _list_held[k, '`label` filtered', out.filtered, _pre[m, m.filtered.rows, sequence]]
+    k = _list_held[k, '`label` filtered flat', out.filteredFlat, _ids[m, m.filtered.flat, sequence]]
+    k = _list_held[k, '`label` sorted', out.sorted, _pre[m, m.sorted.rows, sequence]]
+    k = _list_held[k, '`label` page', out.page, _ids[m, m.page.rows, sequence]]
+    k = _list_held[k, '`label` page flat', out.pageFlat, _ids[m, m.page.flat, sequence]]
+    k = _with[k, '`label` page index', _text[out.pagination.pageIndex], _whole[t.state.page_index]]
+    k = _with[k, '`label` page size', _text[out.pagination.pageSize], _whole[t.state.page_size]]
+    k = _with[k, '`label` page count', _text[out.pageCount], _whole[dt.page_count[t, m]]]
+    k = _with[k, '`label` row count', _text[out.rowCount], _whole[dt.row_count[t, m]]]
+    k = _with[k, '`label` can previous', _text[out.canPrevious], _flag_text[dt.can_previous[t]]]
+    k = _with[k, '`label` can next', _text[out.canNext], _flag_text[dt.can_next[t, m]]]
+    _with[k, '`label` page options', _text[out.pageOptions], _whole[len[dt.page_numbers[t, m]]]]
+
+fn _group_rows[flat]
+    out = slice[flat, 0, 0]
+    for r in flat
+        if dt.is_group[r]
+            out = push[out, r]
+    out
+
+fn _sub_ids[r]
+    out = _no_texts[]
+    for s in r.subs
+        out = push[out, s.id]
+    out
+
+fn _groups_held[k, label, t, m, out]
+    got = _group_rows[m.sorted.flat]
+    want = out.groups
+    k = _with[k, '`label` groups', _whole[len[want]], _whole[len[got]]]
+    if len[want] eq len[got]
+        i = 0
+        while i lt len[want]
+            w = want[i]
+            g = got[i]
+            at = '`label` group `i`'
+            k = _with[k, '`at` id', _text[w.id], g.id]
+            k = _with[k, '`at` depth', _text[w.depth], _whole[g.depth]]
+            k = _with[k, '`at` index', _text[w.index], _whole[g.index]]
+            k = _with[k, '`at` parent', _text[w.parent], g.parent]
+            k = _with[k, '`at` column', _text[w.column], g.column]
+            k = _value_held[k, '`at` value', w.value, dt.words[g.group]]
+            k = _list_held[k, '`at` leaves', w.leaves, g.leaves]
+            k = _list_held[k, '`at` subs', w.subs, _sub_ids[g]]
+            for id in keys[w.values]
+                c = dt.column_of[t, '`id`']
+                k = _value_held[k, '`at` `id`', w.values[id], dt.value_of[g, c]]
+            i = i + 1
+    for id in keys[out.footers]
+        k = _value_held[k, '`label` footer `id`', out.footers[id], dt.footer_value[t, m, '`id`']]
+    k = _list_held[k, '`label` leaf order', out.leafOrder, _column_ids[dt.leaf_columns[t]]]
+    _list_held[k, '`label` visible order', out.visibleOrder, _column_ids[dt.visible_columns[t]]]
+
+fn _ranks_held[k, label, m, out]
+    k = _with[k, '`label` ranked rows', _whole[len[keys[out.ranks]]], _whole[len[m.filtered.flat]]]
+    for r in m.filtered.flat
+        if not (r.id in out.ranks)
+            k = _with[k, '`label` ranks of `r.id`', 'none', 'some']
+        else
+            w = out.ranks[r.id]
+            k = _list_held[k, '`label` ranked columns of `r.id`', json[encode[sort[_words[keys[w]]]]], keys[r.ranks]]
+            for id in keys[w]
+                name = '`id`'
+                if name in r.ranks
+                    k = _with[k, '`label` rank of `r.id` in `name`', _text[w[id]], _real[r.ranks[name]]]
+    k
+
+-------------------------------------------------------------------- row cases
+
+test every_row_case_is_tanstacks[]
+    j = _reference[]
+    k = _begun[]
+    for c in j.cases
+        t = table_from[j, c]
+        m = dt.models[t]
+        label = '`c.name`'
+        k = _models_held[k, label, t, m, c.out, false]
+        if _given[c, 'group']
+            k = _groups_held[k, label, t, m, c.out]
+        if _given[c, 'ranks']
+            k = _ranks_held[k, label, m, c.out]
+    _verdict[k, 'row cases'] gte 30884
+
+-------------------------------------------------------------------- sort, filter and rank functions
+
+test every_sort_function_orders_pairs_as_tanstacks_do[]
+    j = _reference[]
+    k = _begun[]
+    pool = slice[[dt.missing[]], 0, 0]
+    for x in j.sortPool
+        pool = push[pool, value_from[x]]
+    n = len[pool]
+    for f in j.sortFns
+        name = '`f[\'fn\']`'
+        i = 0
+        while i lt n
+            jj = 0
+            while jj lt n
+                want = f.out[i * n + jj]
+                if type[want] ne 'error'
+                    got = dt.sort_compare[name, pool[i], pool[jj]]
+                    k = _with[k, '`name` of `value_text[pool[i]]` and `value_text[pool[jj]]`', _text[want], _whole[got]]
+                jj = jj + 1
+            i = i + 1
+    _verdict[k, 'sort functions'] gte 8972
+
+test every_filter_function_passes_values_as_tanstacks_do[]
+    j = _reference[]
+    k = _begun[]
+    pool = slice[[dt.missing[]], 0, 0]
+    for x in j.filterPool
+        pool = push[pool, value_from[x]]
+    for f in j.filterFns
+        name = '`f[\'fn\']`'
+        for o in f.out
+            given = value_from[o.value]
+            resolved = dt.resolved_filter[name, given]
+            k = _value_held[k, '`name` resolves `value_text[given]`', o.resolved, resolved]
+            i = 0
+            while i lt len[pool]
+                got = dt.filter_passes[name, pool[i], resolved]
+                k = _with[k, '`name` `value_text[given]` on `value_text[pool[i]]`', _text[o.passes[i]], _flag_text[got]]
+                i = i + 1
+        for r in f.removes
+            given = value_from[r.value]
+            k = _with[k, '`name` takes `value_text[given]` away', _text[r.removes], _flag_text[dt.filter_removes[name, given]]]
+    _verdict[k, 'filter functions'] gte 2627
+
+test every_fuzzy_rank_is_match_sorters[]
+    j = _reference[]
+    k = _begun[]
+    queries = _words[j.rankQueries]
+    for c in j.ranks
+        item = value_from[c.item]
+        i = 0
+        while i lt len[queries]
+            r = dt.rank_of[item, dt.words[queries[i]]]
+            at = 'rank of `value_text[item]` for "`queries[i]`"'
+            k = _with[k, at, _text[c.out[i][0]], _real[r.rank]]
+            k = _with[k, '`at` passes', _text[c.out[i][1]], _flag_text[r.passed]]
+            i = i + 1
+    for pair in j.accents
+        k = _with[k, 'accent taken off `pair[0]`', '`pair[1]`', dt.plain_letters['`pair[0]`']]
+    _verdict[k, 'fuzzy ranks'] gte 1468
+
+-------------------------------------------------------------------- sequences: sorting toggled
+
+fn _sorts_held[k, label, t, out]
+    m = dt.models[t]
+    want = out.sorting
+    k = _with[k, '`label` sorted columns', _whole[len[want]], _whole[len[t.state.sorting]]]
+    if len[want] eq len[t.state.sorting]
+        i = 0
+        while i lt len[want]
+            k = _with[k, '`label` sort `i`', _text[want[i].id], t.state.sorting[i].id]
+            k = _with[k, '`label` sort `i` desc', _text[want[i].desc], _flag_text[t.state.sorting[i].desc]]
+            i = i + 1
+    for key in keys[out.columns]
+        id = '`key`'
+        w = out.columns[key]
+        at = '`label` `id`'
+        k = _with[k, '`at` sorted', _text[w.sorted], _or_false[dt.sort_of[t, id]]]
+        k = _with[k, '`at` sort index', _text[w.index], _whole[dt.sort_index[t, id]]]
+        k = _with[k, '`at` next', _text[w.next], _or_false[dt.next_sort[t, m, id, false]]]
+        k = _with[k, '`at` next of several', _text[w.nextMulti], _or_false[dt.next_sort[t, m, id, true]]]
+        k = _with[k, '`at` first', _text[w.first], dt.first_sort[t, m, id]]
+        k = _with[k, '`at` can sort', _text[w.canSort], _flag_text[dt.can_sort[t, id]]]
+        k = _with[k, '`at` can sort with others', _text[w.canMulti], _flag_text[dt.can_multi_sort[t, id]]]
+        k = _with[k, '`at` auto', _text[w.auto], dt.auto_sort[t, m, id]]
+    k
+
+test every_sort_toggle_is_tanstacks[]
+    j = _reference[]
+    k = _begun[]
+    for c in j.toggles
+        t = table_from[j, c]
+        name = '`c.name`'
+        k = _sorts_held[k, '`name` at first', t, c.out[0]]
+        i = 0
+        for s in c.steps
+            i = i + 1
+            t = dt.sort_toggled[t, '`s[0]`', _flag[s[1]]]
+            k = _sorts_held[k, '`name` after `i`', t, c.out[i]]
+    _verdict[k, 'sort toggles'] gte 3515
+
+-------------------------------------------------------------------- sequences: pages and their resets
+
+fn _paged[j, t, s]
+    what = '`s[0]`'
+    if what eq 'index'
+        return dt.page_set[t, int[s[1]]]
+    if what eq 'size'
+        return dt.page_size_set[t, int[s[1]]]
+    if what eq 'next'
+        return dt.next_page[t]
+    if what eq 'previous'
+        return dt.previous_page[t]
+    if what eq 'first'
+        return dt.first_page[t]
+    if what eq 'last'
+        return dt.last_page[t]
+    if what eq 'filter'
+        return dt.filters_set[t, _filters_from[s[1]]]
+    if what eq 'global'
+        return dt.search_set[t, value_from[s[1]]]
+    if what eq 'sort'
+        return dt.sorted_by[t, _sorting_from[s[1]]]
+    if what eq 'group'
+        return dt.grouping_set[t, _words[s[1]]]
+    if what eq 'expand'
+        if type[s[1]] eq 'bool'
+            return dt.expansion_set[t, _flag[s[1]], _opened_from[json['{}']]]
+        return dt.expansion_set[t, false, _opened_from[s[1]]]
+    if what eq 'data'
+        rows = rows_from[j.data.people]
+        return dt.rows_set[t, slice[rows, 0, int[s[1]]]]
+    t
+
+test every_page_step_is_tanstacks[]
+    j = _reference[]
+    k = _begun[]
+    for c in j.pages
+        t = table_from[j, c]
+        name = '`c.name`'
+        k = _models_held[k, '`name` at first', t, dt.models[t], c.out[0], true]
+        i = 0
+        for s in c.steps
+            i = i + 1
+            t = _paged[j, t, s]
+            k = _models_held[k, '`name` after `i` (`s[0]`)', t, dt.models[t], c.out[i], true]
+    _verdict[k, 'page steps'] gte 9111
+
+-------------------------------------------------------------------- sequences: expanding
+
+fn _expanded_ids[t]
+    out = _no_texts[]
+    for id in keys[t.state.expanded]
+        if t.state.expanded[id]
+            out = push[out, id]
+    out
+
+fn _expands_held[k, label, t, out]
+    m = dt.models[t]
+    if type[out.expanded] eq 'bool'
+        k = _with[k, '`label` expanded', 'true', _flag_text[t.state.expanded_all]]
+    else
+        k = _with[k, '`label` expanded all', 'false', _flag_text[t.state.expanded_all]]
+        k = _list_held[k, '`label` expanded', out.expanded, _expanded_ids[t]]
+    k = _with[k, '`label` all expanded', _text[out.all], _flag_text[dt.all_expanded[t, m]]]
+    k = _with[k, '`label` some expanded', _text[out.some], _flag_text[dt.some_expanded[t]]]
+    k = _with[k, '`label` some can expand', _text[out.can], _flag_text[dt.can_some_expand[t, m]]]
+    k = _with[k, '`label` depth', _text[out.depth], _whole[dt.expanded_depth[t, m]]]
+    k = _list_held[k, '`label` page', out.page, _ids[m, m.page.rows, true]]
+    for key in keys[out.rows]
+        id = '`key`'
+        w = out.rows[key]
+        r = dt.data_row_of[m, id]
+        k = _with[k, '`label` `id` can expand', _text[w[0]], _flag_text[dt.can_expand[t, r]]]
+        k = _with[k, '`label` `id` expanded', _text[w[1]], _flag_text[dt.is_expanded[t, id]]]
+        k = _with[k, '`label` `id` parents expanded', _text[w[2]], _flag_text[_parents_expanded[t, m, id]]]
+    k
+
+fn _filtering[t]
+    if len[t.rows] eq 0 or t.options.manual_filtering
+        return false
+    if len[t.state.filters] gt 0
+        return true
+    v = t.state.search
+    not (v.is eq 'missing' or v.is eq 'null' or (v.is eq 'text' and v.words eq ''))
+
+--- Whether TanStack's data row of an id is the very row its grouped rows
+--- hold: it is unless the filters left the row out or made a new row for
+--- it (filtering from the root, a row that passes with rows under it;
+--- filtering from the leaves, every row).
+fn _shared[t, m, r]
+    if not (r.id in m.held)
+        return false
+    if not _filtering[t]
+        return true
+    if t.options.from_leaves
+        return false
+    not (len[r.subs] gt 0 and r.depth lt t.options.filter_depth)
+
+--- Whether every row above a data row is expanded, as TanStack answers for
+--- its data row: the walk begins at the parent that row holds (the grouped
+--- one when the grouped rows share it, else its own) and goes on through
+--- the grouped rows. Lory's parents_expanded walks the grouped rows from
+--- the start.
+fn _parents_expanded[t, m, id]
+    r = dt.data_row_of[m, id]
+    parent = r.parent
+    if _shared[t, m, r]
+        parent = dt.row_of[m, id].parent
+    while parent ne ''
+        if not dt.is_expanded[t, parent]
+            return false
+        parent = dt.row_of[m, parent].parent
+    true
+
+fn _expanding[j, t, s]
+    what = '`s[0]`'
+    if what eq 'row'
+        if _given[json['{"v": `encode[s]`}'], 'v'] and len[s] gt 2
+            return dt.row_expansion_set[t, '`s[1]`', _flag[s[2]]]
+        return dt.row_expansion_toggled[t, '`s[1]`']
+    if what eq 'all'
+        if len[s] gt 2
+            return dt.all_expansion_set[t, _flag[s[2]]]
+        return dt.all_expansion_toggled[t]
+    if what eq 'filter'
+        return dt.filters_set[t, _filters_from[s[1]]]
+    if what eq 'global'
+        return dt.search_set[t, value_from[s[1]]]
+    if what eq 'sort'
+        return dt.sorted_by[t, _sorting_from[s[1]]]
+    if what eq 'group'
+        return dt.grouping_set[t, _words[s[1]]]
+    t
+
+test every_expanding_step_is_tanstacks[]
+    j = _reference[]
+    k = _begun[]
+    for c in j.expands
+        t = table_from[j, c]
+        name = '`c.name`'
+        k = _expands_held[k, '`name` at first', t, c.out[0]]
+        i = 0
+        for s in c.steps
+            i = i + 1
+            t = _expanding[j, t, s]
+            k = _expands_held[k, '`name` after `i` (`s[0]`)', t, c.out[i]]
+    _verdict[k, 'expanding steps'] gte 8382
+
+-------------------------------------------------------------------- sequences: selection
+
+fn _selected_ids[t]
+    out = _no_texts[]
+    for id in keys[t.state.selected]
+        if t.state.selected[id]
+            out = push[out, id]
+    out
+
+fn _selects_held[k, label, t, out]
+    m = dt.models[t]
+    k = _list_held[k, '`label` selection', out.selection, _selected_ids[t]]
+    k = _with[k, '`label` all selected', _text[out.all], _flag_text[dt.all_selected[t, m]]]
+    k = _with[k, '`label` some selected', _text[out.some], _flag_text[dt.some_selected[t]]]
+    k = _with[k, '`label` all the page selected', _text[out.allPage], _flag_text[dt.all_page_selected[t, m]]]
+    k = _with[k, '`label` some of the page selected', _text[out.somePage], _flag_text[dt.some_page_selected[t, m]]]
+    k = _list_held[k, '`label` selected rows', out.selected, _ids[m, dt.selected_rows[t, m].flat, true]]
+    k = _list_held[k, '`label` filtered selected rows', out.filteredSelected, _ids[m, dt.filtered_selected_rows[t, m].flat, true]]
+    k = _list_held[k, '`label` grouped selected rows', out.groupedSelected, _ids[m, dt.grouped_selected_rows[t, m].flat, true]]
+    k = _list_held[k, '`label` selected tree', out.selectedTree, _pre[m, dt.selected_rows[t, m].rows, true]]
+    for key in keys[out.rows]
+        id = '`key`'
+        w = out.rows[key]
+        under = dt.subs_selected[t, dt.data_row_of[m, id]]
+        at = '`label` `id`'
+        k = _with[k, '`at` selected', _text[w[0]], _flag_text[dt.is_selected[t, id]]]
+        k = _with[k, '`at` some under selected', _text[w[1]], _flag_text[under eq 'some']]
+        k = _with[k, '`at` all under selected', _text[w[2]], _flag_text[under eq 'all']]
+        k = _with[k, '`at` can select', _text[w[3]], _flag_text[dt.can_select[t, id]]]
+        k = _with[k, '`at` can select with others', _text[w[4]], _flag_text[dt.can_multi_select[t]]]
+        k = _with[k, '`at` can select under', _text[w[5]], _flag_text[dt.can_select_subs[t, id]]]
+    k
+
+fn _selecting[t, s]
+    what = '`s[0]`'
+    valued = len[s] gt 2 and type[s[2]] ne 'error'
+    if what eq 'row'
+        if valued
+            return dt.row_selection_set[t, '`s[1]`', _flag[s[2]]]
+        return dt.row_selection_toggled[t, '`s[1]`']
+    if what eq 'all'
+        if valued
+            return dt.all_selection_set[t, _flag[s[2]]]
+        return dt.all_selection_toggled[t]
+    if valued
+        return dt.page_selection_set[t, _flag[s[2]]]
+    dt.page_selection_toggled[t]
+
+test every_selection_step_is_tanstacks[]
+    j = _reference[]
+    k = _begun[]
+    for c in j.selects
+        t = table_from[j, c]
+        name = '`c.name`'
+        k = _selects_held[k, '`name` at first', t, c.out[0]]
+        i = 0
+        for s in c.steps
+            i = i + 1
+            t = _selecting[t, s]
+            k = _selects_held[k, '`name` after `i` (`s[0]`)', t, c.out[i]]
+    _verdict[k, 'selection steps'] gte 12245
+
+-------------------------------------------------------------------- sequences: row pinning
+
+fn _pins_held[k, label, t, out]
+    m = dt.models[t]
+    k = _list_held[k, '`label` top', out.top, t.state.top]
+    k = _list_held[k, '`label` bottom', out.bottom, t.state.bottom]
+    k = _list_held[k, '`label` top rows', out.topRows, _ids[m, dt.top_rows[t, m], true]]
+    k = _list_held[k, '`label` center rows', out.centerRows, _ids[m, dt.center_rows[t, m], true]]
+    k = _list_held[k, '`label` bottom rows', out.bottomRows, _ids[m, dt.bottom_rows[t, m], true]]
+    k = _with[k, '`label` some pinned', _text[out.some], _flag_text[dt.some_rows_pinned[t]]]
+    k = _with[k, '`label` some pinned on top', _text[out.someTop], _flag_text[dt.some_rows_pinned[t, 'top']]]
+    for key in keys[out.rows]
+        id = '`key`'
+        w = out.rows[key]
+        at = '`label` `id`'
+        k = _with[k, '`at` pinned', _text[w[0]], _or_false[dt.row_pin_of[t, id]]]
+        k = _with[k, '`at` pinned index', _text[w[1]], _whole[dt.pinned_row_index[t, m, id]]]
+        k = _with[k, '`at` can pin', _text[w[2]], _flag_text[dt.can_pin_row[t, id]]]
+    k
+
+test every_row_pin_is_tanstacks[]
+    j = _reference[]
+    k = _begun[]
+    for c in j.pins
+        t = table_from[j, c]
+        name = '`c.name`'
+        k = _pins_held[k, '`name` at first', t, c.out[0]]
+        i = 0
+        for s in c.steps
+            i = i + 1
+            side = ''
+            if type[s[1]] eq 'str'
+                side = '`s[1]`'
+            leaves = len[s] gt 2 and _flag[s[2]]
+            parents = len[s] gt 3 and _flag[s[3]]
+            t = dt.row_pinned[t, '`s[0]`', side, leaves, parents]
+            k = _pins_held[k, '`name` after `i`', t, c.out[i]]
+    _verdict[k, 'row pins'] gte 3247
+
+-------------------------------------------------------------------- columns: order, visibility, pinning, sizes, headers
+
+fn _texts_held[k, label, want, got]
+    n = len[want]
+    if n ne len[got]
+        k.held = k.held + n
+        w = join[want, ' ']
+        g = join[got, ' ']
+        k.wrong = push[k.wrong, '`label`: the library has `n` items `w`, Lory has `len[got]`: `g`']
+        return k
+    i = 0
+    while i lt n
+        k = _with[k, '`label`[`i`]', want[i], got[i]]
+        i = i + 1
+    k
+
+fn _key_list[j]
+    sort[_words[keys[j]]]
+
+fn _headers_held[k, label, want, got]
+    k = _with[k, '`label` rows of headers', _whole[len[want]], _whole[len[got]]]
+    if len[want] ne len[got]
+        return k
+    i = 0
+    while i lt len[want]
+        w = want[i]
+        g = got[i]
+        at = '`label` row `i`'
+        k = _with[k, '`at` id', _text[w.id], g.id]
+        k = _with[k, '`at` depth', _text[w.depth], _whole[g.depth]]
+        k = _with[k, '`at` headers', _whole[len[w.headers]], _whole[len[g.headers]]]
+        if len[w.headers] eq len[g.headers]
+            x = 0
+            while x lt len[w.headers]
+                wh = w.headers[x]
+                gh = g.headers[x]
+                here = '`at` header `x`'
+                k = _with[k, '`here` id', _text[wh.id], gh.id]
+                k = _with[k, '`here` column', _text[wh.column], gh.column]
+                k = _with[k, '`here` columns spanned', _text[wh.colSpan], _whole[gh.columns]]
+                k = _with[k, '`here` rows spanned', _text[wh.rowSpan], _whole[gh.rows]]
+                k = _with[k, '`here` holds a place', _text[wh.placeholder], _flag_text[gh.placeholder]]
+                k = _with[k, '`here` place', _text[wh.placeholderId], gh.place]
+                k = _with[k, '`here` depth', _text[wh.depth], _whole[gh.depth]]
+                k = _with[k, '`here` index', _text[wh.index], _whole[gh.index]]
+                k = _with[k, '`here` size', _text[wh.size], _real[gh.size]]
+                k = _with[k, '`here` start', _text[wh.start], _real[gh.offset]]
+                k = _list_held[k, '`here` subs', wh.subs, gh.subs]
+                x = x + 1
+        i = i + 1
+    k
+
+fn _place_of[t, id]
+    side = dt.column_pin_of[t, id]
+    if side eq ''
+        return 'center'
+    side
+
+fn _columns_held[k, label, t, out]
+    k = _list_held[k, '`label` all', out.all, _column_ids[dt.leaf_columns[t]]]
+    k = _list_held[k, '`label` flat', out.flat, _column_ids[dt.flat_columns[t]]]
+    k = _list_held[k, '`label` visible', out.visible, _column_ids[dt.visible_columns[t]]]
+    k = _list_held[k, '`label` visible flat', out.visibleFlat, _column_ids[dt.visible_flat_columns[t]]]
+    k = _list_held[k, '`label` start', out.start, _column_ids[dt.side_columns[t, 'start']]]
+    k = _list_held[k, '`label` center', out.center, _column_ids[dt.side_columns[t, 'center']]]
+    k = _list_held[k, '`label` end', out.end, _column_ids[dt.side_columns[t, 'end']]]
+    k = _with[k, '`label` all visible', _text[out.allVisible], _flag_text[dt.all_visible[t]]]
+    k = _with[k, '`label` some visible', _text[out.someVisible], _flag_text[dt.some_visible[t]]]
+    k = _with[k, '`label` some pinned', _text[out.somePinned], _flag_text[dt.some_columns_pinned[t]]]
+    k = _with[k, '`label` total size', _text[out.total], _real[dt.total_size[t]]]
+    k = _with[k, '`label` start size', _text[out.startTotal], _real[dt.side_size[t, 'start']]]
+    k = _with[k, '`label` center size', _text[out.centerTotal], _real[dt.side_size[t, 'center']]]
+    k = _with[k, '`label` end size', _text[out.endTotal], _real[dt.side_size[t, 'end']]]
+    k = _headers_held[k, '`label` headers', out.headers, dt.header_groups[t, 'all']]
+    k = _headers_held[k, '`label` start headers', out.startHeaders, dt.header_groups[t, 'start']]
+    k = _headers_held[k, '`label` center headers', out.centerHeaders, dt.header_groups[t, 'center']]
+    k = _headers_held[k, '`label` end headers', out.endHeaders, dt.header_groups[t, 'end']]
+    k = _texts_held[k, '`label` visibility state', _key_list[out.visibility], keys[t.state.visible]]
+    for key in keys[out.visibility]
+        id = '`key`'
+        if id in t.state.visible
+            k = _with[k, '`label` visibility of `id`', _text[out.visibility[key]], _flag_text[t.state.visible[id]]]
+    k = _list_held[k, '`label` pinned to the start', _part[out.pinning, 'start'], t.state.start]
+    k = _list_held[k, '`label` pinned to the end', _part[out.pinning, 'end'], t.state.end]
+    k = _list_held[k, '`label` order', out.order, t.state.order]
+    k = _texts_held[k, '`label` sizing state', _key_list[out.sizing], keys[t.state.sizes]]
+    for key in keys[out.sizing]
+        id = '`key`'
+        if id in t.state.sizes
+            k = _with[k, '`label` size of `id` in the state', _text[out.sizing[key]], _real[t.state.sizes[id]]]
+    for key in keys[out.columns]
+        id = '`key`'
+        w = out.columns[key]
+        place = _place_of[t, id]
+        at = '`label` `id`'
+        k = _with[k, '`at` visible', _text[w.visible], _flag_text[dt.is_visible[t, id]]]
+        k = _with[k, '`at` can hide', _text[w.canHide], _flag_text[dt.can_hide[t, id]]]
+        k = _with[k, '`at` pinned', _text[w.pinned], _or_false[dt.column_pin_of[t, id]]]
+        k = _with[k, '`at` pinned index', _text[w.pinnedIndex], _whole[dt.pinned_column_index[t, id]]]
+        k = _with[k, '`at` can pin', _text[w.canPin], _flag_text[dt.can_pin_column[t, id]]]
+        k = _with[k, '`at` size', _text[w.size], _real[dt.column_size[t, id]]]
+        k = _with[k, '`at` start', _text[w.start], _real[dt.column_start[t, id]]]
+        k = _with[k, '`at` start in its part', _text[w.startHere], _real[dt.column_start[t, id, place]]]
+        k = _with[k, '`at` after', _text[w.after], _real[dt.column_after[t, id]]]
+        k = _with[k, '`at` after in its part', _text[w.afterHere], _real[dt.column_after[t, id, place]]]
+        k = _with[k, '`at` index', _text[w.index], _whole[dt.column_index[t, id]]]
+        k = _with[k, '`at` index in its part', _text[w.indexHere], _whole[dt.column_index[t, id, place]]]
+        k = _with[k, '`at` first', _text[w.first], _flag_text[dt.is_first_column[t, id]]]
+        k = _with[k, '`at` last', _text[w.last], _flag_text[dt.is_last_column[t, id]]]
+        k = _with[k, '`at` first in its part', _text[w.firstHere], _flag_text[dt.is_first_column[t, id, place]]]
+        k = _with[k, '`at` last in its part', _text[w.lastHere], _flag_text[dt.is_last_column[t, id, place]]]
+        k = _with[k, '`at` can resize', _text[w.canResize], _flag_text[dt.can_resize[t, id]]]
+        k = _with[k, '`at` depth', _text[w.depth], _whole[dt.column_depth[t, id]]]
+        k = _with[k, '`at` parent', _text[w.parent], dt.column_parent[t, id]]
+    k
+
+fn _column_step[t, s]
+    what = '`s[0]`'
+    valued = len[s] gt 2 and type[s[2]] ne 'error'
+    if what eq 'hide'
+        if valued
+            return dt.visibility_set[t, '`s[1]`', _flag[s[2]]]
+        return dt.visibility_toggled[t, '`s[1]`']
+    if what eq 'all'
+        if valued
+            return dt.all_visibility_set[t, _flag[s[2]]]
+        return dt.all_visibility_toggled[t]
+    if what eq 'pin'
+        side = ''
+        if type[s[2]] eq 'str'
+            side = '`s[2]`'
+        return dt.column_pinned[t, '`s[1]`', side]
+    if what eq 'order'
+        return dt.order_set[t, _words[s[2]]]
+    if what eq 'reset size'
+        return dt.column_size_reset[t, '`s[1]`']
+    t
+
+test every_column_report_is_tanstacks[]
+    j = _reference[]
+    k = _begun[]
+    for c in j.columnCases
+        t = table_from[j, c]
+        name = '`c.name`'
+        k = _columns_held[k, '`name` at first', t, c.out[0]]
+        i = 0
+        for s in c.steps
+            i = i + 1
+            t = _column_step[t, s]
+            k = _columns_held[k, '`name` after `i` (`s[0]`)', t, c.out[i]]
+    _verdict[k, 'columns'] gte 34587
+
+-------------------------------------------------------------------- sequences: resizing
+
+fn _resize_held[k, label, t, out]
+    k = _texts_held[k, '`label` sizing', _key_list[out.sizing], keys[t.state.sizes]]
+    for key in keys[out.sizing]
+        id = '`key`'
+        if id in t.state.sizes
+            k = _with[k, '`label` size of `id`', _text[out.sizing[key]], _real[t.state.sizes[id]]]
+    r = t.state.resizing
+    w = out.resizing
+    if r.column eq ''
+        k = _with[k, '`label` column resizing', _text[w.isResizingColumn], 'false']
+        k = _with[k, '`label` start offset', _text[w.startOffset], 'null']
+        k = _with[k, '`label` start size', _text[w.startSize], 'null']
+        k = _with[k, '`label` moved', _text[w.deltaOffset], 'null']
+        k = _with[k, '`label` share', _text[w.deltaPercentage], 'null']
+        k = _with[k, '`label` sizes it began with', _whole[len[w.columnSizingStart]], '0']
+    else
+        k = _with[k, '`label` column resizing', _text[w.isResizingColumn], r.column]
+        k = _with[k, '`label` start offset', _text[w.startOffset], _real[r.offset]]
+        k = _with[k, '`label` start size', _text[w.startSize], _real[r.size]]
+        k = _with[k, '`label` moved', _text[w.deltaOffset], _real[r.moved]]
+        k = _with[k, '`label` share', _text[w.deltaPercentage], _real[r.share]]
+        k = _with[k, '`label` sizes it began with', _whole[len[w.columnSizingStart]], _whole[len[r.sizes]]]
+        if len[w.columnSizingStart] eq len[r.sizes]
+            i = 0
+            while i lt len[r.sizes]
+                k = _with[k, '`label` began with `i`', _text[w.columnSizingStart[i][0]], r.sizes[i].id]
+                k = _with[k, '`label` began with `i` size', _text[w.columnSizingStart[i][1]], _real[r.sizes[i].size]]
+                i = i + 1
+    resizing = _no_texts[]
+    for c in dt.leaf_columns[t]
+        if dt.is_resizing[t, c.id]
+            resizing = push[resizing, c.id]
+    _list_held[k, '`label` columns resizing', out.resizingColumns, resizing]
+
+test every_resize_is_tanstacks[]
+    j = _reference[]
+    k = _begun[]
+    for c in j.resizes
+        t = table_from[j, c]
+        name = '`c.name`'
+        moves = slice[[0.0], 0, 0]
+        for x in c.moves
+            moves = push[moves, 0.0 + x]
+        last = len[moves] - 1
+        t = dt.resize_started[t, '`c.header`', moves[0]]
+        k = _resize_held[k, '`name` begun', t, c.out[0]]
+        i = 1
+        while i lt last
+            t = dt.resize_moved[t, moves[i]]
+            k = _resize_held[k, '`name` moved `i`', t, c.out[i]]
+            i = i + 1
+        t = dt.resize_ended[t, moves[last]]
+        k = _resize_held[k, '`name` ended', t, c.out[last]]
+    _verdict[k, 'resizes'] gte 292
+
+-------------------------------------------------------------------- faceting
+
+test every_facet_is_tanstacks[]
+    j = _reference[]
+    k = _begun[]
+    for c in j.facets
+        t = table_from[j, c]
+        m = dt.models[t]
+        name = '`c.name`'
+        for key in keys[c.out]
+            id = '`key`'
+            w = c.out[key]
+            at = '`name` `id`'
+            k = _list_held[k, '`at` rows', w.rows, _ids[m, dt.faceted_rows[t, m.core, id].flat, false]]
+            got = dt.faceted_values[t, m.core, id]
+            k = _with[k, '`at` values', _whole[len[w.unique]], _whole[len[got]]]
+            if len[w.unique] eq len[got]
+                i = 0
+                while i lt len[got]
+                    k = _value_held[k, '`at` value `i`', w.unique[i][0], got[i].value]
+                    k = _with[k, '`at` count `i`', _text[w.unique[i][1]], _whole[got[i].count]]
+                    i = i + 1
+            reach = dt.faceted_range[t, m.core, id]
+            span = dt.missing[]
+            if reach.found
+                span = dt.listed[[dt.number[reach.least], dt.number[reach.greatest]]]
+            k = _value_held[k, '`at` range', w.minmax, span]
+    _verdict[k, 'facets'] gte 2933
+
+-------------------------------------------------------------------- Grid.js
+
+fn _grid_cells[j]
+    out = slice[[[dt.missing[]]], 0, 0]
+    for row in j
+        cells = slice[[dt.missing[]], 0, 0]
+        for x in row
+            if type[x] eq 'str'
+                cells = push[cells, dt.words['`x`']]
+            else
+                cells = push[cells, dt.number[0.0 + x]]
+        out = push[out, cells]
+    out
+
+fn _grid_held[k, label, g, lang, out, width]
+    total = dt.grid_total[g]
+    if total eq 0
+        k = _with[k, '`label` body', _whole[len[out.body]], '1']
+        k = _with[k, '`label` nothing found', _text[out.body[0][0]], lang.none_found]
+        k = _with[k, '`label` summary', _text[out.summary], 'null']
+        k = _with[k, '`label` summary title', _text[out.summaryTitle], 'null']
+        k = _with[k, '`label` empty', _text[out.empty], lang.none_found]
+    else
+        shown = dt.grid_shown[g]
+        k = _with[k, '`label` body', _whole[len[out.body]], _whole[len[shown]]]
+        if len[out.body] eq len[shown]
+            r = 0
+            while r lt len[shown]
+                cells = g.rows[shown[r]]
+                x = 0
+                while x lt width
+                    k = _with[k, '`label` cell `r` `x`', _text[out.body[r][x]], dt.grid_cell_text[cells[x]]]
+                    x = x + 1
+                r = r + 1
+        k = _with[k, '`label` summary', _text[out.summary], dt.grid_summary[g, lang]]
+        k = _with[k, '`label` summary title', _text[out.summaryTitle], dt.grid_summary_title[g, lang]]
+        k = _with[k, '`label` empty', _text[out.empty], 'null']
+    buttons = dt.grid_buttons[g, lang]
+    k = _with[k, '`label` buttons', _whole[len[out.buttons]], _whole[len[buttons]]]
+    if len[out.buttons] eq len[buttons]
+        i = 0
+        while i lt len[buttons]
+            w = out.buttons[i]
+            b = buttons[i]
+            at = '`label` button `i`'
+            k = _with[k, '`at` words', _text[w.text], b.label]
+            k = _with[k, '`at` off', _text[w.disabled], _flag_text[b.disabled]]
+            k = _with[k, '`at` current', _text[w.current], _flag_text[b.current]]
+            k = _with[k, '`at` gap', _text[w.spread], _flag_text[b.spread]]
+            k = _with[k, '`at` title', _text[w.title], b.title]
+            i = i + 1
+    x = 0
+    while x lt width
+        k = _with[k, '`label` sort `x`', _text[out.sorts[x].state], dt.grid_sort_state[g, x]]
+        k = _with[k, '`label` sort `x` title', _text[out.sorts[x].title], dt.grid_sort_title[g, lang, x]]
+        x = x + 1
+    _with[k, '`label` placeholder', _text[out.placeholder], lang.placeholder]
+
+fn _grid_step[g, lang, s]
+    what = '`s[0]`'
+    if what eq 'next'
+        return dt.grid_next[g]
+    if what eq 'previous'
+        return dt.grid_previous[g]
+    if what eq 'page'
+        words = '`s[1]`'
+        for b in dt.grid_buttons[g, lang]
+            if b.label eq words and not b.spread
+                return dt.grid_page_pressed[g, b.goes]
+        return g
+    if what eq 'last'
+        goes = -1
+        for b in dt.grid_buttons[g, lang]
+            if not b.spread and b.goes gte 0 and b.label ne lang.previous and b.label ne lang.following
+                goes = b.goes
+        return dt.grid_page_pressed[g, goes]
+    if what eq 'search'
+        return dt.grid_searched[g, '`s[1]`']
+    if what eq 'sort'
+        return dt.grid_sort_pressed[g, int[s[1]], len[s] gt 2 and _flag[s[2]]]
+    g
+
+fn _grid_run[k, label, g, lang, run, width]
+    i = 0
+    for s in run.steps
+        g = _grid_step[g, lang, s]
+        k = _grid_held[k, '`label` step `i` (`s[0]`)', g, lang, run.out[i], width]
+        i = i + 1
+    k
+
+test every_grid_answer_is_gridjss[]
+    j = _reference[]
+    k = _begun[]
+    grid = j.gridjs
+    lang = dt.grid_language[]
+    rows = _grid_cells[grid.rows]
+    width = len[grid.columns]
+    first = dt.grid[rows, int[grid.first.limit], int[grid.first.buttons]]
+    k = _grid_run[k, 'first grid', first, lang, grid.first, width]
+    second = dt.grid[slice[rows, 0, int[grid.second.rows]], int[grid.second.limit], int[grid.second.buttons]]
+    k = _grid_run[k, 'second grid', second, lang, grid.second, width]
+    _verdict[k, 'Grid.js'] gte 3643

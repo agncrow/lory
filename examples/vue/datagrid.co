@@ -1,0 +1,188 @@
+--- Grid with Sort and Filter: a table of heroes and their power, its
+--- rows those whose name or power holds the words searched (in either
+--- case), sorted by the column whose head was pressed last; each press on
+--- a head turns that column's order about, and its arrow shows the order
+--- held for the column (up: ascending), as Vue's does. No row left: "No matches found."
+use lory
+use lory.gui
+use lory.icons
+use common
+
+struct Hero [name, power]
+
+--- the words searched, the column sorted by ('' for none) and each
+--- column's order (1 or -1)
+struct Grid [query, key, name_order, power_order]
+
+fn heroes[]
+    [Hero['Chuck Norris', inf], Hero['Bruce Lee', 9000.0], Hero['Jackie Chan', 7000.0], Hero['Jet Li', 8000.0]]
+
+fn columns[]
+    ['name', 'power']
+
+fn fresh[]
+    Grid['', '', 1, 1]
+
+fn ticked[s, c]
+    s
+
+--- `String(value)` of a hero's column
+fn _cell[h, key]
+    if key eq 'name'
+        return h.name
+    common.js_number[h.power]
+
+fn _order_of[s, key]
+    if key eq 'name'
+        return s.name_order
+    s.power_order
+
+fn _holds[hay, needle]
+    len[split[hay, needle]] gt 1
+
+--- `(a === b ? 0 : a > b ? 1 : -1) * order`
+fn _compared[a, b, key, order]
+    if key eq 'name'
+        if a.name eq b.name
+            return 0
+        if a.name gt b.name
+            return order
+        return 0 - order
+    if a.power eq b.power
+        return 0
+    if a.power gt b.power
+        return order
+    0 - order
+
+--- the heroes the table shows, in its order (a stable sort, as
+--- JavaScript's is)
+fn shown_rows[s]
+    want = lower[s.query]
+    rows = slice[heroes[], 0, 0]
+    for h in heroes[]
+        if want eq ''
+            rows = push[rows, h]
+        else
+            found = false
+            for key in columns[]
+                if _holds[lower[_cell[h, key]], want]
+                    found = true
+            if found
+                rows = push[rows, h]
+    if s.key eq ''
+        return rows
+    order = _order_of[s, s.key]
+    sorted = slice[rows, 0, 0]
+    for h in rows
+        --- (each put after every one it does not sort before)
+        at = len[sorted]
+        while at gt 0 and _compared[sorted[at - 1], h, s.key, order] gt 0
+            at = at - 1
+        out = slice[sorted, 0, at]
+        out = push[out, h]
+        for rest in slice[sorted, at, len[sorted]]
+            out = push[out, rest]
+        sorted = out
+    sorted
+
+fn _capitalized[key]
+    '`upper[slice[key, 0, 1]]``slice[key, 1, len[key]]`'
+
+--- the arrow of a column's head: up for ascending (`num` 1), down for
+--- descending, full while its column sorts the table (`lo` 1)
+fn _arrow_painter[d]
+    name = 'triangle-down'
+    if d.num gt 0.5
+        name = 'triangle-up'
+    color = d.look.muted
+    if d.lo gt 0.5
+        color = d.look.ink
+    d.c = icons.draw[d.c, name, d.x, d.y, d.w, color]
+    d
+
+fn controls[s, c, room]
+    search = gui.row[[gui.text['Search'], gui.sized[gui.field['grid:query', s.query], 200.0]], gap = 8.0]
+    rows = shown_rows[s]
+    if len[rows] eq 0
+        return gui.column[[search, common.with_id[gui.text['No matches found.'], 'grid:empty']], gap = 16.0]
+    wide = 160.0
+    heads = slice[[gui.space[0.0]], 0, 0]
+    for key in columns[]
+        heads = push[heads, _plain_head[s, key, wide]]
+    lines = [gui.row[heads, gap = 0.0]]
+    i = 0
+    for h in rows
+        cells = slice[[gui.space[0.0]], 0, 0]
+        for key in columns[]
+            cells = push[cells, gui.sized[gui.panel[[gui.text[_cell[h, key]]], pad = 8.0], wide]]
+        lines = push[lines, common.named[gui.row[cells, gap = 0.0], 'grid:row:`i`']]
+        i = i + 1
+    table = common.named[gui.panel[[gui.column[lines, gap = 0.0]], pad = 0.0], 'grid:table']
+    gui.column[[search, table], gap = 16.0]
+
+fn _plain_head[s, key, wide]
+    up = 0.0
+    if _order_of[s, key] gt 0
+        up = 1.0
+    active = 0.0
+    if s.key eq key
+        active = 1.0
+    arrow = gui.drawn['grid:arrow:`key`', up, 14.0, 14.0, _arrow_painter, lo = active]
+    words = _capitalized[key]
+    gui.sized[gui.item['grid:sort:`key`', [gui.row[[gui.text[words], arrow], gap = 6.0]], chosen = s.key eq key, words = words], wide]
+
+--- `sortBy(key)`: the table sorted by the column, its order turned about
+fn sorted_by[s, key]
+    s.key = key
+    if key eq 'name'
+        s.name_order = 0 - s.name_order
+    else
+        s.power_order = 0 - s.power_order
+    s
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if ev.id eq 'grid:query' and ev.act eq 'edit'
+            s.query = ev.words
+        for key in columns[]
+            if ev.id eq 'grid:sort:`key`' and ev.act eq 'press'
+                s = sorted_by[s, key]
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    lines = slice[[''], 0, 0]
+    i = 0
+    while common.holds[tree, 'grid:row:`i`']
+        top = common.node_by[tree, 'grid:row:`i`']
+        cells = slice[[''], 0, 0]
+        for n in common.nodes_of[top]
+            if n.tag eq 'text'
+                cells = push[cells, common.normalized[n.words]]
+        lines = push[lines, join[cells, ' | ']]
+        i = i + 1
+    heads = slice[[''], 0, 0]
+    for key in columns[]
+        if common.holds[tree, 'grid:sort:`key`']
+            head = common.node_by[tree, 'grid:sort:`key`']
+            arrow = common.node_by[tree, 'grid:arrow:`key`']
+            way = 'dsc'
+            if arrow.num gt 0.5
+                way = 'asc'
+            line = '`head.words` `way`'
+            if head.num gt 0.5
+                line = '`line` active'
+            heads = push[heads, line]
+    out['rows'] = join[lines, '\n']
+    out['headers'] = join[heads, '\n']
+    out['empty'] = ''
+    if common.holds[tree, 'grid:empty']
+        out['empty'] = common.words_by[tree, 'grid:empty']
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

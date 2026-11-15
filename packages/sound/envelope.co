@@ -1,0 +1,186 @@
+--- Envelopes: a level that rises when a note starts, falls to where it is
+--- held, and dies away when it ends, as Tone's Envelope schedules it. A
+--- note's attack, decay, sustain and release are changes to a parameter
+--- (`sound.signal`): straight or exponential ramps, or a curve of 128
+--- points (`sine`, `cosine`, `bounce`, `ripple`, `step`), each laid as
+--- Tone lays it, so the level at any time is Tone's own, number for number
+--- — a note pressed again while the last one still sounds, and released
+--- before its attack is over, included.
+---
+---     shape = envelope.adsr[0.01, 0.1, 0.5, 1.0]
+---     p = envelope.attack_release[shape, 0.0, 0.3, 1.0, 22050.0]
+---     envelope.level_at[p, 0.2]     (the sustain: 0.5)
+
+use math
+use sound
+use signal
+
+--- how a level moves: its attack, decay and release in seconds, the share
+--- of the peak it is held at (0 to 1), and the shapes of its rise, fall
+--- and release (`linear`, `exponential`, or a curve's name; a decay is
+--- straight or exponential only, as Tone's is)
+struct Envelope [attack, decay, sustain, release, attack_curve, decay_curve, release_curve]
+
+--- Tone's envelope: 10 ms up, 100 ms down to half, a second to die away
+fn envelope[]
+    Envelope[0.01, 0.1, 0.5, 1.0, 'linear', 'exponential', 'exponential']
+
+--- an envelope of these times and sustain, Tone's shapes
+fn adsr[attack, decay, sustain, release]
+    Envelope[0.0 + attack, 0.0 + decay, 0.0 + sustain, 0.0 + release, 'linear', 'exponential', 'exponential']
+
+--- an envelope's shapes changed: its rise, its fall to the sustain, its
+--- release
+fn curved[shape, rise, fall, ending]
+    shape.attack_curve = rise
+    shape.decay_curve = fall
+    shape.release_curve = ending
+    shape
+
+--- the length of a curve's table
+fn _points[]
+    128
+
+--- the curve rising from 0 to 1 that a shape names: `cosine` a quarter of
+--- a sine, `sine` half a cosine turned over, `ripple` a rise that wavers,
+--- `step` five stairs, `bounce` a rise that bounces at the top
+fn _rising[name]
+    n = _points[]
+    last = n - 1.0
+    out = zeros[n]
+    i = 0
+    while i lt n
+        k = i / last
+        if name eq 'cosine'
+            out[i] = sin[i / last * (pi / 2.0)]
+        if name eq 'sine'
+            out[i] = 0.5 * (1.0 - cos[pi * k])
+        if name eq 'step'
+            out[i] = ceil[i / last * 5.0] / 5.0
+        if name eq 'ripple'
+            out[i] = (sin[k * (pi * 2.0) * 6.4 - pi / 2.0] + 1.0) / 10.0 + k * 0.83
+        if name eq 'bounce'
+            ring = k ^ 3.0 * 4.0 + 0.2
+            out[i] = 1.0 - abs[cos[ring * pi * 2.0 * k] * (1.0 - k)]
+        i = i + 1
+    if name eq 'ripple'
+        out[n - 1] = 1.0
+    out
+
+--- the curve falling from 1 to 0 that a shape names: the rise turned over
+--- (`cosine`'s is its rise backwards)
+fn _falling[name]
+    up = _rising[name]
+    if name eq 'cosine'
+        return reverse[up]
+    1.0 - up
+
+--- whether a shape is one of the curves (not a ramp)
+fn is_curve[name]
+    name in ['cosine', 'sine', 'step', 'ripple', 'bounce']
+
+--- an attack's curve from where the level already is: the points before
+--- it cut away and the first made the level itself, as Tone cuts them
+fn _from_level[curve, level]
+    i = 1
+    while i lt len[curve]
+        if curve[i - 1] lte level and level lte curve[i]
+            rest = slice[curve, i, len[curve]]
+            rest[0] = level
+            return rest
+        i = i + 1
+    curve
+
+--- a level that has not started: nothing, until a note's attack
+fn silent[]
+    signal.param[0.0]
+
+--- a note's attack at `t`, as loud as `velocity` (0 to 1), from wherever
+--- the level is then: a level already up rises in what is left of the
+--- attack's time; then the decay to the sustain
+fn attacked[shape, p, t, velocity, rate]
+    attack = shape.attack
+    level = signal.value_at[p, t]
+    if level gt 0.0
+        attack = (1.0 - level) / (1.0 / attack)
+    if attack lt 1.0 / rate
+        p = signal.cancelled[p, t]
+        p = signal.set_at[p, velocity, t]
+    else if shape.attack_curve eq 'linear'
+        p = signal.linear_to[p, velocity, attack, t]
+    else if shape.attack_curve eq 'exponential'
+        p = signal.target_to[p, velocity, attack, t]
+    else
+        p = signal.held_at[p, t]
+        p = signal.curve_at[p, _from_level[_rising[shape.attack_curve], level], t, attack, velocity]
+    if shape.decay ne 0.0 and shape.sustain lt 1.0
+        held = velocity * shape.sustain
+        start_at = t + attack
+        if shape.decay_curve eq 'linear'
+            p = signal.linear_at[p, held, shape.decay + start_at]
+        else
+            p = signal.approach_at[p, held, start_at, shape.decay]
+    p
+
+--- a note's release at `t`: the level dies away from wherever it is
+fn released[shape, p, t, rate]
+    level = signal.value_at[p, t]
+    if level lte 0.0
+        return p
+    if shape.release lt 1.0 / rate
+        return signal.set_at[p, 0.0, t]
+    if shape.release_curve eq 'linear'
+        return signal.linear_to[p, 0.0, shape.release, t]
+    if shape.release_curve eq 'exponential'
+        return signal.target_to[p, 0.0, shape.release, t]
+    p = signal.held_at[p, t]
+    signal.curve_at[p, _falling[shape.release_curve], t, shape.release, level]
+
+--- a note's level from silence: its attack at `t`, its release `duration`
+--- seconds later
+fn attack_release[shape, t, duration, velocity, rate]
+    p = attacked[shape, silent[], t, velocity, rate]
+    released[shape, p, t + duration, rate]
+
+--- the level at a time
+fn level_at[p, t]
+    signal.value_at[p, t]
+
+--- when a note released at `t` has died away (its release over)
+fn ends_at[shape, t]
+    t + shape.release
+
+--- the level's samples: `n` of them from `from` seconds, `rate` a second
+fn rendered[p, rate, from, n]
+    signal.rendered[p, rate, from, n]
+
+--- ---- tests ----
+
+test a_note_rises_falls_to_its_sustain_and_dies_away[]
+    shape = adsr[0.1, 0.2, 0.5, 0.4]
+    p = attack_release[shape, 0.0, 1.0, 1.0, 1000.0]
+    abs[level_at[p, 0.05] - 0.5] lt 0.000001
+    level_at[p, 0.1] eq 1.0
+    level_at[p, 0.3] eq 0.5
+    level_at[p, 0.9] eq 0.5
+    level_at[p, 1.2] gt 0.0
+    level_at[p, 1.2] lt 0.5
+    level_at[p, 1.4] eq 0.0
+
+test a_curve_is_laid_point_by_point[]
+    shape = curved[adsr[0.127, 0.0, 1.0, 0.1], 'step', 'linear', 'linear']
+    p = attacked[shape, silent[], 0.0, 1.0, 1000.0]
+    level_at[p, 0.0] eq 0.0
+    level_at[p, 0.2] eq 1.0
+    len[_rising['sine']] eq 128
+    _falling['cosine'][0] eq 1.0
+    _rising['ripple'][127] eq 1.0
+
+test a_note_pressed_again_rises_from_where_it_is[]
+    shape = adsr[0.1, 0.0, 1.0, 1.0]
+    first = attack_release[shape, 0.0, 0.1, 1.0, 1000.0]
+    level = level_at[first, 0.3]
+    level gt 0.0
+    again = attacked[shape, first, 0.3, 1.0, 1000.0]
+    abs[level_at[again, 0.3] - level] lt 0.000001
+    level_at[again, 0.3 + (1.0 - level) * 0.1] eq 1.0

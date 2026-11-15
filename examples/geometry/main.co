@@ -1,0 +1,339 @@
+--- three.js's shapes, made by Lory's geometry: pick one, move the sliders
+--- of its numbers, and turn it with the pointer (drag to turn, the wheel
+--- to come nearer). It is drawn solid, by its indices as three draws it,
+--- with its edges (where its faces meet at more than twenty degrees) and
+--- its wireframe as lines in the scene, behind what is nearer (in a
+--- headset too); the panel says how many vertices and triangles it has.
+use sys
+use math
+use memory
+use lory
+use lory.gui
+use lory.space
+use lory.geometry
+
+--- one of a shape's numbers: its name, its range, where it starts, and
+--- its step (0 for any number, 1 for whole ones)
+struct Param [name, lo, hi, first, step]
+
+--- the program's state: the shape shown, four numbers for each shape (in
+--- the order of the list), and whether it is drawn solid, with its edges
+--- and with its wireframe
+struct App [shape, numbers, solid, edged, wired]
+
+--- what the shape on show was made of and came to: the key of its
+--- numbers, its edges' and its wireframe's lines, its counts, and where
+--- it is put (an extrusion is stood about its middle)
+struct Made [key, edge_lines, wire_lines, vertices, triangles, matrix]
+
+fn _shape_names[]
+    ['box', 'plane', 'circle', 'ring', 'sphere', 'cylinder', 'cone', 'torus', 'torus knot', 'capsule', 'lathe', 'tube', 'shape', 'extrude', 'tetrahedron', 'octahedron', 'icosahedron', 'dodecahedron']
+
+fn _curve_names[]
+    ['a helix', 'a closed spline', 'a cubic Bézier curve', 'a quadratic Bézier curve', 'a line']
+
+--- the numbers a shape's sliders move, at most four
+fn _params_of[name]
+    if name eq 'box'
+        return [Param['width', 0.2, 3.0, 1.6, 0.0], Param['height', 0.2, 3.0, 1.2, 0.0], Param['depth', 0.2, 3.0, 1.0, 0.0], Param['segments', 1.0, 8.0, 2.0, 1.0]]
+    if name eq 'plane'
+        return [Param['width', 0.5, 4.0, 3.0, 0.0], Param['height', 0.5, 4.0, 2.0, 0.0], Param['width segments', 1.0, 16.0, 6.0, 1.0], Param['height segments', 1.0, 16.0, 4.0, 1.0]]
+    if name eq 'circle'
+        return [Param['radius', 0.2, 2.5, 1.5, 0.0], Param['segments', 3.0, 64.0, 32.0, 1.0], Param['theta start', 0.0, 6.28, 0.0, 0.0], Param['theta length', 0.1, 6.283185307179586, 5.0, 0.0]]
+    if name eq 'ring'
+        return [Param['inner radius', 0.0, 1.5, 0.6, 0.0], Param['outer radius', 0.5, 2.5, 1.6, 0.0], Param['theta segments', 3.0, 64.0, 32.0, 1.0], Param['phi segments', 1.0, 8.0, 3.0, 1.0]]
+    if name eq 'sphere'
+        return [Param['radius', 0.3, 2.5, 1.5, 0.0], Param['width segments', 3.0, 64.0, 32.0, 1.0], Param['height segments', 2.0, 32.0, 16.0, 1.0], Param['theta length', 0.1, 3.141592653589793, 3.141592653589793, 0.0]]
+    if name eq 'cylinder'
+        return [Param['top radius', 0.0, 2.0, 0.8, 0.0], Param['bottom radius', 0.0, 2.0, 1.2, 0.0], Param['height', 0.2, 3.0, 2.0, 0.0], Param['radial segments', 3.0, 64.0, 24.0, 1.0]]
+    if name eq 'cone'
+        return [Param['radius', 0.2, 2.0, 1.2, 0.0], Param['height', 0.2, 3.0, 2.0, 0.0], Param['radial segments', 3.0, 64.0, 24.0, 1.0], Param['theta length', 0.1, 6.283185307179586, 6.283185307179586, 0.0]]
+    if name eq 'torus'
+        return [Param['radius', 0.5, 2.0, 1.2, 0.0], Param['tube', 0.05, 1.0, 0.4, 0.0], Param['radial segments', 3.0, 32.0, 16.0, 1.0], Param['arc', 0.1, 6.283185307179586, 6.283185307179586, 0.0]]
+    if name eq 'torus knot'
+        return [Param['radius', 0.5, 2.0, 1.2, 0.0], Param['tube', 0.05, 0.8, 0.35, 0.0], Param['p', 1.0, 8.0, 2.0, 1.0], Param['q', 1.0, 8.0, 3.0, 1.0]]
+    if name eq 'capsule'
+        return [Param['radius', 0.2, 1.5, 0.8, 0.0], Param['height', 0.0, 3.0, 1.5, 0.0], Param['cap segments', 1.0, 12.0, 6.0, 1.0], Param['radial segments', 3.0, 32.0, 16.0, 1.0]]
+    if name eq 'lathe'
+        return [Param['segments', 3.0, 64.0, 24.0, 1.0], Param['phi length', 0.2, 6.283185307179586, 6.283185307179586, 0.0], Param['belly', 0.0, 1.2, 0.7, 0.0], Param['lip', 0.0, 1.0, 0.4, 0.0]]
+    if name eq 'tube'
+        return [Param['curve', 0.0, 4.0, 0.0, 1.0], Param['radius', 0.02, 0.5, 0.15, 0.0], Param['tubular segments', 4.0, 200.0, 120.0, 1.0], Param['radial segments', 3.0, 16.0, 8.0, 1.0]]
+    if name eq 'shape'
+        return [Param['arms', 3.0, 12.0, 5.0, 1.0], Param['inner corners', 0.2, 0.9, 0.45, 0.0], Param['hole', 0.0, 1.0, 0.5, 0.0], Param['curve segments', 1.0, 24.0, 12.0, 1.0]]
+    if name eq 'extrude'
+        return [Param['depth', 0.1, 2.0, 0.6, 0.0], Param['bevel thickness', 0.01, 0.5, 0.15, 0.0], Param['bevel size', 0.01, 0.4, 0.1, 0.0], Param['bevel segments', 0.0, 8.0, 3.0, 1.0]]
+    [Param['radius', 0.3, 2.5, 1.5, 0.0], Param['detail', 0.0, 5.0, 0.0, 1.0]]
+
+--- where a shape's numbers start in the list of all of them
+fn _index_of[name]
+    names = _shape_names[]
+    at = 0
+    for i in range[len[names]]
+        if names[i] eq name
+            at = i
+    at * 4
+
+fn fresh[]
+    numbers = []
+    for name in _shape_names[]
+        params = _params_of[name]
+        for k in range[4]
+            if k lt len[params]
+                numbers = push[numbers, params[k].first]
+            else
+                numbers = push[numbers, 0.0]
+    App['torus knot', numbers, true, true, false]
+
+--- the numbers of the shape on show
+fn _numbers_of[a]
+    at = _index_of[a.shape]
+    slice[a.numbers, at, at + 4]
+
+--- a curve a tube goes along, by its place in the list of curves
+fn _curve_for[which]
+    if which eq 0
+        return geometry.helix_curve[1.2, 2.4, 3.0]
+    if which eq 1
+        return geometry.spline_curve[[1.5, 0.0, 0.0, 0.5, 1.0, 1.2, -1.2, 0.4, 0.6, -1.4, -0.6, -0.8, 0.3, -1.0, -1.2], true]
+    if which eq 2
+        return geometry.cubic_curve[-2.0, -1.0, 0.0, -1.0, 2.0, 1.0, 1.0, -2.0, -1.0, 2.0, 1.0, 0.0]
+    if which eq 3
+        return geometry.quadratic_curve[-2.0, -1.0, 0.0, 0.0, 2.5, 0.5, 2.0, -1.0, 1.0]
+    geometry.line_curve[-1.5, -1.0, -0.5, 1.5, 1.0, 0.5]
+
+--- a star of `arms` points, its inner corners `inner` of the way in, with
+--- a round hole in its middle `hole` of the way out to them (none at 0)
+fn _star[arms, inner, hole]
+    corners = []
+    for i in range[arms * 2]
+        r = 1.5
+        if i % 2 eq 1
+            r = 1.5 * inner
+        angle = pi / 2.0 + (0.0 + i) * pi / (0.0 + arms)
+        corners = push[push[corners, r * cos[angle]], r * sin[angle]]
+    o = geometry.outline[geometry.path_through[corners]]
+    if hole gt 0.01
+        o = geometry.holed[o, geometry.absolute_arc[geometry.path_from[], 0.0, 0.0, 1.2 * inner * hole, 0.0, 6.283185307179586, true]]
+    o
+
+--- a vase's outline, from its foot up: `belly` its swell, `lip` its flare
+fn _vase[belly, lip]
+    corners = []
+    for i in range[16]
+        t = (0.0 + i) / 15.0
+        corners = push[push[corners, 0.2 + belly * sin[pi * t] + lip * t * t * t * t], 2.4 * t - 1.2]
+    corners
+
+--- a shape made from its numbers
+fn _built[name, v]
+    if name eq 'box'
+        cuts = floor[v[3]]
+        return geometry.box[v[0], v[1], v[2], cuts, cuts, cuts]
+    if name eq 'plane'
+        return geometry.plane[v[0], v[1], floor[v[2]], floor[v[3]]]
+    if name eq 'circle'
+        return geometry.circle[v[0], floor[v[1]], v[2], v[3]]
+    if name eq 'ring'
+        return geometry.ring[v[0], v[1], floor[v[2]], floor[v[3]]]
+    if name eq 'sphere'
+        return geometry.sphere[v[0], floor[v[1]], floor[v[2]], 0.0, 6.283185307179586, 0.0, v[3]]
+    if name eq 'cylinder'
+        return geometry.cylinder[v[0], v[1], v[2], floor[v[3]]]
+    if name eq 'cone'
+        return geometry.cone[v[0], v[1], floor[v[2]], 1, false, 0.0, v[3]]
+    if name eq 'torus'
+        return geometry.torus[v[0], v[1], floor[v[2]], 64, v[3]]
+    if name eq 'torus knot'
+        return geometry.torus_knot[v[0], v[1], 160, 12, v[2], v[3]]
+    if name eq 'capsule'
+        return geometry.capsule[v[0], v[1], floor[v[2]], floor[v[3]]]
+    if name eq 'lathe'
+        return geometry.lathe[_vase[v[2], v[3]], floor[v[0]], 0.0, v[1]]
+    if name eq 'tube'
+        which = floor[v[0]]
+        return geometry.tube[_curve_for[which], floor[v[2]], v[1], floor[v[3]], which eq 1]
+    if name eq 'shape'
+        return geometry.shape[_star[floor[v[0]], v[1], v[2]], floor[v[3]]]
+    if name eq 'extrude'
+        rounds = floor[v[3]]
+        return geometry.extrude[[_star[5, 0.45, 0.5]], v[0], 1, rounds gt 0, v[1], v[2], 0.0, rounds, 12]
+    if name eq 'tetrahedron'
+        return geometry.tetrahedron[v[0], floor[v[1]]]
+    if name eq 'octahedron'
+        return geometry.octahedron[v[0], floor[v[1]]]
+    if name eq 'icosahedron'
+        return geometry.icosahedron[v[0], floor[v[1]]]
+    geometry.dodecahedron[v[0], floor[v[1]]]
+
+--- where a shape is put: an extrusion stands out along z from 0, so it is
+--- moved back by half its depth; the rest are made about their middles
+fn _placed[name, v]
+    if name eq 'extrude'
+        return lory.translation[0.0, 0.0, 0.0 - v[0] / 2.0]
+    lory.identity[]
+
+--- the angle between two faces, in degrees, past which their edge is drawn
+fn _edge_angle[]
+    20.0
+
+fn _no_lines[]
+    geometry.Geometry[[], [], [], [], []]
+
+--- what the shape on show was made of and came to
+fn _made[]
+    recall['geometry.made', Made['', _no_lines[], _no_lines[], 0, 0, lory.identity[]]]
+
+--- the canvas with the shape on show held as a form, its edges and its
+--- wireframe as segments beside it, made again only where its numbers
+--- changed (its lines and counts kept too)
+fn _meshed[c, a]
+    v = _numbers_of[a]
+    key = '`a.shape` `v[0]` `v[1]` `v[2]` `v[3]`'
+    if _made[].key eq key and space.made['geometry.shape']
+        return c
+    g = _built[a.shape, v]
+    edge_lines = geometry.edges[g, _edge_angle[]]
+    wire_lines = geometry.wireframe[g]
+    remember['geometry.made', Made[key, edge_lines, wire_lines, geometry.vertex_count[g], geometry.triangle_count[g], _placed[a.shape, v]]]
+    c = space.mesh_form[c, 'geometry.shape', geometry.space_form[g]]
+    c = space.mesh_form[c, 'geometry.edges', geometry.space_segments[edge_lines]]
+    space.mesh_form[c, 'geometry.wire', geometry.space_segments[wire_lines]]
+
+--- the panel's width in CSS pixels
+fn _panel_wide[]
+    300.0
+
+--- the scene: in the canvas right of the panel, seen through a camera
+--- that orbits the shape, the shape solid (pushed a little deeper where
+--- lines are drawn along it, so they show) and its lines
+fn picture[c, a]
+    s = lory.px[c]
+    c = lory.clear[c, gui.dark[].page]
+    aside = (_panel_wide[] + 48.0) * s
+    c = space.within[c, [aside, 24.0 * s, lory.width[c] - aside - 24.0 * s, lory.height[c] - 48.0 * s]]
+    c = _meshed[c, a]
+    made = _made[]
+    camera = space.orbit[c, 'geometry', [0.0, 0.0, 0.0], 6.0]
+    c = space.scene[c, camera, space.daylight[]]
+    if a.solid
+        look = space.plain[lory.hex['#4dabf7']]
+        if a.wired or a.edged
+            look = space.pushed_back[look]
+        c = space.draw[c, 'geometry.shape', made.matrix, look]
+    if a.wired
+        c = space.draw[c, 'geometry.wire', made.matrix, space.shown[lory.hex['#94a3b8']]]
+    if a.edged
+        c = space.draw[c, 'geometry.edges', made.matrix, space.shown[lory.hex['#f8f9fa']]]
+    c
+
+--- a number as its slider's label shows it: a curve by its name, a whole
+--- number as one, the rest to two places
+fn _shown_number[p, value]
+    if p.name eq 'curve'
+        return _curve_names[][floor[value + 0.5]]
+    if p.step gt 0.0
+        return fmt[value, decimals = 0]
+    fmt[value, decimals = 2]
+
+--- the panel: the list of shapes, the sliders of the one on show, how it
+--- is drawn, and what it came to
+fn view_of[a, made]
+    v = _numbers_of[a]
+    kids = [gui.heading['Geometry'], gui.note['three.js shapes, laid out as three lays them out. Drag the shape to turn it; the wheel brings it nearer.'], gui.label['Shape'], gui.select['shape', _shape_names[], a.shape]]
+    params = _params_of[a.shape]
+    for k in range[len[params]]
+        p = params[k]
+        shown_number = _shown_number[p, v[k]]
+        kids = push[kids, gui.label['`p.name`: `shown_number`']]
+        kids = push[kids, gui.slider['p`k`', v[k], p.lo, p.hi, p.step]]
+    kids = push[kids, gui.row[[gui.toggle['solid', 'Solid', a.solid], gui.toggle['edges', 'Edges', a.edged]]]]
+    kids = push[kids, gui.toggle['wire', 'Wireframe', a.wired]]
+    kids = push[kids, gui.note['`made.vertices` vertices, `made.triangles` triangles']]
+    gui.panel[kids]
+
+--- the state after one of the panel's events
+fn applied[a, ev]
+    if ev.id eq 'shape' and ev.act eq 'choose'
+        a.shape = ev.words
+    if ev.id eq 'solid'
+        a.solid = ev.num gt 0.5
+    if ev.id eq 'edges'
+        a.edged = ev.num gt 0.5
+    if ev.id eq 'wire'
+        a.wired = ev.num gt 0.5
+    for k in range[4]
+        if ev.id eq 'p`k`'
+            numbers = a.numbers
+            numbers[_index_of[a.shape] + k] = ev.num
+            a.numbers = numbers
+    a
+
+fn draw[frame]
+    a = recall['app', fresh[]]
+    c = picture[lory.begin[frame], a]
+    shown = gui.show_at[c, view_of[a, _made[]], 24.0, 24.0, _panel_wide[], gui.dark[]]
+    for ev in shown.events
+        a = applied[a, ev]
+    remember['app', a]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+fn _frame[given]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _drag[on, x, y]
+    '[{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+test the_first_frame_meshes_the_knot_and_draws_it_with_its_edges[]
+    c = picture[lory.begin[_frame['[]']], fresh[]]
+    calls = str[lory.batch[c]]
+    'DEPTH_TEST' in calls
+    made = _made[]
+    made.vertices eq 161 * 13
+    made.triangles eq 160 * 12 * 2
+    len[made.edge_lines.positions] gt 0
+    --- (drawn by its indices, its edges as lines in the scene, the solid
+    --- pushed under them; none of the flat drawing's lines)
+    'drawElements' in calls
+    'ELEMENT_ARRAY_BUFFER' in calls
+    'u32:' in calls
+    'LINES' in calls
+    'POLYGON_OFFSET_FILL' in calls
+    len[c.verts] eq 0
+
+test every_shape_in_the_list_is_built_from_its_first_numbers[]
+    a = fresh[]
+    built = 0
+    for name in _shape_names[]
+        a.shape = name
+        g = _built[name, _numbers_of[a]]
+        if geometry.vertex_count[g] gt 0 and len[g.normals] eq len[g.positions]
+            built = built + 1
+    built eq 18
+    len[_params_of['dodecahedron']] eq 2
+
+test choosing_a_shape_and_moving_a_slider_changes_its_numbers_alone[]
+    a = applied[fresh[], gui.Event['shape', 'choose', 'sphere', 0.0]]
+    a.shape eq 'sphere'
+    b = applied[a, gui.Event['p1', 'change', '', 12.0]]
+    _numbers_of[b][1] eq 12.0
+    --- (the knot's numbers are as they were)
+    b.numbers[_index_of['torus knot'] + 1] eq 0.35
+    c = picture[lory.begin[_frame['[]']], b]
+    _made[].vertices eq 13 * 17
+    _shown_number[_params_of['tube'][0], 1.0] eq 'a closed spline'
+
+test a_drag_across_the_scene_turns_it_and_one_across_the_panel_does_not[]
+    a = fresh[]
+    still = picture[lory.begin[_frame['[]']], a]
+    before = space.orbit[still, 'geometry', [0.0, 0.0, 0.0], 6.0].yaw
+    picture[lory.begin[_frame[_drag['down', 600, 300]]], a]
+    turned = picture[lory.begin[_frame[_drag['move', 700, 300]]], a]
+    picture[lory.begin[_frame[_drag['up', 700, 300]]], a]
+    after = space.orbit[turned, 'geometry', [0.0, 0.0, 0.0], 6.0].yaw
+    after lt before
+    picture[lory.begin[_frame[_drag['down', 100, 300]]], a]
+    picture[lory.begin[_frame[_drag['move', 200, 300]]], a]
+    picture[lory.begin[_frame[_drag['up', 200, 300]]], a]
+    space.orbit[still, 'geometry', [0.0, 0.0, 0.0], 6.0].yaw eq after

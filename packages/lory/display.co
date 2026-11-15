@@ -1,0 +1,3321 @@
+--- Lory's display components (docs/components/display.md): what a page
+--- shows, as against what the reader sets — avatars and badges, cards,
+--- chips and tags, lists and their entries, data lists, timelines, feeds
+--- and comments, skeletons and placeholders, spinners and the other
+--- loading indicators, circular progress, key caps and shortcuts, inline
+--- text styles, empty states, statistics, alerts, aspect-ratio boxes,
+--- images that load, galleries with a lightbox, highlighted text and
+--- advertisement slots.
+---
+--- Each is a function answering a `gui.Node`, made of gui's controls and
+--- of controls painted here (`gui.drawn`). A part the reader can press is
+--- a drawn control of its own id (a chip group's third chip is `tags:2`):
+--- Tab reaches it, Enter or space presses it, and it tells its events
+--- under its component's id (`tags`), with the part's words and its
+--- index. What a component holds between frames — an image's answer from
+--- the page, an avatar's first frame, an alert's time shown, how wide each
+--- letter stands — is kept in `use memory` under `lory.display.…`.
+---
+--- Words in a drawn control are measured before the tree is laid, so each
+--- letter is taken as wide as the font's atlas makes it once a display
+--- control has drawn words from that atlas (`words_wide`); before (and in
+--- a test, which has no atlas) a letter is 0.55 of the size, Lory's own
+--- rule without an atlas. Icons are `lory.icons`'; the indicators' timing
+--- curves are `lory.motion`'s, and they move with the frame's time.
+use bits
+use math
+use memory
+use lory
+use gui
+use icons
+use motion
+
+--- how wide each letter stands, as a fraction of the size its words are
+--- drawn at, and the atlas they were read from (`lory.lettering`)
+struct Letters [wide]
+struct Lettered [stamp]
+
+--- the images asked of the page, by address: the object each was loaded
+--- as, whether it has loaded (`loading`, `loaded`, `error`), its size in
+--- the image's own pixels, and the next object's number
+struct Pictures [numbers, states, widths, heights, next]
+
+--- each avatar's first frame drawn (its fallback waits from it)
+struct Avatars [firsts]
+
+--- each box drawn on a ground of its own: its top this frame (the
+--- ground's marker sets it, the box's foot reads it) and the box it took
+--- the last time it was drawn (x, y, width, height, in CSS pixels)
+struct Grounds [tops, boxes]
+
+--- each timed alert's time shown, the frame it was last drawn in, whether
+--- its timeout has been told, and the frame its close button last had the
+--- focus in
+struct Timers [shown, last, told, focused]
+
+--- each gallery's arrangement, the one it moves from and since when, and
+--- which of its pictures the keys are on
+struct Galleries [arranged, was, since, focus]
+
+--- where each timeline's dot of each index stood this frame (its centre)
+struct Dots [points]
+
+--- whether display's indicators hold still (a reader who asks for less
+--- motion)
+struct Calm [still]
+
+--- one key of a shortcut as it is shown: a `key` or the words `between`
+--- two (`+`, `or`, `then`), its words, and whether they are a `symbol` or
+--- `text`
+struct Cap [part, words, shown]
+
+--- words folded a letter at a time, and where each folded letter came
+--- from in the words (their end after the last)
+struct Folded [words, from]
+
+--- ---- what display's drawn controls share ----
+
+--- a list of no controls, of gui's kind (a comment with no replies)
+fn nothing[]
+    none = [gui.space[0.0]]
+    slice[none, 0, 0]
+
+--- (fields handed to a painter in its words, apart: the unit separator,
+--- which no words hold)
+fn _sep[]
+    char[31]
+
+fn _packed[fields]
+    join[fields, _sep[]]
+
+fn _unpacked[words]
+    split[words, _sep[]]
+
+fn _field[fs, i]
+    if i lt len[fs]
+        return fs[i]
+    ''
+
+--- a number written in words (a sign, digits, a point), read without a
+--- failure, as a painter must answer
+fn _number[words]
+    whole = 0.0
+    part = 0.0
+    scale = 1.0
+    minus = false
+    pointed = false
+    for ch in split[words, '']
+        if ch eq '-'
+            minus = true
+        else
+            if ch eq '.'
+                pointed = true
+            else
+                if pointed
+                    scale = scale / 10.0
+                    part = part + _digit[ch] * scale
+                else
+                    whole = whole * 10.0 + _digit[ch]
+    if minus
+        return 0.0 - whole - part
+    whole + part
+
+fn _whole[words]
+    int[_number[words]]
+
+fn _digit[ch]
+    i = 0
+    while i lt 10
+        if ch eq str[i]
+            return i
+        i = i + 1
+    0
+
+--- whole numbers written apart by spaces, and read back
+fn _wholes_written[ns]
+    out = slice[[''], 0, 0]
+    for n in ns
+        out = push[out, str[n]]
+    join[out, ' ']
+
+fn _wholes_read[words]
+    out = []
+    if words eq ''
+        return out
+    for w in split[words, ' ']
+        out = push[out, _whole[w]]
+    out
+
+fn _flag[on, letter]
+    if on
+        return letter
+    ''
+
+fn _yes[flags, letter]
+    letter in flags
+
+--- the colour of a tone of the look: `accent` (`info`, `primary`),
+--- `danger` (`error`), `success`, `warning`, `muted`, `edge`, `panel`,
+--- `page` or `ink`
+fn _toned[look, tone]
+    if tone eq 'accent' or tone eq 'info' or tone eq 'primary' or tone eq ''
+        return look.accent
+    if tone eq 'danger' or tone eq 'error'
+        return look.danger
+    if tone eq 'success'
+        return look.success
+    if tone eq 'warning'
+        return look.warning
+    if tone eq 'muted'
+        return look.muted
+    if tone eq 'edge'
+        return look.edge
+    if tone eq 'panel'
+        return look.panel
+    if tone eq 'page'
+        return look.page
+    look.ink
+
+--- words in a tone, made readable on the panel as gui's are: a colour
+--- under 4.5 to 1 against it (WCAG 2's least for words) moved toward black
+--- on a light ground, toward white on a dark one, until it reads
+fn _ink[look, tone]
+    color = _toned[look, tone]
+    if tone eq 'ink' or tone eq 'muted'
+        return color
+    _readable[color, look.panel]
+
+--- the colour of a tone of the look, and words in it made readable on a
+--- ground (lory.navigation draws with display's tones too)
+fn toned[look, tone]
+    _toned[look, tone]
+
+fn readable[color, behind]
+    _readable[color, behind]
+
+fn _readable[color, behind]
+    if _contrast_of[color, behind] gte 4.5
+        return color
+    toward = lory.white[]
+    if _luminance_of[behind] gt 0.18
+        toward = lory.black[]
+    k = 0.1
+    while k lt 0.95
+        moved = lory.mix[color, toward, k]
+        if _contrast_of[moved, behind] gte 4.5
+            return moved
+        k = k + 0.1
+    toward
+
+fn _light_of[x]
+    if x lte 0.04045
+        return x / 12.92
+    ((x + 0.055) / 1.055) ^ 2.4
+
+fn _luminance_of[k]
+    0.2126 * _light_of[k.r] + 0.7152 * _light_of[k.g] + 0.0722 * _light_of[k.b]
+
+fn _contrast_of[a, b]
+    la = _luminance_of[a]
+    lb = _luminance_of[b]
+    (max[la, lb] + 0.05) / (min[la, lb] + 0.05)
+
+--- the painter's events told under its component's id (the part's own
+--- id stays the drawn control's: its focus, its box)
+fn _told[d, id, act, words, num]
+    own = d.id
+    d.id = id
+    d = gui.tell[d, act, words, num]
+    d.id = own
+    d
+
+--- whether the key was typed into the drawn control this frame
+fn _typed[d, key]
+    key in d.keys
+
+--- a press of the drawn control, or Enter or space while it has the focus
+fn _struck[d]
+    d.pressed or _typed[d, 'Enter'] or _typed[d, ' ']
+
+--- the component's id of a part's (`tags` of `tags:2`) and the part's
+--- index
+fn _owner[id]
+    parts = split[id, ':']
+    if len[parts] lt 2
+        return id
+    join[slice[parts, 0, len[parts] - 1], ':']
+
+fn _index_of_part[id]
+    parts = split[id, ':']
+    _whole[parts[len[parts] - 1]]
+
+--- the frame's time for display's indicators: still at 0 while they hold
+--- still (`hold_still`)
+fn _now[c]
+    if recall['lory.display.calm', Calm[false]].still
+        return 0.0
+    lory.time[c]
+
+--- display's indicators (spinners, dots, shimmers, pulses, a circle going
+--- on) held still, each drawn as it stands at its start, or moving again:
+--- for a reader who asks for less motion (Lory hears no such wish from
+--- the page)
+fn hold_still[on]
+    remember['lory.display.calm', Calm[on]]
+    on
+
+--- ---- words measured before they are drawn ----
+
+fn _no_letters[]
+    Letters[map['' = 0.55]]
+
+--- how wide the words stand at `size` CSS pixels: each letter as wide as
+--- the atlas made it, once a display control has drawn words, and 0.55 of
+--- the size before (Lory's rule where there is no atlas)
+fn words_wide[words, size]
+    _wide_in[recall['lory.display.letters', _no_letters[]].wide, words, size]
+
+fn _wide_in[known, words, size]
+    w = 0.0
+    for ch in split[words, '']
+        if ch in known
+            w = w + known[ch] * size
+        else
+            w = w + 0.55 * size
+    w
+
+--- the atlas's letters learned, as display's painters learn them, for a
+--- painter of another module that draws words (lory.navigation's): the
+--- number of letters learned this time (0: none new)
+fn learned[c]
+    _learned[c]
+
+--- the atlas's letters learned, once each time it changes: how wide each
+--- stands (each painter that draws words calls it first); the number of
+--- letters learned this time
+fn _learned[c]
+    if c.held.size eq 0.0
+        return 0
+    stamp = lory.lettering[c]
+    if recall['lory.display.lettered', Lettered['']].stamp eq stamp
+        return 0
+    known = _letters_of[c.held]
+    remember['lory.display.letters', Letters[known]]
+    remember['lory.display.lettered', Lettered[stamp]]
+    len[keys[known]]
+
+fn _letters_of[held]
+    known = map['' = 0.55]
+    for ch in keys[held.glyphs]
+        known[ch] = held.glyphs[ch][4] / held.size
+    known
+
+--- the words broken into lines no wider than `room` CSS pixels, as their
+--- letters are measured here (a word longer than the room has its line;
+--- no room: one line)
+fn _wrapped[words, size, room]
+    known = recall['lory.display.letters', _no_letters[]].wide
+    out = slice[[''], 0, 0]
+    if room lte 0.0
+        return push[out, words]
+    typed = ''
+    for word in split[words, ' ']
+        tried = word
+        if typed ne ''
+            tried = '`typed` `word`'
+        if typed ne '' and _wide_in[known, tried, size] gt room
+            out = push[out, typed]
+            typed = word
+        else
+            typed = tried
+    push[out, typed]
+
+--- at most `most` lines of them, the last cut with an ellipsis where there
+--- were more
+fn _clamped[rows, most]
+    if most lte 0 or len[rows] lte most
+        return rows
+    kept = slice[rows, 0, most]
+    cut = kept[most - 1]
+    kept[most - 1] = '`cut`…'
+    kept
+
+--- words as gui's own, a line each (laid as they are, in a row too)
+fn _lines_of[rows, size, tone]
+    out = nothing[]
+    for one in rows
+        out = push[out, gui.text[one, size, tone]]
+    gui.column[out, gap = 0.0]
+
+--- ---- drawing ----
+
+--- words drawn with their line centred on `mid`, from `x` (in drawing
+--- pixels, `size` too)
+fn _line[c, x, mid, words, size, color]
+    tall = lory.line_height[c, size]
+    lory.text[c, x, mid - tall / 2.0, words, size, color]
+
+--- an arc about (cx, cy) of radius `r`, from `from` degrees (clockwise
+--- from three o'clock, the drawing's y going down) through `sweep`
+--- degrees, `w` wide, its ends round where `capped`
+fn _arc[c, cx, cy, r, from, sweep, w, color, capped]
+    if sweep lte 0.0 or r lte 0.0
+        return c
+    steps = max[2, int[sweep / 6.0] + 1]
+    xs = []
+    ys = []
+    i = 0
+    while i lte steps
+        a = (from + sweep * i / steps) * pi / 180.0
+        xs = push[xs, cx + r * cos[a]]
+        ys = push[ys, cy + r * sin[a]]
+        i = i + 1
+    c = lory.path[c, xs, ys, w, color]
+    if capped
+        c = lory.circle[c, xs[0], ys[0], w / 2.0, color]
+        c = lory.circle[c, xs[steps], ys[steps], w / 2.0, color]
+    c
+
+--- a name of display's for one of `lory.icons`' (its own names are its
+--- set's: any other name is passed to it as it is)
+fn _icon_name[name]
+    if name eq 'first'
+        return 'first-page'
+    if name eq 'last'
+        return 'last-page'
+    if name eq 'more_vertical'
+        return 'dots-vertical'
+    if name eq 'strike'
+        return 'strikethrough'
+    if name eq 'align_left' or name eq 'align_center' or name eq 'align_right'
+        return 'text_`name`'
+    if name eq 'list'
+        return 'list-bullet'
+    if name eq 'dot'
+        return 'dot-filled'
+    name
+
+--- the icon of that name drawn by `lory.icons` in the square `size` wide
+--- at (x, y) (drawing pixels); `broken_image` is its image struck through
+fn _icon_drawn[c, name, x, y, size, color]
+    if name eq 'broken_image'
+        c = icons.draw[c, 'image', x, y, size, color]
+        return lory.line[c, x + size * 0.12, y + size * 0.88, x + size * 0.88, y + size * 0.12, max[1.0, size / 15.0], color]
+    icons.draw[c, _icon_name[name], x, y, size, color]
+
+--- the icon of that name drawn at (x, y), `size` square (drawing pixels),
+--- display's names for `lory.icons`' with it (`broken_image`, `first`…)
+fn draw_icon[c, name, x, y, size, color]
+    _icon_drawn[c, name, x, y, size, color]
+
+--- an icon of `lory.icons` as a control of the tree, `size` CSS pixels
+--- square, in a tone of the look (it only draws)
+fn icon[name, size = 24.0, tone = 'ink']
+    gui.drawn['', 0.0, size, size, _icon_painter, words = _packed[[name, tone]]]
+
+fn _icon_painter[d]
+    fs = _unpacked[d.words]
+    c = d.c
+    c = _icon_drawn[c, _field[fs, 0], d.x, d.y, d.w, _toned[d.look, _field[fs, 1]]]
+    d.c = c
+    d
+
+--- ---- timing curves (CSS's, as `lory.motion` solves them) ----
+
+fn _ease[p]
+    motion.ease_at['ease', p]
+
+fn _ease_in_out[p]
+    motion.ease_at['ease-in-out', p]
+
+--- `t` milliseconds into a period of `period`, as a fraction of it
+fn _phase[t, period]
+    if period lte 0.0
+        return 0.0
+    q = t / period
+    q - floor[q]
+
+--- ---- grounds drawn behind (or over) what they hold ----
+---
+--- A box of controls laid by gui is drawn on a ground of its own (a tint,
+--- an edge, a rule down its side) by two markers about it: the one before
+--- draws the ground where the box stands, as tall as the box was the last
+--- time it was drawn, and the one after, which knows the box's height this
+--- frame, keeps it and draws what goes over the box (a skeleton's pulse, a
+--- dimmer). A ground is so one frame behind a change of its box's height,
+--- and never behind its place; a box drawn for the first time has none.
+
+fn _no_grounds[]
+    Grounds[map['' = 0.0], map['' = [0.0, 0.0, 0.0, 0.0]]]
+
+--- the box the ground of that key took the last time it was drawn
+--- (x, y, width, height in CSS pixels; all 0 before)
+fn ground_box[key]
+    g = recall['lory.display.grounds', _no_grounds[]]
+    if key in g.boxes
+        return g.boxes[key]
+    [0.0, 0.0, 0.0, 0.0]
+
+--- the node drawn on a ground of its own box: `ground` names it — `panel`
+--- (a card's ground and edge), `field`, `bar` (an edge along its foot),
+--- `raised` (a shadow under it), `foot` (an edge along its top), a tone
+--- (`accent`, `info`, `success`, `warning`, `danger`, `muted`: tinted),
+--- `quote` (a rule down its left) or `none` — and `cover` what is drawn
+--- over the box: `pulse`
+--- (a skeleton's), `dim` or `none`. `key` names the box among the others
+--- (an id). The box is as wide as the node stands: its column's width
+--- where the node takes it, its own where it does not.
+fn grounded[key, n, ground = 'panel', cover = 'none']
+    _grounded_by[_packed[[key, ground, cover]], n]
+
+--- the node on a ground of the picture at `url` (filling the box, cut to
+--- it), at `alpha` of its opacity, over the panel: an app bar's image
+fn grounded_image[key, n, url, alpha = 1.0]
+    _grounded_by[_packed[[key, 'image', 'none', url, str[alpha]]], n]
+
+fn _grounded_by[fields, n]
+    first = gui.drawn['', 0.0, 0.0, 0.0, _ground_painter, words = fields]
+    last = gui.drawn['', 0.0, 0.0, 0.0, _cover_painter, words = fields]
+    box = gui.column[[first, n, last], gap = 0.0]
+    if _stands_wide[n]
+        return box
+    gui.row[[box], gap = 0.0]
+
+--- whether gui lays the node as wide as the column it stands in (its
+--- containers, its words and its entries do; a button, a drawn control of
+--- a width, a row not justified do not)
+fn _stands_wide[n]
+    t = n.tag
+    if t in ['column', 'panel', 'scroll', 'table', 'heading', 'label', 'note', 'text', 'grid', 'item', 'divider', 'header', 'details', 'tabs']
+        return true
+    if t eq 'roving'
+        return not ('along' in n.opts) or n.opts['along'] eq 'column'
+    if t eq 'row'
+        return 'justify' in n.opts and n.opts['justify'] ne ''
+    if t eq 'area' or t eq 'drawn' or t eq 'progress'
+        return n.wide eq 0.0
+    if t eq 'overlay'
+        return 'stretch' in n.nums and n.nums['stretch'] gt 0.5
+    false
+
+fn _ground_painter[d]
+    fs = _unpacked[d.words]
+    key = _field[fs, 0]
+    ground = _field[fs, 1]
+    g = recall['lory.display.grounds', _no_grounds[]]
+    g.tops[key] = d.y / d.s
+    remember['lory.display.grounds', g]
+    tall = 0.0
+    if key in g.boxes
+        tall = g.boxes[key][3] * d.s
+    if tall gt 0.0 and ground eq 'image'
+        c = d.c
+        url = _field[fs, 3]
+        c = lory.rect[c, d.x, d.y, d.w, tall, d.look.panel]
+        c = _asking_all[c, [url]]
+        if image_state[url] eq 'loaded'
+            from = len[c.verts]
+            kept = lory.clipped[c]
+            c = lory.clip[c, d.x, d.y, d.w, tall]
+            c = _pictured[c, url, d.x, d.y, d.w, tall, 'cover']
+            c = lory.unclip[c, kept]
+            c = _faded_after[c, from, _number[_field[fs, 4]]]
+        d.c = c
+        return d
+    if tall gt 0.0 and ground ne 'none'
+        c = d.c
+        c = _ground_of[c, d.look, ground, d.x, d.y, d.w, tall, d.s]
+        d.c = c
+    d
+
+--- the vertices from `from` on at `alpha` of their opacity
+fn _faded_after[c, from, alpha]
+    vs = c.verts
+    i = from + 7
+    while i lt len[vs]
+        vs[i] = vs[i] * alpha
+        i = i + lory.floats[]
+    c.verts = vs
+    c
+
+fn _ground_of[c, look, ground, x, y, w, h, s]
+    if ground eq 'panel'
+        c = lory.round_rect[c, x, y, w, h, 12.0 * s, look.panel]
+        return lory.round_outline[c, x, y, w, h, 12.0 * s, 1.0 * s, look.edge]
+    if ground eq 'quote'
+        return lory.rect[c, x, y, 3.0 * s, h, look.edge]
+    if ground eq 'field'
+        c = lory.round_rect[c, x, y, w, h, 8.0 * s, look.field]
+        return lory.round_outline[c, x, y, w, h, 8.0 * s, 1.0 * s, look.edge]
+    if ground eq 'bar'
+        c = lory.rect[c, x, y, w, h, look.panel]
+        return lory.rect[c, x, y + h - 1.0 * s, w, 1.0 * s, look.edge]
+    if ground eq 'raised'
+        k = 0
+        while k lt 4
+            c = lory.rect[c, x, y + h + k * s, w, 1.0 * s, lory.fade[look.shadow, look.shadow.a * 0.3 * (4 - k) / 4.0]]
+            k = k + 1
+        return lory.rect[c, x, y, w, h, look.panel]
+    if ground eq 'foot'
+        c = lory.rect[c, x, y, w, h, look.panel]
+        return lory.rect[c, x, y, w, 1.0 * s, look.edge]
+    tone = _toned[look, ground]
+    c = lory.round_rect[c, x, y, w, h, 8.0 * s, lory.mix[look.panel, tone, 0.14]]
+    lory.round_outline[c, x, y, w, h, 8.0 * s, 1.0 * s, lory.mix[look.panel, tone, 0.4]]
+
+fn _cover_painter[d]
+    fs = _unpacked[d.words]
+    key = _field[fs, 0]
+    cover = _field[fs, 2]
+    g = recall['lory.display.grounds', _no_grounds[]]
+    top = d.y / d.s
+    if key in g.tops
+        top = g.tops[key]
+    box = [d.x / d.s, top, d.w / d.s, max[0.0, d.y / d.s - top]]
+    g.boxes[key] = box
+    remember['lory.display.grounds', g]
+    if cover ne 'none' and box[3] gt 0.0
+        c = d.c
+        s = d.s
+        x = box[0] * s
+        y = box[1] * s
+        w = box[2] * s
+        h = box[3] * s
+        if cover eq 'pulse'
+            k = skeleton_pulse[_now[c]]
+            c = lory.round_rect[c, x, y, w, h, 6.0 * s, lory.mix[d.look.hover, d.look.edge, k]]
+        if cover eq 'dim'
+            c = lory.round_rect[c, x, y, w, h, 8.0 * s, lory.fade[d.look.page, 0.55]]
+        d.c = c
+    d
+
+--- ---- images, and the avatars that show them ----
+
+fn _no_pictures[]
+    Pictures[map['' = 0], map['' = ''], map['' = 0.0], map['' = 0.0], 0]
+
+--- the object number display's first image is loaded as (each image
+--- after it the next; Lory's own objects are below 1000)
+fn _first_picture[]
+    900000
+
+--- the images at the addresses asked of the page, each once (its answer
+--- comes in a later frame's `said`), and the frame's answers heard
+fn _asking_all[c, urls]
+    p = recall['lory.display.pictures', _no_pictures[]]
+    p = _hearing[p, c]
+    for url in urls
+        if url ne '' and not (url in p.numbers)
+            n = _first_picture[] + p.next
+            p.numbers[url] = n
+            p.states[url] = 'loading'
+            p.next = p.next + 1
+            c = lory.load_image[c, n, url]
+    remember['lory.display.pictures', p]
+    c
+
+--- the page's answers about display's images this frame, kept
+fn _hearing[p, c]
+    for a in lory.said[c]
+        if a.what eq 'image'
+            url = '`a.url`'
+            if url in p.numbers
+                if 'failed' in a
+                    p.states[url] = 'error'
+                else
+                    p.states[url] = 'loaded'
+                    p.widths[url] = 0.0 + a.width
+                    p.heights[url] = 0.0 + a.height
+    p
+
+--- the frame's answers about display's images heard, for a program that
+--- draws none of its images in the frame an answer comes (each of
+--- display's controls that draws an image hears them too); the number of
+--- images loaded so far
+fn heard[c]
+    p = recall['lory.display.pictures', _no_pictures[]]
+    p = _hearing[p, c]
+    remember['lory.display.pictures', p]
+    loaded = 0
+    for url in keys[p.states]
+        if p.states[url] eq 'loaded'
+            loaded = loaded + 1
+    loaded
+
+--- whether the image at the address has loaded: `loaded`, `loading`,
+--- `error` (none given, or it failed), or `idle` where it has not been
+--- asked for yet (Radix's statuses)
+fn image_state[url]
+    p = recall['lory.display.pictures', _no_pictures[]]
+    if url eq ''
+        return 'error'
+    if url in p.states
+        return p.states[url]
+    'idle'
+
+--- the image's own size in its pixels, once it has loaded ([0, 0] before)
+fn image_size[url]
+    p = recall['lory.display.pictures', _no_pictures[]]
+    if url ne '' and url in p.widths
+        return [p.widths[url], p.heights[url]]
+    [0.0, 0.0]
+
+--- the object number the image at the address was loaded as (-1: none)
+fn image_number[url]
+    p = recall['lory.display.pictures', _no_pictures[]]
+    if url ne '' and url in p.numbers
+        return p.numbers[url]
+    -1
+
+--- the picture drawn into the box: `cover` (filling it, cut to it, as CSS
+--- `object-fit: cover`), `contain` (whole, in its middle) or `fill`
+--- (stretched to it)
+fn _pictured[c, url, x, y, w, h, fit]
+    n = image_number[url]
+    if n lt 0
+        return c
+    size = image_size[url]
+    iw = size[0]
+    ih = size[1]
+    if fit eq 'fill' or iw lte 0.0 or ih lte 0.0
+        return lory.image[c, n, x, y, w, h]
+    k = max[w / iw, h / ih]
+    if fit eq 'contain'
+        k = min[w / iw, h / ih]
+    dw = iw * k
+    dh = ih * k
+    kept = lory.clipped[c]
+    c = lory.clip[c, x, y, w, h]
+    c = lory.image[c, n, x + (w - dw) / 2.0, y + (h - dh) / 2.0, dw, dh]
+    lory.unclip[c, kept]
+
+--- the picture drawn into a circle as wide as the box: cut to it in thin
+--- strips, each clipped to the circle's chord where it stands
+fn _pictured_round[c, url, x, y, w, h]
+    strips = min[48, max[8, int[w / 2.0]]]
+    r = w / 2.0
+    cx = x + r
+    cy = y + h / 2.0
+    kept = lory.clipped[c]
+    i = 0
+    while i lt strips
+        x0 = x + w * i / strips
+        x1 = x + w * (i + 1) / strips
+        off = (x0 + x1) / 2.0 - cx
+        half = sqrt[max[0.0, r * r - off * off]]
+        c = lory.clip[c, x0, cy - half, x1 - x0, 2.0 * half]
+        c = _pictured[c, url, x, y, w, h, 'cover']
+        c = lory.unclip[c, kept]
+        i = i + 1
+    c
+
+--- an avatar: the picture at `url` in a circle (`square`: a rounded
+--- square) `size` CSS pixels across, shown only once it has loaded (Radix:
+--- the image waits for its load); until then, and where it fails or there
+--- is none, its fallback — the `initials` — shown once `delay`
+--- milliseconds have passed since it was first drawn (0: at once), so a
+--- picture that loads at once never flashes them. `key` names it among
+--- the others; its status is `avatar_status[url]`.
+fn avatar[key, url, initials, size = 40.0, delay = 0.0, square = false, tone = 'accent']
+    fields = _packed[[key, url, initials, str[delay], _flag[square, 's'], tone]]
+    gui.drawn['', 0.0, size, size, _avatar_painter, words = fields]
+
+--- the avatar's status, as Radix's is: `idle` before it is drawn,
+--- `loading`, `loaded`, or `error` (no address, or it failed)
+fn avatar_status[url]
+    image_state[url]
+
+fn _no_avatars[]
+    Avatars[map['' = 0.0]]
+
+--- whether an avatar's fallback shows: its picture not loaded, and its
+--- delay past since it was first drawn (Radix's `delayMs`)
+fn fallback_shown[state, first, t, delay]
+    state ne 'loaded' and (delay lte 0.0 or t - first gte delay)
+
+fn _avatar_painter[d]
+    fs = _unpacked[d.words]
+    key = _field[fs, 0]
+    url = _field[fs, 1]
+    initials = _field[fs, 2]
+    delay = _number[_field[fs, 3]]
+    square = _field[fs, 4] eq 's'
+    tone = _toned[d.look, _field[fs, 5]]
+    c = d.c
+    _learned[c]
+    c = _asking_all[c, [url]]
+    t = lory.time[c]
+    a = recall['lory.display.avatars', _no_avatars[]]
+    first = t
+    named = '`key` `url`'
+    if named in a.firsts
+        first = a.firsts[named]
+    else
+        a.firsts[named] = t
+        remember['lory.display.avatars', a]
+    state = image_state[url]
+    s = d.s
+    r = d.w / 2.0
+    if square
+        r = 6.0 * s
+    if state eq 'loaded'
+        if square
+            kept = lory.clipped[c]
+            c = lory.clip[c, d.x, d.y, d.w, d.h]
+            c = _pictured[c, url, d.x, d.y, d.w, d.h, 'cover']
+            c = lory.unclip[c, kept]
+        else
+            c = _pictured_round[c, url, d.x, d.y, d.w, d.h]
+            c = lory.ring[c, d.x + r, d.y + d.h / 2.0, r, 1.0 * s, lory.fade[d.look.edge, 0.6]]
+    else
+        if fallback_shown[state, first, t, delay]
+            ground = lory.mix[d.look.panel, tone, 0.22]
+            c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, ground]
+            size = d.h * _initials_size[initials]
+            c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, initials, size, _readable[lory.mix[tone, d.look.ink, 0.35], ground]]
+        else
+            c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, lory.fade[d.look.edge, 0.6]]
+    d.c = c
+    d
+
+--- the initials' size, a fraction of the avatar's: smaller as there are
+--- more letters (Radix's fallback steps down from one letter to three)
+fn _initials_size[initials]
+    k = len[initials]
+    if k lte 1
+        return 0.5
+    if k eq 2
+        return 0.42
+    0.34
+
+--- avatars side by side, each over the edge of the one before (Vuetify's
+--- avatar group): at most `most` of them, the rest counted (`+3`)
+fn avatar_group[key, urls, initials, most = 4, size = 32.0, delay = 0.0]
+    k = len[urls]
+    shown = min[k, max[1, most]]
+    kids = nothing[]
+    i = 0
+    while i lt shown
+        one = avatar['`key`:`i`', urls[i], _field[initials, i], size, delay]
+        kids = push[kids, gui.moved[one, 0.0 - size * 0.3 * i, 0.0]]
+        i = i + 1
+    if k gt shown
+        more = gui.drawn['', 0.0, size, size, _counted_painter, words = '+`k - shown`']
+        kids = push[kids, gui.moved[more, 0.0 - size * 0.3 * shown, 0.0]]
+    gui.row[kids, gap = 0.0]
+
+fn _counted_painter[d]
+    c = d.c
+    _learned[c]
+    c = lory.circle[c, d.x + d.w / 2.0, d.y + d.h / 2.0, d.w / 2.0, d.look.hover]
+    c = lory.ring[c, d.x + d.w / 2.0, d.y + d.h / 2.0, d.w / 2.0, 2.0 * d.s, d.look.page]
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, d.words, d.h * 0.4, d.look.ink]
+    d.c = c
+    d
+
+--- ---- badges ----
+
+--- a small label (Radix's badge): `soft` (tinted), `solid` or `outline`
+fn badge[words, tone = 'accent', variant = 'soft']
+    w = words_wide[words, 12.0] + 16.0
+    gui.drawn['', 0.0, w, 20.0, _badge_painter, words = _packed[[words, tone, variant]]]
+
+fn _badge_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    tone = _toned[d.look, _field[fs, 1]]
+    variant = _field[fs, 2]
+    c = d.c
+    _learned[c]
+    s = d.s
+    r = 6.0 * s
+    ground = d.look.panel
+    if variant eq 'solid'
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, tone]
+        ground = tone
+    else
+        if variant eq 'outline'
+            c = lory.round_outline[c, d.x, d.y, d.w, d.h, r, 1.0 * s, tone]
+        else
+            ground = lory.mix[d.look.panel, tone, 0.2]
+            c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, ground]
+    ink = _readable[lory.mix[tone, d.look.ink, 0.3], ground]
+    if variant eq 'solid'
+        ink = _readable[d.look.on_accent, tone]
+    c = _line[c, d.x + 8.0 * s, d.y + d.h / 2.0, words, 12.0 * s, ink]
+    d.c = c
+    d
+
+--- where a corner marker stands from its control's top right corner, its
+--- size first: [width, height, x, y] in CSS pixels (Vuetify's: a count's
+--- pill 20 high, its lower left corner 12 pixels in from the corner each
+--- way; a dot 8 across)
+fn badge_place[words, dotted = false]
+    if dotted
+        return [8.0, 8.0, -4.5, -3.5]
+    w = max[20.0, words_wide[words, 12.0] + 12.0]
+    [w, 20.0, -12.0, -8.0]
+
+--- a marker over the corner of a control (Vuetify's badge): its words
+--- (a count) on a pill, or a dot (`dotted`); at the control's upper right,
+--- over its edge (`badge_place`), or `inline` after it
+fn badged[n, words = '', dotted = false, tone = 'danger', inline = false]
+    p = badge_place[words, dotted]
+    marker = gui.drawn['', 0.0, p[0], p[1], _marker_painter, words = _packed[[words, tone]]]
+    if inline
+        return gui.row[[n, marker], gap = 6.0]
+    gui.overlay[n, gui.moved[marker, p[0] + p[2], p[3]], anchor = 'top_right']
+
+fn _marker_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    tone = _toned[d.look, _field[fs, 1]]
+    c = d.c
+    _learned[c]
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, d.h / 2.0, tone]
+    if words ne ''
+        c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, words, 12.0 * d.s, _readable[d.look.on_accent, tone]]
+    d.c = c
+    d
+
+--- ---- cards ----
+
+--- a card (Radix's, Vuetify's): its title, subtitle and words over its
+--- controls on a raised ground; given an id, the whole card is pressed as
+--- one (a `press` of that id, its title in the words; Enter or space too)
+--- and shows the pointer over it; `loading` puts a moving bar along its
+--- top, `disabled` sets it aside. `wide` (0: as wide as it stands) is its
+--- width; a card pressed as one wraps its words to the width it stood at
+--- the frame before.
+fn card[kids, id = '', title = '', subtitle = '', words = '', loading = false, disabled = false, wide = 0.0]
+    across = wide
+    if across lte 0.0 and id ne ''
+        across = ground_box[id][2]
+    room = across - 32.0
+    if id ne ''
+        room = room - 20.0
+    inside = nothing[]
+    if loading
+        inside = push[inside, gui.progress[-1.0]]
+    if title ne ''
+        inside = push[inside, _lines_of[_wrapped[title, 20.0, room], 20.0, 'ink']]
+    if subtitle ne ''
+        inside = push[inside, _lines_of[_wrapped[subtitle, 14.0, room], 14.0, 'muted']]
+    if words ne ''
+        inside = push[inside, _lines_of[_wrapped[words, 15.0, room], 15.0, 'ink']]
+    for k in kids
+        inside = push[inside, k]
+    body = gui.column[inside, gap = 8.0]
+    if id ne ''
+        body = gui.item[id, [body], words = title]
+    n = gui.panel[[body]]
+    if wide gt 0.0
+        n = gui.sized[n, wide]
+    if id ne '' and wide lte 0.0
+        n = grounded[id, n, 'none', 'none']
+    if disabled
+        n = gui.disabled[n]
+    n
+
+--- ---- chips, labels and tags ----
+
+--- a chip's height, words' size and inner room by its size's name
+--- (Vuetify's: x_small, small, default, large, x_large)
+fn chip_sizes[size]
+    if size eq 'x_small'
+        return [20.0, 10.0, 8.0]
+    if size eq 'small'
+        return [24.0, 12.0, 10.0]
+    if size eq 'large'
+        return [38.0, 16.0, 14.0]
+    if size eq 'x_large'
+        return [44.0, 18.0, 17.0]
+    [32.0, 14.0, 12.0]
+
+--- how wide a chip stands: its words and inner room, and room for its
+--- tick, its icon and its ×
+fn chip_wide[words, size = 'default', closable = false, ticked = false, lead = '']
+    m = chip_sizes[size]
+    w = 2.0 * m[2] + words_wide[words, m[1]]
+    if ticked
+        w = w + 18.0
+    if lead ne ''
+        w = w + m[1] + 10.0
+    if closable
+        w = w + 20.0
+    w
+
+--- a chip (Vuetify's; a label or tag where it has no id): its words on a
+--- pill, an icon before them (`lead`); `chosen` shows it picked, with a
+--- tick where it is a `filter` chip; `closable` gives it a ×, whose press
+--- (or Delete or Backspace while it has the focus, as MUI's chip) tells
+--- `close`, and a press elsewhere on it (or Enter or space) tells
+--- `press`, its words in the event. `variant`: `tonal`, `outlined`,
+--- `flat`; `size` as `chip_sizes` names them.
+fn chip[id, words, tone = 'accent', closable = false, chosen = false, filter = false, lead = '', size = 'default', variant = 'tonal']
+    ticked = filter and chosen
+    w = chip_wide[words, size, closable, ticked, lead]
+    m = chip_sizes[size]
+    flags = join[[_flag[closable, 'c'], _flag[chosen, 's'], _flag[ticked, 'f']], '']
+    fields = _packed[[words, tone, flags, lead, size, variant, words, 'own']]
+    gui.drawn[id, 0.0, w, m[0], _chip_painter, words = fields]
+
+--- what a chip group's selection is once `picked` is pressed (Vuetify's
+--- group): one chosen at most, or many (`multiple`); the chosen one
+--- pressed again is let go unless the group is `mandatory` and it is the
+--- last; with `most` above 0, no more than that many are chosen
+fn chips_chosen[chosen, picked, multiple = false, mandatory = false, most = 0]
+    if picked in chosen
+        if mandatory and len[chosen] lte 1
+            return chosen
+        if not multiple
+            return slice[[''], 0, 0]
+        out = slice[[''], 0, 0]
+        for one in chosen
+            if one ne picked
+                out = push[out, one]
+        return out
+    if not multiple
+        return push[slice[[''], 0, 0], picked]
+    if most gt 0 and len[chosen] gte most
+        return chosen
+    push[chosen, picked]
+
+--- chips one for each of `choices`, those in `chosen` picked (Vuetify's
+--- chip group): one stop of Tab, Left and Right moving between them (Home
+--- and End to the first and the last, as Vuetify's slide group moves);
+--- pressing one (or Enter or space on it) tells `choose` with the
+--- selection it makes in `words`, a choice a line (`chips_chosen` makes
+--- it), the chip's index in `num`. `column`: the chips wrap onto lines
+--- `wide` CSS pixels long rather than run on along one.
+fn chip_group[id, choices, chosen, multiple = false, mandatory = false, filter = false, column = false, wide = 0.0, tone = 'accent', most = 0]
+    rows = nothing[]
+    line = nothing[]
+    used = 0.0
+    i = 0
+    while i lt len[choices]
+        picked = choices[i]
+        on = picked in chosen
+        ticked = filter and on
+        w = chip_wide[picked, 'default', false, ticked, '']
+        after = join[chips_chosen[chosen, picked, multiple, mandatory, most], '\n']
+        flags = join[[_flag[on, 's'], _flag[ticked, 'f']], '']
+        one = gui.drawn['`id`:`i`', 0.0, w, 32.0, _chip_painter, words = _packed[[picked, tone, flags, '', 'default', 'tonal', after, 'group']]]
+        if column and wide gt 0.0 and used gt 0.0 and used + w gt wide
+            rows = push[rows, gui.row[line, gap = 8.0]]
+            line = nothing[]
+            used = 0.0
+        line = push[line, one]
+        used = used + w + 8.0
+        i = i + 1
+    rows = push[rows, gui.row[line, gap = 8.0]]
+    gui.roving[id, [gui.column[rows, gap = 8.0]], along = 'row', loop = false]
+
+fn _chip_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    tone = _toned[d.look, _field[fs, 1]]
+    flags = _field[fs, 2]
+    lead = _field[fs, 3]
+    m = chip_sizes[_field[fs, 4]]
+    variant = _field[fs, 5]
+    after = _field[fs, 6]
+    in_group = _field[fs, 7] eq 'group'
+    closable = _yes[flags, 'c']
+    chosen = _yes[flags, 's']
+    ticked = _yes[flags, 'f']
+    s = d.s
+    c = d.c
+    _learned[c]
+    live = d.id ne ''
+    r = d.h / 2.0
+    ground = d.look.panel
+    if variant eq 'flat'
+        ground = tone
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, tone]
+    else
+        if variant eq 'outlined'
+            c = lory.round_outline[c, d.x, d.y, d.w, d.h, r, 1.0 * s, tone]
+        else
+            k = 0.16
+            if chosen
+                k = 0.34
+            ground = lory.mix[d.look.panel, tone, k]
+            c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, ground]
+    if live and d.hover
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, lory.fade[d.look.ink, 0.06]]
+    if live and d.down
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, lory.fade[d.look.ink, 0.1]]
+    ink = _readable[lory.mix[tone, d.look.ink, 0.3], ground]
+    if variant eq 'flat'
+        ink = _readable[d.look.on_accent, tone]
+    x = d.x + m[2] * s
+    mid = d.y + d.h / 2.0
+    if ticked
+        c = _icon_drawn[c, 'check', x - 2.0 * s, mid - 8.0 * s, 16.0 * s, ink]
+        x = x + 18.0 * s
+    if lead ne ''
+        c = _icon_drawn[c, lead, x, mid - (m[1] + 2.0) * s / 2.0, (m[1] + 2.0) * s, ink]
+        x = x + (m[1] + 10.0) * s
+    c = _line[c, x, mid, words, m[1] * s, ink]
+    if closable
+        c = _icon_drawn[c, 'close', d.x + d.w - (m[2] + 15.0) * s, mid - 8.0 * s, 16.0 * s, ink]
+    d.c = c
+    if not live
+        return d
+    owner = d.id
+    if in_group
+        owner = _owner[d.id]
+    on_close = d.px gte d.w - (m[2] + 20.0) * s
+    closing = closable and ((d.pressed and on_close) or _typed[d, 'Delete'] or _typed[d, 'Backspace'])
+    if closing
+        return _told[d, owner, 'close', words, 0.0]
+    if _struck[d]
+        if in_group
+            return _told[d, owner, 'choose', after, 0.0 + _index_of_part[d.id]]
+        return _told[d, owner, 'press', words, 0.0]
+    d
+
+--- ---- lists ----
+
+--- an entry of a list (Vuetify's list item, Semantic UI's item): an icon
+--- before (`lead`, an icon's name) and after (`trail`), its title and,
+--- under it, its subtitle wrapped to the entry's width and cut to `most`
+--- lines (Vuetify's `lines`). Given an id it is pressed as one (`press`,
+--- its title in the words), shows the pointer over it and is `chosen`;
+--- `wide` (0: the width it stood at the frame before) is its width.
+fn list_item[id, title, subtitle = '', lead = '', trail = '', most = 1, chosen = false, wide = 0.0]
+    key = id
+    if key eq ''
+        key = 'item `title`'
+    across = wide
+    if across lte 0.0
+        across = ground_box[key][2]
+    used = 20.0
+    kids = nothing[]
+    if lead ne ''
+        kids = push[kids, icon[lead, 24.0, 'muted']]
+        used = used + 32.0
+    if trail ne ''
+        used = used + 32.0
+    room = across - used
+    words = nothing[]
+    words = push[words, gui.text[title, 15.0]]
+    if subtitle ne ''
+        words = push[words, _lines_of[_clamped[_wrapped[subtitle, 13.0, room], most], 13.0, 'muted']]
+    kids = push[kids, gui.column[words, gap = 2.0]]
+    if trail ne ''
+        if across gt 0.0
+            taken = _wide_of_lines[title, subtitle, room, most]
+            kids = push[kids, gui.drawn['', 0.0, max[0.0, room - taken], 1.0, _blank_painter]]
+        kids = push[kids, icon[trail, 24.0, 'muted']]
+    n = gui.item[id, kids, chosen = chosen, words = title]
+    if wide gt 0.0
+        return gui.sized[n, wide]
+    grounded[key, n, 'none', 'none']
+
+fn _wide_of_lines[title, subtitle, room, most]
+    w = words_wide[title, 15.0]
+    if subtitle ne ''
+        for one in _clamped[_wrapped[subtitle, 13.0, room], most]
+            w = max[w, words_wide[one, 13.0]]
+    w
+
+fn _blank_painter[d]
+    d
+
+--- a list's entries one under another, one stop of Tab that the arrows
+--- move through (Up and Down, Home and End), as Vuetify's list is
+fn list_of[id, kids]
+    gui.roving[id, kids, along = 'column', loop = false]
+
+--- a list's heading: quieter, smaller words
+fn subheader[words]
+    gui.text[words, 13.0, 'muted']
+
+--- a group of a list's entries under its title, shown while it is open:
+--- pressed (or Enter or space) it opens or shuts and tells `toggle`
+--- (Vuetify's list group); Lory holds it open, `expanded` at first
+fn list_group[id, title, kids, expanded = false]
+    gui.details[id, title, kids, expanded, true]
+
+--- entries numbered from `from` (Semantic UI's ordered list: each numbered
+--- by where it stands)
+fn numbered[entries, from = 1]
+    rows = nothing[]
+    i = 0
+    while i lt len[entries]
+        rows = push[rows, gui.row[[gui.sized[gui.text['`from + i`.', 15.0, 'muted'], 28.0], gui.text[entries[i], 15.0]], gap = 4.0]]
+        i = i + 1
+    gui.column[rows, gap = 6.0]
+
+--- entries each after a bullet
+fn bulleted[entries]
+    rows = nothing[]
+    for one in entries
+        rows = push[rows, gui.row[[icon['dot', 14.0, 'muted'], gui.text[one, 15.0]], gap = 8.0]]
+    gui.column[rows, gap = 6.0]
+
+--- labels beside what they hold (Radix's data list): each label
+--- `label_wide` CSS pixels wide, quieter; `vertical`: each label over it
+fn data_list[labels, entries, label_wide = 120.0, vertical = false]
+    rows = nothing[]
+    i = 0
+    while i lt min[len[labels], len[entries]]
+        name = gui.text[labels[i], 14.0, 'muted']
+        held = gui.text[entries[i], 15.0]
+        if vertical
+            rows = push[rows, gui.column[[name, held], gap = 2.0]]
+        else
+            rows = push[rows, gui.row[[gui.sized[name, label_wide], held], gap = 12.0, align = 'start']]
+        i = i + 1
+    gui.column[rows, gap = 10.0]
+
+--- ---- timelines, feeds and comments ----
+
+fn _no_dots[]
+    Dots[map['' = [0.0, 0.0]]]
+
+--- a timeline (Vuetify's): its entries in order, each a title, its words,
+--- its time (on the line's other side, Vuetify's `opposite`) and a tone,
+--- on a line through a dot for each. The entries alternate sides about the
+--- line, or keep to one (`side`: `start` or `end`); `horizontal` lays them
+--- along it; `truncate` cuts the line before the first dot (`start`),
+--- after the last (`end`) or both (`both`). `wide` is its width.
+fn timeline[id, titles, words, times, tones, side = '', horizontal = false, truncate = '', wide = 560.0]
+    count = len[titles]
+    rows = nothing[]
+    half = (wide - 40.0) / 2.0
+    if side eq 'end'
+        half = 96.0
+    if side eq 'start'
+        half = wide - 136.0
+    i = 0
+    while i lt count
+        marker = gui.drawn['', 0.0, 24.0, 24.0, _dot_painter, words = _packed[[id, str[i], str[count], _field[tones, i], truncate, _flag[horizontal, 'h']]]]
+        body = gui.column[[gui.text[titles[i], 15.0], gui.text[_field[words, i], 13.0, 'muted']], gap = 2.0]
+        when = gui.text[_field[times, i], 13.0, 'muted']
+        if horizontal
+            held = gui.column[[body], align = 'center']
+            held.tall = 64.0
+            rows = push[rows, gui.column[[gui.sized[held, 140.0], marker, gui.sized[gui.column[[when], align = 'center'], 140.0]], gap = 8.0, align = 'center']]
+        else
+            body_side = 'end'
+            if side eq 'start' or (side eq '' and i % 2 eq 1)
+                body_side = 'start'
+            if body_side eq 'end'
+                rows = push[rows, gui.row[[_side_box[when, half], marker, body], gap = 8.0]]
+            else
+                rows = push[rows, gui.row[[_side_box[body, half], marker, when], gap = 8.0]]
+        i = i + 1
+    if horizontal
+        return gui.row[rows, gap = 12.0, align = 'start']
+    gui.column[rows, gap = 18.0]
+
+--- a timeline entry's first side: `half` wide, its words against the line
+fn _side_box[n, half]
+    gui.sized[gui.column[[n], align = 'end'], half]
+
+fn _dot_painter[d]
+    fs = _unpacked[d.words]
+    id = _field[fs, 0]
+    i = _whole[_field[fs, 1]]
+    count = _whole[_field[fs, 2]]
+    tone = _toned[d.look, _field[fs, 3]]
+    truncate = _field[fs, 4]
+    along = _field[fs, 5] eq 'h'
+    s = d.s
+    cx = d.x + d.w / 2.0
+    cy = d.y + d.h / 2.0
+    c = d.c
+    placed = recall['lory.display.dots', _no_dots[]]
+    before = '`id`:`i - 1`'
+    gap = 10.0 * s
+    if i gt 0 and before in placed.points
+        p = placed.points[before]
+        dx = cx - p[0]
+        dy = cy - p[1]
+        long = sqrt[dx * dx + dy * dy]
+        if long gt 2.0 * gap
+            c = lory.line[c, p[0] + dx / long * gap, p[1] + dy / long * gap, cx - dx / long * gap, cy - dy / long * gap, 2.0 * s, d.look.edge]
+    stub = 16.0 * s
+    if i eq 0 and truncate ne 'start' and truncate ne 'both'
+        if along
+            c = lory.line[c, cx - gap - stub, cy, cx - gap, cy, 2.0 * s, d.look.edge]
+        else
+            c = lory.line[c, cx, cy - gap - stub, cx, cy - gap, 2.0 * s, d.look.edge]
+    if i eq count - 1 and truncate ne 'end' and truncate ne 'both'
+        if along
+            c = lory.line[c, cx + gap, cy, cx + gap + stub, cy, 2.0 * s, d.look.edge]
+        else
+            c = lory.line[c, cx, cy + gap, cx, cy + gap + stub, 2.0 * s, d.look.edge]
+    placed.points['`id`:`i`'] = [cx, cy]
+    remember['lory.display.dots', placed]
+    c = lory.circle[c, cx, cy, 6.0 * s, tone]
+    d.c = c
+    d
+
+--- a feed of events (Semantic UI's): each a picture's initials, what
+--- happened, when, and words under it
+fn feed[key, initials, summaries, times, words]
+    rows = nothing[]
+    i = 0
+    while i lt len[summaries]
+        top_line = gui.row[[strong[summaries[i], 15.0], gui.text[_field[times, i], 13.0, 'muted']], gap = 8.0]
+        said = nothing[]
+        said = push[said, top_line]
+        if _field[words, i] ne ''
+            said = push[said, gui.text[_field[words, i], 14.0]]
+        rows = push[rows, gui.row[[avatar['`key`:`i`', '', _field[initials, i], 36.0], gui.column[said, gap = 2.0]], gap = 12.0, align = 'start']]
+        i = i + 1
+    gui.column[rows, gap = 14.0]
+
+--- a comment (Semantic UI's): its author's initials and name, when, its
+--- words, and its actions as links (each a `press` of the comment's id
+--- with the action's words, `Reply`); its replies (comments) under it,
+--- set in, hidden while `collapsed`
+fn comment[id, author, when, words, replies, initials = '', actions = [], collapsed = false]
+    top_line = gui.row[[strong[author, 15.0], gui.text[when, 13.0, 'muted']], gap = 8.0]
+    links = nothing[]
+    i = 0
+    while i lt len[actions]
+        links = push[links, link['`id`:`i`', actions[i], 13.0, 'hover', id]]
+        i = i + 1
+    said = nothing[]
+    said = push[said, top_line]
+    said = push[said, gui.text[words, 15.0]]
+    if len[links] gt 0
+        said = push[said, gui.row[links, gap = 12.0]]
+    if len[replies] gt 0 and not collapsed
+        said = push[said, gui.column[replies, gap = 12.0]]
+    gui.row[[avatar['`id`:avatar', '', initials, 36.0], gui.column[said, gap = 4.0]], gap = 12.0, align = 'start']
+
+--- ---- skeletons and placeholders ----
+
+--- how far a skeleton's pulse has gone from its fainter tone to its
+--- stronger at `t` milliseconds (Radix's: a second each way, eased, from
+--- the stronger)
+fn skeleton_pulse[t]
+    q = t / 1000.0
+    n = floor[q]
+    p = q - n
+    if n % 2 eq 0
+        return _ease[1.0 - p]
+    _ease[p]
+
+--- where a skeleton's shimmer stands at `t` milliseconds: from -1 (a
+--- width before the bone) to 1 (a width past it), once each second and a
+--- half, eased (Vuetify's skeleton loader)
+fn shimmer_at[t]
+    -1.0 + 2.0 * _ease[_phase[t, 1500.0]]
+
+--- the node shown as a skeleton while `loading` (Radix's skeleton): it
+--- keeps its size, is hidden and set aside, and a pulse is drawn over it;
+--- `key` names its box
+fn skeleton[key, n, loading = true]
+    if not loading
+        return n
+    grounded[key, gui.disabled[gui.faded[n, 0.0]], 'none', 'pulse']
+
+--- a placeholder of a kind (Vuetify's skeleton loader's): `text`,
+--- `heading`, `paragraph`, `avatar`, `button`, `chip`, `image`,
+--- `list_item`, `card` or `article`, `wide` CSS pixels (0: as wide as it
+--- stands), its bones shimmering
+fn skeleton_of[kind, wide = 0.0]
+    gui.drawn['', 0.0, wide, bones_tall[kind], _bones_painter, words = kind]
+
+--- a placeholder kind's height in CSS pixels
+fn bones_tall[kind]
+    if kind eq 'heading'
+        return 32.0
+    if kind eq 'paragraph'
+        return 64.0
+    if kind eq 'avatar'
+        return 48.0
+    if kind eq 'button'
+        return 36.0
+    if kind eq 'chip'
+        return 32.0
+    if kind eq 'image'
+        return 180.0
+    if kind eq 'list_item'
+        return 56.0
+    if kind eq 'card'
+        return 290.0
+    if kind eq 'article'
+        return 104.0
+    20.0
+
+--- the bones of a placeholder's kind, each [x, width, y, height, radius]:
+--- x and width in fractions of its width, the rest in CSS pixels down it
+fn placeholder_bones[kind, wide]
+    out = slice[[[0.0, 0.0, 0.0, 0.0, 0.0]], 0, 0]
+    if kind eq 'heading'
+        return push[out, [0.0, 0.5, 4.0, 24.0, 4.0]]
+    if kind eq 'paragraph'
+        out = push[out, [0.0, 1.0, 4.0, 12.0, 4.0]]
+        out = push[out, [0.0, 0.92, 26.0, 12.0, 4.0]]
+        return push[out, [0.0, 0.7, 48.0, 12.0, 4.0]]
+    if kind eq 'avatar'
+        return push[out, [0.0, 48.0 / max[48.0, wide], 0.0, 48.0, 24.0]]
+    if kind eq 'button'
+        return push[out, [0.0, 64.0 / max[64.0, wide], 0.0, 36.0, 4.0]]
+    if kind eq 'chip'
+        return push[out, [0.0, 96.0 / max[96.0, wide], 0.0, 32.0, 16.0]]
+    if kind eq 'image'
+        return push[out, [0.0, 1.0, 0.0, 180.0, 4.0]]
+    if kind eq 'list_item'
+        a = 40.0 / max[160.0, wide]
+        out = push[out, [0.0, a, 8.0, 40.0, 20.0]]
+        out = push[out, [a + 0.04, 0.6, 14.0, 12.0, 4.0]]
+        return push[out, [a + 0.04, 0.4, 32.0, 10.0, 4.0]]
+    if kind eq 'card'
+        out = push[out, [0.0, 1.0, 0.0, 180.0, 4.0]]
+        out = push[out, [0.0, 0.5, 196.0, 24.0, 4.0]]
+        out = push[out, [0.0, 1.0, 232.0, 12.0, 4.0]]
+        out = push[out, [0.0, 0.92, 254.0, 12.0, 4.0]]
+        return push[out, [0.0, 0.7, 276.0, 12.0, 4.0]]
+    if kind eq 'article'
+        out = push[out, [0.0, 0.5, 4.0, 24.0, 4.0]]
+        out = push[out, [0.0, 1.0, 44.0, 12.0, 4.0]]
+        out = push[out, [0.0, 0.92, 66.0, 12.0, 4.0]]
+        return push[out, [0.0, 0.7, 88.0, 12.0, 4.0]]
+    push[out, [0.0, 1.0, 4.0, 12.0, 4.0]]
+
+fn _bones_painter[d]
+    s = d.s
+    c = d.c
+    slid = shimmer_at[_now[c]]
+    kept = lory.clipped[c]
+    clear = lory.fade[d.look.ink, 0.0]
+    shine = lory.fade[d.look.ink, 0.08]
+    for b in placeholder_bones[d.words, d.w / s]
+        x = d.x + b[0] * d.w
+        y = d.y + b[2] * s
+        w = b[1] * d.w
+        h = b[3] * s
+        c = lory.round_rect[c, x, y, w, h, b[4] * s, d.look.hover]
+        c = lory.clip[c, x, y, w, h]
+        sx = x + slid * w
+        mx = sx + w / 2.0
+        c = lory.shaded[c, sx, y, clear, mx, y, shine, sx, y + h, clear]
+        c = lory.shaded[c, mx, y, shine, mx, y + h, shine, sx, y + h, clear]
+        c = lory.shaded[c, mx, y, shine, sx + w, y, clear, mx, y + h, shine]
+        c = lory.shaded[c, sx + w, y, clear, sx + w, y + h, clear, mx, y + h, shine]
+        c = lory.unclip[c, kept]
+    d.c = c
+    d
+
+--- the widths of a placeholder's lines (Semantic UI's lines vary): a
+--- fraction of its width for each of `count` lines
+fn placeholder_widths[count]
+    pattern = [1.0, 0.86, 0.94, 0.72, 0.9, 0.64]
+    out = []
+    i = 0
+    while i lt count
+        out = push[out, pattern[i % 6]]
+        i = i + 1
+    out
+
+--- a placeholder (Semantic UI's): `count` lines of varying width under a
+--- square `picture` and a `header`'s two lines, keeping the room of what
+--- will come, pulsing
+fn placeholder[count = 3, picture = false, header = false, wide = 0.0]
+    tall = count * 20.0
+    if header
+        tall = tall + 48.0
+    if picture
+        tall = tall + 72.0
+    gui.drawn['', 0.0, wide, tall, _placeholder_painter, words = _packed[[str[count], _flag[picture, 'i'], _flag[header, 'h']]]]
+
+fn _placeholder_painter[d]
+    fs = _unpacked[d.words]
+    count = _whole[_field[fs, 0]]
+    picture = _field[fs, 1] eq 'i'
+    header = _field[fs, 2] eq 'h'
+    s = d.s
+    c = d.c
+    k = skeleton_pulse[_now[c]]
+    tone = lory.mix[d.look.hover, d.look.edge, k]
+    y = d.y
+    if picture
+        c = lory.round_rect[c, d.x, y, 64.0 * s, 64.0 * s, 6.0 * s, tone]
+        y = y + 72.0 * s
+    if header
+        c = lory.round_rect[c, d.x, y + 4.0 * s, d.w * 0.5, 14.0 * s, 4.0 * s, tone]
+        c = lory.round_rect[c, d.x, y + 26.0 * s, d.w * 0.3, 10.0 * s, 4.0 * s, tone]
+        y = y + 48.0 * s
+    widths = placeholder_widths[count]
+    i = 0
+    while i lt len[widths]
+        c = lory.round_rect[c, d.x, y + (5.0 + 20.0 * i) * s, widths[i] * d.w, 10.0 * s, 4.0 * s, tone]
+        i = i + 1
+    d.c = c
+    d
+
+--- ---- spinners and loading indicators ----
+
+--- the opacity of each of a spinner's eight leaves at `t` milliseconds
+--- (Radix's: each fades from 1 to a quarter over 0.8 s, each an eighth of
+--- it behind the one before, round clockwise from the top). The time is
+--- summed in seconds, the delay taken as Radix writes it (-k/8 of 0.8 s),
+--- as a browser sums them, so a leaf at the very end of its fade reads as
+--- a browser reads it.
+fn spinner_leaves[t]
+    out = []
+    k = 0
+    while k lt 8
+        out = push[out, 1.0 - 0.75 * _phase[t / 1000.0 + (8.0 - k) / 8.0 * 0.8, 0.8]]
+        k = k + 1
+    out
+
+--- how far each leaf of a spinner is turned from the first (degrees,
+--- clockwise from the top), and the spinner's own opacity (Radix's)
+fn spinner_turns[]
+    [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+
+fn spinner_opacity[]
+    0.65
+
+--- a spinner (Radix's): eight leaves round its middle, `size` CSS pixels
+--- across (Radix's sizes are 12, 16 and 20), moving with the frame's time
+fn spinner[size = 16.0, tone = 'ink']
+    gui.drawn['', 0.0, size, size, _spinner_painter, words = tone]
+
+fn _spinner_painter[d]
+    c = d.c
+    tone = _toned[d.look, d.words]
+    leaves = spinner_leaves[_now[c]]
+    cx = d.x + d.w / 2.0
+    cy = d.y + d.h / 2.0
+    w = d.w * 0.125
+    outer = d.w / 2.0 - w / 2.0
+    inner = d.w * 0.2 + w / 2.0
+    k = 0
+    turns = spinner_turns[]
+    while k lt 8
+        a = (turns[k] - 90.0) * pi / 180.0
+        color = lory.fade[tone, tone.a * spinner_opacity[] * leaves[k]]
+        x0 = cx + inner * cos[a]
+        y0 = cy + inner * sin[a]
+        x1 = cx + outer * cos[a]
+        y1 = cy + outer * sin[a]
+        c = lory.line[c, x0, y0, x1, y1, w, color]
+        c = lory.circle[c, x0, y0, w / 2.0, color]
+        c = lory.circle[c, x1, y1, w / 2.0, color]
+        k = k + 1
+    d.c = c
+    d
+
+--- the node while it loads (Radix's spinner holding its children): hidden,
+--- keeping its size, a spinner in its middle; itself once `loading` is
+--- false
+fn spinning[n, loading = true, size = 16.0]
+    if not loading
+        return n
+    gui.overlay[gui.disabled[gui.faded[n, 0.0]], spinner[size], anchor = 'center']
+
+--- a loader (Semantic UI's): shown only while `active`, a circle going on
+--- over its words
+fn loader[active, words = '', size = 32.0]
+    if not active
+        return gui.space[0.0]
+    kids = nothing[]
+    kids = push[kids, circular[-1.0, size, 4.0]]
+    if words ne ''
+        kids = push[kids, gui.text[words, 14.0, 'muted']]
+    gui.column[kids, gap = 8.0, align = 'center']
+
+--- the node dimmed, set aside, a loader over it, while `active`
+--- (Semantic UI's dimmer); `key` names its box
+fn dimmer[key, n, active, words = '']
+    if not active
+        return n
+    gui.overlay[grounded[key, gui.disabled[n], 'none', 'dim'], loader[true, words], anchor = 'center']
+
+--- how high dot `i` of jumping dots stands at `t` milliseconds, 0 to 1:
+--- each rises and falls once a `period`, eased each way, `stagger`
+--- milliseconds after the one before (Motion's jumping dots; a dot still
+--- to start stands down)
+fn dot_lift[t, i, stagger = 150.0, period = 1000.0]
+    late = t - i * stagger
+    if late lt 0.0
+        return 0.0
+    q = _phase[late, period]
+    if q lt 0.5
+        return _ease_in_out[q * 2.0]
+    _ease_in_out[2.0 - q * 2.0]
+
+--- how full dot `i` of pulsing dots is at `t`, 0 to 1: each swells and
+--- fades back once a `period`, `stagger` after the one before
+fn dot_pulse[t, i, stagger = 150.0, period = 1000.0]
+    late = t - i * stagger
+    if late lt 0.0
+        return 0.0
+    q = _phase[late, period]
+    _ease_in_out[1.0 - abs[2.0 * q - 1.0]]
+
+--- how far ring `j` of a ripple has spread at `t`, 0 to 1 (rings leave the
+--- middle a `period` over `rings` apart, fading as they spread; a ring
+--- still to leave is -1)
+fn ripple_ring[t, j, rings = 3, period = 1800.0]
+    late = t - j * period / rings
+    if late lt 0.0
+        return -1.0
+    _phase[late, period]
+
+--- dots that jump (`kind` `jump`) or pulse (`pulse`) in turn, `count` of
+--- them `size` CSS pixels across
+fn dots[kind = 'jump', count = 3, size = 10.0, stagger = 150.0, period = 1000.0, tone = 'accent']
+    w = count * size + (count - 1) * size * 0.8
+    gui.drawn['', 0.0, w, size * 2.4, _dots_painter, lo = stagger, hi = period, words = _packed[[kind, str[count], tone]]]
+
+fn _dots_painter[d]
+    fs = _unpacked[d.words]
+    kind = _field[fs, 0]
+    count = _whole[_field[fs, 1]]
+    tone = _toned[d.look, _field[fs, 2]]
+    c = d.c
+    t = _now[c]
+    size = d.h / 2.4
+    i = 0
+    while i lt count
+        cx = d.x + size / 2.0 + i * size * 1.8
+        if kind eq 'pulse'
+            k = dot_pulse[t, 0.0 + i, d.lo, d.hi]
+            c = lory.circle[c, cx, d.y + d.h / 2.0, size / 2.0 * (0.7 + 0.5 * k), lory.fade[tone, tone.a * (0.4 + 0.6 * k)]]
+        else
+            lift = dot_lift[t, 0.0 + i, d.lo, d.hi]
+            c = lory.circle[c, cx, d.y + d.h - size / 2.0 - lift * size * 1.2, size / 2.0, tone]
+        i = i + 1
+    d.c = c
+    d
+
+--- a ripple: `rings` rings spreading from the middle, `size` CSS pixels
+--- across
+fn ripple[size = 48.0, rings = 3, period = 1800.0, tone = 'accent']
+    gui.drawn['', 0.0, size, size, _ripple_painter, lo = 0.0 + rings, hi = period, words = tone]
+
+fn _ripple_painter[d]
+    c = d.c
+    tone = _toned[d.look, d.words]
+    t = _now[c]
+    rings = int[d.lo]
+    j = 0
+    while j lt rings
+        q = ripple_ring[t, 0.0 + j, rings, d.hi]
+        if q gte 0.0
+            c = lory.ring[c, d.x + d.w / 2.0, d.y + d.h / 2.0, max[1.0, q * d.w / 2.0], 2.0 * d.s, lory.fade[tone, tone.a * (1.0 - q)]]
+        j = j + 1
+    d.c = c
+    d
+
+--- ---- circular progress ----
+
+--- a circular progress's numbers, as Vuetify draws it: the side of the
+--- square its circle of radius 20 is drawn in (its view), its line's width
+--- there, how much of its length is not drawn (of 2π·20) and the angle it
+--- starts from (degrees past the top, clockwise), for a value from 0 to
+--- 100 (held to them), `size` CSS pixels across with a line `width` wide,
+--- turned `rotate` degrees, its ends `rounded` (each end then moved in by
+--- half the line, so the round ends meet where the square ends would)
+fn circle_geometry[value, size, width, rotate = 0.0, rounded = false]
+    around = 2.0 * pi * 20.0
+    v = max[0.0, min[100.0, value]]
+    side = 20.0 / (1.0 - width / size) * 2.0
+    stroke = width / size * side
+    left = (100.0 - v) / 100.0 * around
+    if rounded and v gt 0.0 and v lt 100.0
+        left = min[around - 0.01, left + stroke]
+    turned = rotate
+    if rounded
+        turned = rotate + stroke / 2.0 / around * 360.0
+    [side, stroke, left, turned]
+
+--- an indeterminate circle's parts at `t` milliseconds, as Vuetify moves
+--- them: its square turned (degrees), its circle turned in it, the length
+--- of its dash and the dash's offset (of 2π·20): each turns from -90 to
+--- 270 each 1.4 s, and the dash grows from 1 to 100 and is pushed round by
+--- 15 over the first half, then by 109 more over the second, each half
+--- eased in and out
+fn spin_parts[t]
+    u = _phase[t, 1400.0]
+    turned = -90.0 + 360.0 * u
+    dash = 0.0
+    offset = 0.0
+    if u lt 0.5
+        k = _ease_in_out[u / 0.5]
+        dash = 1.0 + 99.0 * k
+        offset = -15.0 * k
+    else
+        k = _ease_in_out[(u - 0.5) / 0.5]
+        dash = 100.0
+        offset = -15.0 - 109.0 * k
+    [turned, turned, dash, offset]
+
+--- where an indeterminate circle's arc starts (degrees clockwise from three
+--- o'clock, 0 to 360) and how far round it reaches, at `t` milliseconds
+fn circle_spin[t]
+    around = 2.0 * pi * 20.0
+    parts = spin_parts[t]
+    from = parts[0] + parts[1] - parts[3] / around * 360.0
+    [from - floor[from / 360.0] * 360.0, min[parts[2], around] / around * 360.0]
+
+--- circular progress (Vuetify's): `value` of 100 round its circle (a
+--- value below 0: going on, its end not known, the arc turning), `size`
+--- CSS pixels across, its line `width` wide, turned `rotate` degrees, its
+--- ends `rounded`, its `words` in its middle
+fn circular[value, size = 32.0, width = 4.0, rotate = 0.0, rounded = false, tone = 'accent', words = '']
+    gui.drawn['', value, size, size, _circular_painter, lo = width, hi = rotate, words = _packed[[tone, _flag[rounded, 'r'], words]]]
+
+fn _circular_painter[d]
+    fs = _unpacked[d.words]
+    tone = _toned[d.look, _field[fs, 0]]
+    rounded = _field[fs, 1] eq 'r'
+    words = _field[fs, 2]
+    c = d.c
+    _learned[c]
+    g = circle_geometry[max[0.0, d.num], d.w / d.s, d.lo, d.hi, rounded]
+    k = d.w / g[0]
+    r = 20.0 * k
+    w = g[1] * k
+    cx = d.x + d.w / 2.0
+    cy = d.y + d.h / 2.0
+    around = 2.0 * pi * 20.0
+    c = lory.ring[c, cx, cy, r + w / 2.0, w, lory.mix[d.look.panel, tone, 0.2]]
+    if d.num lt 0.0
+        spun = circle_spin[_now[c]]
+        c = _arc[c, cx, cy, r, spun[0], spun[1], w, tone, true]
+    else
+        c = _arc[c, cx, cy, r, g[3] - 90.0, (around - g[2]) / around * 360.0, w, tone, rounded]
+    if words ne ''
+        c = lory.text_centered[c, cx, cy, words, d.h * 0.3, d.look.ink]
+    d.c = c
+    d
+
+--- ---- keys and shortcuts ----
+
+--- a key cap (Vuetify's kbd): its words on a raised key, `size` CSS
+--- pixels high
+fn kbd[words, size = 13.0]
+    w = max[20.0, words_wide[words, size] + 12.0]
+    gui.drawn['', 0.0, w, size * 1.4 + 6.0, _kbd_painter, lo = size, words = words]
+
+fn _kbd_painter[d]
+    c = d.c
+    _learned[c]
+    s = d.s
+    c = lory.round_rect[c, d.x, d.y + 1.0 * s, d.w, d.h, 4.0 * s, d.look.edge]
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h - 1.0 * s, 4.0 * s, d.look.field]
+    c = lory.round_outline[c, d.x, d.y, d.w, d.h - 1.0 * s, 4.0 * s, 1.0 * s, d.look.edge]
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + (d.h - 1.0 * s) / 2.0, d.words, d.lo * s, d.look.ink]
+    d.c = c
+    d
+
+--- the names a key goes by, as its one name (Vuetify's aliases)
+fn _key_name[key]
+    k = lower[key]
+    if k eq 'control'
+        return 'ctrl'
+    if k eq 'command'
+        return 'cmd'
+    if k eq 'option'
+        return 'alt'
+    if k eq 'up' or k eq 'down' or k eq 'left' or k eq 'right'
+        return 'arrow`k`'
+    if k eq 'esc'
+        return 'escape'
+    if k eq 'spacebar' or k eq 'space'
+        return ' '
+    if k eq 'return'
+        return 'enter'
+    if k eq 'del'
+        return 'delete'
+    if k eq 'plus'
+        return '+'
+    if k eq 'slash'
+        return '/'
+    if k eq 'underscore'
+        return '_'
+    if k eq 'minus' or k eq 'hyphen'
+        return '-'
+    k
+
+--- a key's symbol and its words, on a Mac or elsewhere ('' where it has
+--- no symbol; words '' where it is none of these)
+fn _key_face[key, mac]
+    if key eq 'ctrl'
+        if mac
+            return ['⌃', 'Ctrl']
+        return ['', 'Ctrl']
+    if key eq 'meta' or key eq 'cmd'
+        if mac
+            return ['⌘', 'Command']
+        return ['', 'Ctrl']
+    if key eq 'shift'
+        if mac
+            return ['⇧', 'Shift']
+        return ['', 'Shift']
+    if key eq 'alt'
+        if mac
+            return ['⌥', 'Option']
+        return ['', 'Alt']
+    if key eq 'enter'
+        return ['↵', 'Enter']
+    if key eq 'arrowup'
+        return ['↑', 'Up Arrow']
+    if key eq 'arrowdown'
+        return ['↓', 'Down Arrow']
+    if key eq 'arrowleft'
+        return ['←', 'Left Arrow']
+    if key eq 'arrowright'
+        return ['→', 'Right Arrow']
+    if key eq 'backspace'
+        return ['⌫', 'Backspace']
+    if key eq 'escape'
+        return ['', 'Escape']
+    if key eq ' '
+        if mac
+            return ['␣', 'Space']
+        return ['', 'Space']
+    if key eq '-' or key eq '+'
+        return ['', key]
+    ['', '']
+
+--- one key as shown: its symbol where `mode` is `symbol` and it has one,
+--- its words otherwise (a key of no name of these: itself, upper case)
+fn _key_cap[key, mode, mac]
+    face = _key_face[key, mac]
+    if face[1] eq ''
+        return Cap['key', upper[key], 'text']
+    if mode eq 'symbol' and face[0] ne ''
+        return Cap['key', face[0], 'symbol']
+    Cap['key', face[1], 'text']
+
+--- the keys of a shortcut as they are shown (Vuetify's hotkey): each
+--- combination (apart by a space between two letters) a list of its keys
+--- and the words between them — `+` for keys together (`+`, `_`), `or`
+--- for either (`/`), `then` for one after another (`-`); on a Mac
+--- (`platform` `mac`) or elsewhere, with symbols where `mode` is `symbol`.
+--- A combination that does not read shows nothing.
+fn hotkey_parts[shortcut, platform = 'mac', mode = 'symbol']
+    mac = platform eq 'mac'
+    out = slice[[[Cap['', '', '']]], 0, 0]
+    for one in _combinations[shortcut]
+        out = push[out, _parsed_keys[one, mode, mac]]
+    out
+
+--- the combinations of a shortcut: split at each space between two
+--- letters or digits (as `\b \b` splits)
+fn _combinations[shortcut]
+    out = slice[[''], 0, 0]
+    if shortcut eq ''
+        return out
+    chars = split[shortcut, '']
+    typed = ''
+    i = 0
+    while i lt len[chars]
+        ch = chars[i]
+        if ch eq ' ' and i gt 0 and i + 1 lt len[chars] and _wordy[chars[i - 1]] and _wordy[chars[i + 1]]
+            out = push[out, typed]
+            typed = ''
+        else
+            typed = '`typed``ch`'
+        i = i + 1
+    push[out, typed]
+
+fn _wordy[ch]
+    ch in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
+
+fn _separating[ch]
+    ch eq '-' or ch eq '/' or ch eq '+' or ch eq '_'
+
+--- a combination's keys and what is between them, read as Vuetify's
+--- grammar reads them: keys after one another (`-`) of keys either way
+--- (`/`) of keys together (`+`, `_`); a key is a letter and those after it
+--- up to a separator or a space, or a separator alone where another
+--- separator or the end follows it
+fn _parsed_keys[words, mode, mac]
+    chars = split[words, '']
+    out = slice[[Cap['', '', '']], 0, 0]
+    at = 0
+    want_key = true
+    while at lt len[chars]
+        ch = chars[at]
+        if want_key
+            following = ''
+            if at + 1 lt len[chars]
+                following = chars[at + 1]
+            if _separating[ch] and following ne '' and not _separating[following]
+                return slice[out, 0, 0]
+            at = at + 1
+            name = ch
+            if not _separating[ch]
+                while at lt len[chars] and not _separating[chars[at]] and chars[at] ne ' '
+                    more = chars[at]
+                    name = '`name``more`'
+                    at = at + 1
+                name = _key_name[name]
+            out = push[out, _key_cap[name, mode, mac]]
+            want_key = false
+        else
+            if not _separating[ch]
+                return slice[out, 0, 0]
+            between = '+'
+            if ch eq '/'
+                between = 'or'
+            if ch eq '-'
+                between = 'then'
+            out = push[out, Cap['between', between, 'text']]
+            at = at + 1
+            want_key = true
+    if want_key and len[out] gt 0
+        return slice[out, 0, 0]
+    out
+
+--- what a shortcut says in words, for a screen reader (Vuetify's label:
+--- `Keyboard shortcut: Ctrl plus K then P`): its keys' words, or with
+--- `mode` `symbol` their symbols, as Vuetify's own label has them
+fn hotkey_label[shortcut, platform = 'mac', mode = 'text']
+    said = slice[[''], 0, 0]
+    for combo in hotkey_parts[shortcut, platform, mode]
+        words = slice[[''], 0, 0]
+        for part in combo
+            if part.part eq 'between' and part.words eq '+'
+                words = push[words, 'plus']
+            else
+                words = push[words, part.words]
+        said = push[said, join[words, ' ']]
+    joined = join[said, ', ']
+    'Keyboard shortcut: `joined`'
+
+--- a shortcut shown (Vuetify's hotkey): its keys on key caps with the
+--- words between them, its combinations apart
+fn hotkey[shortcut, platform = 'mac', mode = 'symbol', size = 13.0]
+    groups = nothing[]
+    for combo in hotkey_parts[shortcut, platform, mode]
+        parts = nothing[]
+        for part in combo
+            if part.part eq 'key'
+                parts = push[parts, kbd[part.words, size]]
+            else
+                parts = push[parts, gui.text[part.words, size, 'muted']]
+        groups = push[groups, gui.row[parts, gap = 4.0]]
+    gui.row[groups, gap = 10.0]
+
+--- ---- inline text styles ----
+
+--- words drawn heavier (Radix's strong), `size` CSS pixels high
+fn strong[words, size = 15.0, tone = 'ink']
+    gui.drawn['', 0.0, words_wide[words, size] + 1.0, size * 1.4, _strong_painter, lo = size, words = _packed[[words, tone]]]
+
+fn _strong_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    color = _ink[d.look, _field[fs, 1]]
+    c = d.c
+    _learned[c]
+    s = d.s
+    y = d.y + 0.2 * d.lo * s
+    c = lory.text[c, d.x, y, words, d.lo * s, color]
+    c = lory.text[c, d.x + 0.6 * s, y, words, d.lo * s, color]
+    d.c = c
+    d
+
+--- words drawn slanted (Radix's em), `size` CSS pixels high
+fn em[words, size = 15.0, tone = 'ink']
+    gui.drawn['', 0.0, words_wide[words, size] + size * 0.2, size * 1.4, _em_painter, lo = size, words = _packed[[words, tone]]]
+
+fn _em_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    color = _ink[d.look, _field[fs, 1]]
+    c = d.c
+    _learned[c]
+    from = len[c.verts]
+    c = lory.text[c, d.x, d.y + 0.2 * d.lo * d.s, words, d.lo * d.s, color]
+    c = _slanted[c, from, d.y + d.h, 0.2]
+    d.c = c
+    d
+
+--- the vertices from `from` on leant: each moved along by `k` of its height
+--- above the line `base` (a letter's quad leans with them)
+fn _slanted[c, from, base, k]
+    vs = c.verts
+    i = from
+    while i lt len[vs]
+        vs[i] = vs[i] + (base - vs[i + 1]) * k
+        i = i + lory.floats[]
+    c.verts = vs
+    c
+
+--- words quoted (Radix's quote): slanted, between curly quotes
+fn quote[words, size = 15.0, tone = 'ink']
+    em['“`words`”', size, tone]
+
+--- code in a line of words (Radix's code): on a tint (`soft`), filled
+--- (`solid`), edged (`outline`) or as it is (`ghost`)
+fn inline_code[words, size = 14.0, variant = 'soft', tone = 'accent']
+    w = words_wide[words, size] + 8.0
+    gui.drawn['', 0.0, w, size * 1.4 + 2.0, _code_painter, lo = size, words = _packed[[words, variant, tone]]]
+
+fn _code_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    variant = _field[fs, 1]
+    tone = _toned[d.look, _field[fs, 2]]
+    c = d.c
+    _learned[c]
+    s = d.s
+    ground = d.look.panel
+    if variant eq 'solid'
+        ground = tone
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, 4.0 * s, tone]
+    if variant eq 'soft'
+        ground = lory.mix[d.look.panel, tone, 0.16]
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, 4.0 * s, ground]
+    if variant eq 'outline'
+        c = lory.round_outline[c, d.x, d.y, d.w, d.h, 4.0 * s, 1.0 * s, lory.mix[d.look.panel, tone, 0.6]]
+    ink = _readable[lory.mix[tone, d.look.ink, 0.35], ground]
+    if variant eq 'solid'
+        ink = _readable[d.look.on_accent, tone]
+    c = _line[c, d.x + 4.0 * s, d.y + d.h / 2.0, words, d.lo * s, ink]
+    d.c = c
+    d
+
+--- a block quote (Radix's): its controls set in from a rule down its left
+fn blockquote[key, kids]
+    grounded[key, gui.column[kids, gap = 6.0, pad = 12.0], 'quote', 'none']
+
+--- a link (Radix's): words in the accent, underlined as `underline` says
+--- (`auto` and `hover`: while the pointer is over it; `always`; `none`);
+--- pressed (or Enter while it has the focus) it tells `press` with its
+--- words, under `owner` where one is given (a comment's action)
+fn link[id, words, size = 15.0, underline = 'auto', owner = '']
+    who = owner
+    if who eq ''
+        who = id
+    gui.drawn[id, 0.0, words_wide[words, size], size * 1.4, _link_painter, lo = size, words = _packed[[words, underline, who]]]
+
+fn _link_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    underline = _field[fs, 1]
+    who = _field[fs, 2]
+    c = d.c
+    _learned[c]
+    s = d.s
+    color = _ink[d.look, 'accent']
+    if d.hover
+        color = lory.mix[color, d.look.ink, 0.25]
+    c = lory.text[c, d.x, d.y + 0.2 * d.lo * s, words, d.lo * s, color]
+    lined = underline eq 'always' or ((underline eq 'auto' or underline eq 'hover') and d.hover)
+    if lined
+        c = lory.rect[c, d.x, d.y + d.h - 2.0 * s, d.w, 1.0 * s, color]
+    d.c = c
+    if d.id ne '' and (d.pressed or _typed[d, 'Enter'])
+        return _told[d, who, 'press', words, 0.0]
+    d
+
+--- ---- empty states and statistics ----
+
+--- what a page shows where it has nothing to show (Vuetify's empty
+--- state): an icon (`glyph`), a `headline` (a large `404`), a title, its
+--- words and an action's button (`action_id`, its words `action`)
+fn empty_state[title, words = '', glyph = '', headline = '', action = '', action_id = '']
+    kids = nothing[]
+    if glyph ne ''
+        kids = push[kids, icon[glyph, 64.0, 'muted']]
+    if headline ne ''
+        kids = push[kids, big_words[headline, 56.0, 'muted']]
+    kids = push[kids, gui.text[title, 22.0]]
+    if words ne ''
+        kids = push[kids, gui.text[words, 15.0, 'muted']]
+    if action ne ''
+        kids = push[kids, gui.button[action_id, action]]
+    gui.column[kids, gap = 12.0, align = 'center', pad = 24.0]
+
+--- words drawn large on one line (a statistic's value), `size` CSS pixels
+fn big_words[words, size = 40.0, tone = 'ink']
+    gui.drawn['', 0.0, words_wide[words, size], size * 1.2, _big_painter, lo = size, words = _packed[[words, tone]]]
+
+fn _big_painter[d]
+    fs = _unpacked[d.words]
+    c = d.c
+    _learned[c]
+    c = _line[c, d.x, d.y + d.h / 2.0, _field[fs, 0], d.lo * d.s, _ink[d.look, _field[fs, 1]]]
+    d.c = c
+    d
+
+--- a statistic (Semantic UI's): its value large over its label (beside it,
+--- `horizontal`)
+fn statistic[value, label, size = 40.0, tone = 'ink', horizontal = false]
+    big = big_words[value, size, tone]
+    under = gui.text[upper[label], 13.0, 'muted']
+    if horizontal
+        return gui.row[[big, under], gap = 10.0]
+    gui.column[[big, under], gap = 4.0, align = 'center']
+
+--- ---- alerts, callouts and messages ----
+
+fn _no_timers[]
+    Timers[map['' = 0.0], map['' = 0.0], map['' = false], map['' = -1.0]]
+
+--- the icon of an alert's tone
+fn _tone_icon[tone]
+    if tone eq 'success'
+        return 'success'
+    if tone eq 'warning'
+        return 'warning'
+    if tone eq 'error' or tone eq 'danger'
+        return 'error'
+    'info'
+
+--- an alert (Vuetify's; Radix's callout, Semantic UI's message): its
+--- tone's icon, its title and words on a ground of its tone (`tonal`;
+--- `outlined`: a field's ground and edge), its controls under them.
+--- `closable` gives it a ×, whose press (or Enter or space) tells
+--- `dismiss` (words `close`); `lasts` above 0 makes it tell `dismiss`
+--- (`timeout`) once it has been shown that many milliseconds on the page,
+--- the time held while the pointer rests on it or its × has the focus,
+--- and `timer` draws the time left along its foot. Its words wrap to the
+--- width it stood at the frame before.
+fn alert[id, title, words, tone = 'info', variant = 'tonal', closable = false, lasts = 0.0, timer = false, prominent = false, kids = []]
+    box = ground_box[id]
+    side = 24.0
+    if prominent
+        side = 44.0
+    room = box[2] - side - 40.0
+    if closable
+        room = room - 40.0
+    texts = nothing[]
+    if title ne ''
+        texts = push[texts, strong[title, 16.0, tone]]
+    if words ne ''
+        texts = push[texts, _lines_of[_wrapped[words, 15.0, room], 15.0, 'ink']]
+    for k in kids
+        texts = push[texts, k]
+    parts = nothing[]
+    parts = push[parts, icon[_tone_icon[tone], side, tone]]
+    parts = push[parts, gui.column[texts, gap = 4.0]]
+    if closable
+        parts = push[parts, gui.drawn['`id`:close', 0.0, 28.0, 28.0, _close_painter, words = id]]
+    inside = nothing[]
+    inside = push[inside, gui.row[parts, gap = 12.0, align = 'start', pad = 14.0]]
+    if lasts gt 0.0
+        inside = push[inside, gui.disabled[gui.drawn['`id`:timer', 0.0, 0.0, 3.0, _timer_painter, lo = lasts, words = _packed[[id, tone, _flag[timer, 't']]]]]]
+    ground = tone
+    if variant eq 'outlined'
+        ground = 'field'
+    grounded[id, gui.column[inside, gap = 0.0], ground, 'none']
+
+--- a callout (Radix's): an alert of words alone
+fn callout[id, words, tone = 'info']
+    alert[id, '', words, tone]
+
+fn _close_painter[d]
+    c = d.c
+    s = d.s
+    if d.hover
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, 6.0 * s, d.look.hover]
+    c = _icon_drawn[c, 'close', d.x + 6.0 * s, d.y + 6.0 * s, d.w - 12.0 * s, d.look.muted]
+    d.c = c
+    if d.focused
+        timers = recall['lory.display.timers', _no_timers[]]
+        timers.focused[d.words] = lory.time[c]
+        remember['lory.display.timers', timers]
+    if _struck[d]
+        return _told[d, d.words, 'dismiss', 'close', 0.0]
+    d
+
+--- how long an alert has been shown (milliseconds), its time held while
+--- the pointer rests on it
+fn alert_shown[id]
+    timers = recall['lory.display.timers', _no_timers[]]
+    if id in timers.shown
+        return timers.shown[id]
+    0.0
+
+--- the alert's time shown started again: an alert of that id shown anew
+--- (its timeout is told once each time)
+fn alert_reset[id]
+    timers = recall['lory.display.timers', _no_timers[]]
+    timers.shown[id] = 0.0
+    timers.told[id] = false
+    timers.last[id] = -1.0
+    remember['lory.display.timers', timers]
+    id
+
+fn _timer_painter[d]
+    fs = _unpacked[d.words]
+    id = _field[fs, 0]
+    tone = _toned[d.look, _field[fs, 1]]
+    drawn_bar = _field[fs, 2] eq 't'
+    c = d.c
+    t = lory.time[c]
+    timers = recall['lory.display.timers', _no_timers[]]
+    shown = 0.0
+    if id in timers.shown
+        shown = timers.shown[id]
+    last = t
+    if id in timers.last and timers.last[id] gte 0.0
+        last = timers.last[id]
+    told = false
+    if id in timers.told
+        told = timers.told[id]
+    focused = id in timers.focused and timers.focused[id] eq t
+    box = ground_box[id]
+    s = d.s
+    resting = lory.pointing[c] and _inside[lory.pointer_x[c] / s, lory.pointer_y[c] / s, box[0], box[1], box[2], box[3]]
+    on_page = d.y + d.h gt 0.0 and d.y lt lory.height[c]
+    if not resting and not focused and on_page
+        shown = shown + max[0.0, min[250.0, t - last]]
+    timers.shown[id] = shown
+    timers.last[id] = t
+    due = shown gte d.lo and not told
+    if due
+        timers.told[id] = true
+    remember['lory.display.timers', timers]
+    if drawn_bar
+        c = lory.rect[c, d.x, d.y, d.w * max[0.0, 1.0 - shown / d.lo], d.h, tone]
+    d.c = c
+    if due
+        return _told[d, id, 'dismiss', 'timeout', shown]
+    d
+
+fn _inside[x, y, bx, by, bw, bh]
+    x gte bx and y gte by and x lt bx + bw and y lt by + bh
+
+--- ---- aspect ratio ----
+
+--- the height a box of that ratio (width over height) stands at: `wide`
+--- over the ratio, or (`wide` 0) the width the box of that key stood at
+--- the frame before over it (a frame behind a change of its column)
+fn aspect_tall[key, ratio, wide = 0.0]
+    w = wide
+    if w lte 0.0
+        w = ground_box[key][2]
+    if ratio lte 0.0
+        return 0.0
+    w / ratio
+
+--- a box kept at a ratio of width to height (Radix's aspect ratio): as
+--- wide as it stands (or `wide`), as tall as the ratio makes it, its
+--- controls in its middle
+fn aspect[key, ratio, kids, wide = 0.0]
+    base = gui.drawn['', 0.0, wide, aspect_tall[key, ratio, wide], _blank_painter]
+    gui.overlay[grounded[key, base, 'none', 'none'], gui.column[kids, align = 'center'], anchor = 'center']
+
+--- ---- images ----
+
+--- an image (Vuetify's, Semantic UI's) loading from `url`: `wide` by
+--- `tall` CSS pixels, or as tall as its `ratio` (width over height), or
+--- once loaded its own, makes it (`wide` 0: as wide as it stands); `lazy`:
+--- asked for only once it shows on the page; while it loads, its
+--- `preview` (a small image's address, loaded first: Vuetify's
+--- `lazy-src`) or a pulse; where it fails, a broken picture and its `alt`
+--- words. `fit`: `cover`, `contain` or `fill`. `key` names its box; its
+--- state is `image_state[url]`.
+fn image[key, url, wide = 0.0, tall = 0.0, ratio = 0.0, fit = 'cover', lazy = true, preview = '', alt = '', radius = 4.0]
+    h = tall
+    if h lte 0.0
+        w = wide
+        if w lte 0.0
+            w = ground_box[key][2]
+        size = image_size[url]
+        k = ratio
+        if k lte 0.0 and size[1] gt 0.0
+            k = size[0] / size[1]
+        if k lte 0.0
+            k = 16.0 / 9.0
+        h = w / k
+        if w lte 0.0
+            h = 160.0
+    fields = _packed[[url, preview, alt, fit, _flag[lazy, 'l']]]
+    grounded[key, gui.drawn['', 0.0, wide, h, _image_painter, lo = radius, words = fields], 'none', 'none']
+
+fn _image_painter[d]
+    fs = _unpacked[d.words]
+    url = _field[fs, 0]
+    preview = _field[fs, 1]
+    alt = _field[fs, 2]
+    fit = _field[fs, 3]
+    lazy = _field[fs, 4] eq 'l'
+    c = d.c
+    _learned[c]
+    s = d.s
+    k = lory.clipped[c]
+    seen = d.y + d.h gt max[0.0, k[1]] and d.y lt min[lory.height[c], k[3]] and d.x + d.w gt max[0.0, k[0]] and d.x lt min[lory.width[c], k[2]]
+    if seen or not lazy
+        c = _asking_all[c, [preview, url]]
+    state = image_state[url]
+    c = lory.clip[c, d.x, d.y, d.w, d.h]
+    if state eq 'loaded'
+        c = _pictured[c, url, d.x, d.y, d.w, d.h, fit]
+    else
+        if state eq 'error'
+            c = lory.round_rect[c, d.x, d.y, d.w, d.h, d.lo * s, d.look.hover]
+            c = _icon_drawn[c, 'broken_image', d.x + d.w / 2.0 - 16.0 * s, d.y + d.h / 2.0 - 26.0 * s, 32.0 * s, d.look.muted]
+            if alt ne ''
+                c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0 + 18.0 * s, alt, 13.0 * s, d.look.muted]
+        else
+            if preview ne '' and image_state[preview] eq 'loaded'
+                c = _pictured[c, preview, d.x, d.y, d.w, d.h, fit]
+            else
+                pulse = skeleton_pulse[_now[c]]
+                c = lory.round_rect[c, d.x, d.y, d.w, d.h, d.lo * s, lory.mix[d.look.hover, d.look.edge, pulse]]
+    c = lory.unclip[c, k]
+    d.c = c
+    d
+
+--- ---- galleries and the lightbox ----
+
+fn _no_galleries[]
+    Galleries[map['' = ''], map['' = ''], map['' = 0.0], map['' = 0]]
+
+--- where picture `i` of `count` stands in an arrangement `wide` by `tall`
+--- CSS pixels, `offset` pictures along it (a ring turned, a strip slid, a
+--- grid's rows scrolled, a pile lifted): its box (x, y, width, height).
+--- `grid`: rows of `columns` squares; `strip`: one row of squares `tall`
+--- high; `ring`: round an ellipse, the first at the top; `stack`: a pile,
+--- each a little past the one under it.
+fn gallery_place[arrangement, i, count, columns, wide, tall, gap = 8.0, offset = 0.0]
+    k = 0.0 + i
+    if arrangement eq 'strip'
+        return [(k - offset) * (tall + gap), 0.0, tall, tall]
+    if arrangement eq 'ring'
+        cell = min[wide, tall] / 4.0
+        a = 2.0 * pi * (k - offset) / max[1, count] - pi / 2.0
+        rx = wide / 2.0 - cell / 2.0
+        ry = tall / 2.0 - cell / 2.0
+        return [wide / 2.0 + rx * cos[a] - cell / 2.0, tall / 2.0 + ry * sin[a] - cell / 2.0, cell, cell]
+    if arrangement eq 'stack'
+        cell = min[wide, tall] * 0.6
+        return [(wide - cell) / 2.0 + (k - offset) * 10.0, (tall - cell) / 2.0 - (k - offset) * 5.0, cell, cell]
+    cols = max[1, columns]
+    cell = (wide - gap * (cols - 1)) / cols
+    col = i % cols
+    row_at = 0.0 + (i - col) / cols
+    [col * (cell + gap), (row_at - offset) * (cell + gap), cell, cell]
+
+--- a gallery's height in an arrangement (a grid's is its rows')
+fn gallery_tall[arrangement, count, columns, wide, tall, gap = 8.0]
+    if arrangement eq 'strip' or arrangement eq 'ring' or arrangement eq 'stack'
+        return tall
+    cols = max[1, columns]
+    cell = (wide - gap * (cols - 1)) / cols
+    rows = (count + cols - 1) / cols
+    rows * cell + max[0, rows - 1] * gap
+
+--- a box part of the way (`k`, 0 to 1) from one to another
+fn box_between[a, b, k]
+    [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k, a[3] + (b[3] - a[3]) * k]
+
+--- how far a gallery is along its move to a new arrangement, `t`
+--- milliseconds after it began (450 of them, eased in and out)
+fn gallery_moved[since, t]
+    _ease_in_out[max[0.0, min[1.0, (t - since) / 450.0]]]
+
+--- a gallery (Motion's): its pictures placed by `arrangement`
+--- (`gallery_place`), moving to their new places, eased, when it changes;
+--- one stop of Tab, the arrows moving between pictures (Home and End to
+--- the first and the last); a picture pressed (or Enter or space on the
+--- one the arrows are on) tells `choose` with its address and its index,
+--- for the program to show it in a `lightbox`. `wide` and `tall` are its
+--- size (a grid's height is its rows').
+fn gallery[id, urls, arrangement = 'grid', columns = 3, wide = 600.0, tall = 320.0, gap = 8.0, offset = 0.0]
+    g = recall['lory.display.galleries', _no_galleries[]]
+    if id in g.arranged
+        if g.arranged[id] ne arrangement
+            g.was[id] = g.arranged[id]
+            g.since[id] = -1.0
+            g.arranged[id] = arrangement
+            remember['lory.display.galleries', g]
+    else
+        g.arranged[id] = arrangement
+        g.was[id] = arrangement
+        g.since[id] = -1000000.0
+        remember['lory.display.galleries', g]
+    h = gallery_tall[arrangement, len[urls], columns, wide, tall, gap]
+    fields = _packed[[join[urls, '\n'], arrangement, str[columns], str[gap], str[offset], str[tall]]]
+    gui.drawn[id, 0.0, wide, h, _gallery_painter, words = fields]
+
+--- which picture of a gallery the arrows are on
+fn gallery_focus[id]
+    g = recall['lory.display.galleries', _no_galleries[]]
+    if id in g.focus
+        return g.focus[id]
+    0
+
+fn _gallery_painter[d]
+    fs = _unpacked[d.words]
+    urls = split[_field[fs, 0], '\n']
+    arrangement = _field[fs, 1]
+    columns = _whole[_field[fs, 2]]
+    gap = _number[_field[fs, 3]]
+    offset = _number[_field[fs, 4]]
+    tall = _number[_field[fs, 5]]
+    c = d.c
+    s = d.s
+    t = lory.time[c]
+    c = _asking_all[c, urls]
+    g = recall['lory.display.galleries', _no_galleries[]]
+    since = -1000000.0
+    if d.id in g.since
+        since = g.since[d.id]
+    if since eq -1.0
+        since = t
+        g.since[d.id] = t
+        remember['lory.display.galleries', g]
+    from = arrangement
+    if d.id in g.was
+        from = g.was[d.id]
+    k = gallery_moved[since, t]
+    count = len[urls]
+    focus = gallery_focus[d.id]
+    w = d.w / s
+    pick = -1
+    i = 0
+    while i lt count
+        box = box_between[gallery_place[from, i, count, columns, w, tall, gap, offset], gallery_place[arrangement, i, count, columns, w, tall, gap, offset], k]
+        x = d.x + box[0] * s
+        y = d.y + box[1] * s
+        bw = box[2] * s
+        bh = box[3] * s
+        if image_state[urls[i]] eq 'loaded'
+            c = _pictured[c, urls[i], x, y, bw, bh, 'cover']
+        else
+            c = lory.round_rect[c, x, y, bw, bh, 4.0 * s, d.look.hover]
+        if d.focused and i eq focus
+            c = lory.round_outline[c, x - 2.0 * s, y - 2.0 * s, bw + 4.0 * s, bh + 4.0 * s, 6.0 * s, 2.0 * s, d.look.focus]
+        if d.pressed and _inside[d.px, d.py, x - d.x, y - d.y, bw, bh]
+            pick = i
+        i = i + 1
+    d.c = c
+    moved = focus
+    if pick gte 0
+        moved = pick
+    for key in d.keys
+        if key eq 'ArrowRight' or key eq 'ArrowDown'
+            moved = min[count - 1, moved + 1]
+        if key eq 'ArrowLeft' or key eq 'ArrowUp'
+            moved = max[0, moved - 1]
+        if key eq 'Home'
+            moved = 0
+        if key eq 'End'
+            moved = count - 1
+    if moved ne focus
+        g = recall['lory.display.galleries', _no_galleries[]]
+        g.focus[d.id] = moved
+        remember['lory.display.galleries', g]
+    if pick lt 0 and (_typed[d, 'Enter'] or _typed[d, ' ']) and count gt 0
+        pick = moved
+    if pick gte 0
+        return _told[d, d.id, 'choose', urls[pick], 0.0 + pick]
+    d
+
+--- a lightbox: picture `at` of `urls` large over the dimmed page (a modal
+--- layer of that id: Escape or a press on the dimming tells `dismiss`),
+--- its caption under it; the arrows (or a press on either side) tell
+--- `choose` with the picture before or after, round from the last to the
+--- first; Home and End the first and the last
+fn lightbox[id, urls, at, captions = [], wide = 640.0, tall = 420.0]
+    if at lt 0 or at gte len[urls]
+        return gui.space[0.0]
+    fields = _packed[[join[urls, '\n'], _field[captions, at]]]
+    viewer = gui.drawn['`id`:view', 0.0 + at, wide, tall, _lightbox_painter, words = fields]
+    gui.modal[id, [viewer], wide = wide + 48.0]
+
+--- the picture a lightbox moves to from `at` of `count` by a key (-1: none)
+fn lightbox_step[at, count, key]
+    if count lte 0
+        return -1
+    if key eq 'ArrowRight'
+        return (at + 1) % count
+    if key eq 'ArrowLeft'
+        return (at - 1 + count) % count
+    if key eq 'Home'
+        return 0
+    if key eq 'End'
+        return count - 1
+    -1
+
+fn _lightbox_painter[d]
+    fs = _unpacked[d.words]
+    urls = split[_field[fs, 0], '\n']
+    caption = _field[fs, 1]
+    c = d.c
+    _learned[c]
+    s = d.s
+    at = int[d.num]
+    count = len[urls]
+    url = urls[at]
+    c = _asking_all[c, [url]]
+    foot = 28.0 * s
+    if caption eq ''
+        foot = 0.0
+    ph = d.h - foot
+    if image_state[url] eq 'loaded'
+        c = _pictured[c, url, d.x, d.y, d.w, ph, 'contain']
+    else
+        c = lory.round_rect[c, d.x, d.y, d.w, ph, 6.0 * s, d.look.hover]
+        c = _icon_drawn[c, 'image', d.x + d.w / 2.0 - 20.0 * s, d.y + ph / 2.0 - 20.0 * s, 40.0 * s, d.look.muted]
+    side = 48.0 * s
+    mid = d.y + ph / 2.0
+    c = lory.circle[c, d.x + 28.0 * s, mid, 20.0 * s, lory.fade[d.look.page, 0.7]]
+    c = _icon_drawn[c, 'chevron_left', d.x + 16.0 * s, mid - 12.0 * s, 24.0 * s, d.look.ink]
+    c = lory.circle[c, d.x + d.w - 28.0 * s, mid, 20.0 * s, lory.fade[d.look.page, 0.7]]
+    c = _icon_drawn[c, 'chevron_right', d.x + d.w - 40.0 * s, mid - 12.0 * s, 24.0 * s, d.look.ink]
+    counted = '`at + 1` / `count`'
+    c = lory.text_right[c, d.x + d.w - 12.0 * s, d.y + 10.0 * s, counted, 13.0 * s, d.look.ink]
+    if caption ne ''
+        c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h - foot / 2.0, caption, 14.0 * s, d.look.muted]
+    d.c = c
+    to = -1
+    for key in d.keys
+        step = lightbox_step[at, count, key]
+        if step gte 0
+            to = step
+    if d.pressed
+        if d.px lt side
+            to = lightbox_step[at, count, 'ArrowLeft']
+        if d.px gt d.w - side
+            to = lightbox_step[at, count, 'ArrowRight']
+    if to gte 0 and to ne at
+        return _told[d, _owner[d.id], 'choose', urls[to], 0.0 + to]
+    d
+
+--- ---- highlighted text ----
+
+--- the accented letters of Latin, Greek and Vietnamese, and each one's
+--- plain letter (Unicode's canonical decompositions, the accents taken
+--- off), in step
+fn _accented[]
+    join[['ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïñòóôõöùúûüýÿĀāĂăĄąĆ', 'ćĈĉĊċČčĎďĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĨĩĪīĬĭĮįİĴĵĶķĹĺĻļĽľŃńŅņŇňŌōŎŏŐő', 'ŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽžƠơƯưǍǎǏǐǑǒǓǔǕǖǗǘǙǚǛ', 'ǜǞǟǠǡǢǣǦǧǨǩǪǫǬǭǮǯǰǴǵǸǹǺǻǼǽǾǿȀȁȂȃȄȅȆȇȈȉȊȋȌȍȎȏȐȑȒȓȔȕȖȗȘșȚțȞȟȦȧ', 'ȨȩȪȫȬȭȮȯȰȱȲȳ΅ΆΈΉΊΌΎΏΐΪΫάέήίΰϊϋόύώϓϔḀḁḂḃḄḅḆḇḈḉḊḋḌḍḎḏḐḑḒḓḔḕḖḗḘ', 'ḙḚḛḜḝḞḟḠḡḢḣḤḥḦḧḨḩḪḫḬḭḮḯḰḱḲḳḴḵḶḷḸḹḺḻḼḽḾḿṀṁṂṃṄṅṆṇṈṉṊṋṌṍṎṏṐṑṒṓṔ', 'ṕṖṗṘṙṚṛṜṝṞṟṠṡṢṣṤṥṦṧṨṩṪṫṬṭṮṯṰṱṲṳṴṵṶṷṸṹṺṻṼṽṾṿẀẁẂẃẄẅẆẇẈẉẊẋẌẍẎẏẐ', 'ẑẒẓẔẕẖẗẘẙẛẠạẢảẤấẦầẨẩẪẫẬậẮắẰằẲẳẴẵẶặẸẹẺẻẼẽẾếỀềỂểỄễỆệỈỉỊịỌọỎỏỐố', 'ỒồỔổỖỗỘộỚớỜờỞởỠỡỢợỤụỦủỨứỪừỬửỮữỰựỲỳỴỵỶỷỸỹ'], '']
+
+fn _plain[]
+    join[['AAAAAACEEEEIIIINOOOOOUUUUYaaaaaaceeeeiiiinooooouuuuyyAaAaAaC', 'cCcCcCcDdEeEeEeEeEeGgGgGgGgHhIiIiIiIiIJjKkLlLlLlNnNnNnOoOoOo', 'RrRrRrSsSsSsSsTtTtUuUuUuUuUuUuWwYyYZzZzZzOoUuAaIiOoUuUuUuUuU', 'uAaAaÆæGgKkOoOoƷʒjGgNnAaÆæØøAaAaEeEeIiIiOoOoRrRrUuUuSsTtHhAa', 'EeOoOoOoOoYy¨ΑΕΗΙΟΥΩιΙΥαεηιυιυουωϒϒAaBbBbBbCcDdDdDdDdDdEeEeE', 'eEeEeFfGgHhHhHhHhHhIiIiKkKkKkLlLlLlLlMmMmMmNnNnNnNnOoOoOoOoP', 'pPpRrRrRrRrSsSsSsSsSsTtTtTtTtUuUuUuUuUuVvVvWwWwWwWwWwXxXxYyZ', 'zZzZzhtwyſAaAaAaAaAaAaAaAaAaAaAaAaEeEeEeEeEeEeEeEeIiIiOoOoOo', 'OoOoOoOoOoOoOoOoOoUuUuUuUuUuUuUuYyYyYyYy'], '']
+
+--- a letter folded to its plain form: its accents taken off (é, ñ, ç and
+--- the rest), and the letters that carry no accent but are not plain
+--- letters written as their plain spelling (ø as o, ß as ss, æ as ae); a
+--- combining accent alone is nothing
+fn _folded[ch]
+    n = code[ch]
+    if n gte 768 and n lte 879
+        return ''
+    if n lt 192
+        return ch
+    _spelled[translate[ch, _accented[], _plain[]]]
+
+--- the plain spelling of a letter that is no accented letter
+fn _spelled[ch]
+    letters = ['ł', 'l', 'ø', 'o', 'đ', 'd', 'ð', 'd', 'þ', 'th', 'ħ', 'h', 'ŧ', 't', 'ŋ', 'n', 'ß', 'ss', 'æ', 'ae', 'œ', 'oe', 'ı', 'i', 'Ł', 'L', 'Ø', 'O', 'Đ', 'D', 'Ð', 'D', 'Þ', 'Th', 'Ħ', 'H', 'Ŧ', 'T', 'Ŋ', 'N', 'ẞ', 'Ss', 'Æ', 'Ae', 'Œ', 'Oe']
+    i = 0
+    while i + 1 lt len[letters]
+        if letters[i] eq ch
+            return letters[i + 1]
+        i = i + 2
+    ch
+
+--- words in lower case, a word's last sigma as any other's
+fn _lowered[words]
+    replace[lower[words], 'ς', 'σ']
+
+fn _folded_words[words]
+    out = slice[[''], 0, 0]
+    for ch in split[words, '']
+        out = push[out, _folded[ch]]
+    join[out, '']
+
+--- where `needle` stands in `hay` from `from` on (-1: nowhere)
+fn _found_at[hay, needle, from]
+    k = len[needle]
+    i = from
+    last = len[hay] - k
+    while i lte last
+        if slice[hay, i, i + k] eq needle
+            return i
+        i = i + 1
+    -1
+
+--- each place the needle stands in the hay (only the first unless
+--- `every`), one after another, as [start, end]
+fn _gathered[hay, needle, every]
+    out = slice[[[0, 0]], 0, 0]
+    at = _found_at[hay, needle, 0]
+    while at gte 0
+        out = push[out, [at, at + len[needle]]]
+        if not every
+            return out
+        at = _found_at[hay, needle, at + len[needle]]
+    out
+
+--- the words folded a letter at a time (lowered, and their accents taken
+--- off, as asked), with where each folded letter came from
+fn _folded_map[words, ignore_case, fold]
+    pieces = slice[[''], 0, 0]
+    from = []
+    chars = split[words, '']
+    i = 0
+    while i lt len[chars]
+        one = chars[i]
+        if ignore_case
+            one = _lowered[one]
+        if fold
+            one = _folded_words[one]
+        pieces = push[pieces, one]
+        k = 0
+        while k lt len[one]
+            from = push[from, i]
+            k = k + 1
+        i = i + 1
+    from = push[from, len[chars]]
+    Folded[join[pieces, ''], from]
+
+--- a span of the folded words back in the words: its end carried past a
+--- letter that folded to more than one
+fn _mapped_back[from, lo_at, hi_at]
+    e0 = from[hi_at]
+    if hi_at gt 0 and from[hi_at] eq from[hi_at - 1]
+        at = hi_at
+        while at lt len[from] and from[at] eq from[hi_at]
+            at = at + 1
+        e0 = from[min[at, len[from] - 1]]
+    [from[lo_at], e0]
+
+--- where the query stands in the words (`fold_query`: its accents taken
+--- off; `fold_text`: the words'), each place as [start, end] in the words
+fn _searched[words, query, ignore_case, fold_query, fold_text, every]
+    needle = query
+    if fold_query
+        needle = _folded_words[needle]
+    if ignore_case
+        needle = _lowered[needle]
+    if len[needle] eq 0
+        return slice[[[0, 0]], 0, 0]
+    if not fold_text
+        if not ignore_case
+            return _gathered[words, needle, every]
+        lowered = _lowered[words]
+        if len[lowered] eq len[words]
+            return _gathered[lowered, needle, every]
+    made = _folded_map[words, ignore_case, fold_text]
+    out = slice[[[0, 0]], 0, 0]
+    for span in _gathered[made.words, needle, every]
+        back = _mapped_back[made.from, span[0], span[1]]
+        k = len[out]
+        if k eq 0 or out[k - 1][0] ne back[0] or out[k - 1][1] ne back[1]
+            out = push[out, back]
+    out
+
+--- whether span `a` comes before `b`: by its start, then its end
+fn _before[a, b]
+    a[0] lt b[0] or (a[0] eq b[0] and a[1] lt b[1])
+
+fn _sorted_spans[spans]
+    out = slice[[[0, 0]], 0, 0]
+    for span in spans
+        at = 0
+        while at lt len[out] and not _before[span, out[at]]
+            at = at + 1
+        kept = push[slice[out, 0, at], span]
+        rest = slice[out, at, len[out]]
+        for one in rest
+            kept = push[kept, one]
+        out = kept
+    out
+
+--- spans sorted by their start (then their end), each that starts inside
+--- the one kept before it dropped
+fn _kept_apart[spans]
+    out = slice[[[0, 0]], 0, 0]
+    for span in _sorted_spans[spans]
+        k = len[out]
+        if k eq 0 or span[0] gte out[k - 1][1]
+            out = push[out, span]
+    out
+
+--- where one term stands in the words (Vuetify's highlight: the first
+--- place, or every one with `match_all`), `ignore_case` or not; `accents`
+--- `true` folds both the term's accents and the words', `query` the
+--- term's alone and `target` the words' alone (each then also matching as
+--- written), `false` neither
+fn term_ranges[words, term, ignore_case = false, match_all = false, accents = 'false']
+    fold_query = accents eq 'true' or accents eq 'query'
+    fold_text = accents eq 'true' or accents eq 'target'
+    if fold_query eq fold_text
+        return _searched[words, term, ignore_case, fold_query, fold_text, match_all]
+    both = _searched[words, term, ignore_case, false, false, true]
+    for span in _searched[words, term, ignore_case, fold_query, fold_text, true]
+        both = push[both, span]
+    kept = _kept_apart[both]
+    if match_all or len[kept] lte 1
+        return kept
+    slice[kept, 0, 1]
+
+--- spans merged: sorted, those that overlap or touch made one, empty ones
+--- dropped (Vuetify's highlight merges its matches so)
+fn ranges_merged[spans]
+    out = slice[[[0, 0]], 0, 0]
+    for span in _sorted_spans[spans]
+        if span[0] lt span[1]
+            k = len[out]
+            if k gt 0 and span[0] lte out[k - 1][1]
+                out[k - 1] = [out[k - 1][0], max[out[k - 1][1], span[1]]]
+            else
+                out = push[out, span]
+    out
+
+--- where the terms stand in the words, merged (Vuetify's highlight)
+fn highlight_ranges[words, terms, ignore_case = false, match_all = false, accents = 'false']
+    spans = slice[[[0, 0]], 0, 0]
+    for term in terms
+        if term ne ''
+            for span in term_ranges[words, term, ignore_case, match_all, accents]
+                spans = push[spans, span]
+    ranges_merged[spans]
+
+--- words with spans of them marked (`highlight_ranges`): drawn on one
+--- line, or wrapped to `wide` CSS pixels
+fn highlighted[words, spans, size = 15.0, tone = 'ink', wide = 0.0]
+    flat = []
+    for span in spans
+        flat = push[flat, span[0]]
+        flat = push[flat, span[1]]
+    count = 1
+    w = words_wide[words, size]
+    if wide gt 0.0
+        count = len[_wrapped[words, size, wide]]
+        w = wide
+    gui.drawn['', 0.0, w, count * size * 1.4, _highlight_painter, lo = size, hi = wide, words = _packed[[words, _wholes_written[flat], tone]]]
+
+fn _highlight_painter[d]
+    fs = _unpacked[d.words]
+    words = _field[fs, 0]
+    marks = _wholes_read[_field[fs, 1]]
+    color = _ink[d.look, _field[fs, 2]]
+    c = d.c
+    _learned[c]
+    s = d.s
+    size = d.lo * s
+    at = 0
+    y = d.y
+    for one in _wrapped[words, d.lo, d.hi]
+        i = 0
+        while i + 1 lt len[marks]
+            a = max[marks[i], at] - at
+            b = min[marks[i + 1], at + len[one]] - at
+            if b gt a
+                x0 = lory.measure[c, slice[one, 0, a], size]
+                x1 = lory.measure[c, slice[one, 0, b], size]
+                c = lory.round_rect[c, d.x + x0, y + 0.1 * size, x1 - x0, 1.2 * size, 3.0 * s, lory.mix[d.look.panel, d.look.warning, 0.4]]
+            i = i + 2
+        c = lory.text[c, d.x, y + 0.2 * size, one, size, color]
+        at = at + len[one] + 1
+        y = y + 1.4 * size
+    d.c = c
+    d
+
+--- ---- advertisement slots ----
+
+--- an advertisement unit's size in CSS pixels (the IAB's units, as
+--- Semantic UI names them; [0, 0] for a name it does not know)
+fn advert_size[unit]
+    names = ['medium rectangle', 'large rectangle', 'vertical rectangle', 'small rectangle', 'mobile banner', 'mobile leaderboard', 'large mobile banner', 'banner', 'vertical banner', 'top banner', 'half banner', 'leaderboard', 'large leaderboard', 'billboard', 'panorama', 'netboard', 'skyscraper', 'wide skyscraper', 'half page', 'square', 'small square', 'button', 'small button']
+    sizes = [[300.0, 250.0], [336.0, 280.0], [240.0, 400.0], [180.0, 150.0], [320.0, 50.0], [300.0, 50.0], [320.0, 100.0], [468.0, 60.0], [120.0, 240.0], [930.0, 180.0], [234.0, 60.0], [728.0, 90.0], [970.0, 90.0], [970.0, 250.0], [980.0, 120.0], [580.0, 400.0], [120.0, 600.0], [160.0, 600.0], [300.0, 600.0], [250.0, 250.0], [200.0, 200.0], [120.0, 90.0], [120.0, 60.0]]
+    i = 0
+    while i lt len[names]
+        if names[i] eq unit
+            return sizes[i]
+        i = i + 1
+    [0.0, 0.0]
+
+--- whether a unit shows on a page `page_wide` CSS pixels wide: a mobile
+--- unit only on a phone's (767 or narrower)
+fn advert_shown[unit, page_wide]
+    if starts[unit, 'mobile'] or starts[unit, 'large mobile']
+        return page_wide lte 767.0
+    true
+
+--- an advertisement's slot (Semantic UI's): a box of its unit's size
+--- holding the program's controls (the advertisement's: Lory shows none
+--- of its own); in test mode, the `test_words` on a quiet ground in its
+--- middle; nothing where its unit does not show on a page that wide
+--- (`page_wide`, 0: any)
+fn advert[unit, kids, test_words = '', page_wide = 0.0]
+    if page_wide gt 0.0 and not advert_shown[unit, page_wide]
+        return gui.space[0.0]
+    size = advert_size[unit]
+    base = gui.drawn['', 0.0, size[0], size[1], _advert_painter, words = test_words]
+    gui.overlay[base, gui.column[kids, align = 'center'], anchor = 'center']
+
+fn _advert_painter[d]
+    if d.words eq ''
+        return d
+    c = d.c
+    _learned[c]
+    c = lory.rect[c, d.x, d.y, d.w, d.h, d.look.hover]
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, d.words, 14.0 * d.s, d.look.muted]
+    d.c = c
+    d
+
+--- ---- tests: frames as a page hands them ----
+
+--- a frame at `t` milliseconds, 900 by 700, with the input, the pointers
+--- and the page's answers given (JSON lists)
+fn _frame_t[t, given, pointers, answers]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": `pointers`, "controllers": [], "said": `answers`}']]
+
+fn _quiet[t]
+    _frame_t[t, '[]', '[]', '[]']
+
+--- a press and release at a place, a key typed, a pointer standing at a
+--- place
+fn _press[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _key[name]
+    '[{"type": "key", "key": "`name`", "code": "`name`", "shift": false}]'
+
+fn _standing[x, y]
+    '[{"x": `x`, "y": `y`, "down": false}]'
+
+--- a headset's frame at a time (its left eye's view, 1000 by 560), the
+--- right hand's ray resting on the page at (500, 275), with the input given
+fn _in_headset[t, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": `t`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']]
+
+--- the right hand's trigger pressed and let go
+fn _ray_press[]
+    '[{"type": "down", "device": "ray", "id": "right", "hand": "right"}, {"type": "up", "device": "ray", "id": "right", "hand": "right"}]'
+
+--- the tree shown in the frame from (24, 24), 852 wide, in the dark look
+fn _shown[c, tree]
+    gui.show_at[c, tree, 24.0, 24.0, 852.0, gui.dark[]]
+
+--- what display and gui hold let go: each test starts from nothing
+fn _fresh[]
+    for name in ['lory.display.letters', 'lory.display.lettered', 'lory.display.pictures', 'lory.display.avatars', 'lory.display.grounds', 'lory.display.timers', 'lory.display.galleries', 'lory.display.dots', 'lory.display.calm', 'lory.gui']
+        forget[name]
+    true
+
+--- the event of that id and act among those shown (a blank one: none)
+fn _event_of[shown, id, act]
+    for one in shown.events
+        if one.id eq id and one.act eq act
+            return one
+    gui.Event['', '', '', 0.0]
+
+fn _has_event[shown, id, act]
+    _event_of[shown, id, act].act eq act
+
+--- whether anything was drawn in that colour (its red, green and blue)
+fn _has_colour[c, k]
+    vs = c.verts
+    i = 0
+    while i + 7 lt len[vs]
+        if abs[vs[i + 4] - k.r] lt 0.002 and abs[vs[i + 5] - k.g] lt 0.002 and abs[vs[i + 6] - k.b] lt 0.002 and vs[i + 7] gt 0.0
+            return true
+        i = i + lory.floats[]
+    false
+
+--- whether the frame asked the page for the image at the address
+fn _asked_image[c, url]
+    for call in c.asks
+        if len[call] gt 2 and call[1] eq '@image' and call[2] eq '=`url`'
+            return true
+    false
+
+--- before an atlas has come, a letter stands 0.55 of its size, and words
+--- break into lines no wider than their room, the last kept cut where
+--- there are more than may show
+test words_are_measured_and_wrapped_before_an_atlas_comes[]
+    _fresh[]
+    abs[words_wide['abc', 10.0] - 16.5] lt 0.000001
+    words_wide['', 10.0] eq 0.0
+    _wrapped['one two three', 10.0, 60.0] eq ['one two', 'three']
+    _wrapped['one two three', 10.0, 0.0] eq ['one two three']
+    _wrapped['unbreakable', 10.0, 20.0] eq ['unbreakable']
+    _clamped[['a', 'b', 'c'], 2] eq ['a', 'b…']
+    _clamped[['a', 'b'], 2] eq ['a', 'b']
+    _number['-12.5'] eq -12.5
+    _whole['42'] eq 42
+    _wholes_read[_wholes_written[[3, 0, 17]]] eq [3, 0, 17]
+    _owner['tags:2'] eq 'tags'
+    _owner['a:b:3'] eq 'a:b'
+    _index_of_part['tags:12'] eq 12
+
+--- a tone's words are made readable on the panel (4.5 to 1), and ink is
+--- kept as it is
+test a_tones_words_read_on_the_panel[]
+    look = gui.light[]
+    made = _ink[look, 'warning']
+    _contrast_of[made, look.panel] gte 4.5
+    _ink[look, 'ink'] eq look.ink
+    _toned[look, 'error'] eq look.danger
+    _toned[look, 'info'] eq look.accent
+
+--- Vuetify's group: one chosen, or many; the chosen one let go unless the
+--- group is mandatory and it is the last; no more than `most`
+test a_chip_groups_selection_follows_its_rules[]
+    chips_chosen[['a'], 'b'] eq ['b']
+    len[chips_chosen[['a'], 'a']] eq 0
+    chips_chosen[['a'], 'a', mandatory = true] eq ['a']
+    chips_chosen[['a', 'b'], 'a', multiple = true] eq ['b']
+    chips_chosen[['a'], 'b', multiple = true] eq ['a', 'b']
+    chips_chosen[['a', 'b'], 'c', multiple = true, most = 2] eq ['a', 'b']
+    chips_chosen[['a'], 'a', multiple = true, mandatory = true] eq ['a']
+    chips_chosen[['a', 'b'], 'a', multiple = true, mandatory = true] eq ['b']
+
+--- a chip group is one stop of Tab: Tab enters it at its first chip, Left
+--- and Right move between its chips (not past its ends), Home and End to
+--- its first and last, and Enter, space or a press chooses one
+test a_chip_group_is_one_stop_its_arrows_move_and_enter_chooses[]
+    _fresh[]
+    tree = gui.column[[gui.button['before', 'Before'], chip_group['tags', ['red', 'green', 'blue'], ['red']], gui.button['after', 'After']]]
+    laid = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], tree]
+    'tags:0' in laid.boxes and 'tags:2' in laid.boxes
+    laid.boxes['tags:1'][0] gt laid.boxes['tags:0'][0]
+    laid.boxes['tags:1'][1] eq laid.boxes['tags:0'][1]
+    _shown[_frame_t[0, _key['Tab'], '[]', '[]'], tree]
+    entered = _shown[_frame_t[0, _key['Tab'], '[]', '[]'], tree]
+    len[entered.events] eq 0
+    moved = _shown[_frame_t[0, _key['ArrowRight'], '[]', '[]'], tree]
+    _event_of[moved, 'tags', 'rove'].words eq 'tags:1'
+    chose = _shown[_frame_t[0, _key['Enter'], '[]', '[]'], tree]
+    picked = _event_of[chose, 'tags', 'choose']
+    picked.words eq 'green'
+    picked.num eq 1.0
+    _event_of[_shown[_frame_t[0, _key[' '], '[]', '[]'], tree], 'tags', 'choose'].num eq 1.0
+    b = laid.boxes['tags:2']
+    pressed = _shown[_frame_t[0, _press[b[0] + 5.0, b[1] + 5.0], '[]', '[]'], tree]
+    _event_of[pressed, 'tags', 'choose'].words eq 'blue'
+    _event_of[pressed, 'tags', 'choose'].num eq 2.0
+    --- (the group does not loop: Right at the last chip stays there)
+    len[_shown[_frame_t[0, _key['ArrowRight'], '[]', '[]'], tree].events] eq 0
+    _event_of[_shown[_frame_t[0, _key['Home'], '[]', '[]'], tree], 'tags', 'rove'].num eq 0.0
+    _event_of[_shown[_frame_t[0, _key['End'], '[]', '[]'], tree], 'tags', 'rove'].num eq 2.0
+    --- (Tab leaves it for the control after it)
+    left_it = _shown[_frame_t[0, _key['Tab'], '[]', '[]'], tree]
+    len[left_it.events] eq 0
+    _event_of[_shown[_frame_t[0, _key['Enter'], '[]', '[]'], tree], 'tags', 'choose'].act eq ''
+    --- (many chosen: the choice is every one chosen, a line each)
+    many = gui.column[[chip_group['sizes', ['S', 'M', 'L'], ['S'], multiple = true, filter = true]]]
+    m = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], many].boxes['sizes:1']
+    _event_of[_shown[_frame_t[0, _press[m[0] + 5.0, m[1] + 5.0], '[]', '[]'], many], 'sizes', 'choose'].words eq 'S\nM'
+
+--- a closable chip tells `close` by a press on its × or by Delete while it
+--- has the focus, and `press` by a press anywhere else on it
+test a_closable_chip_tells_its_close_by_its_mark_and_by_delete[]
+    _fresh[]
+    tree = gui.column[[chip['draft', 'Draft', closable = true]]]
+    laid = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], tree]
+    b = laid.boxes['draft']
+    abs[b[2] - chip_wide['Draft', 'default', true]] lt 0.001
+    b[3] eq 32.0
+    on_words = _shown[_frame_t[0, _press[b[0] + 6.0, b[1] + 10.0], '[]', '[]'], tree]
+    _event_of[on_words, 'draft', 'press'].words eq 'Draft'
+    not _has_event[on_words, 'draft', 'close']
+    deleted = _shown[_frame_t[0, _key['Delete'], '[]', '[]'], tree]
+    _event_of[deleted, 'draft', 'close'].words eq 'Draft'
+    marked = _shown[_frame_t[0, _press[b[0] + b[2] - 8.0, b[1] + 10.0], '[]', '[]'], tree]
+    _has_event[marked, 'draft', 'close']
+    not _has_event[marked, 'draft', 'press']
+    --- (a chip of no id is a label: it only draws)
+    len[_shown[_frame_t[0, _press[30.0, 30.0], '[]', '[]'], gui.column[[chip['', 'Label']]]].events] eq 0
+
+--- an avatar's picture shows only once it has loaded; until then its
+--- initials, once its delay has passed since it was first drawn; a
+--- picture that fails, or none, shows them (Radix's statuses)
+test an_avatar_shows_its_picture_once_loaded_and_its_initials_after_their_delay[]
+    _fresh[]
+    look = gui.dark[]
+    tree = gui.column[[avatar['me', 'me.png', 'AL', 40.0, 500.0]]]
+    avatar_status['me.png'] eq 'idle'
+    first = _shown[_quiet[1000], tree]
+    avatar_status['me.png'] eq 'loading'
+    image_number['me.png'] eq _first_picture[]
+    _asked_image[first.canvas, 'me.png']
+    initials_ground = lory.mix[look.panel, look.accent, 0.22]
+    not _has_colour[first.canvas, initials_ground]
+    not _has_colour[_shown[_quiet[1400], tree].canvas, initials_ground]
+    _has_colour[_shown[_quiet[1500], tree].canvas, initials_ground]
+    loaded = _shown[_frame_t[1600, '[]', '[]', '[{"what": "image", "id": 900000, "url": "me.png", "width": 64, "height": 48}]'], tree]
+    avatar_status['me.png'] eq 'loaded'
+    image_size['me.png'] eq [64.0, 48.0]
+    not _has_colour[loaded.canvas, initials_ground]
+    not _asked_image[loaded.canvas, 'me.png']
+    --- (one that fails, and one of no picture, show their initials at once)
+    failing = gui.column[[avatar['you', 'you.png', 'Y']]]
+    _shown[_quiet[2000], failing]
+    _shown[_frame_t[2100, '[]', '[]', '[{"what": "image", "id": 900001, "url": "you.png", "failed": "the image did not load"}]'], failing]
+    avatar_status['you.png'] eq 'error'
+    _has_colour[_shown[_quiet[2200], failing].canvas, initials_ground]
+    avatar_status[''] eq 'error'
+    fallback_shown['error', 0.0, 0.0, 0.0]
+    not fallback_shown['loaded', 0.0, 5000.0, 0.0]
+    not fallback_shown['loading', 1000.0, 1499.0, 500.0]
+    fallback_shown['loading', 1000.0, 1500.0, 500.0]
+
+--- a count's marker stands over its control's upper right corner, its
+--- lower left 12 pixels in from it each way (a dot's 4.5), and takes no
+--- room: the control stands where it would without it
+test a_badge_stands_over_its_controls_corner_and_takes_no_room[]
+    _fresh[]
+    badge_place['3'] eq [20.0, 20.0, -12.0, -8.0]
+    badge_place['', true] eq [8.0, 8.0, -4.5, -3.5]
+    abs[badge_place['1234'][0] - (words_wide['1234', 12.0] + 12.0)] lt 0.000001
+    plain = _shown[_quiet[0], gui.column[[gui.row[[gui.button['inbox', 'Inbox'], gui.button['next', 'Next']]]]]]
+    marked = _shown[_quiet[0], gui.column[[gui.row[[badged[gui.button['inbox', 'Inbox'], '3'], gui.button['next', 'Next']]]]]]
+    marked.boxes['inbox'] eq plain.boxes['inbox']
+    marked.boxes['next'] eq plain.boxes['next']
+    _has_colour[marked.canvas, gui.dark[].danger]
+    not _has_colour[plain.canvas, gui.dark[].danger]
+
+--- an alert's timeout is told once it has been shown its time on the
+--- page, the time held while the pointer rests on it, and told once
+test an_alert_tells_its_timeout_once_its_time_held_while_rested_on[]
+    _fresh[]
+    tree = gui.column[[alert['note', 'Saved', 'Your changes are saved.', 'success', lasts = 1000.0, timer = true]]]
+    _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], tree]
+    box = ground_box['note']
+    box[2] eq 852.0
+    box[3] gt 30.0
+    _shown[_quiet[200], tree]
+    alert_shown['note'] eq 200.0
+    _shown[_frame_t[400, '[]', _standing[box[0] + 10.0, box[1] + 10.0], '[]'], tree]
+    alert_shown['note'] eq 200.0
+    _shown[_quiet[600], tree]
+    alert_shown['note'] eq 400.0
+    _shown[_quiet[800], tree]
+    len[_shown[_quiet[1000], tree].events] eq 0
+    late = _shown[_quiet[1200], tree]
+    _event_of[late, 'note', 'dismiss'].words eq 'timeout'
+    len[_shown[_quiet[1400], tree].events] eq 0
+    --- (shown anew, it is timed anew)
+    alert_reset['note']
+    alert_shown['note'] eq 0.0
+    --- (a frame long after the last adds a quarter second at most)
+    _shown[_quiet[1500], tree]
+    _shown[_quiet[9000], tree]
+    alert_shown['note'] eq 250.0
+
+--- a closable alert's × tells `dismiss` (`close`) pressed, or by Enter
+--- while it has the focus; while it has the focus its time is held
+test an_alert_is_closed_by_its_mark_and_its_time_held_while_the_mark_has_the_focus[]
+    _fresh[]
+    tree = gui.column[[alert['gone', '', 'Bye.', closable = true, lasts = 5000.0]]]
+    laid = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], tree]
+    x = laid.boxes['gone:close']
+    x[2] eq 28.0
+    pressed = _shown[_frame_t[100, _press[x[0] + 14.0, x[1] + 14.0], '[]', '[]'], tree]
+    _event_of[pressed, 'gone', 'dismiss'].words eq 'close'
+    held = alert_shown['gone']
+    _shown[_quiet[300], tree]
+    alert_shown['gone'] eq held
+    _event_of[_shown[_frame_t[400, _key['Enter'], '[]', '[]'], tree], 'gone', 'dismiss'].words eq 'close'
+    _shown[_frame_t[500, _press[899.0, 699.0], '[]', '[]'], tree]
+    _shown[_quiet[700], tree]
+    alert_shown['gone'] gt held
+
+--- a skeleton keeps the size and place of what it stands for, which is
+--- set aside under it (a press reaches nothing); loaded, it is itself
+test a_skeleton_keeps_the_size_and_place_of_what_it_stands_for[]
+    _fresh[]
+    plain = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], gui.column[[gui.row[[gui.button['go', 'Go'], gui.button['next', 'Next']]]]]]
+    tree = gui.column[[gui.row[[skeleton['bone', gui.button['go', 'Go']], gui.button['next', 'Next']]]]]
+    held = _shown[_quiet[0], tree]
+    held.boxes['next'] eq plain.boxes['next']
+    ground_box['bone'] eq plain.boxes['go']
+    b = plain.boxes['go']
+    len[_shown[_frame_t[0, _press[b[0] + 4.0, b[1] + 4.0], '[]', '[]'], tree].events] eq 0
+    loaded = gui.column[[gui.row[[skeleton['bone', gui.button['go', 'Go'], false], gui.button['next', 'Next']]]]]
+    _event_of[_shown[_frame_t[0, _press[b[0] + 4.0, b[1] + 4.0], '[]', '[]'], loaded], 'go', 'press'].act eq 'press'
+    --- (a column's skeleton is as wide as the column)
+    _shown[_quiet[0], gui.column[[skeleton['para', gui.text['Some words.']]]]]
+    ground_box['para'][2] eq 852.0
+    --- (Radix's pulse: from its stronger tone, a second each way)
+    skeleton_pulse[0.0] eq 1.0
+    abs[skeleton_pulse[1000.0]] lt 0.000001
+    skeleton_pulse[2000.0] eq 1.0
+    skeleton_pulse[500.0] gt 0.5
+    placeholder_widths[7] eq [1.0, 0.86, 0.94, 0.72, 0.9, 0.64, 1.0]
+    bones_tall['card'] eq 290.0
+    len[placeholder_bones['paragraph', 300.0]] eq 3
+
+--- the indicators move with the frame's time, dot i of a row a stagger
+--- behind dot i - 1, and hold still when asked
+test indicators_move_with_the_frames_time_and_hold_still_when_asked[]
+    _fresh[]
+    tree = gui.column[[spinner[16.0], dots['jump'], dots['pulse'], ripple[], circular[-1.0], skeleton_of['paragraph', 300.0]]]
+    a = _shown[_quiet[0], tree].canvas.verts
+    b = _shown[_quiet[300], tree].canvas.verts
+    a ne b
+    hold_still[true]
+    still_a = _shown[_quiet[0], tree].canvas.verts
+    still_b = _shown[_quiet[300], tree].canvas.verts
+    still_a eq still_b
+    not hold_still[false]
+    dot_lift[0.0, 1.0] eq 0.0
+    dot_lift[150.0, 1.0] eq 0.0
+    abs[dot_lift[650.0, 1.0] - 1.0] lt 0.000001
+    abs[dot_lift[400.0, 1.0] - dot_lift[250.0, 0.0]] lt 0.000001
+    abs[dot_pulse[700.0, 2.0] - dot_pulse[400.0, 0.0]] lt 0.000001
+    ripple_ring[0.0, 1.0] eq -1.0
+    ripple_ring[600.0, 1.0] eq 0.0
+    abs[ripple_ring[1500.0, 1.0] - 0.5] lt 0.000001
+    spinner_leaves[0.0][0] eq 1.0
+    abs[spinner_leaves[0.0][1] - 0.34375] lt 0.000001
+
+--- Vuetify's circle: its view, its line's width there, the length left
+--- undrawn and its start (Vuetify 4.3.1's own numbers)
+test a_circles_numbers_are_vuetifys[]
+    g = circle_geometry[40.0, 32.0, 4.0]
+    abs[g[0] - 45.714285714285715] lt 0.000000001
+    abs[g[1] - 5.714285714285714] lt 0.000000001
+    abs[g[2] - 75.39822368615503] lt 0.000000001
+    g[3] eq 0.0
+    h = circle_geometry[1.0, 64.0, 2.0, 30.0]
+    abs[h[2] - 124.4070690821558] lt 0.000000001
+    h[3] eq 30.0
+    circle_geometry[-5.0, 32.0, 4.0][2] eq circle_geometry[0.0, 32.0, 4.0][2]
+    circle_geometry[100.0, 32.0, 4.0][2] eq 0.0
+
+--- a shortcut's keys, on a Mac and elsewhere, and its words for a screen
+--- reader (Vuetify 4.3.1's)
+test a_shortcut_shows_its_keys_on_a_mac_and_elsewhere[]
+    parts = hotkey_parts['ctrl+k']
+    len[parts] eq 1
+    parts[0][0].words eq '⌃'
+    parts[0][0].shown eq 'symbol'
+    parts[0][1].part eq 'between'
+    parts[0][1].words eq '+'
+    parts[0][2].words eq 'K'
+    hotkey_parts['meta+k', 'pc', 'text'][0][0].words eq 'Ctrl'
+    hotkey_label['ctrl+k', 'mac', 'symbol'] eq 'Keyboard shortcut: ⌃ plus K'
+    hotkey_label['meta+k', 'pc'] eq 'Keyboard shortcut: Ctrl plus K'
+    hotkey_label['g-g'] eq 'Keyboard shortcut: G then G'
+    hotkey_label['ctrl/meta+s', 'pc'] eq 'Keyboard shortcut: Ctrl or Ctrl plus S'
+    hotkey_label['shift+tab'] eq 'Keyboard shortcut: Shift plus TAB'
+    hotkey_label['ctrl+minus', 'pc'] eq 'Keyboard shortcut: Ctrl plus -'
+    hotkey_label['a-b-c', 'pc', 'symbol'] eq 'Keyboard shortcut: A then B then C'
+    len[hotkey_parts['ctrl k']] eq 2
+
+--- the terms found in the words, merged, as Vuetify's highlight finds
+--- them: accents and case as asked (Vuetify 4.3.1's own answers)
+test highlighted_terms_are_found_and_merged[]
+    highlight_ranges['The quick brown fox jumps over the lazy dog', ['o']] eq [[12, 13]]
+    highlight_ranges['The quick brown fox jumps over the lazy dog', ['quick', 'fox'], true, false, 'true'] eq [[4, 9], [16, 19]]
+    len[highlight_ranges['The quick brown fox jumps over the lazy dog', ['']]] eq 0
+    highlight_ranges['abcd abcd', ['b', 'bc'], false, true] eq [[1, 3], [6, 8]]
+    highlight_ranges['Crème brûlée à la française, crème fraîche', ['a'], true, true, 'target'] eq [[13, 14], [16, 17], [20, 21], [23, 24], [37, 38]]
+    highlight_ranges['Cafe CAFÉ café cafe', ['CAFÉ'], true] eq [[5, 9]]
+    highlight_ranges['ΣΑΣ σας Σας', ['ς'], true, true, 'query'] eq [[0, 1], [2, 3], [4, 5], [6, 7], [8, 9], [10, 11]]
+    highlight_ranges['aaaa', ['a'], false, true, 'target'] eq [[0, 4]]
+    ranges_merged[[[6, 9], [1, 4], [3, 5]]] eq [[1, 5], [6, 9]]
+    len[ranges_merged[[[2, 2]]]] eq 0
+    _folded['é'] eq 'e'
+    _folded['ß'] eq 'ss'
+    _folded['Ø'] eq 'O'
+
+--- a gallery is one stop: a press chooses a picture (its address and
+--- index), the arrows move between them, Enter chooses the one they are
+--- on; a lightbox steps round its pictures
+test a_gallery_chooses_its_pictures_by_press_and_by_keys[]
+    _fresh[]
+    urls = ['a.png', 'b.png', 'c.png', 'd.png']
+    tree = gui.column[[gallery['pics', urls, 'grid', 2, 400.0]]]
+    laid = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], tree]
+    g = laid.boxes['pics']
+    g[2] eq 400.0
+    g[3] eq 400.0
+    pressed = _shown[_frame_t[0, _press[g[0] + 214.0, g[1] + 10.0], '[]', '[]'], tree]
+    picked = _event_of[pressed, 'pics', 'choose']
+    picked.words eq 'b.png'
+    picked.num eq 1.0
+    gallery_focus['pics'] eq 1
+    _shown[_frame_t[0, _key['ArrowRight'], '[]', '[]'], tree]
+    gallery_focus['pics'] eq 2
+    _event_of[_shown[_frame_t[0, _key['Enter'], '[]', '[]'], tree], 'pics', 'choose'].words eq 'c.png'
+    _shown[_frame_t[0, _key['End'], '[]', '[]'], tree]
+    gallery_focus['pics'] eq 3
+    _shown[_frame_t[0, _key['Home'], '[]', '[]'], tree]
+    gallery_focus['pics'] eq 0
+    image_state['d.png'] eq 'loading'
+    gallery_place['grid', 3, 4, 2, 400.0, 400.0] eq [204.0, 204.0, 196.0, 196.0]
+    gallery_place['strip', 2, 4, 2, 400.0, 100.0] eq [216.0, 0.0, 100.0, 100.0]
+    ring = gallery_place['ring', 0, 4, 2, 400.0, 400.0]
+    abs[ring[0] - 150.0] lt 0.000001 and abs[ring[1]] lt 0.000001
+    gallery_tall['grid', 5, 2, 400.0, 100.0] eq 3.0 * 196.0 + 16.0
+    gallery_moved[0.0, 0.0] eq 0.0
+    gallery_moved[0.0, 450.0] eq 1.0
+    abs[gallery_moved[0.0, 225.0] - 0.5] lt 0.001
+    lightbox_step[0, 3, 'ArrowLeft'] eq 2
+    lightbox_step[2, 3, 'ArrowRight'] eq 0
+    lightbox_step[1, 3, 'Home'] eq 0
+    lightbox_step[1, 3, 'End'] eq 2
+    lightbox_step[1, 3, 'x'] eq -1
+
+--- a lightbox shows a picture over the page and tells the picture the
+--- arrows step to; Escape dismisses its layer
+test a_lightbox_steps_by_its_arrows_and_is_dismissed_by_escape[]
+    _fresh[]
+    urls = ['a.png', 'b.png', 'c.png']
+    tree = gui.column[[gui.button['under', 'Under'], lightbox['big', urls, 1, ['A', 'B', 'C'], 400.0, 300.0]]]
+    laid = _shown[_quiet[0], tree]
+    v = laid.boxes['big:view']
+    v[2] eq 400.0
+    _shown[_frame_t[0, _press[v[0] + 200.0, v[1] + 150.0], '[]', '[]'], tree]
+    _event_of[_shown[_frame_t[0, _key['ArrowRight'], '[]', '[]'], tree], 'big', 'choose'].words eq 'c.png'
+    _event_of[_shown[_frame_t[0, _key['ArrowLeft'], '[]', '[]'], tree], 'big', 'choose'].num eq 0.0
+    side = _shown[_frame_t[0, _press[v[0] + 10.0, v[1] + 150.0], '[]', '[]'], tree]
+    _event_of[side, 'big', 'choose'].num eq 0.0
+    _has_event[_shown[_frame_t[0, _key['Escape'], '[]', '[]'], tree], 'big', 'dismiss']
+    lightbox['big', urls, 5].tag eq 'space'
+
+--- an image is asked for once it shows on the page (one far below is not,
+--- unless it is not lazy), and drawn once the page says it has loaded
+test an_image_is_asked_for_once_it_shows_and_drawn_once_loaded[]
+    _fresh[]
+    tree = gui.column[[image['near', 'near.png', 200.0, 100.0], gui.space[900.0], image['far', 'far.png', 200.0, 100.0], image['eager', 'eager.png', 200.0, 100.0, lazy = false]]]
+    first = _shown[_quiet[0], tree]
+    image_state['near.png'] eq 'loading'
+    image_state['far.png'] eq 'idle'
+    image_state['eager.png'] eq 'loading'
+    _asked_image[first.canvas, 'near.png']
+    not _asked_image[first.canvas, 'far.png']
+    n = image_number['near.png']
+    e = image_number['eager.png']
+    answers = '[{"what": "image", "id": `n`, "url": "near.png", "width": 400, "height": 200}, {"what": "image", "id": `e`, "url": "eager.png", "failed": "the image did not load"}]'
+    answered = _shown[_frame_t[100, '[]', '[]', answers], tree]
+    image_state['near.png'] eq 'loaded'
+    image_size['near.png'] eq [400.0, 200.0]
+    image_state['eager.png'] eq 'error'
+    not _asked_image[answered.canvas, 'near.png']
+    heard[_quiet[200]] eq 1
+    --- (one of no height stands as its picture's ratio makes it, once known)
+    ratio_tree = gui.column[[image['sized', 'near.png', 300.0]]]
+    _shown[_quiet[300], ratio_tree]
+    ground_box['sized'][3] eq 150.0
+
+--- a box kept at a ratio stands as tall as its width over the ratio
+test an_aspect_box_stands_at_its_ratio[]
+    _fresh[]
+    aspect_tall['ar', 2.0, 400.0] eq 200.0
+    aspect_tall['ar', 0.0, 400.0] eq 0.0
+    tree = gui.column[[aspect['ar', 2.0, [gui.text['Hi']], 400.0]]]
+    _shown[_quiet[0], tree]
+    _shown[_quiet[0], tree]
+    ground_box['ar'][3] eq 200.0
+
+--- a card pressed as one tells `press` with its title, and set aside it
+--- tells nothing; loading, it draws its bar
+test a_card_is_pressed_as_one_and_set_aside_when_disabled[]
+    _fresh[]
+    tree = gui.column[[card[[gui.text['Body words.']], 'c1', 'Title', 'Sub']]]
+    laid = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], tree]
+    b = laid.boxes['c1']
+    pressed = _shown[_frame_t[0, _press[b[0] + 20.0, b[1] + 20.0], '[]', '[]'], tree]
+    _event_of[pressed, 'c1', 'press'].words eq 'Title'
+    off = gui.column[[card[[gui.text['Body words.']], 'c1', 'Title', 'Sub', disabled = true]]]
+    len[_shown[_frame_t[0, _press[b[0] + 20.0, b[1] + 20.0], '[]', '[]'], off].events] eq 0
+    plain = _shown[_quiet[0], gui.column[[card[nothing[], '', 'Title']]]]
+    loading = _shown[_quiet[0], gui.column[[card[nothing[], '', 'Title', loading = true]]]]
+    len[loading.canvas.verts] gt len[plain.canvas.verts]
+
+--- a list's entries are one stop of Tab, Up and Down moving through them;
+--- each is pressed as one, its title told
+test a_lists_entries_are_one_stop_the_arrows_move_through[]
+    _fresh[]
+    tree = gui.column[[list_of['mail', [list_item['inbox', 'Inbox', 'Mail that came in', 'inbox'], list_item['sent', 'Sent'], list_item['drafts', 'Drafts', trail = 'chevron_right']]]]]
+    laid = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], tree]
+    i = laid.boxes['inbox']
+    i[2] eq 852.0
+    laid.boxes['sent'][1] gt i[1] + i[3] - 1.0
+    pressed = _shown[_frame_t[0, _press[i[0] + 100.0, i[1] + 10.0], '[]', '[]'], tree]
+    _event_of[pressed, 'inbox', 'press'].words eq 'Inbox'
+    _event_of[_shown[_frame_t[0, _key['ArrowDown'], '[]', '[]'], tree], 'mail', 'rove'].words eq 'sent'
+    _event_of[_shown[_frame_t[0, _key['Enter'], '[]', '[]'], tree], 'sent', 'press'].words eq 'Sent'
+    _event_of[_shown[_frame_t[0, _key['End'], '[]', '[]'], tree], 'mail', 'rove'].words eq 'drafts'
+    --- (a subtitle wrapped to its room and cut to its lines)
+    _clamped[_wrapped['one two three four five', 13.0, 60.0], 1] eq ['one two…']
+
+--- a comment's replies are under it, and hidden while it is collapsed;
+--- its actions tell `press` under the comment's id
+test a_comments_replies_nest_and_hide_when_collapsed[]
+    _fresh[]
+    reply = comment['r1', 'Bo', 'then', 'Yes.', nothing[], 'B', ['Reply']]
+    open_tree = gui.column[[comment['c1', 'Ada', 'now', 'Hello.', [reply], 'A', ['Reply', 'Edit']]]]
+    shut_tree = gui.column[[comment['c1', 'Ada', 'now', 'Hello.', [reply], 'A', ['Reply', 'Edit'], true]]]
+    open_laid = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], open_tree]
+    'r1:0' in open_laid.boxes
+    open_laid.boxes['r1:0'][0] gt open_laid.boxes['c1:0'][0]
+    not ('r1:0' in _shown[_quiet[0], shut_tree].boxes)
+    edit = open_laid.boxes['c1:1']
+    _event_of[_shown[_frame_t[0, _press[edit[0] + 4.0, edit[1] + 4.0], '[]', '[]'], open_tree], 'c1', 'press'].words eq 'Edit'
+
+--- a timeline's dots stand one under another on its line (along it,
+--- laid horizontally), its entries on alternate sides
+test a_timelines_dots_stand_along_its_line[]
+    _fresh[]
+    tree = gui.column[[timeline['tl', ['One', 'Two', 'Three'], ['a', 'b', 'c'], ['1', '2', '3'], ['accent', 'success', 'warning']]]]
+    _shown[_quiet[0], tree]
+    dots_at = recall['lory.display.dots', _no_dots[]].points
+    dots_at['tl:0'][0] eq dots_at['tl:1'][0]
+    dots_at['tl:1'][0] eq dots_at['tl:2'][0]
+    dots_at['tl:1'][1] gt dots_at['tl:0'][1]
+    across = gui.column[[timeline['th', ['One', 'Two'], ['a', 'b'], ['1', '2'], ['accent', 'accent'], horizontal = true]]]
+    _shown[_quiet[0], across]
+    laid = recall['lory.display.dots', _no_dots[]].points
+    laid['th:0'][1] eq laid['th:1'][1]
+    laid['th:1'][0] gt laid['th:0'][0]
+
+--- a link tells `press` (under its owner where it has one), and is
+--- underlined as asked: `auto` only while the pointer is over it
+test a_link_tells_its_press_and_is_underlined_as_asked[]
+    _fresh[]
+    tree = gui.column[[link['more', 'Read more']]]
+    laid = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], tree]
+    b = laid.boxes['more']
+    _event_of[_shown[_frame_t[0, _press[b[0] + 4.0, b[1] + 4.0], '[]', '[]'], tree], 'more', 'press'].words eq 'Read more'
+    _event_of[_shown[_frame_t[0, _key['Enter'], '[]', '[]'], tree], 'more', 'press'].act eq 'press'
+    away = _shown[_frame_t[0, _press[899.0, 699.0], '[]', '[]'], tree]
+    over = _shown[_frame_t[0, '[]', _standing[b[0] + 4.0, b[1] + 4.0], '[]'], tree]
+    len[over.canvas.verts] gt len[away.canvas.verts]
+    always = gui.column[[link['more', 'Read more', underline = 'always']]]
+    len[_shown[_quiet[0], always].canvas.verts] gt len[away.canvas.verts]
+    owned = gui.column[[link['c:0', 'Reply', owner = 'c']]]
+    o = _shown[_quiet[0], owned].boxes['c:0']
+    _event_of[_shown[_frame_t[0, _press[o[0] + 4.0, o[1] + 4.0], '[]', '[]'], owned], 'c', 'press'].words eq 'Reply'
+
+--- an advertisement's slot is its unit's size, and a mobile unit shows
+--- only on a phone's page
+test an_advertisements_slot_is_its_units_size[]
+    _fresh[]
+    advert_size['medium rectangle'] eq [300.0, 250.0]
+    advert_size['leaderboard'] eq [728.0, 90.0]
+    advert_size['nothing'] eq [0.0, 0.0]
+    not advert_shown['mobile banner', 1024.0]
+    advert_shown['mobile banner', 400.0]
+    advert_shown['leaderboard', 400.0]
+    laid = _shown[_quiet[0], gui.column[[gui.row[[advert['medium rectangle', nothing[], 'Test ad'], gui.button['after', 'After']]]]]]
+    laid.boxes['after'][0] eq 24.0 + 300.0 + 10.0
+    advert['mobile banner', nothing[], '', 1024.0].tag eq 'space'
+
+--- in a headset, a chip of a group under the right hand's ray is chosen by
+--- its trigger, as a press chooses it on a screen
+test in_a_headset_a_chip_under_the_ray_is_chosen_by_its_trigger[]
+    _fresh[]
+    frame = _in_headset[0, '[]']
+    abs[lory.pointer_x[frame] - 500.0] lt 1.0
+    abs[lory.pointer_y[frame] - 275.0] lt 1.0
+    tree = chip_group['hands', ['near', 'far'], ['far']]
+    laid = gui.show_at[frame, tree, 480.0, 260.0, 400.0, gui.dark[]]
+    b = laid.boxes['hands:0']
+    _inside[500.0, 275.0, b[0], b[1], b[2], b[3]]
+    pressed = gui.show_at[_in_headset[16, _ray_press[]], tree, 480.0, 260.0, 400.0, gui.dark[]]
+    chosen = _event_of[pressed, 'hands', 'choose']
+    chosen.words eq 'near'
+    chosen.num eq 0.0

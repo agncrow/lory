@@ -1,0 +1,204 @@
+--- A long line thinned to what its chart can show, as Chart.js thins it:
+--- by largest triangles (LTTB: each bucket of points keeps the one that
+--- makes the largest triangle with the point kept before it and the mean
+--- of the next bucket), or by least and most (each pixel's width of
+--- points keeps its first and last and its lowest and highest).
+---
+--- These are Chart.js 4.5.1's decimation rules, read from it and written
+--- anew (see charts_model.co).
+use math
+use charts_model
+
+--- the points a line keeps: where each stands along the axis and its value
+struct Thinned [xs, ys]
+
+--- the chart with each of its long lines thinned for a canvas `width`
+--- wide, where its decimation is on: lines laid along x on an axis of
+--- numbers or times, of more points than its threshold (four times the
+--- width where it names none)
+fn decimated[ch0, width]
+    ch = ch0
+    if not ch.decimate or ch.index_axis eq 'y'
+        return ch
+    d = 0
+    while d lt len[ch.sets]
+        s = ch.sets[d]
+        if _thinned_here[ch, s]
+            span = _visible_span[ch, s]
+            most = ch.threshold
+            if most ne most or most eq 0.0
+                most = 4.0 * width
+            if 0.0 + span[1] gt most
+                kept = min_max[s.xs, s.ys, span[0], span[1], width]
+                if ch.algorithm eq 'lttb'
+                    samples = ch.samples
+                    if samples ne samples or samples eq 0.0
+                        samples = width
+                    kept = lttb[s.xs, s.ys, span[0], span[1], samples]
+                s.xs = kept.xs
+                s.ys = kept.ys
+                all_sets = ch.sets
+                all_sets[d] = s
+                ch.sets = all_sets
+        d = d + 1
+    ch
+
+--- whether a dataset is one Chart.js thins: a line of points standing
+--- on an x axis of numbers or times
+fn _thinned_here[ch, s]
+    if charts_model.form_of[ch, s] ne 'line' or len[s.xs] eq 0
+        return false
+    k = charts_model.axis_at[ch, charts_model.axis_id_of[ch, s, 'x']]
+    if k lt 0
+        return false
+    form = ch.axes[k].form
+    form eq 'linear' or form eq 'time'
+
+--- the first point within the x axis's range asked for and how many
+--- there are
+fn _visible_span[ch, s]
+    n = len[s.xs]
+    k = charts_model.axis_at[ch, charts_model.axis_id_of[ch, s, 'x']]
+    a = ch.axes[k]
+    first = 0
+    count = n
+    if charts_model.finite[a.min]
+        first = max[0, min[_lookup[s.xs, a.min][0], n - 1]]
+    if charts_model.finite[a.max]
+        count = max[first, min[_lookup[s.xs, a.max][1] + 1, n]] - first
+    else
+        count = n - first
+    [first, count]
+
+fn _lookup[vs, v]
+    lo = 0
+    hi = len[vs] - 1
+    while hi - lo gt 1
+        mid = (lo + hi) / 2
+        if vs[mid] lt v
+            lo = mid
+        else
+            hi = mid
+    [lo, hi]
+
+--- `samples` of the `count` points from `first`: the first and the last,
+--- and from each bucket between the one making the largest triangle
+fn lttb[xs, ys, first, count, samples]
+    if samples gte 0.0 + count
+        return Thinned[slice[xs, first, first + count], slice[ys, first, first + count]]
+    out_x = charts_model.no_numbers[]
+    out_y = charts_model.no_numbers[]
+    bucket_width = (0.0 + count - 2) / (samples - 2.0)
+    last = first + count - 1
+    a = first
+    out_x = push[out_x, xs[a]]
+    out_y = push[out_y, ys[a]]
+    best_x = nan
+    best_y = nan
+    next_a = a
+    i = 0
+    while 0.0 + i lt samples - 2.0
+        mean_x = 0.0
+        mean_y = 0.0
+        from = floor[(0.0 + i + 1) * bucket_width] + 1 + first
+        till = min[floor[(0.0 + i + 2) * bucket_width] + 1, count] + first
+        j = from
+        while j lt till
+            mean_x = mean_x + xs[j]
+            mean_y = mean_y + ys[j]
+            j = j + 1
+        mean_x = mean_x / (0.0 + till - from)
+        mean_y = mean_y / (0.0 + till - from)
+        lo = floor[(0.0 + i) * bucket_width] + 1 + first
+        hi = min[floor[(0.0 + i + 1) * bucket_width] + 1, count] + first
+        ax = xs[a]
+        ay = ys[a]
+        largest = -1.0
+        j = lo
+        while j lt hi
+            area = 0.5 * abs[(ax - mean_x) * (ys[j] - ay) - (ax - xs[j]) * (mean_y - ay)]
+            if area gt largest
+                largest = area
+                best_x = xs[j]
+                best_y = ys[j]
+                next_a = j
+            j = j + 1
+        out_x = push[out_x, best_x]
+        out_y = push[out_y, best_y]
+        a = next_a
+        i = i + 1
+    out_x = push[out_x, xs[last]]
+    out_y = push[out_y, ys[last]]
+    Thinned[out_x, out_y]
+
+--- the `count` points from `first`, each pixel's width (of a line
+--- `width` wide) of them kept as its first, its last, and its lowest and
+--- highest set at the mean place of those after its first
+fn min_max[xs, ys, first, count, width]
+    out_x = charts_model.no_numbers[]
+    out_y = charts_model.no_numbers[]
+    last = first + count - 1
+    x_min = xs[first]
+    span = xs[last] - x_min
+    mean_x = 0.0
+    seen = 0
+    before = -1
+    have_before = false
+    low_at = -1
+    high_at = -1
+    start_at = -1
+    low = 0.0
+    high = 0.0
+    i = first
+    while i lt first + count
+        x = (xs[i] - x_min) / span * width
+        y = ys[i]
+        column = int[x]
+        if have_before and column eq before
+            if y lt low
+                low = y
+                low_at = i
+            else if y gt high
+                high = y
+                high_at = i
+            seen = seen + 1
+            mean_x = ((0.0 + seen - 1) * mean_x + xs[i]) / (0.0 + seen)
+        else
+            previous = i - 1
+            if low_at gte 0 and high_at gte 0
+                one = min[low_at, high_at]
+                two = max[low_at, high_at]
+                if one ne start_at and one ne previous
+                    out_x = push[out_x, mean_x]
+                    out_y = push[out_y, ys[one]]
+                if two ne start_at and two ne previous
+                    out_x = push[out_x, mean_x]
+                    out_y = push[out_y, ys[two]]
+            if i gt 0 and previous ne start_at
+                out_x = push[out_x, xs[previous]]
+                out_y = push[out_y, ys[previous]]
+            out_x = push[out_x, xs[i]]
+            out_y = push[out_y, ys[i]]
+            before = column
+            have_before = true
+            seen = 0
+            low = y
+            high = y
+            low_at = i
+            high_at = i
+            start_at = i
+        i = i + 1
+    Thinned[out_x, out_y]
+
+--- ---- truths ----
+
+test a_short_line_is_kept_whole_and_a_long_one_thinned[]
+    xs = [0.0, 1.0, 2.0, 3.0, 4.0]
+    ys = [0.0, 5.0, 1.0, 4.0, 2.0]
+    lttb[xs, ys, 0, 5, 10.0].xs eq xs
+    thin = lttb[xs, ys, 0, 5, 3.0]
+    len[thin.xs] eq 3
+    thin.xs[0] eq 0.0
+    thin.xs[2] eq 4.0
+    kept = min_max[xs, ys, 0, 5, 2.0]
+    kept.xs[0] eq 0.0

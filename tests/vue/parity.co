@@ -1,0 +1,118 @@
+--- Lory's Vue examples held to Vue's own. reference.json is what Vue
+--- 3.5.44's examples (vuejs/docs at 40aa88a), marked 18.1.2 and lodash-es
+--- 4.18.1 showed in Chrome for a fixed script of presses, typing and
+--- frames (reference.py drove them); each block replays one example's
+--- script through the gallery (driver.co) and holds every field it shows
+--- at every step to Vue's. Run from the repository's root:
+--- `crow test tests/vue/parity.co`. Markdown is held twice: the example's
+--- script, and marked's page for each of 24 sources read on their own.
+use lory
+use lory.gui
+use driver
+use examples.vue.editor
+
+fn _held[slug]
+    held = driver.replayed[slug]
+    if len[held.wrong] gt 0
+        log[join[held.wrong, '\n']]
+    log['`slug`: `held.steps` steps, `held.fields` fields held, `held.numbers` numbers among them, worst gap `held.worst`']
+    held
+
+test hello_world_shows_its_message[]
+    held = _held['hello-world']
+    len[held.wrong] eq 0
+    held.fields gt 0
+
+test handling_input_reverses_appends_and_holds_back_the_link[]
+    held = _held['handling-input']
+    len[held.wrong] eq 0
+
+test attribute_bindings_bind_a_title_a_class_and_a_style[]
+    held = _held['attribute-bindings']
+    len[held.wrong] eq 0
+
+test conditionals_and_loops_show_the_list_or_say_why_not[]
+    held = _held['conditionals-and-loops']
+    len[held.wrong] eq 0
+
+test form_bindings_echo_every_input[]
+    held = _held['form-bindings']
+    len[held.wrong] eq 0
+
+test simple_component_draws_each_entry[]
+    held = _held['simple-component']
+    len[held.wrong] eq 0
+
+test counter_counts[]
+    held = _held['counter']
+    len[held.wrong] eq 0
+
+test markdown_is_drawn_a_tenth_of_a_second_after_the_typing_stops[]
+    held = _held['markdown']
+    len[held.wrong] eq 0
+
+test fetching_data_shows_the_last_answer_for_the_branch[]
+    held = _held['fetching-data']
+    len[held.wrong] eq 0
+
+test the_grid_sorts_by_the_head_pressed_and_filters_by_the_search[]
+    held = _held['grid']
+    len[held.wrong] eq 0
+
+test the_tree_opens_folders_and_makes_entries_folders[]
+    held = _held['tree']
+    len[held.wrong] eq 0
+
+test the_svg_graph_follows_its_stats[]
+    held = _held['svg']
+    len[held.wrong] eq 0
+
+test the_modal_fades_and_shrinks_in_and_out[]
+    held = _held['modal']
+    len[held.wrong] eq 0
+
+test the_list_slides_rows_in_out_and_to_their_new_places[]
+    held = _held['list-transition']
+    len[held.wrong] eq 0
+
+test the_temperature_converter_works_each_from_the_other[]
+    held = _held['temperature-converter']
+    len[held.wrong] eq 0
+
+test the_flight_booker_books_only_dates_that_make_sense[]
+    held = _held['flight-booker']
+    len[held.wrong] eq 0
+
+test the_timer_runs_to_its_duration[]
+    held = _held['timer']
+    len[held.wrong] eq 0
+
+test crud_creates_updates_deletes_and_filters[]
+    held = _held['crud']
+    len[held.wrong] eq 0
+
+test the_circle_drawer_draws_adjusts_undoes_and_redoes[]
+    held = _held['circle-drawer']
+    len[held.wrong] eq 0
+
+test cells_work_out_their_formulas[]
+    held = _held['cells']
+    len[held.wrong] eq 0
+
+--- marked's page for each source, held to the page read here
+fn _structures_wrong[]
+    wrong = 0
+    for m in driver.reference[]['markdown']
+        a = m['source']
+        b = m['structure']
+        source = '`a`'
+        want = '`b`'
+        got = editor.structure[source]
+        if got ne want
+            log['markdown [`source`]: got [`got`], marked made [`want`]']
+            wrong = wrong + 1
+    wrong
+
+test markdown_is_read_into_the_page_marked_makes_of_it[]
+    _structures_wrong[] eq 0
+    len[driver.reference[]['markdown']] eq 24

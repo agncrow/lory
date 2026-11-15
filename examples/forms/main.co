@@ -1,0 +1,236 @@
+--- A sign-up form drawn by Lory, from Crow (`lory.forms`, `lory.editors`):
+--- a name, an email address and a password, a country found in a
+--- combobox, a code of six digits a box to each, and the terms agreed to,
+--- checked by their rules as Semantic UI checks a form when it is sent (a
+--- field that shows an error is checked again as it changes); beside them
+--- a price range set by two thumbs, a rating, and a few words about the
+--- reader written in Markdown and read into a preview as they are typed.
+--- The program's state is a record kept in process memory between frames;
+--- the controls' own (focus, what is being typed, the preview's reading)
+--- is Lory's.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.forms
+use lory.editors
+
+--- what the reader has filled in and done: the form (each field's words
+--- and the error under it), the country being chosen, whether the
+--- password shows, the code, the price range, the rating, the words about
+--- them, and how many times the form was sent
+struct App [form, country, reveal, code, low, high, stars, about, sent]
+
+--- the app as it opens: nothing filled in
+fn fresh[]
+    fields = map['name' = '', 'email' = '', 'password' = '', 'country' = '', 'code' = '', 'agree' = '']
+    App[forms.form_of[fields], forms.combo_of[], false, forms.code_of[], 20.0, 80.0, 0.0, editors.notes_of[about_me[]], 0]
+
+--- the words about the reader the editor opens with
+fn about_me[]
+    '## About me\n\nI grow *tomatoes* and draw **maps**.\n\n- a garden by the river\n- maps of \`old\` railways\n'
+
+--- the countries the combobox offers
+fn countries[]
+    ['Argentina', 'Australia', 'Austria', 'Brazil', 'Canada', 'Chile', 'Denmark', 'Egypt', 'Finland', 'France', 'Germany', 'Ghana', 'Iceland', 'India', 'Indonesia', 'Ireland', 'Italy', 'Japan', 'Kenya', 'Mexico', 'Nepal', 'Netherlands', 'New Zealand', 'Nigeria', 'Norway', 'Peru', 'Portugal', 'Spain', 'Sweden', 'United Kingdom', 'United States']
+
+--- each field and the rules it is checked by (what a failed rule says is
+--- Lory's, but for the terms')
+fn wants[]
+    [forms.want['name', 'Your name', ['empty']], forms.want['email', 'Your email', ['empty', 'email']], forms.want['password', 'A password', ['minLength[8]']], forms.want['country', 'A country', ['empty']], forms.want['code', 'The code', ['exactLength[6]']], forms.want['agree', 'The terms', ['checked'], says = ['Please agree to the terms']]]
+
+--- ---- the page ----
+
+--- the form on the left, the rest on the right
+fn page_of[a]
+    gui.row[[gui.sized[form_panel[a], 380.0], gui.sized[more_panel[a], 470.0]], gap = 16.0]
+
+--- the form: each field under its label, with its error under it
+fn form_panel[a]
+    f = a.form
+    who = f.fields['name']
+    mail = f.fields['email']
+    secret = f.fields['password']
+    name = forms.labelled['name', 'Name', gui.sized[gui.field['name', who, hint = 'Ada Lovelace'], 348.0], fault = forms.error_of[f, 'name']]
+    email = forms.labelled['email', 'Email', gui.sized[gui.field['email', mail, hint = 'ada@example.com'], 348.0], fault = forms.error_of[f, 'email']]
+    password = forms.labelled['password', 'Password', forms.password['password', secret, a.reveal, wide = 348.0], note = 'Eight characters or more.', fault = forms.error_of[f, 'password']]
+    --- (the label of a control of several parts gives none of them the
+    --- focus: it is `passive`)
+    country = forms.labelled['country', 'Country', forms.combobox['country', a.country, countries[], hint = 'Type to find yours', wide = 348.0], fault = forms.error_of[f, 'country'], passive = true]
+    code = forms.labelled['code', 'The code we sent you', forms.otp['code', a.code], note = 'Six digits: type them, or paste them all.', fault = forms.error_of[f, 'code'], passive = true]
+    agree = [forms.switch['agree', 'I agree to the terms', f.fields['agree'] eq 'on']]
+    fault = forms.error_of[f, 'agree']
+    if fault ne ''
+        agree = push[agree, gui.text[fault, size = 13.0, tone = 'danger']]
+    gui.panel[[gui.heading['Create your account'], name, email, password, country, code, gui.column[agree, gap = 6.0], gui.row[[gui.button['submit', 'Create account'], sent_note[a]]]], gap = 14.0]
+
+--- what the form says beside its button: once it was sent, a welcome
+fn sent_note[a]
+    if a.sent eq 0
+        return gui.note['Every field is needed.']
+    who = a.form.fields['name']
+    gui.text['Welcome, `who`.', tone = 'success']
+
+--- the price range, the rating and the words about the reader, with a
+--- count of their characters
+fn more_panel[a]
+    least = int[a.low]
+    most = int[a.high]
+    price = gui.column[[gui.label['Price range: $`least` to $`most`'], forms.range_slider['price', a.low, a.high, 0.0, 200.0, step = 5.0, gap_steps = 2, wide = 438.0]], gap = 6.0]
+    stars = gui.column[[gui.label['How did you find us?'], forms.rating['stars', a.stars, half = true]], gap = 6.0]
+    words = a.about.text
+    about = gui.column[[gui.label['About you'], editors.markdown_editor['about', a.about, wide = 438.0, lines = 10], forms.char_count[words, 400]], gap = 6.0]
+    gui.panel[[gui.heading['A little more'], price, stars, about], gap = 14.0]
+
+--- ---- the reader's frame answered ----
+
+--- the app once the frame is answered: each control's record brought up
+--- to date, then the form (the country and the code, which its events do
+--- not name, set from their records first)
+fn answered[a, shown]
+    secret = a.form.fields['password']
+    a.country = forms.combobox_after['country', a.country, countries[], shown]
+    a.code = forms.otp_after['code', a.code, shown]
+    a.reveal = forms.password_after['password', secret, a.reveal, shown]
+    a.about = editors.markdown_after['about', a.about, shown]
+    for e in shown.events
+        if e.id eq 'stars' and e.act eq 'change'
+            a.stars = e.num
+        if e.id eq 'price:low' and e.act eq 'change'
+            a.low = e.num
+        if e.id eq 'price:high' and e.act eq 'change'
+            a.high = e.num
+    f = set_from[a.form, 'country', a.country.chosen]
+    f = set_from[f, 'code', forms.code_text[a.code]]
+    f = forms.form_after[f, wants[], shown]
+    if f.sent
+        a.sent = a.sent + 1
+    a.form = f
+    a
+
+--- the form with a field its events do not name set to `words`, checked
+--- again as it changes where it shows an error
+fn set_from[f, field, words]
+    if f.fields[field] eq words
+        return f
+    filled = f.fields
+    filled[field] = words
+    f.fields = filled
+    if forms.error_of[f, field] ne ''
+        errors = f.errors
+        errors[field] = forms.errors_of[wants[], filled][field]
+        f.errors = errors
+    f
+
+fn draw[frame]
+    a = recall['app', fresh[]]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    shown = gui.show[c, page_of[a]]
+    a = answered[a, shown]
+    remember['app', a]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+--- ---- tests: frames as a page hands them ----
+
+--- a frame 960 by 800 at `t` milliseconds, with the input given (JSON)
+fn screen[t, given]
+    json['{"t": `t`, "width": 960, "height": 800, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 960, "height": 800, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+--- a press and a release at a place, and a key typed
+fn press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn key_typed[name]
+    '[{"type": "key", "key": "`name`", "code": "`name`", "shift": false}]'
+
+--- the app once a frame of that input is answered, and what it showed
+struct Seen [app, shown]
+
+fn frame_at[a, t, given]
+    c = lory.begin[screen[t, given]]
+    shown = gui.show[c, page_of[a]]
+    Seen[answered[a, shown], shown]
+
+--- the app as it first shows, the focus another test left let go (a
+--- press on no control)
+fn opened[a]
+    gui.unfocus[]
+    frame_at[a, 0.0, press_at[2.0, 2.0]]
+
+--- a press in the middle of a control
+fn pressed_on[seen, id]
+    b = seen.shown.boxes[id]
+    press_at[b[0] + b[2] / 2.0, b[1] + b[3] / 2.0]
+
+--- a press at the end of a field's line, and words typed there
+fn typed_into[seen, id, words]
+    b = seen.shown.boxes[id]
+    x = b[0] + b[2] - 5.0
+    y = b[1] + b[3] / 2.0
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "text", "text": "`words`"}]'
+
+--- the app with every field filled in as its rules want
+fn filled_in[]
+    a = fresh[]
+    f = a.form
+    fields = f.fields
+    fields['name'] = 'Ada'
+    fields['email'] = 'ada@example.com'
+    fields['password'] = 'analytical'
+    fields['agree'] = 'on'
+    f.fields = fields
+    a.form = f
+    a.country = forms.combo_of['India']
+    a.code = forms.code_of['123456']
+    a
+
+test sent_empty_it_says_what_each_field_needs_and_a_field_typed_in_is_checked_again[]
+    first = opened[fresh[]]
+    sent = frame_at[first.app, 100.0, pressed_on[first, 'submit']]
+    f = sent.app.form
+    f.failed
+    forms.error_of[f, 'name'] eq 'Your name is needed'
+    forms.error_of[f, 'email'] eq 'Your email is needed'
+    forms.error_of[f, 'password'] eq 'A password needs 8 characters or more'
+    forms.error_of[f, 'country'] eq 'A country is needed'
+    forms.error_of[f, 'code'] eq 'The code needs 6 characters exactly'
+    forms.error_of[f, 'agree'] eq 'Please agree to the terms'
+    sent.app.sent eq 0
+    --- (the first field that failed has the focus: what is typed goes
+    --- there, and is checked once typing has stopped for 200 milliseconds)
+    typed = frame_at[sent.app, 200.0, '[{"type": "text", "text": "Ada"}]']
+    typed.app.form.fields['name'] eq 'Ada'
+    forms.error_of[typed.app.form, 'name'] eq 'Your name is needed'
+    checked = frame_at[typed.app, 450.0, '[]']
+    forms.error_of[checked.app.form, 'name'] eq ''
+
+test a_form_filled_in_is_sent_and_welcomes_the_reader[]
+    first = opened[filled_in[]]
+    sent = frame_at[first.app, 100.0, pressed_on[first, 'submit']]
+    sent.app.form.sent
+    sent.app.sent eq 1
+    forms.errors_of[wants[], sent.app.form.fields]['code'] eq ''
+
+test the_country_is_found_by_typing_and_chosen_by_enter[]
+    first = opened[fresh[]]
+    typed = frame_at[first.app, 100.0, typed_into[first, 'country:field:0', 'ind']]
+    typed.app.country.open
+    chosen = frame_at[typed.app, 200.0, key_typed['Enter']]
+    chosen.app.country.chosen eq 'India'
+    chosen.app.form.fields['country'] eq 'India'
+
+test a_press_rates_and_the_words_about_the_reader_are_read_a_tenth_of_a_second_after_typing[]
+    first = opened[fresh[]]
+    --- (the third star's cell is 28 wide from 56: its right half is a
+    --- whole three)
+    b = first.shown.boxes['stars']
+    rated = frame_at[first.app, 100.0, press_at[b[0] + 77.0, b[1] + 10.0]]
+    rated.app.stars eq 3.0
+    typed = frame_at[rated.app, 200.0, typed_into[rated, 'about:field:0', '!']]
+    typed.app.about.read ne typed.app.about.text
+    later_on = frame_at[typed.app, 350.0, '[]']
+    later_on.app.about.read eq later_on.app.about.text
+    starts[editors.tree_text[later_on.app.about.doc], '(document (heading 2']

@@ -1,0 +1,1021 @@
+--- Lory's disclosure: the accordion and the collapsible, which show and
+--- hide what is under their triggers, and the tree view, whose folders
+--- open and close. Each answers the pointer and the keys as the library
+--- or the pattern it follows does: Radix's Accordion and Collapsible, the
+--- tree of Vue's own example (a press opens a folder; a double press
+--- makes a leaf a folder), Vuetify's VTreeview with checkboxes (its
+--- `classic` choosing: a folder ticks all under it, and is ticked, unticked
+--- or mixed as they are; held to Vuetify's own numbers by
+--- tests/menus/reference.json), and the WAI-ARIA tree's keys. The program
+--- holds which folds are open (it keeps what the events say); a tree's
+--- open folders, its ticks and where its keys are, Lory holds.
+
+use memory
+use lory
+use gui
+use icons
+use motion
+use menus
+
+--- ---- folds coming and going ----
+
+--- the time and the curve Radix's demos open and close a fold over
+--- (300 ms, cubic-bezier(0.87, 0, 0.13, 1)), its height growing from
+--- nothing to its own
+fn fold_time[]
+    300.0
+
+fn _fold_curve[]
+    'cubic-bezier(0.87, 0, 0.13, 1)'
+
+--- the heights of what each fold shows, as it was last laid whole, and
+--- where each one's laying began, by the fold's key
+struct Heights [tops, by]
+
+fn _heights[]
+    recall['lory.disclosure.heights', Heights[map['' = 0.0], map['' = 0.0]]]
+
+fn _height_of[key]
+    held = _heights[]
+    if key in held.by
+        return held.by[key]
+    0.0
+
+--- how far open a fold is (0 to 1, eased): open as it is first laid, it
+--- is shown whole at once (Radix's Collapsible keeps its first opening
+--- from moving); after, it grows and shrinks over `fold_time`
+struct Seen [keys]
+
+fn _fold_shown[c, key, open]
+    held = recall['lory.disclosure.seen', Seen[map['' = true]]]
+    first = not (key in held.keys)
+    if first
+        held.keys[key] = true
+        remember['lory.disclosure.seen', held]
+    if first
+        remember['lory.motion/presence/lory.disclosure/`key`', motion.Showing[open, lory.time[c], _one[open]]]
+    fresh = motion.presence[c, 'lory.disclosure/`key`', open, fold_time[], fold_time[], _fold_curve[]]
+    if not fresh.present
+        return 0.0
+    fresh.value
+
+--- what a fold shows, `k` of the way open: wholly open, what it holds
+--- (its height measured as it is laid); on its way, the room it takes
+--- grows to (or shrinks from) `k` of that height, and what it holds is
+--- shown once the fold is wholly open. (gui has no clipping column but a
+--- scroll, whose bar and wheel a fold must not have, so the room grows
+--- empty: docs/components/menus.md.) A fold never yet laid whole has no
+--- height to grow to, and opens whole at once
+fn _unfolded[key, kids, k, pad]
+    probed = gui.overlay[gui.overlay[gui.column[kids, pad = pad], _height_probe[key, 0.0], anchor = 'top_left'], _height_probe[key, 1.0], anchor = 'bottom_right']
+    whole = _height_of[key]
+    if k gte 1.0 or whole eq 0.0
+        return probed
+    gui.space[whole * k]
+
+fn _height_probe[key, corner]
+    gui.drawn['', corner, 0.0, 0.0, _height_probed, words = key]
+
+fn _height_probed[d]
+    held = _heights[]
+    if d.num lt 0.5
+        held.tops[d.words] = d.y / d.s
+    else
+        if d.words in held.tops
+            held.by[d.words] = d.y / d.s - held.tops[d.words]
+    remember['lory.disclosure.heights', held]
+    d
+
+--- the control the keys asked the focus moved to, given it as this frame
+--- is built (a painter's own frame has handed gui its focus already)
+struct Moving [to]
+
+fn _moved_focus[]
+    held = recall['lory.disclosure.focus', Moving['']]
+    if held.to ne ''
+        gui.focus[held.to, '']
+        remember['lory.disclosure.focus', Moving['']]
+    ''
+
+fn _ask_focus[id]
+    remember['lory.disclosure.focus', Moving[id]]
+
+--- ---- an accordion (Radix's Accordion) ----
+
+--- one fold of an accordion: its id, its trigger's words, what it shows
+--- open, and whether it is set aside
+struct Fold [id, words, kids, off]
+
+fn fold[id, words, kids, off = false]
+    Fold[id, words, kids, off]
+
+--- folds one under another, each a trigger and, open, what it shows
+--- under it (growing in over 300 ms). `open` holds the folds open (the
+--- program keeps it: `folds_open`); one at a time, or as many as are
+--- opened where `multiple`; the one open is closed by its trigger only
+--- where `collapsible`. A press on a trigger, Enter or space opens or
+--- closes its fold; the arrows up and down move the focus between the
+--- triggers, round past the ends, Home and End to the ends (passing those
+--- set aside). Its event: `change` (the accordion's id; the folds open
+--- after it, a space between)
+fn accordion[c, id, folds, open, multiple = false, collapsible = false]
+    _moved_focus[]
+    ids = slice[[''], 0, 0]
+    for f in folds
+        if not f.off
+            ids = push[ids, f.id]
+    words_open = join[open, ' ']
+    all_ids = join[ids, ' ']
+    rows = slice[[gui.space[0.0]], 0, 0]
+    for f in folds
+        is_open = f.id in open
+        how = '`_one[multiple]``_one[collapsible]``_one[is_open]``_one[f.off]`'
+        trigger = gui.drawn['`id`:`f.id`', _one[is_open], 0.0, 44.0, _fold_trigger, words = '`id`\t`f.id`\t`f.words`\t`how`\t`words_open`\t`all_ids`']
+        rows = push[rows, trigger]
+        k = _fold_shown[c, '`id`/`f.id`', is_open]
+        if k gt 0.0 or is_open
+            rows = push[rows, _unfolded['`id`:`f.id`', f.kids, k, 12.0]]
+        rows = push[rows, gui.drawn['', 0.0, 0.0, 1.0, _rule]]
+    gui.column[rows, gap = 0.0]
+
+fn _one[yes]
+    if yes
+        return 1.0
+    0.0
+
+fn _rule[d]
+    d.c = lory.rect[d.c, d.x, d.y, d.w, d.h, d.look.edge]
+    d
+
+--- the folds open after this frame's events (`open` where none changed
+--- them)
+fn folds_open[shown, id, open]
+    out = open
+    for e in shown.events
+        if e.id eq id and e.act eq 'change'
+            out = slice[[''], 0, 0]
+            for w in split[e.words, ' ']
+                if w ne ''
+                    out = push[out, w]
+    out
+
+--- the folds open once `which` is pressed: one at a time, it is the one
+--- open (closed again only where `collapsible`); `multiple`, it opens or
+--- closes alone
+fn folds_after[open, which, multiple, collapsible]
+    out = slice[[''], 0, 0]
+    was = which in open
+    if multiple
+        for w in open
+            if w ne which
+                out = push[out, w]
+        if not was
+            out = push[out, which]
+        return out
+    if was
+        if collapsible
+            return out
+        return [which]
+    [which]
+
+--- a fold's trigger: its words and its mark (turned while open), the
+--- pointer's press, Enter and space opening or closing it, the arrows
+--- moving the focus along the triggers
+fn _fold_trigger[d]
+    parts = split[d.words, '\t']
+    group = parts[0]
+    me = parts[1]
+    how = split[parts[3], '']
+    multiple = how[0] eq '1'
+    collapsible = how[1] eq '1'
+    off = how[3] eq '1'
+    open = slice[[''], 0, 0]
+    for w in split[parts[4], ' ']
+        if w ne ''
+            open = push[open, w]
+    ids = split[parts[5], ' ']
+    if not off
+        hit = d.pressed
+        for k in d.keys
+            if k eq 'Enter' or k eq ' '
+                hit = true
+            to = _along[ids, me, k]
+            if to ne ''
+                _ask_focus['`group`:`to`']
+        if hit
+            after = folds_after[open, me, multiple, collapsible]
+            if join[after, ' '] ne join[open, ' ']
+                d.told = push[d.told, gui.Event[group, 'change', join[after, ' '], 0.0]]
+    c = d.c
+    s = d.s
+    look = d.look
+    if d.hover and not off
+        c = lory.rect[c, d.x, d.y, d.w, d.h, look.hover]
+    ink = look.ink
+    if off
+        ink = look.muted
+    c = lory.text[c, d.x + 12.0 * s, d.y + (d.h - lory.line_height[c, 15.0 * s]) / 2.0, parts[2], 15.0 * s, ink]
+    turn = 0.0
+    if d.num gt 0.5
+        turn = 180.0
+    d.c = icons.turned[c, 'chevron-down', d.x + d.w - 30.0 * s, d.y + (d.h - 15.0 * s) / 2.0, 15.0 * s, look.muted, turn]
+    d
+
+--- the trigger the key moves the focus to along `ids` from `me` (round
+--- past the ends), '' for a key that moves nothing
+fn _along[ids, me, key]
+    n = len[ids]
+    at = -1
+    i = 0
+    while i lt n
+        if ids[i] eq me
+            at = i
+        i = i + 1
+    if n eq 0 or at lt 0
+        return ''
+    if key eq 'ArrowDown'
+        return ids[(at + 1) % n]
+    if key eq 'ArrowUp'
+        return ids[(at - 1 + n) % n]
+    if key eq 'Home'
+        return ids[0]
+    if key eq 'End'
+        return ids[n - 1]
+    ''
+
+--- ---- a collapsible (Radix's Collapsible) ----
+
+--- a trigger of `words` and, `open`, its `kids` under it (growing in over
+--- 300 ms): a press on the trigger, Enter or space tells `toggle` (its
+--- id; 1 to open, 0 to close), and the program keeps `open`
+fn collapsible[c, id, words, kids, open]
+    trigger = gui.drawn[id, _one[open], 0.0, 40.0, _collapse_trigger, words = words]
+    k = _fold_shown[c, id, open]
+    if k eq 0.0 and not open
+        return gui.column[[trigger], gap = 0.0]
+    gui.column[[trigger, _unfolded[id, kids, k, 8.0]], gap = 0.0]
+
+--- whether a collapsible is open after this frame's events
+fn toggled[shown, id, open]
+    out = open
+    for e in shown.events
+        if e.id eq id and e.act eq 'toggle'
+            out = e.num gt 0.5
+    out
+
+fn _collapse_trigger[d]
+    hit = d.pressed
+    for k in d.keys
+        if k eq 'Enter' or k eq ' '
+            hit = true
+    if hit
+        d = gui.tell[d, 'toggle', '', 1.0 - d.num]
+    c = d.c
+    s = d.s
+    look = d.look
+    ground = look.panel
+    if d.hover
+        ground = look.hover
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 6.0 * s, ground]
+    c = lory.round_outline[c, d.x, d.y, d.w, d.h, 6.0 * s, 1.0 * s, look.edge]
+    c = lory.text[c, d.x + 12.0 * s, d.y + (d.h - lory.line_height[c, 14.0 * s]) / 2.0, d.words, 14.0 * s, look.ink]
+    mark = 'plus'
+    if d.num gt 0.5
+        mark = 'minus'
+    d.c = icons.draw[c, mark, d.x + d.w - 28.0 * s, d.y + (d.h - 15.0 * s) / 2.0, 15.0 * s, look.muted]
+    d
+
+--- ---- a tree view (Vue's tree example; Vuetify's VTreeview with
+--- checkboxes; the WAI-ARIA tree's keys) ----
+
+--- one twig of a tree: its id, its words, the twigs under it, whether it
+--- is a folder (a folder may be empty), whether it is set aside
+struct Twig [id, words, kids, folder, off]
+
+fn _no_twigs[]
+    nothing = [Twig['', '', [], false, false]]
+    slice[nothing, 0, 0]
+
+fn leaf[id, words, off = false]
+    Twig[id, words, _no_twigs[], false, off]
+
+fn branch[id, words, kids, off = false]
+    Twig[id, words, kids, true, off]
+
+--- one row of a tree laid flat: its id, words, depth, whether it is a
+--- folder, the place of its parent among the rows (-1: none) and how many
+--- rows under it (all its kids and theirs), and whether it is set aside
+struct Line [id, words, depth, folder, parent, under, off]
+
+--- what each tree holds between frames: its twigs laid flat, the folders
+--- open, each twig's tick (`on`, `off`, `indeterminate`: Vuetify's), the
+--- twig the keys are on, the one last chosen, the letters typed ahead
+--- and when
+struct Grove [lines, open, ticks, at, chosen, search, searched]
+
+fn _no_lines[]
+    nothing = [Line['', '', 0, false, -1, 0, false]]
+    slice[nothing, 0, 0]
+
+fn _fresh_grove[]
+    Grove[_no_lines[], map['' = false], map['' = 'off'], '', '', '', -1000000.0]
+
+struct Groves [by]
+
+fn _grove[id]
+    held = recall['lory.disclosure.trees', Groves[map['' = _fresh_grove[]]]]
+    if id in held.by
+        return held.by[id]
+    _fresh_grove[]
+
+fn _grove_kept[id, grove]
+    held = recall['lory.disclosure.trees', Groves[map['' = _fresh_grove[]]]]
+    held.by[id] = grove
+    remember['lory.disclosure.trees', held]
+
+--- the twigs laid flat, each before those under it
+fn flat[twigs]
+    _flattened[twigs, 0, -1, _no_lines[]]
+
+fn _flattened[twigs, depth, parent, out]
+    for t in twigs
+        at = len[out]
+        out = push[out, Line[t.id, t.words, depth, t.folder, parent, 0, t.off]]
+        out = _flattened[t.kids, depth + 1, at, out]
+        line = out[at]
+        line.under = len[out] - at - 1
+        out[at] = line
+    out
+
+--- the folders of tree `id` open, the twigs ticked (its leaves, as
+--- Vuetify's classic choosing answers them) and a twig's tick
+fn tree_open[id]
+    grove = _grove[id]
+    out = slice[[''], 0, 0]
+    for l in grove.lines
+        if l.id in grove.open
+            if grove.open[l.id]
+                out = push[out, l.id]
+    out
+
+fn tree_ticked[id]
+    grove = _grove[id]
+    out = slice[[''], 0, 0]
+    for l in grove.lines
+        if l.under eq 0 and not l.folder and _tick_of[grove, l.id] eq 'on'
+            out = push[out, l.id]
+    out
+
+fn tick_of[id, twig]
+    _tick_of[_grove[id], twig]
+
+fn _tick_of[grove, twig]
+    if twig in grove.ticks
+        return grove.ticks[twig]
+    'off'
+
+--- tree `id`'s folders `ids` opened (the program's; a folder it makes)
+fn open_twigs[id, ids]
+    grove = _grove[id]
+    for i in ids
+        grove.open[i] = true
+    _grove_kept[id, grove]
+    id
+
+--- the ticks after twig `r` (a place among the lines) is ticked (`on`)
+--- or not, as Vuetify's classic choosing answers: it and every twig under
+--- it not set aside take the tick; then each folder over it is `on` where
+--- every twig under it (not set aside) is, `off` where none is ticked or
+--- mixed, else `indeterminate`
+fn ticked_after[lines, ticks, r, on]
+    value = 'off'
+    if on
+        value = 'on'
+    j = r
+    while j lte r + lines[r].under
+        if not lines[j].off
+            ticks[lines[j].id] = value
+        j = j + 1
+    parent = lines[r].parent
+    while parent gte 0
+        every = true
+        none = true
+        k = parent + 1
+        while k lte parent + lines[parent].under
+            kid = lines[k]
+            if kid.parent eq parent and not kid.off
+                state = 'off'
+                if kid.id in ticks
+                    state = ticks[kid.id]
+                if state ne 'on'
+                    every = false
+                if (kid.id in ticks) and state ne 'off'
+                    none = false
+            k = k + 1
+        result = 'indeterminate'
+        if every
+            result = 'on'
+        else
+            if none
+                result = 'off'
+        ticks[lines[parent].id] = result
+        parent = lines[parent].parent
+    ticks
+
+--- the rows shown: each whose folders over it are all open
+fn _shown_rows[grove]
+    out = slice[[0], 0, 0]
+    i = 0
+    n = len[grove.lines]
+    while i lt n
+        out = push[out, i]
+        l = grove.lines[i]
+        if (l.folder or l.under gt 0) and not _is_open[grove, l.id]
+            i = i + l.under + 1
+        else
+            i = i + 1
+    out
+
+fn _is_open[grove, id]
+    if id in grove.open
+        return grove.open[id]
+    false
+
+--- the row height of a tree, and how far each depth stands in
+fn tree_row[]
+    28.0
+
+fn tree_indent[]
+    20.0
+
+--- a tree of `twigs`, one stop of Tab, its rows each `tree_row` high: a
+--- press on a folder opens or closes it, on a leaf chooses it, on a
+--- checkbox (where `checks`) ticks it (and all under it); a double press on
+--- a leaf tells `fold` (the program makes it a folder; Lory opens it).
+--- With the focus: the arrows up and down move along the rows shown;
+--- right opens a closed folder, or goes to an open one's first twig;
+--- left closes an open folder, or goes to the twig's folder; Home and End
+--- to the ends; letters typed go to the next twig whose words start so; *
+--- opens every folder beside the twig; Enter chooses a leaf, or opens or
+--- closes a folder; space ticks it (where `checks`). Its events (the
+--- tree's id): `toggle` (a folder's id; 1 opened), `choose` (a leaf's
+--- id), `check` (the twig's id; 1 ticked) and `fold`
+fn tree[c, id, twigs, checks = false]
+    grove = _grove[id]
+    grove.lines = flat[twigs]
+    if grove.at eq '' and len[grove.lines] gt 0
+        grove.at = grove.lines[0].id
+    _grove_kept[id, grove]
+    count = len[_shown_rows[grove]]
+    gui.drawn[id, _one[checks], 0.0, count * tree_row[] + 4.0, _tree_drawn]
+
+--- the tree: the pointer's presses and double presses on its rows, its
+--- keys, and drawn
+fn _tree_drawn[d]
+    clock = lory.time[d.c]
+    if not clock.ok
+        return d
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    s = d.s
+    checks = d.num gt 0.5
+    grove = _grove[d.id]
+    shown = _shown_rows[grove]
+    box = [d.x / s, d.y / s, d.w / s, d.h / s]
+    told = slice[[gui.Event['', '', '', 0.0]], 0, 0]
+    for e in evs
+        x = e.x / s
+        y = e.y / s
+        if (e.on eq 'up' or e.on eq 'double') and _inside[x, y, box]
+            k = int[floor[(y - box[1] - 2.0) / tree_row[]]]
+            if k gte 0 and k lt len[shown]
+                r = shown[k]
+                l = grove.lines[r]
+                if not l.off
+                    grove.at = l.id
+                    left = x - box[0] - 4.0 - l.depth * tree_indent[]
+                    if e.on eq 'double'
+                        if not l.folder and l.under eq 0
+                            told = push[told, gui.Event[d.id, 'fold', l.id, 0.0]]
+                            grove.open[l.id] = true
+                    else
+                        if checks and left gte 22.0 and left lt 42.0
+                            on = _tick_of[grove, l.id] ne 'on'
+                            grove.ticks = ticked_after[grove.lines, grove.ticks, r, on]
+                            told = push[told, gui.Event[d.id, 'check', l.id, _one[on]]]
+                        else
+                            if l.folder or l.under gt 0
+                                grove = _flipped[grove, l.id]
+                                told = push[told, gui.Event[d.id, 'toggle', l.id, _one[_is_open[grove, l.id]]]]
+                            else
+                                grove.chosen = l.id
+                                told = push[told, gui.Event[d.id, 'choose', l.id, 0.0]]
+    if d.focused
+        for e in evs
+            if e.on eq 'key' and not (e.ctrl or e.alt or e.meta)
+                turn = _tree_key[grove, e.key, checks, clock]
+                grove = turn.grove
+                for t in turn.told
+                    told = push[told, gui.Event[d.id, t.act, t.words, t.num]]
+    if grove.search ne '' and clock - grove.searched gte menus.typeahead_time[]
+        grove.search = ''
+    _grove_kept[d.id, grove]
+    for t in told
+        d.told = push[d.told, t]
+    d.c = _tree_painted[d, grove, checks]
+    d
+
+--- a folder opened where it was closed, closed where it was open
+fn _flipped[grove, id]
+    grove.open[id] = not _is_open[grove, id]
+    grove
+
+--- what a key did to a tree: the tree as it left it, and its events
+struct Keyed [grove, told]
+
+fn _tree_key[grove, key, checks, clock]
+    told = slice[[gui.Event['', '', '', 0.0]], 0, 0]
+    shown = _shown_rows[grove]
+    at = _row_of[grove, grove.at]
+    k = _place_of[shown, at]
+    if at lt 0 or k lt 0
+        return Keyed[grove, told]
+    l = grove.lines[at]
+    parent_like = l.folder or l.under gt 0
+    if key eq 'ArrowDown'
+        grove.at = _shown_id[grove, shown, _next_live[grove, shown, k, 1]]
+    if key eq 'ArrowUp'
+        grove.at = _shown_id[grove, shown, _next_live[grove, shown, k, -1]]
+    if key eq 'Home'
+        grove.at = _shown_id[grove, shown, _next_live[grove, shown, -1, 1]]
+    if key eq 'End'
+        grove.at = _shown_id[grove, shown, _next_live[grove, shown, len[shown], -1]]
+    if key eq 'ArrowRight' and parent_like
+        if not _is_open[grove, l.id]
+            grove.open[l.id] = true
+            told = push[told, gui.Event['', 'toggle', l.id, 1.0]]
+        else
+            if l.under gt 0
+                grove.at = grove.lines[at + 1].id
+    if key eq 'ArrowLeft'
+        if parent_like and _is_open[grove, l.id]
+            grove.open[l.id] = false
+            told = push[told, gui.Event['', 'toggle', l.id, 0.0]]
+        else
+            if l.parent gte 0
+                grove.at = grove.lines[l.parent].id
+    if key eq 'Enter'
+        if parent_like
+            grove = _flipped[grove, l.id]
+            told = push[told, gui.Event['', 'toggle', l.id, _one[_is_open[grove, l.id]]]]
+        else
+            grove.chosen = l.id
+            told = push[told, gui.Event['', 'choose', l.id, 0.0]]
+    if key eq ' ' and checks
+        on = _tick_of[grove, l.id] ne 'on'
+        grove.ticks = ticked_after[grove.lines, grove.ticks, at, on]
+        told = push[told, gui.Event['', 'check', l.id, _one[on]]]
+    if key eq '*'
+        --- (every folder beside it, under its own folder, opened)
+        j = 0
+        while j lt len[grove.lines]
+            m = grove.lines[j]
+            if m.parent eq l.parent and (m.folder or m.under gt 0) and not _is_open[grove, m.id]
+                grove.open[m.id] = true
+                told = push[told, gui.Event['', 'toggle', m.id, 1.0]]
+            j = j + 1
+    if len[key] eq 1 and key ne ' ' and key ne '*'
+        search = key
+        if clock - grove.searched lt menus.typeahead_time[]
+            search = '`grove.search``key`'
+        grove.search = search
+        grove.searched = clock
+        names = slice[[''], 0, 0]
+        for r in shown
+            names = push[names, grove.lines[r].words]
+        found = menus.next_match[names, search, l.words]
+        if found ne ''
+            for r in shown
+                if grove.lines[r].words eq found and grove.at eq l.id
+                    grove.at = grove.lines[r].id
+    Keyed[grove, told]
+
+fn _row_of[grove, id]
+    i = 0
+    while i lt len[grove.lines]
+        if grove.lines[i].id eq id
+            return i
+        i = i + 1
+    -1
+
+fn _place_of[shown, r]
+    k = 0
+    while k lt len[shown]
+        if shown[k] eq r
+            return k
+        k = k + 1
+    -1
+
+--- the next row shown from place `k` by `step` not set aside (`k` where
+--- none is)
+fn _next_live[grove, shown, k, step]
+    j = k + step
+    while j gte 0 and j lt len[shown]
+        if not grove.lines[shown[j]].off
+            return j
+        j = j + step
+    k
+
+fn _shown_id[grove, shown, k]
+    if k lt 0 or k gte len[shown]
+        return grove.at
+    grove.lines[shown[k]].id
+
+--- the tree's rows: each indented by its depth, a folder's mark (turned
+--- open), its checkbox (ticked, mixed), its icon and words; the row the
+--- keys are on ringed while the tree has the focus, the one chosen on the
+--- accent's tint
+fn _tree_painted[d, grove, checks]
+    c = d.c
+    s = d.s
+    look = d.look
+    shown = _shown_rows[grove]
+    rh = tree_row[] * s
+    y = d.y + 2.0 * s
+    for r in shown
+        l = grove.lines[r]
+        x = d.x + (4.0 + l.depth * tree_indent[]) * s
+        ink = look.ink
+        if l.off
+            ink = look.muted
+        if l.id eq grove.chosen
+            c = lory.round_rect[c, d.x, y, d.w, rh, 5.0 * s, lory.fade[look.accent, 0.22]]
+        if d.focused and l.id eq grove.at
+            c = lory.round_outline[c, d.x + 1.0 * s, y + 1.0 * s, d.w - 2.0 * s, rh - 2.0 * s, 5.0 * s, 2.0 * s, lory.fade[look.focus, 0.8]]
+        folder = l.folder or l.under gt 0
+        open = _is_open[grove, l.id]
+        if folder
+            turn = 0.0
+            if open
+                turn = 90.0
+            c = icons.turned[c, 'chevron-right', x, y + (rh - 15.0 * s) / 2.0, 15.0 * s, look.muted, turn]
+        ix = x + 20.0 * s
+        if checks
+            state = _tick_of[grove, l.id]
+            bx = ix + 2.0 * s
+            by = y + (rh - 16.0 * s) / 2.0
+            if state eq 'off'
+                c = lory.round_outline[c, bx, by, 16.0 * s, 16.0 * s, 3.0 * s, 1.5 * s, look.muted]
+            else
+                c = lory.round_rect[c, bx, by, 16.0 * s, 16.0 * s, 3.0 * s, look.accent]
+                mark = 'check'
+                if state eq 'indeterminate'
+                    mark = 'minus'
+                c = icons.draw[c, mark, bx + 0.5 * s, by + 0.5 * s, 15.0 * s, look.on_accent]
+            ix = ix + 22.0 * s
+        icon = 'file'
+        if folder
+            icon = 'folder'
+            if open
+                icon = 'folder-open'
+        c = icons.draw[c, icon, ix, y + (rh - 15.0 * s) / 2.0, 15.0 * s, look.muted]
+        c = lory.text[c, ix + 22.0 * s, y + (rh - lory.line_height[c, 14.0 * s]) / 2.0, l.words, 14.0 * s, ink]
+        y = y + rh
+    c
+
+fn _inside[x, y, b]
+    x gte b[0] and x lt b[0] + b[2] and y gte b[1] and y lt b[1] + b[3]
+
+
+--- ---- tests: frames as a page hands them ----
+
+fn _frame_at[t, given]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _headset_at[t, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 900, "height": 700, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _event_at[on, x, y]
+    '{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+fn _press[x, y]
+    down = _event_at['down', x, y]
+    up = _event_at['up', x, y]
+    '[`down`, `up`]'
+
+--- two presses and the page's double press after them, as a browser
+--- hands them
+fn _double[x, y]
+    down = _event_at['down', x, y]
+    up = _event_at['up', x, y]
+    twice = _event_at['double', x, y]
+    '[`down`, `up`, `down`, `up`, `twice`]'
+
+fn _typed_key[name]
+    '[{"type": "key", "key": "`name`", "code": "`name`"}]'
+
+fn _told_words[shown]
+    out = slice[[''], 0, 0]
+    for e in shown.events
+        n = int[e.num]
+        out = push[out, '`e.id`/`e.act`/`e.words`/`n`']
+    join[out, ' ']
+
+fn _focus_now[]
+    recall['lory.gui', gui._fresh[]].focus
+
+fn _begun[]
+    gui.show[_frame_at[0.0, '[]'], gui.column[[gui.space[10.0]]]]
+    gui.unfocus[]
+    remember['lory.disclosure.trees', Groves[map['' = _fresh_grove[]]]]
+    remember['lory.disclosure.focus', Moving['']]
+    remember['lory.disclosure.heights', Heights[map['' = 0.0], map['' = 0.0]]]
+    remember['lory.disclosure.seen', Seen[map['' = true]]]
+    ''
+
+fn _folds[]
+    [fold['a', 'Is it accessible?', [gui.text['Yes. It follows the pattern.']]], fold['b', 'Is it styled?', [gui.text['Yes. It takes the look.'], gui.text['And the theme.']]], fold['x', 'Set aside', [gui.text['Never.']], off = true], fold['c', 'Is it animated?', [gui.text['Yes. It grows in.']]]]
+
+fn _accordion_page[t, given, open, multiple, collapsible]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[accordion[c, 'faq', _folds[], open, multiple = multiple, collapsible = collapsible], gui.button['after', 'After']]]]
+
+fn _trigger_at[shown, id]
+    b = shown.boxes['faq:`id`']
+    _press[b[0] + 20.0, b[1] + 20.0]
+
+--- what a press on a trigger opens, as Radix's Accordion: one at a time
+--- the one pressed (pressed again, closed only where `collapsible`); with
+--- `multiple`, each opens and closes alone
+test a_press_on_a_trigger_opens_its_fold_one_at_a_time_or_many[]
+    folds_after[[], 'a', false, false] eq ['a']
+    folds_after[['a'], 'b', false, false] eq ['b']
+    folds_after[['a'], 'a', false, false] eq ['a']
+    len[folds_after[['a'], 'a', false, true]] eq 0
+    folds_after[['a'], 'b', true, false] eq ['a', 'b']
+    folds_after[['a', 'b'], 'a', true, false] eq ['b']
+    _begun[]
+    first = _accordion_page[0.0, '[]', ['a'], false, false]
+    'faq:b' in first.boxes
+    pressed = _accordion_page[16.0, _trigger_at[first, 'b'], ['a'], false, false]
+    _told_words[pressed] eq 'faq/change/b/0'
+    folds_open[pressed, 'faq', ['a']] eq ['b']
+    again = _accordion_page[32.0, _trigger_at[first, 'b'], ['b'], false, false]
+    _told_words[again] eq ''
+    shut = _accordion_page[48.0, _trigger_at[first, 'b'], ['b'], false, true]
+    _told_words[shut] eq 'faq/change//0'
+    len[folds_open[shut, 'faq', ['b']]] eq 0
+    prior = _accordion_page[600.0, '[]', ['b'], true, false]
+    many = _accordion_page[616.0, _trigger_at[prior, 'c'], ['b'], true, false]
+    _told_words[many] eq 'faq/change/b c/0'
+    --- (a fold set aside tells nothing)
+    _told_words[_accordion_page[632.0, _trigger_at[prior, 'x'], ['b'], true, false]] eq ''
+
+--- Radix's Accordion's keys: Enter and space open and close the fold
+--- whose trigger has the focus; the arrows down and up move the focus to
+--- the next trigger and the one before it, round past the ends (`loop`),
+--- passing one set aside; Home and End to the first and the last
+test the_arrows_move_between_triggers_and_loop_and_home_and_end_go_to_the_ends[]
+    _begun[]
+    first = _accordion_page[0.0, '[]', [], false, true]
+    _accordion_page[16.0, _trigger_at[first, 'a'], [], false, true]
+    _focus_now[] eq 'faq:a'
+    _told_words[_accordion_page[32.0, _typed_key['Enter'], ['a'], false, true]] eq 'faq/change//0'
+    _told_words[_accordion_page[48.0, _typed_key[' '], [], false, true]] eq 'faq/change/a/0'
+    _accordion_page[64.0, _typed_key['ArrowDown'], ['a'], false, true]
+    _accordion_page[80.0, '[]', ['a'], false, true]
+    _focus_now[] eq 'faq:b'
+    _accordion_page[96.0, _typed_key['ArrowDown'], ['a'], false, true]
+    _accordion_page[112.0, '[]', ['a'], false, true]
+    _focus_now[] eq 'faq:c'
+    _accordion_page[128.0, _typed_key['ArrowDown'], ['a'], false, true]
+    _accordion_page[144.0, '[]', ['a'], false, true]
+    _focus_now[] eq 'faq:a'
+    _accordion_page[160.0, _typed_key['ArrowUp'], ['a'], false, true]
+    _accordion_page[176.0, '[]', ['a'], false, true]
+    _focus_now[] eq 'faq:c'
+    _accordion_page[192.0, _typed_key['Home'], ['a'], false, true]
+    _accordion_page[208.0, '[]', ['a'], false, true]
+    _focus_now[] eq 'faq:a'
+    _accordion_page[224.0, _typed_key['End'], ['a'], false, true]
+    _accordion_page[240.0, '[]', ['a'], false, true]
+    _focus_now[] eq 'faq:c'
+    --- (Tab leaves the accordion: its triggers are each a stop of Tab)
+    _accordion_page[256.0, '[{"type": "key", "key": "Tab", "code": "Tab"}]', ['a'], false, true]
+    _focus_now[] eq 'after'
+
+--- a fold's room grows over Radix's demos' 300 ms on their curve to
+--- the height it has open (what it holds shown once it is whole), and
+--- shrinks the same way back; a fold open as it is first laid stands open
+--- at once
+test a_fold_grows_in_over_300_ms_and_shrinks_out[]
+    _begun[]
+    whole = _accordion_page[0.0, '[]', ['b'], false, true]
+    'faq:b' in whole.boxes
+    tall = _height_of['faq:b']
+    tall gt 30.0
+    _accordion_page[800.0, '[]', [], false, true]
+    _accordion_page[950.0, '[]', [], false, true]
+    gone = _accordion_page[1200.0, '[]', [], false, true]
+    y0 = gone.boxes['after'][1]
+    whole.boxes['after'][1] eq y0 + tall
+    _accordion_page[1300.0, '[]', ['b'], false, true]
+    half = _accordion_page[1450.0, '[]', ['b'], false, true]
+    k = motion.ease_at[_fold_curve[], 0.5]
+    abs[half.boxes['after'][1] - (y0 + tall * k)] lt 0.000001
+    quarter = _accordion_page[1375.0, '[]', ['b'], false, true]
+    abs[quarter.boxes['after'][1] - (y0 + tall * motion.ease_at[_fold_curve[], 0.25])] lt 0.000001
+    full = _accordion_page[1600.0, '[]', ['b'], false, true]
+    full.boxes['after'][1] eq y0 + tall
+    fold_time[] eq 300.0
+
+fn _collapsible_page[t, given, open]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[collapsible[c, 'more', 'Show 2 more', [gui.text['@radix-ui/colors'], gui.text['@stitches/react']], open], gui.button['after', 'After']]]]
+
+--- a collapsible's trigger tells `toggle` (1 to open, 0 to close) on a
+--- press, Enter and space; open, what it holds stands under the trigger
+test a_collapsible_tells_toggle_on_a_press_enter_and_space[]
+    _begun[]
+    closed = _collapsible_page[0.0, '[]', false]
+    b = closed.boxes['more']
+    pressed = _collapsible_page[16.0, _press[b[0] + 10.0, b[1] + 10.0], false]
+    _told_words[pressed] eq 'more/toggle//1'
+    toggled[pressed, 'more', false]
+    _focus_now[] eq 'more'
+    _collapsible_page[32.0, '[]', true]
+    opened = _collapsible_page[400.0, '[]', true]
+    opened.boxes['after'][1] gt closed.boxes['after'][1] + 30.0
+    keyed = _collapsible_page[416.0, _typed_key['Enter'], true]
+    _told_words[keyed] eq 'more/toggle//0'
+    not toggled[keyed, 'more', true]
+    _told_words[_collapsible_page[432.0, _typed_key[' '], false]] eq 'more/toggle//1'
+
+--- a tree of files: two folders, one inside the other, and their files
+fn _files[]
+    lib = branch['lib', 'lib', [leaf['gui', 'gui.co'], leaf['xr', 'xr.co']]]
+    src = branch['src', 'src', [lib, leaf['main', 'main.co'], leaf['old', 'old.co', off = true]]]
+    docs = branch['docs', 'docs', [leaf['guide', 'guide.md']]]
+    [src, docs, leaf['readme', 'README.md'], branch['empty', 'empty', []]]
+
+fn _tree_page[t, given, checks]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[tree[c, 'files', _files[], checks = checks], gui.button['after', 'After']]]]
+
+--- a press on row `k` shown, `left` CSS pixels in from the tree's left
+fn _row_press[shown, k, left]
+    b = shown.boxes['files']
+    _press[b[0] + left, b[1] + 2.0 + tree_row[] * k + 14.0]
+
+fn _row_double[shown, k]
+    b = shown.boxes['files']
+    _double[b[0] + 120.0, b[1] + 2.0 + tree_row[] * k + 14.0]
+
+--- the twigs laid flat: each with its depth, its parent's place and how
+--- many rows are under it
+test a_tree_is_laid_flat_each_before_what_is_under_it[]
+    lines = flat[_files[]]
+    len[lines] eq 10
+    lines[0].id eq 'src'
+    lines[0].under eq 5
+    lines[1].id eq 'lib'
+    lines[1].parent eq 0
+    lines[2].depth eq 2
+    lines[6].id eq 'docs'
+    lines[6].parent eq -1
+    lines[9].folder
+    lines[9].under eq 0
+
+--- Vue's tree example: a press on a folder opens it (its rows shown
+--- under it) and again closes it; a press on a leaf chooses it; a double
+--- press on a leaf tells `fold` (the program makes it a folder) and Lory
+--- opens it
+test a_press_opens_a_folder_and_a_double_press_makes_a_leaf_a_folder[]
+    _begun[]
+    first = _tree_page[0.0, '[]', false]
+    first.boxes['files'][3] eq 4.0 * tree_row[] + 4.0
+    opened = _tree_page[16.0, _row_press[first, 0, 60.0], false]
+    _told_words[opened] eq 'files/toggle/src/1'
+    tree_open['files'] eq ['src']
+    shown = _tree_page[32.0, '[]', false]
+    shown.boxes['files'][3] eq 7.0 * tree_row[] + 4.0
+    --- (rows now: src, lib, main, old, docs, README, empty)
+    _told_words[_tree_page[48.0, _row_press[shown, 2, 80.0], false]] eq 'files/choose/main/0'
+    --- (old.co is set aside: a press on it does nothing)
+    _told_words[_tree_page[64.0, _row_press[shown, 3, 80.0], false]] eq ''
+    twice = _tree_page[80.0, _row_double[shown, 5], false]
+    _told_words[twice] eq 'files/choose/readme/0 files/choose/readme/0 files/fold/readme/0'
+    'readme' in tree_open['files']
+    closed = _tree_page[96.0, _row_press[shown, 0, 60.0], false]
+    _told_words[closed] eq 'files/toggle/src/0'
+    _tree_page[112.0, '[]', false].boxes['files'][3] eq 4.0 * tree_row[] + 4.0
+
+--- the WAI-ARIA tree's keys: down and up move along the rows shown
+--- (passing one set aside), right opens a closed folder and then goes to
+--- its first twig, left closes an open folder or goes to the twig's
+--- folder, Home and End go to the ends, Enter opens or closes a folder
+--- and chooses a leaf, and * opens every folder beside the twig
+test the_keys_of_a_tree_move_open_and_close_as_the_aria_pattern_says[]
+    _begun[]
+    first = _tree_page[0.0, '[]', false]
+    _tree_page[16.0, _row_press[first, 2, 80.0], false]
+    _focus_now[] eq 'files'
+    _grove['files'].at eq 'readme'
+    _tree_page[32.0, _typed_key['Home'], false]
+    _grove['files'].at eq 'src'
+    _told_words[_tree_page[48.0, _typed_key['ArrowRight'], false]] eq 'files/toggle/src/1'
+    _grove['files'].at eq 'src'
+    _tree_page[64.0, _typed_key['ArrowRight'], false]
+    _grove['files'].at eq 'lib'
+    _tree_page[80.0, _typed_key['ArrowDown'], false]
+    _grove['files'].at eq 'main'
+    _tree_page[96.0, _typed_key['ArrowDown'], false]
+    --- (past old.co, set aside)
+    _grove['files'].at eq 'docs'
+    _tree_page[112.0, _typed_key['ArrowUp'], false]
+    _grove['files'].at eq 'main'
+    _tree_page[128.0, _typed_key['ArrowLeft'], false]
+    _grove['files'].at eq 'src'
+    _told_words[_tree_page[144.0, _typed_key['ArrowLeft'], false]] eq 'files/toggle/src/0'
+    _tree_page[160.0, _typed_key['End'], false]
+    _grove['files'].at eq 'empty'
+    _told_words[_tree_page[176.0, _typed_key['Enter'], false]] eq 'files/toggle/empty/1'
+    _tree_page[192.0, _typed_key['ArrowUp'], false]
+    _told_words[_tree_page[208.0, _typed_key['Enter'], false]] eq 'files/choose/readme/0'
+    _told_words[_tree_page[224.0, _typed_key['*'], false]] eq 'files/toggle/src/1 files/toggle/docs/1'
+    tree_open['files'] eq ['src', 'docs', 'empty']
+    --- (keys tell nothing once the focus has gone)
+    _tree_page[240.0, '[{"type": "key", "key": "Tab", "code": "Tab"}]', false]
+    _focus_now[] eq 'after'
+    _told_words[_tree_page[256.0, _typed_key['Home'], false]] eq ''
+
+--- letters typed go to the next twig shown whose words start so, the
+--- letters typed within a second making one search (Radix's and the
+--- ARIA pattern's typeahead, as menus answer it)
+test typing_ahead_goes_to_the_next_twig_whose_words_start_so[]
+    _begun[]
+    first = _tree_page[0.0, '[]', false]
+    _tree_page[16.0, _row_press[first, 0, 60.0], false]
+    _tree_page[32.0, _typed_key['d'], false]
+    _grove['files'].at eq 'docs'
+    --- (typed within a second of the d, 'dr' starts no twig)
+    _tree_page[48.0, _typed_key['r'], false]
+    _grove['files'].at eq 'docs'
+    _tree_page[1100.0, _typed_key['r'], false]
+    _grove['files'].at eq 'readme'
+    --- (round past the end to the top)
+    _tree_page[2200.0, _typed_key['m'], false]
+    _grove['files'].at eq 'main'
+    --- (gui.co is in a folder closed)
+    _tree_page[3300.0, _typed_key['g'], false]
+    _grove['files'].at eq 'main'
+    _tree_page[4400.0, _typed_key['l'], false]
+    _grove['files'].at eq 'lib'
+    _tree_page[4500.0, _typed_key['i'], false]
+    _grove['files'].at eq 'lib'
+    menus.typeahead_time[] eq 1000.0
+
+--- Vuetify's classic choosing: a folder ticked ticks every twig under it
+--- not set aside; a folder is ticked where every twig under it is,
+--- unticked where none is, mixed (`indeterminate`) else
+test ticking_a_folder_ticks_what_is_under_it_and_a_folder_shows_what_its_twigs_are[]
+    lines = flat[_files[]]
+    ticks = ticked_after[lines, map['' = 'off'], 1, true]
+    ticks['gui'] eq 'on'
+    ticks['xr'] eq 'on'
+    ticks['lib'] eq 'on'
+    ticks['src'] eq 'indeterminate'
+    ticks = ticked_after[lines, ticks, 4, true]
+    ticks['src'] eq 'on'
+    not ('old' in ticks)
+    ticks = ticked_after[lines, ticks, 2, false]
+    ticks['lib'] eq 'indeterminate'
+    ticks['src'] eq 'indeterminate'
+    ticks = ticked_after[lines, ticks, 3, false]
+    ticks['lib'] eq 'off'
+    _begun[]
+    first = _tree_page[0.0, '[]', true]
+    _tree_page[16.0, _row_press[first, 0, 60.0], true]
+    shown = _tree_page[32.0, '[]', true]
+    _told_words[_tree_page[48.0, _row_press[shown, 0, 30.0], true]] eq 'files/check/src/1'
+    tree_ticked['files'] eq ['gui', 'xr', 'main']
+    tick_of['files', 'src'] eq 'on'
+    _tree_page[64.0, _row_press[shown, 2, 100.0], true]
+    _told_words[_tree_page[80.0, _typed_key[' '], true]] eq 'files/check/main/0'
+    tick_of['files', 'src'] eq 'indeterminate'
+    tree_ticked['files'] eq ['gui', 'xr']
+
+--- in a headset a tree is drawn on the page's panel and its rows answer
+--- a ray's press as a pointer's
+test in_a_headset_a_tree_opens_its_folders_as_on_a_page[]
+    _begun[]
+    c = _headset_at[0.0, '[]']
+    first = gui.show[c, gui.column[[tree[c, 'files', _files[]]]]]
+    lory.end[first.canvas] gt 0
+    c = _headset_at[16.0, _row_press[first, 0, 60.0]]
+    _told_words[gui.show[c, gui.column[[tree[c, 'files', _files[]]]]]] eq 'files/toggle/src/1'
+    c = _headset_at[32.0, '[]']
+    opened = gui.show[c, gui.column[[tree[c, 'files', _files[]]]]]
+    len[opened.canvas.verts] gt len[first.canvas.verts]

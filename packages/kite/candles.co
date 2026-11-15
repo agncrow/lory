@@ -1,0 +1,374 @@
+--- Candles for a chart that stands out of a wall: an app's bars read as
+--- it answers them (a day's bars as columns: each bar's second of the
+--- day, its open, high, low, close and volume), folded into candles up to
+--- the second a chart has reached, and the candles' solid shapes — a body
+--- and its wick a candle (thick where much was traded), a slab of volume
+--- under each — gathered a colour (Lory's `solid`), in units a matrix
+--- scales: x in the wall's pixels, y in prices (or in shares, the volume),
+--- z in pixels out of the wall. A chart whose range moves is scaled by its
+--- matrix and built again only when a candle is done.
+---
+---     use kite.candles
+---
+---     d = candles.day_of[status, body]
+---     k = candles.folded[d, 60.0, d.s[0], head, 0, 1.0]
+---     g = candles.bodies[k, 10.0, candles.span_of[k].most, 0.01, true, len[k.s]]
+use math
+use lory
+use lory.solid
+
+--- a symbol's bars of a day: how the asking stands (`asked`, `ok`, `none`,
+--- `failed`) and why it failed; each bar's second of its day, its open,
+--- high, low, close and volume, what its VWAP is of (`pv`: price times
+--- volume), and the close before the day (0 where none is known)
+struct Day [state, why, s, o, h, l, c, v, pv, prev]
+
+fn _none[]
+    slice[[0.0], 0, 0]
+
+fn no_day[state, why]
+    Day[state, why, _none[], _none[], _none[], _none[], _none[], _none[], _none[], 0.0]
+
+fn _column[j, name]
+    out = _none[]
+    v = j[name]
+    if not v.ok
+        return out
+    for x in v
+        out = push[out, 0.0 + x]
+    out
+
+--- an app's answer for one symbol's day ({s, o, h, l, c, v, prev}: a
+--- column each), read
+fn day_of[status, body]
+    if status ne 200
+        return no_day['failed', 'the app answered `status`']
+    j = json[body]
+    if not j.ok
+        return no_day['failed', 'the answer was not read']
+    d = no_day['ok', '']
+    d.s = _column[j, 's']
+    d.o = _column[j, 'o']
+    d.h = _column[j, 'h']
+    d.l = _column[j, 'l']
+    d.c = _column[j, 'c']
+    d.v = _column[j, 'v']
+    n = len[d.s]
+    if len[d.o] ne n or len[d.h] ne n or len[d.l] ne n or len[d.c] ne n or len[d.v] ne n
+        return no_day['failed', 'the answer\'s columns differ in length']
+    if n eq 0
+        d.state = 'none'
+    amounts = _none[]
+    for i in range[n]
+        amounts = push[amounts, d.c[i] * d.v[i]]
+    d.pv = amounts
+    if j.prev.ok
+        d.prev = 0.0 + j.prev
+    d
+
+--- an app's answer for every symbol's candles ({symbols, counts, s, o, h,
+--- l, c, v, pv}: the columns one symbol after another, `counts` of them
+--- each): the symbols, and each one's day
+struct Batch [names, days]
+
+fn batch_of[status, body]
+    names = slice[[''], 0, 0]
+    days = slice[[no_day['ok', '']], 0, 0]
+    if status ne 200
+        return Batch[names, days]
+    j = json[body]
+    if not j.ok
+        return Batch[names, days]
+    ss = _column[j, 's']
+    os = _column[j, 'o']
+    hs = _column[j, 'h']
+    lows = _column[j, 'l']
+    cs = _column[j, 'c']
+    vs = _column[j, 'v']
+    ps = _column[j, 'pv']
+    counts = _column[j, 'counts']
+    n = len[ss]
+    if len[os] ne n or len[hs] ne n or len[lows] ne n or len[cs] ne n or len[vs] ne n or len[ps] ne n
+        return Batch[names, days]
+    from = 0
+    at = 0
+    for name in j.symbols
+        if at lt len[counts]
+            many = int[counts[at]]
+            if from + many lte n
+                d = no_day['ok', '']
+                d.s = slice[ss, from, from + many]
+                d.o = slice[os, from, from + many]
+                d.h = slice[hs, from, from + many]
+                d.l = slice[lows, from, from + many]
+                d.c = slice[cs, from, from + many]
+                d.v = slice[vs, from, from + many]
+                d.pv = slice[ps, from, from + many]
+                if many eq 0
+                    d.state = 'none'
+                names = push[names, '`name`']
+                days = push[days, d]
+            from = from + many
+        at = at + 1
+    Batch[names, days]
+
+--- candles: each one's first second, its open, high, low, close and
+--- volume, the day's VWAP as it stood at its end (NaN where nothing had
+--- traded), whether the last is still growing, and the first one's place
+--- among the day's candles of its span (counted from the day's first bar,
+--- whatever the window: a candle keeps its place as a window slides on)
+struct Candles [s, o, h, l, c, v, vw, growing, first]
+
+fn no_candles[]
+    Candles[_none[], _none[], _none[], _none[], _none[], _none[], _none[], false, 0]
+
+--- the bars from second `lo` to second `hi` of the day folded into
+--- candles of `span` seconds, the last `keep` of them (0: all); a bar
+--- `wide` seconds long is taken once the head has passed it whole (1 for
+--- one-second bars). The VWAP runs from the day's first bar.
+fn folded[d, span, lo, hi, keep, wide]
+    k = no_candles[]
+    n = len[d.s]
+    cur = -1.0
+    co = 0.0
+    ch = 0.0
+    cl = 0.0
+    cc = 0.0
+    cv = 0.0
+    pv = 0.0
+    vol = 0.0
+    vwap = nan
+    --- (the day's candles counted as their bars pass, the window's or not)
+    seen = -1.0
+    places = -1
+    first = 0
+    i = 0
+    while i lt n
+        sec = d.s[i]
+        if sec + wide - 1.0 gt hi
+            break
+        at = floor[sec / span] * span
+        if at ne seen
+            seen = at
+            places = places + 1
+        --- (a candle done takes the VWAP as it stood at its last bar)
+        if sec gte lo
+            if at ne cur
+                if cur gte 0.0
+                    k = _with[k, cur, co, ch, cl, cc, cv, vwap]
+                else
+                    first = places
+                cur = at
+                co = d.o[i]
+                ch = d.h[i]
+                cl = d.l[i]
+                cv = 0.0
+            ch = max[ch, d.h[i]]
+            cl = min[cl, d.l[i]]
+            cc = d.c[i]
+            cv = cv + d.v[i]
+        pv = pv + d.pv[i]
+        vol = vol + d.v[i]
+        if vol gt 0.0
+            vwap = pv / vol
+        i = i + 1
+    if cur gte 0.0
+        k = _with[k, cur, co, ch, cl, cc, cv, vwap]
+        --- (the last grows until the head has passed its whole span)
+        k.growing = cur + span - 1.0 gt hi
+    many = len[k.s]
+    k.first = first
+    if keep gt 0 and many gt keep
+        from = many - keep
+        k = Candles[slice[k.s, from, many], slice[k.o, from, many], slice[k.h, from, many], slice[k.l, from, many], slice[k.c, from, many], slice[k.v, from, many], slice[k.vw, from, many], k.growing, first + from]
+    k
+
+fn _with[k, s, o, h, l, c, v, vwap]
+    k.s = push[k.s, s]
+    k.o = push[k.o, o]
+    k.h = push[k.h, h]
+    k.l = push[k.l, l]
+    k.c = push[k.c, c]
+    k.v = push[k.v, v]
+    k.vw = push[k.vw, vwap]
+    k
+
+--- the prices and the volume a chart of the candles spans: its lowest and
+--- highest price (a little room around them) and its largest volume
+struct Span [lo, hi, most]
+
+fn span_of[k]
+    lo = 0.0
+    hi = 0.0
+    most = 0.0
+    first = true
+    for i in range[len[k.s]]
+        if first or k.l[i] lt lo
+            lo = k.l[i]
+        if first or k.h[i] gt hi
+            hi = k.h[i]
+        first = false
+        most = max[most, k.v[i]]
+    if hi lte lo
+        hi = lo + max[0.01, abs[lo] * 0.01]
+    room = (hi - lo) * 0.06
+    Span[lo - room, hi + room, max[1.0, most]]
+
+--- how far out of the wall a candle of volume `v` stands (its body's
+--- depth): thicker the more was traded
+fn depth[v, most]
+    12.0 + 34.0 * max[0.0, min[1.0, v / max[1.0, most]]]
+
+--- the bodies and wicks of the first `upto` candles that rose (`rising`)
+--- or fell: x in pixels (`slot` a candle), y in prices, z in pixels; a
+--- body no thinner than `thin` (a price)
+fn bodies[k, slot, most, thin, rising, upto]
+    bodies_of[k, slot, most, thin, rising, 0, upto, 0]
+
+--- the same of candles `from` to `upto` (not taking it), x from the left
+--- of candle `origin` — where shapes held for a window were begun, its
+--- new candles laid on from there (the candle may have slid out of the
+--- window since: a place before its first, below 0)
+fn bodies_of[k, slot, most, thin, rising, from, upto, origin]
+    g = solid.geo[]
+    for i in range[max[0, from], min[upto, len[k.s]]]
+        rose = k.c[i] gte k.o[i]
+        if rose eq rising
+            foot = min[k.o[i], k.c[i]]
+            top = max[max[k.o[i], k.c[i]], foot + thin]
+            deep = depth[k.v[i], most]
+            x = (0.0 + i - origin) * slot
+            g = solid.block[g, x + slot * 0.18, foot, 6.0, x + slot * 0.82, top, 6.0 + deep]
+            g = solid.block[g, x + slot * 0.5 - 0.9, k.l[i], 6.0 + deep * 0.3, x + slot * 0.5 + 0.9, k.h[i], 6.0 + deep * 0.7]
+    g
+
+--- the slabs of volume under the first `upto` candles that rose or fell:
+--- y in shares
+fn volumes[k, slot, rising, upto]
+    volumes_of[k, slot, rising, 0, upto, 0]
+
+fn volumes_of[k, slot, rising, from, upto, origin]
+    g = solid.geo[]
+    for i in range[max[0, from], min[upto, len[k.s]]]
+        rose = k.c[i] gte k.o[i]
+        if rose eq rising and k.v[i] gt 0.0
+            x = (0.0 + i - origin) * slot
+            g = solid.block[g, x + slot * 0.18, 0.0, 1.0, x + slot * 0.82, k.v[i], 5.0]
+    g
+
+--- the VWAP as a ribbon over the candles, in pixels: `ky` pixels a unit
+--- of price above `lo`, lifted `foot` pixels
+fn mean_line[k, slot, lo, ky, foot]
+    mean_line_of[k, slot, lo, ky, foot, 0, len[k.s], 0]
+
+--- the same through candles `from` to `upto` (not taking it), x from the
+--- left of candle `origin`
+fn mean_line_of[k, slot, lo, ky, foot, from, upto, origin]
+    xs = _none[]
+    ys = _none[]
+    for i in range[max[0, from], min[upto, len[k.s]]]
+        v = k.vw[i]
+        if v eq v
+            xs = push[xs, (0.0 + i - origin) * slot + slot * 0.5]
+            ys = push[ys, foot + (v - lo) * ky]
+    solid.ribbon[solid.geo[], xs, ys, 2.4, 50.0, 54.0]
+
+--- a second of a day as a clock says it: 09:30, or 09:30:15 where seconds
+--- matter
+fn clock[secs, with_seconds]
+    whole = int[secs]
+    hh = whole / 3600
+    mm = (whole - hh * 3600) / 60
+    ss = whole - hh * 3600 - mm * 60
+    said = '`_two[hh]`:`_two[mm]`'
+    if with_seconds
+        said = '`said`:`_two[ss]`'
+    said
+
+fn _two[n]
+    if n lt 10
+        return '0`n`'
+    '`n`'
+
+--- a price said: more places the smaller it is
+fn price[v]
+    if abs[v] gte 100.0
+        return '`fmt[v, decimals = 2]`'
+    if abs[v] gte 1.0
+        return '`fmt[v, decimals = 2]`'
+    '`fmt[v, decimals = 4]`'
+
+fn _body[]
+    '{"s": [14400, 14401, 14402, 14460, 14461], "o": [10, 10.5, 10.2, 11, 11.5], "h": [10.6, 10.8, 10.4, 11.6, 12], "l": [9.9, 10.1, 10, 10.9, 11.4], "c": [10.5, 10.2, 10.3, 11.5, 11.9], "v": [100, 200, 100, 50, 150], "prev": 9.5}'
+
+test bars_fold_into_candles_up_to_the_head[]
+    d = day_of[200, _body[]]
+    d.state eq 'ok'
+    d.prev eq 9.5
+    len[d.pv] eq 5
+    k = folded[d, 60.0, 14400.0, 14461.0, 0, 1.0]
+    k.s eq [14400.0, 14460.0]
+    k.o eq [10.0, 11.0]
+    k.h eq [10.8, 12.0]
+    k.l eq [9.9, 10.9]
+    k.c eq [10.3, 11.9]
+    k.v eq [400.0, 200.0]
+    k.growing eq true
+    --- (the head a second earlier: the last bar is not taken yet)
+    folded[d, 60.0, 14400.0, 14460.0, 0, 1.0].c eq [10.3, 11.5]
+    --- (the VWAP runs from the day's first bar)
+    round[k.vw[0] * 1000.0] eq 10300
+    --- (only the last candle kept, and a window that begins later)
+    folded[d, 60.0, 14400.0, 14461.0, 1, 1.0].s eq [14460.0]
+    folded[d, 60.0, 14460.0, 14461.0, 0, 1.0].o eq [11.0]
+    sp = span_of[k]
+    sp.lo lt 9.9
+    sp.hi gt 12.0
+    sp.most eq 400.0
+    day_of[404, ''].state eq 'failed'
+    day_of[200, '{"s": [], "o": [], "h": [], "l": [], "c": [], "v": [], "prev": 0}'].state eq 'none'
+
+test candles_are_blocks_a_colour[]
+    k = folded[day_of[200, _body[]], 60.0, 14400.0, 14461.0, 0, 1.0]
+    up = bodies[k, 10.0, 400.0, 0.01, true, 2]
+    solid.corners[up] eq 120
+    solid.corners[bodies[k, 10.0, 400.0, 0.01, false, 2]] eq 0
+    solid.corners[bodies[k, 10.0, 400.0, 0.01, true, 1]] eq 60
+    solid.corners[volumes[k, 10.0, true, 2]] eq 60
+    depth[400.0, 400.0] eq 46.0
+    depth[0.0, 400.0] eq 12.0
+    clock[34200.0, false] eq '09:30'
+    clock[14461.0, true] eq '04:01:01'
+    price[3.04] eq '3.04'
+
+--- a candle keeps its place among the day's as the window slides, and a
+--- window's new candle is laid where it would be in the whole window
+test a_candle_keeps_its_place_as_the_window_slides[]
+    d = day_of[200, _body[]]
+    --- (14400's minute is the day's first candle, 14460's its second)
+    folded[d, 60.0, 14400.0, 14461.0, 0, 1.0].first eq 0
+    folded[d, 60.0, 14460.0, 14461.0, 0, 1.0].first eq 1
+    folded[d, 60.0, 14400.0, 14461.0, 1, 1.0].first eq 1
+    --- (of seconds, the five bars are five candles: the last two kept)
+    k = folded[d, 1.0, 14400.0, 14461.0, 2, 1.0]
+    k.s eq [14460.0, 14461.0]
+    k.first eq 3
+    whole = bodies_of[k, 10.0, 400.0, 0.01, true, 0, 2, 0]
+    added = bodies_of[k, 10.0, 400.0, 0.01, true, 1, 2, 0]
+    solid.corners[whole] eq 120
+    solid.corners[added] eq 60
+    added.at[0] eq whole.at[180]
+    --- (begun two candles before the window's first: laid two slots on)
+    bodies_of[k, 10.0, 400.0, 0.01, true, 0, 1, -2].at[0] eq whole.at[0] + 20.0
+    solid.corners[volumes_of[k, 10.0, true, 1, 2, 0]] eq 30
+    solid.corners[mean_line_of[k, 10.0, 0.0, 1.0, 0.0, 0, 2, 0]] eq 18
+    solid.corners[mean_line_of[k, 10.0, 0.0, 1.0, 0.0, 1, 2, 0]] eq 0
+
+test a_batch_is_a_day_a_symbol[]
+    b = batch_of[200, '{"t0": 0, "symbols": ["AA", "BB"], "counts": [2, 1], "s": [14400, 14460, 14400], "o": [1, 2, 5], "h": [2, 3, 6], "l": [1, 2, 5], "c": [2, 3, 6], "v": [10, 20, 30], "pv": [15, 50, 165]}']
+    b.names eq ['AA', 'BB']
+    b.days[0].c eq [2.0, 3.0]
+    b.days[1].pv eq [165.0]
+    --- (a minute's candle is taken once the head has passed the whole of it)
+    folded[b.days[0], 60.0, 14400.0, 14500.0, 0, 60.0].s eq [14400.0]
+    folded[b.days[0], 60.0, 14400.0, 14519.0, 0, 60.0].s eq [14400.0, 14460.0]

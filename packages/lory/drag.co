@@ -1,0 +1,3363 @@
+--- Lory's drag and drop (docs/components/drag.md): lists reordered, and
+--- items carried between them, by dragging, as SortableJS 1.15.7 does it;
+--- and the drags that are not a list's, as Motion 14.7.1 does them: a
+--- control dragged freely and thrown, a stack of cards swiped away, a row
+--- swiped to show its actions, a slider that reveals one picture over
+--- another, two fingers that zoom, turn and pan, and a honeycomb of icons
+--- dragged and zoomed.
+---
+--- What SortableJS and Motion do is re-implemented here, and
+--- tests/drag/reference.co holds it to what they did: SortableJS driven in
+--- a browser by tests/drag/reference.py, Motion run in Node by
+--- tests/drag/motion.mjs. None of their source is included: their
+--- behaviour was read from those versions and written anew. A thrown
+--- drag's glide and the springs are lory.motion's, held to Motion there.
+---
+--- A list is a column, row or grid of controls, each with an id. gui draws
+--- it, through `drag.show` (or `drag.show_at`) in place of `gui.show`, and
+--- what the reader does to it comes back as `Told` records, the events
+--- SortableJS tells, in its order:
+---
+---     todo = drag.grouped[drag.list['todo', items, gap = 0.0], 'tasks']
+---     done = drag.grouped[drag.list['done', others, gap = 0.0], 'tasks']
+---     shown = drag.show[c, gui.row[[todo, done], gap = 20.0]]
+---     for t in shown.told
+---         if t.act eq 'end'
+---             lists = drag.after[lists, t]
+---
+--- While an item is dragged the lists show the drag's order; the program
+--- takes the change into its own data at `end` (`drag.after` does it for
+--- lists of ids) and the next frame's tree shows it.
+
+use memory
+use lory
+use gui
+use motion
+use math as m
+
+--- ---- what a drag tells ----
+
+--- what happened (`act`: choose, unchoose, start, clone, move, change,
+--- add, remove, update, sort, end, filter, spill, select, deselect), the
+--- list that tells it, the item, the list it came from and the one it is
+--- over or went to, its index before and after (-1 for none), how it was
+--- pulled ('' none, 'yes', 'clone'), the item it trades places with (a
+--- swapping list's), the selected items carried with it (a list of
+--- `multiple`'s) and their indices before and after, and, for a move, the
+--- item it is over and whether it goes after it
+struct Told [act, list, item, from, to, old_index, new_index, pull, swap, items, olds, news, related, after]
+
+--- the tree shown, as gui shows it (the canvas, gui's events with the
+--- drags' after them, the boxes in the page's pixels), and what the drags
+--- told this frame
+struct Dragged [canvas, events, boxes, told]
+
+--- ---- lists ----
+
+--- a list reordered by dragging: its controls (each with an id: one
+--- without is given `<list>:<index>`) one under another (`along`
+--- 'column'), side by side ('row', each at its own width) or in `columns`
+--- equal columns ('grid'), `gap` CSS pixels apart, `pad` inside its edge
+--- (a grid has none) and at least `tall` high (a column: an empty one
+--- stays a place to drop into)
+fn list[id, kids, along = 'column', gap = 10.0, pad = 0.0, columns = 2, tall = 0.0]
+    n = gui.column[kids, gap = gap, pad = pad]
+    if along eq 'row'
+        n = gui.row[kids, gap = gap, align = 'start', pad = pad]
+    if along eq 'grid'
+        n = gui.grid[kids, columns = columns, gap = gap]
+    n.id = id
+    n.tall = tall
+    n.opts['drag'] = 'list'
+    n.opts['drag_along'] = along
+    n.nums['drag_gap'] = gap
+    n.nums['drag_pad'] = pad
+    if along eq 'grid'
+        n.nums['drag_pad'] = 0.0
+    n.nums['drag_columns'] = 0.0 + max[1, columns]
+    n
+
+--- the list in a group, `name`: an item is carried between lists that
+--- take it. `pull` says where its items may go ('' or 'yes' to any list
+--- that takes them, 'no' nowhere, 'clone' a copy goes and the item
+--- stays, or the names of the groups that may take them, separated by
+--- commas) and `take` what it takes ('' its own group's items, 'yes' any,
+--- 'no' none, or the names of the groups it takes from): SortableJS's
+--- `group`, its `pull` and `put`
+fn grouped[n, name, pull = '', take = '']
+    n.opts['drag_group'] = name
+    n.opts['drag_pull'] = pull
+    n.opts['drag_take'] = take
+    n
+
+--- the list's own order kept: its items may be carried out, and back,
+--- but not reordered (SortableJS's `sort: false`)
+fn unsorted[n]
+    n.nums['drag_unsorted'] = 1.0
+    n
+
+--- its items slide to their places over `ms` milliseconds as the order
+--- changes (SortableJS's `animation`, eased as CSS's `ease`)
+fn animated[n, ms]
+    n.nums['drag_animation'] = ms
+    n
+
+--- where a neighbour is passed (SortableJS's swapThreshold, invertSwap,
+--- invertedSwapThreshold and emptyInsertThreshold): over `swap` of its
+--- length about its middle; with `invert`, over its outer parts,
+--- `inverted` of its length (-1: as `swap`); an empty list is met
+--- `empty` CSS pixels outside its edge
+fn thresholds[n, swap = 1.0, invert = false, inverted = -1.0, empty = 5.0]
+    n.nums['drag_swap_at'] = swap
+    n.nums['drag_invert'] = 0.0
+    if invert
+        n.nums['drag_invert'] = 1.0
+    n.nums['drag_inverted_at'] = inverted
+    n.nums['drag_empty_at'] = empty
+    n
+
+--- an item let go over another trades places with it (SortableJS's Swap
+--- plugin; the list it is let go in swaps too)
+fn swapping[n]
+    n.nums['drag_swaps'] = 1.0
+    n
+
+--- items pressed are selected (pressed again, let go), and the selected
+--- are dragged together (SortableJS's MultiDrag plugin); with a `key`
+--- ('ctrl', 'meta', 'shift' or 'alt'), a press without it held selects
+--- only the item pressed; Shift selects from the last one selected
+fn multiple[n, key = '']
+    n.nums['drag_multi'] = 1.0
+    n.opts['drag_multi_key'] = key
+    n
+
+--- an item let go outside every list goes back where it came from
+--- (`how` 'revert') or is taken out ('remove'): SortableJS's OnSpill
+fn spilled[n, how]
+    n.opts['drag_spill'] = how
+    n
+
+--- dragged within `sensitivity` CSS pixels of an edge of the scroll area
+--- the list stands in (its first control), the area scrolls `speed`
+--- pixels every 24 ms (SortableJS's AutoScroll; 0 sensitivity: never)
+fn scrolling[n, sensitivity = 30.0, speed = 10.0]
+    n.nums['drag_sensitivity'] = sensitivity
+    n.nums['drag_speed'] = speed
+    n
+
+--- a drag starts only once the item has been held `ms` milliseconds (a
+--- touch's alone, `touch_only`); moving first lets it go
+fn delayed[n, ms, touch_only = false]
+    n.nums['drag_delay'] = ms
+    n.nums['drag_touch_only'] = 0.0
+    if touch_only
+        n.nums['drag_touch_only'] = 1.0
+    n
+
+--- a drag starts only once the pointer has moved `px` CSS pixels
+--- (SortableJS's fallbackTolerance)
+fn tolerance[n, px]
+    n.nums['drag_tolerance'] = px
+    n
+
+--- the list's items stay where they are (SortableJS's `disabled`)
+fn disabled[n]
+    n.nums['drag_off'] = 1.0
+    n
+
+--- an item of the list is dragged only by its grip (`grip[]` among its
+--- controls: SortableJS's `handle`)
+fn handled[n]
+    n.nums['drag_handled'] = 1.0
+    n
+
+--- the grip a handled list's item is dragged by: six dots, 24 CSS pixels
+--- square
+fn grip[]
+    n = gui.drawn['', 0.0, 24.0, 24.0, _grip_painted]
+    n.opts['drag_grip'] = 'yes'
+    n
+
+fn _grip_painted[d]
+    s = d.s
+    r = 1.6 * s
+    i = 0
+    while i lt 6
+        cx = d.x + d.w / 2.0 + (-3.0 + 6.0 * (i % 2)) * s
+        cy = d.y + d.h / 2.0 + (-6.0 + 6.0 * (i / 2)) * s
+        d.c = lory.circle[d.c, cx, cy, r, d.look.muted]
+        i = i + 1
+    d
+
+--- (a painter called once by name, so that its parameter is typed: one
+--- handed into a record in a module is refused otherwise)
+fn _painters_typed[c]
+    d = gui.Drawn[c, '', 0.0, 0.0, 1.0, '', 0.0, 0.0, 0.0, 0.0, 1.0, gui.dark[], false, false, false, false, 0.0, 0.0, slice[[''], 0, 0], slice[[gui.Event['', '', '', 0.0]], 0, 0]]
+    d = _grip_painted[d]
+    d = _reveal_painted[d]
+    d.c
+
+--- the item is not dragged: pressed, its list tells `filter`
+--- (SortableJS's `filter`)
+fn filtered[n]
+    n.opts['drag_filtered'] = 'yes'
+    n
+
+--- ---- the lists as the tree asks for them ----
+
+--- a list as the tree asks for it this frame: how it lays its items out,
+--- its group, its options, the scroll area it stands in, the lists and
+--- items it stands inside (nearest first), its items' ids in the
+--- program's order, and those filtered and with a grip
+struct Spec [id, along, gap, pad, columns, tall, name, pull, take, sorts, animation, swap_at, invert, inverted_at, empty_at, swaps, multi, multi_key, spill, sensitivity, speed, delay, touch_only, tolerance, off, handled, scroller, ancestors, inside, items, filtered, grips]
+
+--- what the tree holds for the drags: its lists, every list item's node
+--- by id, the scroll areas' first controls, and the drags that are not a
+--- list's (free, cards, rows, pinches, honeycombs) by id
+struct Sensed [specs, entries, firsts, others]
+
+fn _no_specs[]
+    slice[[_no_spec['']], 0, 0]
+
+fn _no_spec[id]
+    Spec[id, 'column', 10.0, 0.0, 1.0, 0.0, '', '', '', true, 0.0, 1.0, false, -1.0, 5.0, false, false, '', '', 30.0, 10.0, 0.0, false, 0.0, false, false, '', slice[[''], 0, 0], slice[[''], 0, 0], slice[[''], 0, 0], slice[[''], 0, 0], slice[[''], 0, 0]]
+
+fn _no_texts[]
+    slice[[''], 0, 0]
+
+fn _sensed_of[tree]
+    s = Sensed[_no_specs[], map['' = gui.space[0.0]], map['' = ''], map['' = gui.space[0.0]]]
+    _sense[s, tree, '', _no_texts[], _no_texts[]]
+
+--- (`scroller`: the scroll area the node stands in; `ancestors` and
+--- `inside`: the lists and their items around it, nearest first)
+fn _sense[s, n, scroller, ancestors, inside]
+    if _opt[n, 'drag', ''] eq 'list'
+        sp = _spec_from[n, scroller, ancestors, inside]
+        s.specs = push[s.specs, sp]
+        i = 0
+        while i lt len[n.kids]
+            k = n.kids[i]
+            id = k.id
+            if id eq ''
+                id = '`n.id`:`i`'
+                k.id = id
+            s.entries[id] = k
+            s = _sense[s, k, scroller, _prepended[ancestors, n.id], _prepended[inside, id]]
+            i = i + 1
+        return s
+    if _opt[n, 'drag', ''] ne '' and n.id ne ''
+        s.others[n.id] = n
+    if n.tag eq 'scroll' and n.id ne ''
+        scroller = n.id
+        if len[n.kids] gt 0
+            s.firsts[n.id] = n.kids[0].id
+    i = 0
+    while i lt len[n.kids]
+        s = _sense[s, n.kids[i], scroller, ancestors, inside]
+        i = i + 1
+    s
+
+fn _prepended[xs, x]
+    out = [x]
+    i = 0
+    while i lt len[xs]
+        out = push[out, xs[i]]
+        i = i + 1
+    out
+
+fn _spec_from[n, scroller, ancestors, inside]
+    sp = _no_spec[n.id]
+    sp.along = _opt[n, 'drag_along', 'column']
+    sp.gap = _num[n, 'drag_gap', 10.0]
+    sp.pad = _num[n, 'drag_pad', 0.0]
+    sp.columns = _num[n, 'drag_columns', 1.0]
+    sp.tall = n.tall
+    sp.name = _opt[n, 'drag_group', '']
+    sp.pull = _opt[n, 'drag_pull', '']
+    sp.take = _opt[n, 'drag_take', '']
+    sp.sorts = not _on[n, 'drag_unsorted']
+    sp.animation = _num[n, 'drag_animation', 0.0]
+    sp.swap_at = _num[n, 'drag_swap_at', 1.0]
+    sp.invert = _on[n, 'drag_invert']
+    sp.inverted_at = _num[n, 'drag_inverted_at', -1.0]
+    sp.empty_at = _num[n, 'drag_empty_at', 5.0]
+    sp.swaps = _on[n, 'drag_swaps']
+    sp.multi = _on[n, 'drag_multi']
+    sp.multi_key = _opt[n, 'drag_multi_key', '']
+    sp.spill = _opt[n, 'drag_spill', '']
+    sp.sensitivity = _num[n, 'drag_sensitivity', 30.0]
+    sp.speed = _num[n, 'drag_speed', 10.0]
+    sp.delay = _num[n, 'drag_delay', 0.0]
+    sp.touch_only = _on[n, 'drag_touch_only']
+    sp.tolerance = _num[n, 'drag_tolerance', 0.0]
+    sp.off = _on[n, 'drag_off']
+    sp.handled = _on[n, 'drag_handled']
+    sp.scroller = scroller
+    sp.ancestors = ancestors
+    sp.inside = inside
+    items = _no_texts[]
+    filtered_ids = _no_texts[]
+    grips = _no_texts[]
+    i = 0
+    while i lt len[n.kids]
+        k = n.kids[i]
+        id = k.id
+        if id eq ''
+            id = '`n.id`:`i`'
+        items = push[items, id]
+        if _opt[k, 'drag_filtered', ''] eq 'yes'
+            filtered_ids = push[filtered_ids, id]
+        if _has_grip[k]
+            grips = push[grips, id]
+        i = i + 1
+    sp.items = items
+    sp.filtered = filtered_ids
+    sp.grips = grips
+    sp
+
+fn _has_grip[n]
+    if _opt[n, 'drag_grip', ''] eq 'yes'
+        return true
+    i = 0
+    while i lt len[n.kids]
+        if _has_grip[n.kids[i]]
+            return true
+        i = i + 1
+    false
+
+fn _opt[n, key, otherwise]
+    if key in n.opts
+        return n.opts[key]
+    otherwise
+
+fn _num[n, key, otherwise]
+    if key in n.nums
+        return n.nums[key]
+    otherwise
+
+fn _on[n, key]
+    _num[n, key, 0.0] gt 0.5
+
+fn _spec_of[specs, id]
+    i = 0
+    while i lt len[specs]
+        if specs[i].id eq id
+            return specs[i]
+        i = i + 1
+    _no_spec['']
+
+fn _has_spec[specs, id]
+    i = 0
+    while i lt len[specs]
+        if specs[i].id eq id
+            return true
+        i = i + 1
+    false
+
+--- whether items lie top to bottom in the list (SortableJS's direction:
+--- a column's and a one-column grid's), else side by side
+fn _vertical[sp]
+    if sp.along eq 'row'
+        return false
+    if sp.along eq 'grid'
+        return sp.columns lte 1.0
+    true
+
+--- ---- what the drags keep between frames ----
+
+--- the drag under way (`stage` '' none, 'pending' held for its delay,
+--- 'held' its delay let go, 'chosen' pressed, 'dragging'), and what
+--- SortableJS keeps of it; the lists' orders while it lasts; the slides
+--- and their history; the selection; the scroll it turns; and where each
+--- list and item was laid out last
+struct Kept [stage, item, source, parent, next_id, old_index, start_index, new_index, down_x, down_y, last_x, last_y, chose_at, loop_at, touched, touch_x, touch_y, ghost, ghost_dx, ghost_dy, last_target, last_direction, past_first, circumstantial, move_distance, silent_until, put_list, put_modes, clone_shown, orders, swap_with, selected, sel_list, last_select, multi_on, sorted_index, scroll_id, scroll_v, scroll_since, scroll_done, scroll_quirk, scroll_shift, anims, slides_until, prev_from, prev_to, lasting, reset_at, ignores, ignore_until, told, key_down, layouts, pointer, device, pointer_x, pointer_y, pressed, moved_drag, finished]
+
+fn _fresh[]
+    Kept['', '', '', '', '', -1, -1, -1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, 0.0, 0.0, [0.0, 0.0, 0.0, 0.0], 0.0, 0.0, '', 0, false, false, 0.0, -1.0, '', map['' = ''], false, map['' = ['']], '', _no_texts[], '', '', false, map['' = -1], '', 0, 0.0, 0, false, 0.0, map['' = [0.0, 0.0, 0.0, 0.0]], map['' = 0.0], map['' = [0.0, 0.0, 0.0, 0.0]], map['' = [0.0, 0.0, 0.0, 0.0]], map['' = 0.0], map['' = 0.0], map['' = ''], map['' = 0.0], _no_told[], false, map['' = [0.0, 0.0, 0.0, 0.0]], '', '', 0.0, 0.0, false, false, map['' = ['']]]
+
+fn _no_told[]
+    slice[[Told['', '', '', '', '', -1, -1, '', '', _no_texts[], _no_ints[], _no_ints[], '', false]], 0, 0]
+
+fn _no_ints[]
+    out = []
+    for i in range[0]
+        out = push[out, 0]
+    out
+
+--- ---- orders ----
+
+fn _order[k, id]
+    if id in k.orders
+        return k.orders[id]
+    _no_texts[]
+
+fn _copy_of[id]
+    '`id`:copy'
+
+fn _is_copy[id]
+    ends[id, ':copy']
+
+fn _original[id]
+    if _is_copy[id]
+        return slice[id, 0, len[id] - 5]
+    id
+
+--- where the item stands among its list's (SortableJS's index: the copy
+--- left behind not counted), -1 where it is not in it
+fn _index_in[order, id]
+    i = 0
+    at = 0
+    while i lt len[order]
+        if order[i] eq id
+            return at
+        if not _is_copy[order[i]]
+            at = at + 1
+        i = i + 1
+    -1
+
+--- where it stands among them all, the copy counted
+fn _pos_in[order, id]
+    i = 0
+    while i lt len[order]
+        if order[i] eq id
+            return i
+        i = i + 1
+    -1
+
+fn _without[order, id]
+    out = _no_texts[]
+    i = 0
+    while i lt len[order]
+        if order[i] ne id
+            out = push[out, order[i]]
+        i = i + 1
+    out
+
+--- the order with `id` put before `before` ('' or absent: at the end)
+fn _put_before[order, id, before]
+    out = _no_texts[]
+    placed = false
+    i = 0
+    while i lt len[order]
+        if order[i] eq before and not placed
+            out = push[out, id]
+            placed = true
+        out = push[out, order[i]]
+        i = i + 1
+    if not placed
+        out = push[out, id]
+    out
+
+--- the list the item stands in ('' none)
+fn _list_holding[k, specs, id]
+    i = 0
+    while i lt len[specs]
+        if _pos_in[_order[k, specs[i].id], id] gte 0
+            return specs[i].id
+        i = i + 1
+    ''
+
+--- the index of the item in the list it stands in, -1 none
+fn _index_of[k, specs, id]
+    holder = _list_holding[k, specs, id]
+    if holder eq ''
+        return -1
+    _index_in[_order[k, holder], id]
+
+--- the item moved into `into` before `before` (SortableJS's insertBefore:
+--- an item put before itself stays)
+fn _moved_to[k, specs, id, into, before]
+    if before eq id
+        return k
+    holder = _list_holding[k, specs, id]
+    if holder ne ''
+        k.orders[holder] = _without[_order[k, holder], id]
+    k.orders[into] = _put_before[_order[k, into], id, before]
+    k
+
+--- the id after `id` in the order ('' none)
+fn _next_in[order, id]
+    at = _pos_in[order, id]
+    if at lt 0 or at + 1 gte len[order]
+        return ''
+    order[at + 1]
+
+--- ---- where things stand ----
+
+fn _layout[k, id]
+    if id in k.layouts
+        return k.layouts[id]
+    [0.0, 0.0, 0.0, 0.0]
+
+fn _laid_out[k, id]
+    id ne '' and id in k.layouts
+
+--- how far the item is drawn from its place at `t`, sliding (CSS's ease
+--- over the slide's time)
+fn _offset[k, id, t]
+    if not (id in k.anims)
+        return [0.0, 0.0]
+    a = k.anims[id]
+    if a[3] lte 0.0
+        return [0.0, 0.0]
+    p = (t - a[2]) / a[3]
+    if p gte 1.0
+        return [0.0, 0.0]
+    if p lt 0.0
+        p = 0.0
+    left = 1.0 - motion.eased[_css_ease[], p]
+    [a[0] * left, a[1] * left]
+
+fn _css_ease[]
+    motion.cubic_bezier[0.25, 0.1, 0.25, 1.0]
+
+--- the item's box as it shows at `t`
+fn _rect_at[k, id, t]
+    r = _layout[k, id]
+    o = _offset[k, id, t]
+    [r[0] + o[0], r[1] + o[1], r[2], r[3]]
+
+--- whether the item is sliding (SortableJS's `animated`)
+fn _sliding[k, id, t]
+    id in k.slides_until and t lt k.slides_until[id]
+
+--- sliding along both axes (SortableJS's animatingX and animatingY)
+fn _both_ways[k, id, t]
+    if not _sliding[k, id, t] or not (id in k.anims)
+        return false
+    a = k.anims[id]
+    a[0] ne 0.0 and a[1] ne 0.0
+
+--- whether a slide's time is still kept for it (thisAnimationDuration)
+fn _lasting[k, id, t]
+    id in k.reset_at and t lt k.reset_at[id]
+
+--- whether the list waits for its item to slide past before it is met
+--- again (SortableJS's _ignoreWhileAnimating)
+fn _ignored[k, list_id, target, t]
+    if not (list_id in k.ignores) or k.ignores[list_id] eq ''
+        return false
+    k.ignores[list_id] eq target and t lt k.ignore_until[list_id]
+
+fn _inside[x, y, r]
+    x gte r[0] and y gte r[1] and x lt r[0] + r[2] and y lt r[1] + r[3]
+
+--- JavaScript's Math.round: the nearest whole number, a half up
+fn _js_round[x]
+    float[floor[x + 0.5]]
+
+--- SortableJS's isRectEqual: the same box, rounded
+fn _same_rect[a, b]
+    _js_round[a[1]] eq _js_round[b[1]] and _js_round[a[0]] eq _js_round[b[0]] and _js_round[a[3]] eq _js_round[b[3]] and _js_round[a[2]] eq _js_round[b[2]]
+
+--- a list in the chain under the pointer, and its item there ('' none:
+--- the list itself)
+struct Link [list, kid]
+
+--- the lists under the point, the nearest first, each with its item
+--- there (the last drawn of those whose box at `t` holds it)
+fn _chain_at[k, specs, x, y, t]
+    found = slice[[Link['', '']], 0, 0]
+    depths = []
+    i = 0
+    while i lt len[specs]
+        sp = specs[i]
+        if _laid_out[k, sp.id] and _inside[x, y, _layout[k, sp.id]]
+            order = _order[k, sp.id]
+            kid = ''
+            j = 0
+            while j lt len[order]
+                if _laid_out[k, order[j]] and _inside[x, y, _rect_at[k, order[j], t]]
+                    kid = order[j]
+                j = j + 1
+            found = push[found, Link[sp.id, kid]]
+            depths = push[depths, len[sp.ancestors]]
+        i = i + 1
+    --- (the deepest first, as the page's elements nest)
+    out = slice[[Link['', '']], 0, 0]
+    deepest = 0
+    i = 0
+    while i lt len[depths]
+        deepest = max[deepest, depths[i]]
+        i = i + 1
+    d = deepest
+    while d gte 0
+        i = 0
+        while i lt len[found]
+            if depths[i] eq d
+                out = push[out, found[i]]
+            i = i + 1
+        d = d - 1
+    out
+
+--- whether the point is on the list: its box or an item of it as shown
+fn _on_list[k, list_id, x, y, t]
+    if _laid_out[k, list_id] and _inside[x, y, _layout[k, list_id]]
+        return true
+    order = _order[k, list_id]
+    i = 0
+    while i lt len[order]
+        if _laid_out[k, order[i]] and _inside[x, y, _rect_at[k, order[i], t]]
+            return true
+        i = i + 1
+    false
+
+--- whether the list holds the item, itself or in a list inside it
+fn _holds[specs, list_id, holder]
+    if holder eq ''
+        return false
+    if holder eq list_id
+        return true
+    sp = _spec_of[specs, holder]
+    i = 0
+    while i lt len[sp.ancestors]
+        if sp.ancestors[i] eq list_id
+            return true
+        i = i + 1
+    false
+
+--- ---- the layout as the order changes ----
+
+--- whether gui stands the control as wide as the column it is in
+fn _stretched[n]
+    t = n.tag
+    if t eq 'column' or t eq 'panel' or t eq 'scroll' or t eq 'table' or t eq 'heading' or t eq 'label' or t eq 'note' or t eq 'text' or t eq 'grid' or t eq 'item' or t eq 'divider' or t eq 'header' or t eq 'details' or t eq 'tabs'
+        return true
+    if t eq 'roving'
+        return _opt[n, 'along', 'column'] eq 'column'
+    if t eq 'row'
+        return _opt[n, 'justify', ''] ne ''
+    if t eq 'area' or t eq 'drawn' or t eq 'progress'
+        return n.wide eq 0.0
+    if t eq 'overlay'
+        return _on[n, 'stretch']
+    false
+
+fn _entry_stretches[sensed, id]
+    o = _original[id]
+    if o in sensed.entries
+        return _stretched[sensed.entries[o]]
+    true
+
+--- the size an item was laid out at last (a copy: its original's)
+fn _size_of[k, id]
+    if _laid_out[k, id]
+        return _layout[k, id]
+    _layout[k, _original[id]]
+
+--- the lists' items laid out again where their order changed, as gui
+--- will lay them out (each item at the size it had)
+fn _relaid[k, sensed, ids]
+    i = 0
+    while i lt len[ids]
+        if ids[i] ne ''
+            k = _relaid_list[k, sensed, _spec_of[sensed.specs, ids[i]]]
+        i = i + 1
+    k
+
+fn _relaid_list[k, sensed, sp]
+    if sp.id eq '' or not _laid_out[k, sp.id]
+        return k
+    b = _layout[k, sp.id]
+    order = _order[k, sp.id]
+    pad = sp.pad
+    gap = sp.gap
+    if sp.along eq 'grid'
+        cols = int[sp.columns]
+        cell = (b[2] - gap * (sp.columns - 1.0)) / sp.columns
+        cy = b[1]
+        r = 0
+        while r * cols lt len[order]
+            rh = 0.0
+            i = r * cols
+            while i lt min[len[order], (r + 1) * cols]
+                rh = max[rh, _size_of[k, order[i]][3]]
+                i = i + 1
+            i = r * cols
+            while i lt min[len[order], (r + 1) * cols]
+                sz = _size_of[k, order[i]]
+                w = sz[2]
+                if _entry_stretches[sensed, order[i]]
+                    w = cell
+                k.layouts[order[i]] = [b[0] + (cell + gap) * (i - r * cols), cy, w, sz[3]]
+                i = i + 1
+            cy = cy + rh + gap
+            r = r + 1
+        return k
+    if sp.along eq 'row'
+        cx = b[0] + pad
+        tallest = 0.0
+        i = 0
+        while i lt len[order]
+            sz = _size_of[k, order[i]]
+            k.layouts[order[i]] = [cx, b[1] + pad, sz[2], sz[3]]
+            cx = cx + sz[2] + gap
+            tallest = max[tallest, sz[3]]
+            i = i + 1
+        k.layouts[sp.id] = [b[0], b[1], b[2], tallest + 2.0 * pad]
+        return k
+    cy = b[1] + pad
+    inner = b[2] - 2.0 * pad
+    i = 0
+    while i lt len[order]
+        sz = _size_of[k, order[i]]
+        w = sz[2]
+        if _entry_stretches[sensed, order[i]]
+            w = inner
+        k.layouts[order[i]] = [b[0] + pad, cy, w, sz[3]]
+        cy = cy + sz[3]
+        if i + 1 lt len[order]
+            cy = cy + gap
+        i = i + 1
+    k.layouts[sp.id] = [b[0], b[1], b[2], max[cy + pad - b[1], sp.tall]]
+    k
+
+--- ---- what is told ----
+
+--- the told record, with what SortableJS adds to every event of the list
+--- that tells it: the item swapped with (a swapping list's) and the
+--- selection (a list of `multiple`'s)
+fn _tell[k, sensed, act, list_id, item, from, to, old, new_at]
+    sp = _spec_of[sensed.specs, list_id]
+    pull = ''
+    if k.put_list ne '' and k.put_list in k.put_modes
+        pull = k.put_modes[k.put_list]
+    if act eq 'select' or act eq 'deselect'
+        pull = ''
+    swap = ''
+    if sp.swaps
+        swap = k.swap_with
+    items = _no_texts[]
+    olds = _no_ints[]
+    news = _no_ints[]
+    if sp.multi
+        items = k.selected
+        i = 0
+        while i lt len[k.selected]
+            id = k.selected[i]
+            olds = push[olds, _sorted_at[k, id]]
+            news = push[news, _index_of[k, sensed.specs, id]]
+            i = i + 1
+    k.told = push[k.told, Told[act, list_id, item, from, to, old, new_at, pull, swap, items, olds, news, '', false]]
+    k
+
+fn _sorted_at[k, id]
+    if id in k.sorted_index
+        return k.sorted_index[id]
+    -1
+
+--- an event of the dragged item, from its list, as SortableJS fills one
+--- in: from the list it came from, its indices as they stand
+fn _told_drag[k, sensed, act, list_id, to]
+    _tell[k, sensed, act, list_id, k.item, k.source, to, k.old_index, k.new_index]
+
+--- the move SortableJS's onMove is asked about: over `related`, before
+--- or after it
+fn _tell_move[k, el, related, after]
+    k.told = push[k.told, Told['move', k.source, k.item, k.source, el, -1, -1, '', '', _no_texts[], _no_ints[], _no_ints[], related, after]]
+    k
+
+--- the order changed: the list it changed in tells where the item is now
+fn _changed[k, sensed, el]
+    k.new_index = _index_of[k, sensed.specs, k.item]
+    _tell[k, sensed, 'change', el, k.item, k.source, el, k.old_index, k.new_index]
+
+--- ---- slides (SortableJS's animation) ----
+
+--- an item's box as it showed and where it stood, as the order changed
+struct Caught [id, x, y, w, h, fx, fy, fw, fh]
+
+fn _no_caught[]
+    slice[[Caught['', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], 0, 0]
+
+--- the list's items before its order changes (captureAnimationState)
+fn _caught[k, sp, t]
+    out = _no_caught[]
+    if sp.id eq '' or sp.animation lte 0.0
+        return out
+    order = _order[k, sp.id]
+    i = 0
+    while i lt len[order]
+        id = order[i]
+        if _laid_out[k, id]
+            r = _rect_at[k, id, t]
+            f = r
+            if _lasting[k, id, t]
+                o = _offset[k, id, t]
+                f = [r[0] - o[0], r[1] - o[1], r[2], r[3]]
+            out = push[out, Caught[id, r[0], r[1], r[2], r[3], f[0], f[1], f[2], f[3]]]
+        i = i + 1
+    out
+
+fn _joined_caught[a, b]
+    out = a
+    i = 0
+    while i lt len[b]
+        out = push[out, b[i]]
+        i = i + 1
+    out
+
+--- the items caught set sliding from where they showed to where they now
+--- stand (animateAll), and the longest slide's time
+struct Slid [k, time]
+
+fn _slid[k, sp, caught, t]
+    if sp.animation lte 0.0
+        return Slid[k, 0.0]
+    most = 0.0
+    i = 0
+    while i lt len[caught]
+        st = caught[i]
+        if _laid_out[k, st.id]
+            to = _layout[k, st.id]
+            from = [st.fx, st.fy, st.fw, st.fh]
+            shown = [st.x, st.y, st.w, st.h]
+            time = 0.0
+            if _lasting[k, st.id, t]
+                pf = k.prev_from[st.id]
+                pt = k.prev_to[st.id]
+                if _same_rect[pf, to] and not _same_rect[from, to] and _same_slope[shown, to, from]
+                    time = _real_time[shown, pf, pt, sp.animation]
+            if not _same_rect[to, from]
+                k.prev_from[st.id] = from
+                k.prev_to[st.id] = to
+                if not (time gt 0.0)
+                    time = sp.animation
+                k.anims[st.id] = [st.x - to[0], st.y - to[1], t, time]
+                k.slides_until[st.id] = t + time
+            if time gt 0.0
+                most = max[most, time]
+                k.reset_at[st.id] = t + time
+                k.lasting[st.id] = time
+        i = i + 1
+    Slid[k, most]
+
+--- SortableJS's check that a slide turned back runs along the line it
+--- came on: the slopes from where it now stands to where it shows and to
+--- where it set out from, as JavaScript divides (a vertical line's slope
+--- infinite, its sign kept; none where both are nothing)
+fn _same_slope[shown, to, from]
+    ay = shown[1] - to[1]
+    ax = shown[0] - to[0]
+    fy = from[1] - to[1]
+    fx = from[0] - to[0]
+    if ax eq 0.0 and fx eq 0.0
+        if ay eq 0.0 or fy eq 0.0
+            return false
+        return (ay gt 0.0) eq (fy gt 0.0)
+    if ax eq 0.0 or fx eq 0.0
+        return false
+    ay / ax eq fy / fx
+
+--- the part of the slide's time a slide back takes: as far as it had
+--- come of the way it was going (SortableJS's calculateRealTime)
+fn _real_time[shown, from, to, animation]
+    gone = sqrt[(from[1] - shown[1]) * (from[1] - shown[1]) + (from[0] - shown[0]) * (from[0] - shown[0])]
+    whole = sqrt[(from[1] - to[1]) * (from[1] - to[1]) + (from[0] - to[0]) * (from[0] - to[0])]
+    if whole eq 0.0
+        return 0.0
+    gone / whole * animation
+
+--- ---- groups ----
+
+--- what the source list lets go to the list `to`: '' nothing, 'yes',
+--- 'clone' (SortableJS's checkPull)
+fn _pulled[from, to]
+    v = from.pull
+    same = from.name ne '' and to.name ne '' and from.name eq to.name
+    if v eq '' or v eq 'yes'
+        return 'yes'
+    if v eq 'no'
+        return ''
+    if v eq 'clone'
+        return 'clone'
+    if _named[v, to.name]
+        return 'yes'
+    ''
+
+--- whether the list takes from the source (SortableJS's checkPut)
+fn _taken[to, from]
+    v = to.take
+    same = to.name ne '' and from.name ne '' and to.name eq from.name
+    if v eq ''
+        return same
+    if v eq 'no'
+        return false
+    if v eq 'yes'
+        return true
+    _named[v, from.name]
+
+fn _named[names, name]
+    if name eq ''
+        return false
+    parts = split[names, ',']
+    i = 0
+    while i lt len[parts]
+        if trim[parts[i]] eq name
+            return true
+        i = i + 1
+    false
+
+--- ---- the copy a cloning list leaves behind ----
+
+fn _clone_hidden[k]
+    if k.clone_shown
+        k.orders[k.source] = _without[_order[k, k.source], _copy_of[k.item]]
+        k.clone_shown = false
+    k
+
+--- the copy shown in the source while the item is over a list it was
+--- pulled into as a clone (SortableJS's _showClone)
+fn _clone_shown[k, el]
+    mode = ''
+    if el in k.put_modes
+        mode = k.put_modes[el]
+    if mode ne 'clone'
+        return _clone_hidden[k]
+    if k.clone_shown
+        return k
+    order = _order[k, k.source]
+    copy = _copy_of[k.item]
+    before = ''
+    if _pos_in[order, k.item] gte 0
+        before = k.item
+    else if k.next_id ne '' and _pos_in[order, k.next_id] gte 0
+        before = k.next_id
+    k.orders[k.source] = _put_before[order, copy, before]
+    k.clone_shown = true
+    k
+
+--- ---- a dragover (SortableJS's _onDragOver) ----
+
+--- the drag after a dragover, and whether it was done with there (it
+--- goes no further out)
+struct Went [k, done]
+
+--- the dragover of the list `sp` with the pointer at (x, y) over its item
+--- `under` ('' for the list itself)
+fn _over[k, sensed, sp, under, x, y, t]
+    if t lt k.silent_until
+        return Went[k, false]
+    specs = sensed.specs
+    el = sp.id
+    owner = el eq k.source
+    from_list = k.put_list
+    if from_list eq ''
+        from_list = k.source
+    target = under
+    if target eq ''
+        target = el
+    nothing = _no_caught[]
+    --- (over the item dragged or inside it, over an item sliding both
+    --- ways, or over the one the list waits for to slide past)
+    inside_drag = under eq k.item or (_in_texts[sp.inside, k.item])
+    if inside_drag or (target ne el and _both_ways[k, target, t]) or _ignored[k, el, target, t]
+        k = _completed[k, sensed, sp, owner, from_list, target, false, nothing, nothing, t]
+        return Went[k, true]
+    if k.stage ne 'dragging' or sp.off
+        return Went[k, false]
+    src = _spec_of[specs, k.source]
+    revert = false
+    took = false
+    if owner
+        if sp.sorts
+            took = true
+        else if k.parent ne k.source
+            revert = true
+            took = true
+    else if k.put_list eq el
+        took = true
+    else
+        mode = _pulled[src, sp]
+        k.put_modes[el] = mode
+        if mode ne ''
+            took = _taken[sp, src]
+    if not took
+        return Went[k, false]
+    vertical = _vertical[sp]
+    drag_rect = _rect_at[k, k.item, t]
+    --- (SortableJS's Swap: the item over is marked, nothing moves)
+    if sp.swaps and src.swaps
+        if target ne el
+            k = _tell_move[k, el, target, false]
+            k.swap_with = target
+        k = _changed[k, sensed, el]
+        k = _completed[k, sensed, sp, owner, from_list, target, true, nothing, nothing, t]
+        return Went[k, true]
+    if revert
+        k.parent = k.source
+        caught = _caught[k, sp, t]
+        from_caught = nothing
+        if from_list ne el
+            from_caught = _caught[k, _spec_of[specs, from_list], t]
+        k = _clone_hidden[k]
+        holder = _list_holding[k, specs, k.item]
+        before = ''
+        if k.next_id ne '' and _pos_in[_order[k, k.source], k.next_id] gte 0
+            before = k.next_id
+        k = _moved_to[k, specs, k.item, k.source, before]
+        k = _folded_back[k, sensed]
+        k = _relaid[k, sensed, [holder, k.source, from_list]]
+        k = _completed[k, sensed, sp, owner, from_list, target, true, caught, from_caught, t]
+        return Went[k, true]
+    order = _order[k, el]
+    last = ''
+    if len[order] gt 0
+        last = order[len[order] - 1]
+    if last eq '' or (_ghost_last[k, sp, x, y, vertical, t] and not _sliding[k, last, t])
+        --- (to the end of the list)
+        if last eq k.item
+            k = _completed[k, sensed, sp, owner, from_list, target, false, nothing, nothing, t]
+            return Went[k, true]
+        if last ne '' and under eq ''
+            target = last
+        k = _tell_move[k, el, target, true]
+        caught = _caught[k, sp, t]
+        from_caught = nothing
+        if from_list ne el
+            from_caught = _caught[k, _spec_of[specs, from_list], t]
+        holder = _list_holding[k, specs, k.item]
+        after_last = _next_in[order, last]
+        k = _moved_to[k, specs, k.item, el, after_last]
+        k.parent = el
+        k = _relaid[k, sensed, [holder, el]]
+        k = _changed[k, sensed, el]
+        k = _completed[k, sensed, sp, owner, from_list, target, true, caught, from_caught, t]
+        return Went[k, true]
+    if last ne '' and _ghost_first[k, sp, x, y, vertical, t]
+        --- (to the start of the list)
+        first = order[0]
+        if first eq k.item
+            k = _completed[k, sensed, sp, owner, from_list, target, false, nothing, nothing, t]
+            return Went[k, true]
+        target = first
+        k = _tell_move[k, el, target, false]
+        caught = _caught[k, sp, t]
+        from_caught = nothing
+        if from_list ne el
+            from_caught = _caught[k, _spec_of[specs, from_list], t]
+        holder = _list_holding[k, specs, k.item]
+        k = _moved_to[k, specs, k.item, el, first]
+        k.parent = el
+        k = _relaid[k, sensed, [holder, el]]
+        k = _changed[k, sensed, el]
+        k = _completed[k, sensed, sp, owner, from_list, target, true, caught, from_caught, t]
+        return Went[k, true]
+    if target ne el and _pos_in[order, target] gte 0
+        target_rect = _rect_at[k, target, t]
+        different_level = k.parent ne el
+        dr = drag_rect
+        if _sliding[k, k.item, t]
+            dr = _layout[k, k.item]
+        tr = target_rect
+        if _sliding[k, target, t]
+            tr = _layout[k, target]
+        different = not _in_line[dr, tr, vertical]
+        side = 0
+        if vertical
+            side = 1
+        before_swap = 0.0
+        has_before = false
+        if k.last_target ne target
+            before_swap = target_rect[side]
+            has_before = true
+            k.past_first = false
+            k.circumstantial = (not different and sp.invert) or different_level
+        threshold = sp.swap_at
+        if different
+            threshold = 1.0
+        inverted = sp.inverted_at
+        if inverted lt 0.0
+            inverted = sp.swap_at
+        way = _swap_direction[k, sensed, x, y, target, target_rect, vertical, threshold, inverted, k.circumstantial, k.last_target eq target]
+        k = way.k
+        direction = way.direction
+        sibling = ''
+        if direction ne 0
+            parent_order = _order[k, k.parent]
+            at = _index_in[parent_order, k.item] - direction
+            if at gte 0 and at lt len[parent_order]
+                sibling = parent_order[at]
+        if direction eq 0 or sibling eq target
+            k = _completed[k, sensed, sp, owner, from_list, target, false, nothing, nothing, t]
+            return Went[k, true]
+        k.last_target = target
+        k.last_direction = direction
+        next_sibling = _next_in[order, target]
+        after = direction eq 1
+        k = _tell_move[k, el, target, after]
+        k.silent_until = t + 30.0
+        caught = _caught[k, sp, t]
+        from_caught = nothing
+        if from_list ne el
+            from_caught = _caught[k, _spec_of[specs, from_list], t]
+        holder = _list_holding[k, specs, k.item]
+        before = target
+        if after
+            before = next_sibling
+            if before eq k.item
+                before = _next_in[order, k.item]
+        k = _moved_to[k, specs, k.item, el, before]
+        k.parent = el
+        k = _relaid[k, sensed, [holder, el]]
+        if has_before and not k.circumstantial
+            moved = _rect_at[k, target, t]
+            k.move_distance = abs[before_swap - moved[side]]
+        k = _changed[k, sensed, el]
+        k = _completed[k, sensed, sp, owner, from_list, target, true, caught, from_caught, t]
+        return Went[k, true]
+    if _holds[specs, el, k.parent]
+        k = _completed[k, sensed, sp, owner, from_list, target, false, nothing, nothing, t]
+        return Went[k, true]
+    Went[k, false]
+
+fn _in_texts[xs, x]
+    i = 0
+    while i lt len[xs]
+        if xs[i] eq x
+            return true
+        i = i + 1
+    false
+
+--- the dragover done with (SortableJS's `completed`): after an insertion,
+--- the copy shown or hidden, the list put into noted, and the lists'
+--- items set sliding
+fn _completed[k, sensed, sp, owner, from_list, target, insertion, caught, from_caught, t]
+    el = sp.id
+    if insertion
+        if owner
+            k = _clone_hidden[k]
+        else
+            k = _clone_shown[k, el]
+            k = _relaid[k, sensed, [k.source]]
+        if k.put_list ne el and el ne k.source
+            k.put_list = el
+        else if el eq k.source and k.put_list ne ''
+            k.put_list = ''
+        slid = _slid[k, sp, caught, t]
+        k = slid.k
+        if from_list eq el
+            k.ignores[el] = target
+        --- (the list waits for its slides to end, or for nothing)
+        k.ignore_until[el] = t + slid.time
+        if slid.time lte 0.0
+            k.ignores[el] = ''
+        if el ne from_list
+            back = _slid[k, _spec_of[sensed.specs, from_list], from_caught, t]
+            k = back.k
+            k.ignores[from_list] = ''
+    if (target eq k.item and not _sliding[k, k.item, t]) or target eq el
+        k.last_target = ''
+    k
+
+--- whether two boxes stand in one row or column (SortableJS's
+--- _dragElInRowColumn): an edge across the way shared, or their middles
+fn _in_line[a, b, vertical]
+    a1 = a[1]
+    a2 = a[1] + a[3]
+    al = a[3]
+    b1 = b[1]
+    b2 = b[1] + b[3]
+    bl = b[3]
+    if vertical
+        a1 = a[0]
+        a2 = a[0] + a[2]
+        al = a[2]
+        b1 = b[0]
+        b2 = b[0] + b[2]
+        bl = b[2]
+    a1 eq b1 or a2 eq b2 or a1 + al / 2.0 eq b1 + bl / 2.0
+
+--- the drag and which way past the target it goes (1 after, -1 before,
+--- 0 not yet): SortableJS's _getSwapDirection
+struct Way [k, direction]
+
+fn _swap_direction[k, sensed, x, y, target, r, vertical, threshold, inverted, invert_swap, is_last]
+    mouse = x
+    length = r[2]
+    s1 = r[0]
+    s2 = r[0] + r[2]
+    if vertical
+        mouse = y
+        length = r[3]
+        s1 = r[1]
+        s2 = r[1] + r[3]
+    invert = false
+    if not invert_swap
+        if is_last and k.move_distance lt length * threshold
+            if not k.past_first
+                past = false
+                if k.last_direction eq 1
+                    past = mouse gt s1 + length * inverted / 2.0
+                else
+                    past = mouse lt s2 - length * inverted / 2.0
+                if past
+                    k.past_first = true
+            if not k.past_first
+                shadowed = false
+                if k.last_direction eq 1
+                    shadowed = mouse lt s1 + k.move_distance
+                else
+                    shadowed = mouse gt s2 - k.move_distance
+                if shadowed
+                    return Way[k, -k.last_direction]
+            else
+                invert = true
+        else
+            if mouse gt s1 + length * (1.0 - threshold) / 2.0 and mouse lt s2 - length * (1.0 - threshold) / 2.0
+                if _index_of[k, sensed.specs, k.item] lt _index_of[k, sensed.specs, target]
+                    return Way[k, 1]
+                return Way[k, -1]
+    if invert or invert_swap
+        if mouse lt s1 + length * inverted / 2.0 or mouse gt s2 - length * inverted / 2.0
+            if mouse gt s1 + length / 2.0
+                return Way[k, 1]
+            return Way[k, -1]
+    Way[k, 0]
+
+--- the box around the list's items not sliding (SortableJS's
+--- getChildContainingRectFromElement), and whether there is one
+struct Around [x0, y0, x1, y1, some]
+
+fn _around[k, order, t]
+    a = Around[0.0, 0.0, 0.0, 0.0, false]
+    i = 0
+    while i lt len[order]
+        id = order[i]
+        if _laid_out[k, id] and not _sliding[k, id, t]
+            r = _rect_at[k, id, t]
+            if not a.some
+                a = Around[r[0], r[1], r[0] + r[2], r[1] + r[3], true]
+            else
+                a.x0 = min[a.x0, r[0]]
+                a.y0 = min[a.y0, r[1]]
+                a.x1 = max[a.x1, r[0] + r[2]]
+                a.y1 = max[a.y1, r[1] + r[3]]
+        i = i + 1
+    a
+
+--- the pointer before the list's first item (SortableJS's _ghostIsFirst)
+fn _ghost_first[k, sp, x, y, vertical, t]
+    order = _order[k, sp.id]
+    f = _rect_at[k, order[0], t]
+    a = _around[k, order, t]
+    if vertical
+        return (a.some and x lt a.x0 - 10.0) or (y lt f[1] and x lt f[0] + f[2])
+    (a.some and y lt a.y0 - 10.0) or (y lt f[1] + f[3] and x lt f[0])
+
+--- the pointer past the list's last item (SortableJS's _ghostIsLast)
+fn _ghost_last[k, sp, x, y, vertical, t]
+    order = _order[k, sp.id]
+    l = _rect_at[k, order[len[order] - 1], t]
+    a = _around[k, order, t]
+    if vertical
+        return (a.some and x gt a.x1 + 10.0) or (y gt l[1] + l[3] and x gt l[0])
+    (a.some and y gt a.y1 + 10.0) or (x gt l[0] + l[2] and y gt l[1])
+
+--- ---- the drag's course ----
+
+--- a press: the lists under it, the nearest first, each asked whether
+--- one of its items is pressed to be dragged (SortableJS's _onTapStart)
+fn _pressed_down[k, sensed, e, t]
+    if k.stage ne ''
+        return k
+    k.pointer = e.id
+    k.device = e.device
+    k.pointer_x = e.x
+    k.pointer_y = e.y
+    k.pressed = true
+    k.moved_drag = false
+    chain = _chain_at[k, sensed.specs, e.x, e.y, t]
+    i = 0
+    while i lt len[chain]
+        link = chain[i]
+        sp = _spec_of[sensed.specs, link.list]
+        kid = link.kid
+        if e.button eq 0 and not sp.off and kid ne '' and not _is_copy[kid] and not _sliding[k, kid, t]
+            old = _index_in[_order[k, sp.id], kid]
+            if _in_texts[sp.filtered, kid]
+                k = _tell[k, sensed, 'filter', sp.id, kid, sp.id, sp.id, old, -1]
+            else if not sp.handled or _on_grip[k, kid, e.x, e.y]
+                return _prepared[k, sensed, sp, kid, old, e, t]
+        i = i + 1
+    k
+
+fn _on_grip[k, kid, x, y]
+    g = '`kid`:grip'
+    _laid_out[k, g] and _inside[x, y, _layout[k, g]]
+
+--- the item pressed is the one to drag (SortableJS's _prepareDragStart):
+--- chosen at once, or once its delay has passed
+fn _prepared[k, sensed, sp, kid, old, e, t]
+    k.item = kid
+    k.source = sp.id
+    k.parent = sp.id
+    k.next_id = _next_in[_order[k, sp.id], kid]
+    k.old_index = old
+    k.new_index = -1
+    k.down_x = e.x
+    k.down_y = e.y
+    k.last_x = e.x
+    k.last_y = e.y
+    if sp.delay gt 0.0 and (not sp.touch_only or e.device eq 'touch')
+        k.stage = 'pending'
+        k.chose_at = t + sp.delay
+        return k
+    _chosen[k, sensed, t]
+
+fn _chosen[k, sensed, t]
+    sp = _spec_of[sensed.specs, k.source]
+    k.stage = 'chosen'
+    k.multi_on = sp.multi and _in_texts[k.selected, k.item]
+    _told_drag[k, sensed, 'choose', k.source, k.source]
+
+--- the pointer moved while the item is held
+fn _pointer_moved[k, sensed, e, t]
+    if k.stage eq '' or e.id ne k.pointer
+        return k
+    if k.stage eq 'pending'
+        if max[abs[e.x - k.last_x], abs[e.y - k.last_y]] gte 1.0
+            k.stage = 'held'
+        return k
+    if k.stage eq 'held'
+        return k
+    src = _spec_of[sensed.specs, k.source]
+    if k.stage eq 'chosen'
+        if src.tolerance gt 0.0 and max[abs[e.x - k.last_x], abs[e.y - k.last_y]] lt src.tolerance
+            return k
+        return _started[k, sensed, t]
+    k.ghost_dx = e.x - k.down_x
+    k.ghost_dy = e.y - k.down_y
+    k.touched = true
+    k.touch_x = e.x
+    k.touch_y = e.y
+    k = _zoned[k, sensed, e.x, e.y, t]
+    _nearest_empty[k, sensed, e.x, e.y, t]
+
+--- the drag started (SortableJS's _onDragStart and _dragStarted): where
+--- it started noted, the selection's indices kept, the other selected
+--- items gathered out of their lists, and the item's picture taken up
+fn _started[k, sensed, t]
+    specs = sensed.specs
+    src = _spec_of[specs, k.source]
+    k.start_index = k.old_index
+    if src.swaps
+        k.swap_with = k.item
+    if src.multi
+        if not k.multi_on and k.sel_list ne ''
+            k = _deselect_all[k, sensed, k.sel_list]
+        i = 0
+        while i lt len[k.selected]
+            k.sorted_index[k.selected[i]] = _index_of[k, specs, k.selected[i]]
+            i = i + 1
+        k.selected = _by_index[k, k.selected]
+    k.stage = 'dragging'
+    k.moved_drag = true
+    k.new_index = -1
+    k = _told_drag[k, sensed, 'clone', k.source, k.source]
+    if k.multi_on and src.sorts
+        caught = _caught[k, src, t]
+        holders = [k.source]
+        i = 0
+        while i lt len[k.selected]
+            id = k.selected[i]
+            if id ne k.item
+                holder = _list_holding[k, specs, id]
+                if holder ne ''
+                    k.orders[holder] = _without[_order[k, holder], id]
+                    holders = push[holders, holder]
+            i = i + 1
+        k = _relaid[k, sensed, holders]
+        k = _slid[k, src, caught, t].k
+    k.ghost = _rect_at[k, k.item, t]
+    k.ghost_dx = 0.0
+    k.ghost_dy = 0.0
+    k.loop_at = t + 50.0
+    k.touched = false
+    _told_drag[k, sensed, 'start', k.source, k.source]
+
+--- the ids in the order of their indices when the drag started
+fn _by_index[k, ids]
+    out = _no_texts[]
+    taken = _no_texts[]
+    n = 0
+    while n lt len[ids]
+        best = ''
+        i = 0
+        while i lt len[ids]
+            id = ids[i]
+            if not _in_texts[taken, id]
+                if best eq '' or _sorted_at[k, id] lt _sorted_at[k, best]
+                    best = id
+            i = i + 1
+        out = push[out, best]
+        taken = push[taken, best]
+        n = n + 1
+    out
+
+--- the other selected items back in the source at their indices, as the
+--- drag reverts into a list it may not sort (MultiDrag's revert)
+fn _folded_back[k, sensed]
+    if not k.multi_on or len[k.selected] lte 1
+        return k
+    i = 0
+    while i lt len[k.selected]
+        id = k.selected[i]
+        if id ne k.item
+            order = _order[k, k.source]
+            at = _sorted_at[k, id]
+            before = ''
+            if at gte 0 and at lt len[order]
+                before = order[at]
+            k = _moved_to[k, sensed.specs, id, k.source, before]
+        i = i + 1
+    k
+
+--- an empty list near the pointer is met at once (SortableJS's
+--- _detectNearestEmptySortable): the first of the tree's whose box, its
+--- threshold wider, holds the point
+fn _nearest_empty[k, sensed, x, y, t]
+    if k.stage ne 'dragging'
+        return k
+    i = 0
+    while i lt len[sensed.specs]
+        sp = sensed.specs[i]
+        if sp.empty_at gt 0.0 and len[_order[k, sp.id]] eq 0 and _laid_out[k, sp.id]
+            b = _layout[k, sp.id]
+            a = sp.empty_at
+            if x gte b[0] - a and x lte b[0] + b[2] + a and y gte b[1] - a and y lte b[1] + b[3] + a
+                return _over[k, sensed, sp, '', x, y, t].k
+        i = i + 1
+    k
+
+--- the dragover SortableJS runs every 50 ms while an item is dragged
+--- (_emulateDragOver), at the pointer's last place: the lists under it
+--- asked, the nearest first, until one is done with it
+fn _looped[k, sensed, t]
+    if k.stage ne 'dragging' or t lt k.loop_at
+        return k
+    while k.loop_at lte t
+        k.loop_at = k.loop_at + 50.0
+    if not k.touched
+        return k
+    x = k.touch_x
+    y = k.touch_y
+    if not _on_list[k, k.parent, x, y, t]
+        k.last_target = ''
+    chain = _chain_at[k, sensed.specs, x, y, t]
+    i = 0
+    while i lt len[chain]
+        went = _over[k, sensed, _spec_of[sensed.specs, chain[i].list], chain[i].kid, x, y, t]
+        k = went.k
+        if went.done
+            return k
+        i = i + 1
+    k
+
+--- ---- the scroll the drag turns (SortableJS's AutoScroll) ----
+
+--- where the scroll area stands, how far it is turned and how far it may
+--- turn: its box, its first control's place under it, and that
+--- control's height
+fn _scroll_state[k, sensed, sid]
+    b = _layout[k, sid]
+    first = ''
+    if sid in sensed.firsts
+        first = sensed.firsts[sid]
+    if not _laid_out[k, first]
+        return [b[0], b[1], b[2], b[3], 0.0, b[3]]
+    f = _layout[k, first]
+    [b[0], b[1], b[2], b[3], b[1] - f[1], f[3]]
+
+--- the pointer near an edge of the scroll area it is over sets it
+--- turning that way (or stops it), from now
+fn _zoned[k, sensed, x, y, t]
+    src = _spec_of[sensed.specs, k.source]
+    sid = ''
+    over_item = false
+    chain = _chain_at[k, sensed.specs, x, y, t]
+    if len[chain] gt 0
+        sp = _spec_of[sensed.specs, chain[0].list]
+        sid = sp.scroller
+        over_item = chain[0].kid ne ''
+    if sid eq '' or not _laid_out[k, sid] or not _inside[x, y, _layout[k, sid]] or src.sensitivity lte 0.0
+        k.scroll_v = 0
+        k.scroll_id = ''
+        return k
+    st = _scroll_state[k, sensed, sid]
+    sens = src.sensitivity
+    v = 0
+    if abs[st[1] + st[3] - y] lte sens and st[4] + st[3] lt st[5]
+        v = v + 1
+    if abs[st[1] - y] lte sens and st[4] gt 0.0
+        v = v - 1
+    if v ne k.scroll_v or sid ne k.scroll_id
+        k.scroll_v = v
+        k.scroll_id = sid
+        k.scroll_since = t
+        k.scroll_done = 0
+        k.scroll_quirk = over_item
+    k
+
+--- how many 24 ms turns are due `ms` after the scroll set out: a first
+--- one at 24, then from 30 on, as SortableJS starts it again once it
+--- finds the scroll area under the pointer (`quirk`), else every 24
+fn _turns_due[ms, quirk]
+    if not quirk
+        return floor[ms / 24.0]
+    first = 0
+    if ms gte 24.0
+        first = 1
+    if ms lt 30.0
+        return first
+    first + floor[(ms - 30.0) / 24.0]
+
+--- the turns due by now taken: the scroll area turned (its items with
+--- it, where the dragover will look for them this frame), clamped to its
+--- ends
+fn _scrolled_on[k, sensed, t]
+    if k.stage ne 'dragging' or k.scroll_v eq 0 or k.scroll_id eq ''
+        return k
+    src = _spec_of[sensed.specs, k.source]
+    due = _turns_due[t - k.scroll_since, k.scroll_quirk]
+    if due lte k.scroll_done
+        return k
+    st = _scroll_state[k, sensed, k.scroll_id]
+    want = float[due - k.scroll_done] * src.speed * float[k.scroll_v]
+    k.scroll_done = due
+    top = st[4]
+    most = max[0.0, st[5] - st[3]]
+    by = min[max[top + want, 0.0], most] - top
+    if by eq 0.0
+        return k
+    k.scroll_shift = k.scroll_shift + by
+    sid = k.scroll_id
+    i = 0
+    while i lt len[sensed.specs]
+        sp = sensed.specs[i]
+        if sp.scroller eq sid
+            k = _shifted[k, sp.id, by]
+            order = _order[k, sp.id]
+            j = 0
+            while j lt len[order]
+                k = _shifted[k, order[j], by]
+                k = _shifted[k, '`order[j]`:grip', by]
+                j = j + 1
+        i = i + 1
+    if sid in sensed.firsts
+        k = _shifted[k, sensed.firsts[sid], by]
+    k
+
+fn _shifted[k, id, by]
+    if _laid_out[k, id]
+        r = k.layouts[id]
+        k.layouts[id] = [r[0], r[1] - by, r[2], r[3]]
+    k
+
+--- ---- let go ----
+
+--- the drag over: its item left where it is (SortableJS's _onDrop and
+--- its plugins' drops), and what changed told
+fn _let_go[k, sensed, e, t]
+    if k.stage ne '' and e.id ne k.pointer
+        return k
+    k.pressed = false
+    k = _deselected_on_up[k, sensed, e, t]
+    if k.stage eq ''
+        return k
+    specs = sensed.specs
+    src = _spec_of[specs, k.source]
+    if k.stage ne 'dragging'
+        if src.multi
+            k = _toggled[k, sensed, e]
+        k = _told_drag[k, sensed, 'unchoose', k.source, k.source]
+        return _ended[k]
+    k.new_index = _index_of[k, specs, k.item]
+    k.scroll_v = 0
+    k.scroll_id = ''
+    --- (OnSpill: let go outside the list it is over)
+    if src.spill ne ''
+        to_list = k.put_list
+        if to_list eq ''
+            to_list = k.source
+        if not _on_list[k, to_list, e.x, e.y, t]
+            k = _told_drag[k, sensed, 'spill', k.source, k.source]
+            if src.spill eq 'revert'
+                caught = _caught[k, src, t]
+                if k.put_list ne ''
+                    caught = _joined_caught[caught, _caught[k, _spec_of[specs, k.put_list], t]]
+                holder = _list_holding[k, specs, k.item]
+                rest = _without[_order[k, k.source], k.item]
+                before = ''
+                if k.start_index gte 0 and k.start_index lt len[rest]
+                    before = rest[k.start_index]
+                k = _moved_to[k, specs, k.item, k.source, before]
+                k = _relaid[k, sensed, [holder, k.source]]
+                k = _slid[k, src, caught, t].k
+            if src.spill eq 'remove'
+                holder = _list_holding[k, specs, k.item]
+                caught = _caught[k, _spec_of[specs, holder], t]
+                k.orders[holder] = _without[_order[k, holder], k.item]
+                k = _relaid[k, sensed, [holder]]
+                k = _slid[k, _spec_of[specs, holder], caught, t].k
+    --- (Swap: the item and the one it was let go over trade places)
+    if src.swaps and k.swap_with ne '' and k.swap_with ne k.item
+        k = _swapped[k, sensed, k.item, k.swap_with, t]
+    --- (MultiDrag: the selected put in after the item, in their order)
+    if src.multi and k.multi_on
+        k = _gathered[k, sensed, t]
+    k.parent = _list_holding[k, specs, k.item]
+    k.new_index = -1
+    if k.parent ne ''
+        k.new_index = _index_of[k, specs, k.item]
+    --- (a slide under way when it was let go goes on from where it shows)
+    if _sliding[k, k.item, t]
+        a = k.anims[k.item]
+        o = _offset[k, k.item, t]
+        k.anims[k.item] = [o[0], o[1], t, a[3]]
+        k.slides_until[k.item] = t + a[3]
+    if k.clone_shown
+        mode = ''
+        if k.put_list ne '' and k.put_list in k.put_modes
+            mode = k.put_modes[k.put_list]
+        if k.parent eq k.source or (k.put_list ne '' and mode ne 'clone')
+            k = _clone_hidden[k]
+            k = _relaid[k, sensed, [k.source]]
+    to = k.parent
+    if to eq ''
+        to = k.source
+    k = _tell[k, sensed, 'unchoose', k.source, k.item, k.source, to, k.old_index, -1]
+    if k.parent ne k.source
+        if k.parent ne ''
+            k = _told_drag[k, sensed, 'add', k.parent, k.parent]
+            k = _told_drag[k, sensed, 'remove', k.source, k.parent]
+            k = _told_drag[k, sensed, 'sort', k.parent, k.parent]
+            k = _told_drag[k, sensed, 'sort', k.source, k.parent]
+    else if k.new_index ne k.old_index and k.new_index gte 0
+        k = _told_drag[k, sensed, 'update', k.source, k.parent]
+        k = _told_drag[k, sensed, 'sort', k.source, k.parent]
+    if k.new_index lt 0
+        k.new_index = k.old_index
+    k = _told_drag[k, sensed, 'end', k.source, to]
+    k = _finished_now[k]
+    _ended[k]
+
+--- the lists' orders as the drag left them, for `after` (a copy left
+--- behind given a name of its own)
+fn _finished_now[k]
+    done = map['' = ['']]
+    taken = _no_texts[]
+    for id in keys[k.orders]
+        if id ne ''
+            order = k.orders[id]
+            j = 0
+            while j lt len[order]
+                taken = push[taken, order[j]]
+                j = j + 1
+    for id in keys[k.orders]
+        if id ne ''
+            order = k.orders[id]
+            out = _no_texts[]
+            j = 0
+            while j lt len[order]
+                x = order[j]
+                if _is_copy[x]
+                    n = 1
+                    while _in_texts[taken, '`_original[x]`*`n`']
+                        n = n + 1
+                    x = '`_original[x]`*`n`'
+                    taken = push[taken, x]
+                out = push[out, x]
+                j = j + 1
+            done[id] = out
+    k.finished = done
+    k
+
+--- what is kept of a drag once it is over
+fn _ended[k]
+    k.stage = ''
+    k.item = ''
+    k.source = ''
+    k.parent = ''
+    k.next_id = ''
+    k.old_index = -1
+    k.start_index = -1
+    k.new_index = -1
+    k.put_list = ''
+    k.put_modes = map['' = '']
+    k.clone_shown = false
+    k.swap_with = ''
+    k.last_target = ''
+    k.last_direction = 0
+    k.multi_on = false
+    k.scroll_v = 0
+    k.scroll_id = ''
+    k.touched = false
+    k
+
+--- two items trade places (SortableJS's swapNodes), and slide there
+fn _swapped[k, sensed, a, b, t]
+    specs = sensed.specs
+    la = _list_holding[k, specs, a]
+    lb = _list_holding[k, specs, b]
+    caught = _caught[k, _spec_of[specs, la], t]
+    if lb ne la
+        caught = _joined_caught[caught, _caught[k, _spec_of[specs, lb], t]]
+    oa = _order[k, la]
+    ob = _order[k, lb]
+    if la eq lb
+        out = _no_texts[]
+        i = 0
+        while i lt len[oa]
+            x = oa[i]
+            if x eq a
+                x = b
+            else if x eq b
+                x = a
+            out = push[out, x]
+            i = i + 1
+        k.orders[la] = out
+    else
+        ia = _pos_in[oa, a]
+        ib = _pos_in[ob, b]
+        oa[ia] = b
+        ob[ib] = a
+        k.orders[la] = oa
+        k.orders[lb] = ob
+    k = _relaid[k, sensed, [la, lb]]
+    k = _slid[k, _spec_of[specs, la], caught, t].k
+    if lb ne la
+        k = _slid[k, _spec_of[specs, lb], caught, t].k
+    k
+
+--- the selected items set down after the item dragged, in the order
+--- they stood in when the drag started (MultiDrag's drop)
+fn _gathered[k, sensed, t]
+    specs = sensed.specs
+    if len[k.selected] lte 1 or k.parent eq ''
+        return k
+    sp = _spec_of[specs, k.parent]
+    if not (sp.sorts or k.parent ne k.source)
+        return k
+    caught = _caught[k, sp, t]
+    here = _rect_at[k, k.item, t]
+    i = 0
+    while i lt len[k.selected]
+        id = k.selected[i]
+        if id ne k.item
+            caught = push[caught, Caught[id, here[0], here[1], here[2], here[3], here[0], here[1], here[2], here[3]]]
+        i = i + 1
+    at = _pos_in[_order[k, k.parent], k.item]
+    i = 0
+    while i lt len[k.selected]
+        id = k.selected[i]
+        order = _order[k, k.parent]
+        before = ''
+        if at lt len[order]
+            before = order[at]
+        if before ne id
+            holder = _list_holding[k, specs, id]
+            if holder ne ''
+                k.orders[holder] = _without[_order[k, holder], id]
+            k.orders[k.parent] = _put_before[_order[k, k.parent], id, before]
+        at = at + 1
+        i = i + 1
+    k = _relaid[k, sensed, [k.parent, k.source]]
+    k = _slid[k, sp, caught, t].k
+    --- (the item back where it was, the others moved: the list told so)
+    if k.old_index eq _index_of[k, specs, k.item]
+        moved = false
+        i = 0
+        while i lt len[k.selected]
+            if _sorted_at[k, k.selected[i]] ne _index_of[k, specs, k.selected[i]]
+                moved = true
+            i = i + 1
+        if moved
+            k = _told_drag[k, sensed, 'update', k.source, k.source]
+            k = _told_drag[k, sensed, 'sort', k.source, k.source]
+    k.sel_list = k.parent
+    k
+
+--- a press let go on an item of a list of `multiple`'s, no drag made:
+--- the item selected, or let go (with Shift, those between it and the
+--- last selected selected too)
+fn _toggled[k, sensed, e]
+    specs = sensed.specs
+    src = _spec_of[specs, k.source]
+    if src.multi_key ne '' and not _key_held[e, src.multi_key]
+        k = _deselect_all[k, sensed, k.source]
+    if not _in_texts[k.selected, k.item]
+        if k.sel_list ne k.source and k.sel_list ne ''
+            k = _deselect_all[k, sensed, k.sel_list]
+        k.selected = push[k.selected, k.item]
+        k.sel_list = k.source
+        k = _tell[k, sensed, 'select', k.source, k.item, k.source, k.source, -1, -1]
+        if e.shift and k.last_select ne '' and _list_holding[k, specs, k.last_select] eq k.source
+            order = _order[k, k.source]
+            last_at = _index_in[order, k.last_select]
+            now_at = _index_in[order, k.item]
+            if last_at gte 0 and now_at gte 0 and last_at ne now_at
+                i = last_at
+                n = now_at
+                if now_at lt last_at
+                    i = now_at
+                    n = last_at + 1
+                while i lt n
+                    id = order[i]
+                    if not _in_texts[k.selected, id] and not _in_texts[src.filtered, id]
+                        k.selected = push[k.selected, id]
+                        k = _tell[k, sensed, 'select', k.source, id, k.source, k.source, -1, -1]
+                    i = i + 1
+        else
+            k.last_select = k.item
+    else
+        k.selected = _without[k.selected, k.item]
+        k.last_select = ''
+        k = _tell[k, sensed, 'deselect', k.source, k.item, k.source, k.source, -1, -1]
+    k
+
+fn _key_held[e, key]
+    if key eq 'ctrl'
+        return e.ctrl
+    if key eq 'meta'
+        return e.meta
+    if key eq 'shift'
+        return e.shift
+    if key eq 'alt'
+        return e.alt
+    false
+
+--- every selected item let go, each told as it goes
+fn _deselect_all[k, sensed, list_id]
+    if k.sel_list ne list_id
+        return k
+    while len[k.selected] gt 0
+        id = k.selected[0]
+        k.selected = _without[k.selected, id]
+        k = _tell[k, sensed, 'deselect', list_id, id, list_id, list_id, -1, -1]
+    k.sel_list = ''
+    k
+
+--- a press let go off the selection's list, no drag made, lets the
+--- selection go (MultiDrag's _deselectMultiDrag)
+fn _deselected_on_up[k, sensed, e, t]
+    if k.stage eq 'dragging' or k.sel_list eq '' or e.button ne 0
+        return k
+    if not _has_spec[sensed.specs, k.sel_list]
+        return k
+    order = _order[k, k.sel_list]
+    i = 0
+    while i lt len[order]
+        if _laid_out[k, order[i]] and _inside[e.x, e.y, _rect_at[k, order[i], t]]
+            return k
+        i = i + 1
+    _deselect_all[k, sensed, k.sel_list]
+
+--- ---- each frame ----
+
+--- the orders taken from the tree while nothing is dragged (the
+--- program's own), and the selection kept to what is still there
+fn _synced[k, sensed]
+    if k.stage eq ''
+        orders = map['' = ['']]
+        i = 0
+        while i lt len[sensed.specs]
+            sp = sensed.specs[i]
+            orders[sp.id] = sp.items
+            i = i + 1
+        k.orders = orders
+        kept = _no_texts[]
+        i = 0
+        while i lt len[k.selected]
+            if _list_holding[k, sensed.specs, k.selected[i]] ne ''
+                kept = push[kept, k.selected[i]]
+            i = i + 1
+        k.selected = kept
+        if len[kept] eq 0
+            k.sel_list = ''
+        return k
+    --- (a list the tree brings in while the drag lasts joins with its own)
+    i = 0
+    while i lt len[sensed.specs]
+        sp = sensed.specs[i]
+        if not (sp.id in k.orders)
+            k.orders[sp.id] = sp.items
+        i = i + 1
+    k
+
+--- an event in the page's pixels, as the boxes are
+fn _in_page[e, px]
+    e.x = e.x / px
+    e.y = e.y / px
+    e
+
+--- the drags of the lists, for one frame's events
+fn _driven[k, sensed, c, t]
+    px = lory.px[c]
+    if k.stage eq 'pending' and t gte k.chose_at
+        k = _chosen[k, sensed, k.chose_at]
+    k.scroll_shift = 0.0
+    k = _scrolled_on[k, sensed, t]
+    for e in lory.events[c]
+        if e.on eq 'down' or e.on eq 'move' or e.on eq 'up'
+            p = _in_page[e, px]
+            if e.on eq 'down'
+                k = _pressed_down[k, sensed, p, t]
+            if e.on eq 'move'
+                k = _pointer_moved[k, sensed, p, t]
+            if e.on eq 'up'
+                k = _let_go[k, sensed, p, t]
+    --- (a ray tells no moves: its press held, where it points is one)
+    if k.device eq 'ray' and k.stage ne ''
+        x = lory.pointer_x[c] / px
+        y = lory.pointer_y[c] / px
+        if x ne k.pointer_x or y ne k.pointer_y
+            m_ev = lory.Ev['move', x, y, 0, 0.0, 0.0, '', '', '', false, false, false, false, 'ray', k.pointer]
+            k = _pointer_moved[k, sensed, m_ev, t]
+    if k.device eq 'ray'
+        k.pointer_x = lory.pointer_x[c] / px
+        k.pointer_y = lory.pointer_y[c] / px
+    k = _looped[k, sensed, t]
+    k
+
+--- ---- the tree as the drags show it ----
+
+--- the tree with each list in its drag's order, its items where they
+--- slide, the item dragged marked where it will go, the selected marked,
+--- and the copy a cloning list leaves behind
+fn _rewritten[k, sensed, n, t, scale]
+    if _opt[n, 'drag', ''] eq 'list'
+        order = _order[k, n.id]
+        kids = slice[n.kids, 0, 0]
+        i = 0
+        while i lt len[order]
+            id = order[i]
+            o = _original[id]
+            if o in sensed.entries
+                e = _sure_node[sensed.entries[o]]
+                if _is_copy[id]
+                    e = _unnamed[e]
+                    e.id = id
+                e = _rewritten[k, sensed, e, t, scale]
+                e = _gripped[e, id]
+                off = _offset[k, id, t]
+                if off[0] ne 0.0 or off[1] ne 0.0
+                    e = gui.moved[e, _num[e, 'dx', 0.0] + off[0] / scale, _num[e, 'dy', 0.0] + off[1] / scale]
+                if k.stage eq 'dragging' and id eq k.item
+                    if e.tag eq 'item'
+                        e.num = 1.0
+                    e = gui.faded[e, 0.35]
+                else if _in_texts[k.selected, id] or (k.stage eq 'dragging' and id eq k.swap_with and id ne k.item)
+                    if e.tag eq 'item'
+                        e.num = 1.0
+                kids = push[kids, _sure_node[e]]
+            i = i + 1
+        n.kids = kids
+        return n
+    out = slice[n.kids, 0, 0]
+    i = 0
+    while i lt len[n.kids]
+        kid = _sure_node[_rewritten[k, sensed, _sure_node[n.kids[i]], t, scale]]
+        out = push[out, kid]
+        i = i + 1
+    n.kids = out
+    n
+
+--- the control with no ids in it (a picture of it: the pointer finds
+--- nothing there)
+fn _unnamed[n]
+    n.id = ''
+    out = slice[n.kids, 0, 0]
+    i = 0
+    while i lt len[n.kids]
+        kid = _sure_node[_unnamed[_sure_node[n.kids[i]]]]
+        out = push[out, kid]
+        i = i + 1
+    n.kids = out
+    n
+
+--- the item's grip named after it, to be found
+fn _gripped[n, id]
+    out = slice[n.kids, 0, 0]
+    i = 0
+    while i lt len[n.kids]
+        k = _sure_node[n.kids[i]]
+        if _opt[k, 'drag_grip', ''] eq 'yes'
+            k.id = '`id`:grip'
+        else
+            k = _sure_node[_gripped[k, id]]
+        out = push[out, k]
+        i = i + 1
+    n.kids = out
+    n
+
+fn _no_nodes[]
+    slice[[gui.space[0.0]], 0, 0]
+
+--- the node's kids made one (a list of the kind gui keeps them in)
+fn _one_kid[n, kid]
+    push[slice[n.kids, 0, 0], _sure_node[kid]]
+
+fn _eight[a, b, c, d, e, f, g, h]
+    [a, b, c, d, e, f, g, h]
+
+--- a node of the tree, sure (looked up, it may have failed: a space then)
+fn _sure_node[x]
+    if not x.ok
+        return gui.space[0.0]
+    x
+
+--- the item dragged, drawn under the pointer over everything (its
+--- picture, which nothing under it is hidden from)
+fn _with_image[k, sensed, tree, x, y, scale]
+    if k.stage ne 'dragging' or not (k.item in sensed.entries)
+        return tree
+    e = _unnamed[_sure_node[sensed.entries[k.item]]]
+    w = k.ghost[2] / scale
+    picture = gui.sized[gui.panel[[e], gap = 0.0, pad = 0.0], w]
+    picture.id = 'drag:image'
+    picture = gui.faded[gui.moved[picture, (k.ghost[0] + k.ghost_dx - x) / scale, (k.ghost[1] + k.ghost_dy - y) / scale], 0.8]
+    gui.overlay[tree, gui.overlay[gui.space[0.0], picture, anchor = 'top_left'], anchor = 'top_left']
+
+--- where each list and item was laid out, from the boxes gui drew them
+--- in (an item's slide taken off)
+fn _read_layouts[k, sensed, boxes, t]
+    laid = map['' = [0.0, 0.0, 0.0, 0.0]]
+    i = 0
+    while i lt len[sensed.specs]
+        sp = sensed.specs[i]
+        if sp.id in boxes
+            laid[sp.id] = _box_of[boxes[sp.id]]
+        if sp.scroller ne '' and sp.scroller in boxes
+            laid[sp.scroller] = _box_of[boxes[sp.scroller]]
+        order = _order[k, sp.id]
+        j = 0
+        while j lt len[order]
+            id = order[j]
+            off = _offset[k, id, t]
+            if id in boxes
+                b = _box_of[boxes[id]]
+                laid[id] = [b[0] - off[0], b[1] - off[1], b[2], b[3]]
+            g = '`id`:grip'
+            if g in boxes
+                laid[g] = _box_of[boxes[g]]
+            j = j + 1
+        i = i + 1
+    for sid in keys[sensed.firsts]
+        if sid ne ''
+            f = sensed.firsts[sid]
+            if f ne '' and f in boxes
+                laid[f] = _box_of[boxes[f]]
+            if sid in boxes
+                laid[sid] = _box_of[boxes[sid]]
+    k.layouts = laid
+    k
+
+--- a box of gui's as the drags keep it
+fn _box_of[b]
+    [_sure[b[0]], _sure[b[1]], _sure[b[2]], _sure[b[3]]]
+
+--- a number of gui's, sure (a box's parts are looked up, and may fail)
+fn _sure[x]
+    if not x.ok
+        return 0.0
+    0.0 + x
+
+--- the drag's slides and scrolls under way (a page that draws only when
+--- something changes draws on while they last)
+fn _busy[k, t]
+    if k.stage eq 'dragging' or k.stage eq 'pending'
+        return true
+    for id in keys[k.slides_until]
+        if t lt k.slides_until[id]
+            return true
+    false
+
+--- ---- showing ----
+
+--- the tree drawn across the whole canvas, in the dark look, with room
+--- around it, its lists dragged (as `gui.show`)
+fn show[c, tree]
+    s = lory.px[c]
+    show_at[c, tree, 24.0, 24.0, lory.width[c] / s - 48.0, gui.dark[]]
+
+--- the tree drawn at (x, y), `w` wide, as `gui.show_at` draws it, its
+--- lists dragged, and the drags that are not a list's run
+fn show_at[c, tree, x, y, w, look, scale = 1.0, radius = 1.0]
+    k = recall['lory.drag', _fresh[]]
+    k.told = _no_told[]
+    t = lory.time[c]
+    sensed = _sensed_of[tree]
+    k = _synced[k, sensed]
+    k = _driven[k, sensed, c, t]
+    o = recall['lory.drag/others', _no_others[]]
+    o.told = _no_told[]
+    o = _others_driven[o, sensed, c, t]
+    shown_tree = _rewritten[k, sensed, tree, t, scale]
+    shown_tree = _others_rewritten[o, shown_tree, t, scale]
+    shown_tree = _with_image[k, sensed, shown_tree, x, y, scale]
+    given = c.events
+    if k.scroll_shift ne 0.0 and _laid_out[k, k.scroll_id]
+        b = _layout[k, k.scroll_id]
+        px = lory.px[c]
+        turned = lory.Ev['wheel', (b[0] + b[2] / 2.0) * px, (b[1] + b[3] / 2.0) * px, 0, 0.0, k.scroll_shift * px, '', '', '', false, false, false, false, 'mouse', '']
+        c.events = push[c.events, turned]
+    shown = gui.show_at[c, shown_tree, x, y, w, look, scale = scale, radius = radius]
+    canvas = shown.canvas
+    canvas.events = given
+    k = _read_layouts[k, sensed, shown.boxes, t]
+    o = _others_laid[o, sensed, shown.boxes]
+    if k.stage eq 'dragging' or o.grabbing
+        canvas = lory.cursor[canvas, 'grabbing']
+    events = slice[[gui.Event['', '', '', 0.0]], 0, 0]
+    ended = false
+    for told in k.told
+        if told.act eq 'end'
+            ended = true
+    for e in shown.events
+        if not (e.act eq 'press' and (ended or o.suppress))
+            events = push[events, e]
+    told = k.told
+    for ot in o.told
+        told = push[told, ot]
+    for td in told
+        events = push[events, gui.Event[td.list, td.act, td.item, 0.0 + td.new_index]]
+    remember['lory.drag', k]
+    remember['lory.drag/others', o]
+    Dragged[canvas, events, shown.boxes, told]
+
+--- the lists' orders as the last drag left them, for the program to take
+--- into its data at that drag's `end`: `lists` (each list's ids, by the
+--- list's id) with every list the drag changed in its new order (a copy
+--- left by a cloning list named `<id>*<n>`)
+fn after[lists, t]
+    if t.act ne 'end'
+        return lists
+    k = recall['lory.drag', _fresh[]]
+    for id in keys[k.finished]
+        if id ne '' and id in lists
+            lists[id] = k.finished[id]
+    lists
+
+--- the ids of a list's items in the order it shows them now (a drag's
+--- while it lasts; the copy a cloning list shows as `<id>:copy`)
+fn shown_order[id]
+    k = recall['lory.drag', _fresh[]]
+    _order[k, id]
+
+--- every drag, slide, selection and place forgotten (a program that
+--- starts its lists anew)
+fn forget[]
+    remember['lory.drag', _fresh[]]
+    remember['lory.drag/others', _no_others[]]
+    true
+
+--- whether an item is being dragged, or a slide is under way: a page
+--- that draws only when something changes draws on while it is
+fn busy[c]
+    k = recall['lory.drag', _fresh[]]
+    o = recall['lory.drag/others', _no_others[]]
+    _busy[k, lory.time[c]] or o.grabbing or o.moving
+
+--- ---- Motion's drag: free, thrown, snapped back ----
+
+--- what a drag is released into on one axis, as Motion's drag sets it
+--- up (VisualElementDragControls' startAnimation): a glide at the
+--- release's velocity (none without `momentum`), slowing over 750 ms, a
+--- bound met (`low`, `high`; a billion or more: none) springing it back
+--- (soft where the drag is `elastic`, else at once), or its place of
+--- rest snapped to the start (`snap`)
+fn released[value, velocity, low = -1000000000.0, high = 1000000000.0, elastic = true, snap = false, momentum = true]
+    v = velocity
+    if not momentum
+        v = 0.0
+    th = motion.inertia[value, v]
+    th.time_constant = 750.0
+    th.rest_delta = 1.0
+    th.rest_speed = 10.0
+    th.bounce_stiffness = 1000000.0
+    th.bounce_damping = 10000000.0
+    if elastic
+        th.bounce_stiffness = 200.0
+        th.bounce_damping = 40.0
+    th.low = _bound[low]
+    th.high = _bound[high]
+    if snap
+        th.low = 0.0
+        th.high = 0.0
+    th
+
+--- a place dragged to, held to its bounds: past one, pulled back toward
+--- it by `elastic` of the way (0 holds it at the bound, 1 lets it go
+--- free), as Motion's applyConstraints
+fn pulled[p, low, high, elastic]
+    if p lt low
+        return low + (p - low) * elastic
+    if p gt high
+        return high + (p - high) * elastic
+    p
+
+--- a control dragged freely (Motion's `drag`): along `axis` ('x', 'y' or
+--- 'both'), kept `left`, `right`, `top` and `bottom` CSS pixels at most
+--- from where it stands (pulled past by `elastic`), thrown on with its
+--- speed when let go (`momentum`), or sent back home (`snap`); with
+--- `lock`, along the way it was first moved alone. It tells `grab`,
+--- `lock` (`to` the axis), `drag`, `let_go` and `rest`; where it is is
+--- `place_of[id]`
+fn free[id, kid, axis = 'both', left = -1000000000.0, right = 1000000000.0, top = -1000000000.0, bottom = 1000000000.0, elastic = 0.35, momentum = true, snap = false, lock = false]
+    n = gui.row[[kid], gap = 0.0, align = 'start']
+    n.id = id
+    n.opts['drag'] = 'free'
+    n.opts['drag_axis'] = axis
+    n.nums['drag_left'] = left
+    n.nums['drag_right'] = right
+    n.nums['drag_top'] = top
+    n.nums['drag_bottom'] = bottom
+    n.nums['drag_elastic'] = elastic
+    n.nums['drag_momentum'] = 0.0
+    if momentum
+        n.nums['drag_momentum'] = 1.0
+    n.nums['drag_snap'] = 0.0
+    if snap
+        n.nums['drag_snap'] = 1.0
+    n.nums['drag_lock'] = 0.0
+    if lock
+        n.nums['drag_lock'] = 1.0
+    n
+
+--- a stack of cards, the first on top, swiped away to either side
+--- (dragged past `distance` CSS pixels, or let go faster than `speed`
+--- pixels a second): it tells `swipe` (`to` 'left' or 'right') as it is
+--- let go and `gone` once it is off; else it springs back
+fn cards[id, kids, distance = 100.0, speed = 500.0]
+    named = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt len[kids]
+        k = kids[i]
+        if k.id eq ''
+            k.id = '`id`:`i`'
+        named = push[named, k]
+        i = i + 1
+    n = gui.row[named, gap = 0.0, align = 'start']
+    n.id = id
+    n.opts['drag'] = 'cards'
+    n.nums['drag_distance'] = distance
+    n.nums['drag_speed'] = speed
+    n
+
+--- a list's row swiped to show its actions behind it (`actions`, buttons,
+--- `wide` CSS pixels together): swiped past half of them it stays open,
+--- swiped most of the way across it acts, the first action's (`act`,
+--- `to` the action's id, then `gone`); a press elsewhere closes it. It
+--- tells `open` and `close` too
+fn swiped[id, kid, actions, wide = 160.0]
+    n = gui.column[[kid, gui.row[actions, gap = 0.0]], gap = 0.0]
+    n.id = id
+    n.opts['drag'] = 'row'
+    n.nums['drag_wide'] = wide
+    n
+
+--- two pictures over each other, the second shown left of a line the
+--- reader drags across (Lory's image compare): `value` how far across
+--- the line stands (0 to 1), `before` and `after` the pictures' numbers
+--- (lory.load_image; -1 for a plain ground), `words` the two sides'
+--- names, separated by a comma. It tells `change` as the line moves
+fn reveal[id, value, wide, tall, before = -1, after = -1, words = '']
+    gui.drawn[id, value, wide, tall, _reveal_painted, lo = 0.0 + before, hi = 0.0 + after, words = words]
+
+fn _reveal_painted[d]
+    if d.down
+        d.num = max[0.0, min[1.0, d.px / max[d.w, 1.0]]]
+    for key in d.keys
+        if key eq 'ArrowLeft'
+            d.num = max[0.0, d.num - 0.05]
+        if key eq 'ArrowRight'
+            d.num = min[1.0, d.num + 0.05]
+        if key eq 'Home'
+            d.num = 0.0
+        if key eq 'End'
+            d.num = 1.0
+    line_x = d.x + d.w * d.num
+    if d.hi gte 0.0
+        d.c = lory.image[d.c, int[d.hi], d.x, d.y, d.w, d.h]
+    else
+        d.c = lory.rect[d.c, d.x, d.y, d.w, d.h, d.look.field]
+    kept = lory.clipped[d.c]
+    d.c = lory.clip[d.c, d.x, d.y, line_x - d.x, d.h]
+    if d.lo gte 0.0
+        d.c = lory.image[d.c, int[d.lo], d.x, d.y, d.w, d.h]
+    else
+        d.c = lory.rect[d.c, d.x, d.y, d.w, d.h, d.look.edge]
+    d.c = lory.unclip[d.c, kept]
+    names = split[d.words, ',']
+    if len[names] eq 2
+        size = 13.0 * d.s
+        d.c = lory.text[d.c, d.x + 10.0 * d.s, d.y + 8.0 * d.s, trim[names[0]], size, d.look.ink]
+        d.c = lory.text_right[d.c, d.x + d.w - 10.0 * d.s, d.y + 8.0 * d.s, trim[names[1]], size, d.look.ink]
+    d.c = lory.rect[d.c, line_x - 1.0 * d.s, d.y, 2.0 * d.s, d.h, d.look.ink]
+    knob = d.look.panel
+    if d.hover or d.down
+        knob = d.look.hover
+    d.c = lory.circle[d.c, line_x, d.y + d.h / 2.0, 14.0 * d.s, d.look.ink]
+    d.c = lory.circle[d.c, line_x, d.y + d.h / 2.0, 12.0 * d.s, knob]
+    d.c = lory.line[d.c, line_x - 6.0 * d.s, d.y + d.h / 2.0, line_x - 2.0 * d.s, d.y + d.h / 2.0, 2.0 * d.s, d.look.ink]
+    d.c = lory.line[d.c, line_x + 2.0 * d.s, d.y + d.h / 2.0, line_x + 6.0 * d.s, d.y + d.h / 2.0, 2.0 * d.s, d.look.ink]
+    d
+
+--- a control zoomed, turned and moved by two fingers (or a trackpad's
+--- pinch, Ctrl and the wheel), and moved by one, shown `tall` CSS pixels
+--- high and no further out: between `least` and `most` its size. It
+--- tells `pinch` as it changes; `view_of[id]` is its scale, its move and
+--- its turn (in degrees; Lory draws no control turned, so the program
+--- shows the turn where it draws)
+fn pinch[id, kid, tall, least = 0.5, most = 4.0]
+    n = gui.scroll[id, tall, [kid]]
+    n.opts['drag'] = 'pinch'
+    n.nums['drag_least'] = least
+    n.nums['drag_most'] = most
+    n
+
+--- icons on a honeycomb (a watch's home screen): dragged and thrown
+--- about, zoomed by two fingers or Ctrl and the wheel, each smaller the
+--- further it stands from the middle. `icons` are controls `size` CSS
+--- pixels square, with ids (a press on one is told as gui tells it,
+--- unless the honeycomb was dragged)
+fn honeycomb[id, icons, wide, tall, size = 64.0]
+    n = gui.sized[gui.scroll[id, tall, [gui.row[icons, gap = -size, align = 'start']]], wide]
+    n.opts['drag'] = 'honey'
+    n.nums['drag_size'] = size
+    n
+
+--- ---- the drags that are not a list's, kept ----
+
+--- one drag of Motion's under way or at rest: its value (CSS pixels from
+--- home), whether it is held and by which pointer, the pointer's history
+--- since it was pressed (Motion's pan session), whether it has started,
+--- the value it started from and the axis it locked to, the move this
+--- frame not yet taken, the glide or spring it was let go into, and a
+--- card's, a row's, a pinch's or a honeycomb's own
+struct Grab [sort_of, x, y, held, pointer, device, hist_t, hist_x, hist_y, started, ox, oy, lock, has_move, mx, my, gliding, rel_t, th_x, th_y, g_x, g_y, springing, sp_from, sp_to, sp_v, sp_t, ending, open, zoom, turn, touch_ids, touch_x, touch_y, p0]
+
+fn _no_grab[kind]
+    th = motion.inertia[0.0, 0.0]
+    g = motion.glide[th]
+    Grab[kind, 0.0, 0.0, false, '', '', [0.0], [0.0], [0.0], false, 0.0, 0.0, '', false, 0.0, 0.0, false, 0.0, th, th, g, g, false, 0.0, 0.0, 0.0, 0.0, '', false, 1.0, 0.0, _no_texts[], [0.0], [0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
+
+--- the drags of Motion's by id, the one held, what they told this frame,
+--- whether one is held or moving, whether a press made into a drag is
+--- not to be told as a press, and where each was laid out
+struct Others [grabs, active, told, grabbing, moving, suppress, boxes, device, pointer_x, pointer_y]
+
+fn _no_others[]
+    Others[map['' = _no_grab['']], '', _no_told[], false, false, false, map['' = [0.0, 0.0, 0.0, 0.0]], '', 0.0, 0.0]
+
+fn _grab_of[o, id, kind]
+    if id in o.grabs
+        return o.grabs[id]
+    _no_grab[kind]
+
+fn _say[o, act, id, to]
+    o.told = push[o.told, Told[act, id, id, '', to, -1, -1, '', '', _no_texts[], _no_ints[], _no_ints[], '', false]]
+    o
+
+--- where a free control stands (CSS pixels from home)
+fn place_of[id]
+    o = recall['lory.drag/others', _no_others[]]
+    g = _grab_of[o, id, 'free']
+    [g.x, g.y]
+
+--- a pinch's or honeycomb's view: its scale, its move and its turn
+fn view_of[id]
+    o = recall['lory.drag/others', _no_others[]]
+    g = _grab_of[o, id, 'pinch']
+    [g.zoom, g.x, g.y, g.turn]
+
+--- the place pressed to drag it: a free control's and a stack's front
+--- card's where they show, a row's, a pinch's and a honeycomb's box
+fn _grab_box[o, n, g]
+    b = [0.0, 0.0, -1.0, -1.0]
+    if n.id in o.boxes
+        b = _box_of[o.boxes[n.id]]
+    --- (a stack's front card where it shows: gui's box of it is moved)
+    front = _front_of[n]
+    if g.sort_of eq 'cards' and front ne '' and front in o.boxes
+        return _box_of[o.boxes[front]]
+    if g.sort_of eq 'free' or g.sort_of eq 'cards'
+        b = [_sure[b[0] + g.x], _sure[b[1] + g.y], _sure[b[2]], _sure[b[3]]]
+    b
+
+fn _is_kind[n, kind]
+    _opt[n, 'drag', ''] eq kind
+
+--- Motion's pan session's velocity (getVelocity): from the last point
+--- back to the first more than 100 ms before it (the second, where that
+--- is the press and the history runs past 200 ms), in pixels a second
+fn _pan_velocity[g]
+    n = len[g.hist_t]
+    if n lt 2
+        return [0.0, 0.0]
+    last = n - 1
+    i = last
+    at = -1
+    while i gte 0
+        at = i
+        if g.hist_t[last] - g.hist_t[i] gt 100.0
+            i = -1
+        else
+            i = i - 1
+    if at eq 0 and n gt 2 and g.hist_t[last] - g.hist_t[0] gt 200.0
+        at = 1
+    secs = (g.hist_t[last] - g.hist_t[at]) / 1000.0
+    if secs eq 0.0
+        return [0.0, 0.0]
+    [(g.hist_x[last] - g.hist_x[at]) / secs, (g.hist_y[last] - g.hist_y[at]) / secs]
+
+--- the bounds a free control (or a honeycomb's view) is held to, as
+--- -inf/inf where there is none: [low x, high x, low y, high y]
+fn _bounds_of[n, g]
+    if g.sort_of eq 'free'
+        return [_bound[_num[n, 'drag_left', -1000000000.0]], _bound[_num[n, 'drag_right', 1000000000.0]], _bound[_num[n, 'drag_top', -1000000000.0]], _bound[_num[n, 'drag_bottom', 1000000000.0]]]
+    if g.sort_of eq 'cards'
+        return [-inf, inf, 0.0, 0.0]
+    if g.sort_of eq 'row'
+        return [-inf, 0.0, 0.0, 0.0]
+    if g.sort_of eq 'honey'
+        return _honey_bounds[n, g]
+    [-inf, inf, -inf, inf]
+
+fn _bound[v]
+    if v lte -1000000000.0
+        return -inf
+    if v gte 1000000000.0
+        return inf
+    v
+
+fn _elastic_of[n, g]
+    if g.sort_of eq 'free'
+        return _num[n, 'drag_elastic', 0.35]
+    if g.sort_of eq 'pinch'
+        return 0.0
+    0.35
+
+--- along which axes the drag moves it
+fn _moves_x[n, g]
+    if g.sort_of eq 'free'
+        a = _opt[n, 'drag_axis', 'both']
+        if a eq 'y' or g.lock eq 'y'
+            return false
+        return true
+    true
+
+fn _moves_y[n, g]
+    if g.sort_of eq 'free'
+        a = _opt[n, 'drag_axis', 'both']
+        if a eq 'x' or g.lock eq 'x'
+            return false
+        return true
+    g.sort_of eq 'pinch' or g.sort_of eq 'honey'
+
+--- the pointer pressed on it: held, its history begun (any glide or
+--- spring stopped where it shows)
+fn _grabbed[o, n, g, e, t]
+    g.held = true
+    g.pointer = e.id
+    g.device = e.device
+    g.hist_t = [t]
+    g.hist_x = [e.x]
+    g.hist_y = [e.y]
+    g.started = false
+    g.lock = ''
+    g.has_move = false
+    g.gliding = false
+    g.springing = false
+    g.ending = ''
+    o.active = n.id
+    o.device = e.device
+    o.suppress = false
+    if g.sort_of eq 'free'
+        o = _say[o, 'grab', n.id, '']
+    o.grabs[n.id] = g
+    o
+
+--- the move this frame taken (Motion's updatePoint): the drag starts
+--- once the pointer has gone 3 pixels; a locked drag waits until it has
+--- gone 10 along one way
+fn _panned[o, n, g, t]
+    if not g.has_move
+        return o
+    g.has_move = false
+    dx = g.mx - g.hist_x[0]
+    dy = g.my - g.hist_y[0]
+    if not g.started and sqrt[dx * dx + dy * dy] lt 3.0
+        o.grabs[n.id] = g
+        return o
+    g.hist_t = push[g.hist_t, t]
+    g.hist_x = push[g.hist_x, g.mx]
+    g.hist_y = push[g.hist_y, g.my]
+    if not g.started
+        g.started = true
+        g.ox = g.x
+        g.oy = g.y
+        o.suppress = true
+    if g.sort_of eq 'free' and _on[n, 'drag_lock'] and g.lock eq ''
+        if abs[dy] gt 10.0
+            g.lock = 'y'
+        else if abs[dx] gt 10.0
+            g.lock = 'x'
+        if g.lock ne ''
+            o = _say[o, 'lock', n.id, g.lock]
+        o.grabs[n.id] = g
+        return o
+    b = _bounds_of[n, g]
+    el = _elastic_of[n, g]
+    if _moves_x[n, g]
+        g.x = pulled[g.ox + dx, b[0], b[1], el]
+    if _moves_y[n, g]
+        g.y = pulled[g.oy + dy, b[2], b[3], el]
+    if g.sort_of eq 'free'
+        o = _say[o, 'drag', n.id, '']
+    o.grabs[n.id] = g
+    o
+
+--- the pointer let go: the drag thrown on, sprung back, swiped off, or
+--- (a row) opened or closed
+fn _dropped[o, n, g, t]
+    o = _panned[o, n, g, t]
+    g = o.grabs[n.id]
+    g.held = false
+    o.active = ''
+    if not g.started
+        o.grabs[n.id] = g
+        return o
+    v = _pan_velocity[g]
+    g.rel_t = t
+    if g.sort_of eq 'free'
+        o = _say[o, 'let_go', n.id, '']
+        b = _bounds_of[n, g]
+        elastic = _num[n, 'drag_elastic', 0.35] gt 0.0
+        snap = _on[n, 'drag_snap']
+        momentum = _on[n, 'drag_momentum']
+        vx = 0.0
+        if _moves_x[n, g]
+            vx = v[0]
+        vy = 0.0
+        if _moves_y[n, g]
+            vy = v[1]
+        g.th_x = released[g.x, vx, low = b[0], high = b[1], elastic = elastic, snap = snap, momentum = momentum]
+        g.th_y = released[g.y, vy, low = b[2], high = b[3], elastic = elastic, snap = snap, momentum = momentum]
+        g.g_x = motion.glide[g.th_x]
+        g.g_y = motion.glide[g.th_y]
+        g.gliding = true
+    if g.sort_of eq 'cards'
+        far = _num[n, 'drag_distance', 100.0]
+        fast = _num[n, 'drag_speed', 500.0]
+        way = 0.0
+        if abs[g.x] gt far
+            way = _sign_of[g.x]
+        else if abs[v[0]] gt fast
+            way = _sign_of[v[0]]
+        if way ne 0.0
+            side = 'right'
+            if way lt 0.0
+                side = 'left'
+            o = _say[o, 'swipe', n.id, side]
+            w = 400.0
+            front = _front_of[n]
+            if front ne '' and front in o.boxes
+                w = o.boxes[front][2]
+            else if n.id in o.boxes
+                w = o.boxes[n.id][2]
+            g = _sprung[g, g.x, way * (w + 80.0), v[0], t]
+            g.ending = 'gone'
+        else
+            g = _sprung[g, g.x, 0.0, v[0], t]
+    if g.sort_of eq 'row'
+        wide = _num[n, 'drag_wide', 160.0]
+        w = wide * 2.0
+        if n.id in o.boxes
+            w = o.boxes[n.id][2]
+        if g.x lt -0.6 * w
+            g = _sprung[g, g.x, -w, v[0], t]
+            g.ending = 'act'
+        else if g.x lt -wide / 2.0 or v[0] lt -500.0
+            g = _sprung[g, g.x, -wide, v[0], t]
+            if not g.open
+                o = _say[o, 'open', n.id, '']
+            g.open = true
+        else
+            g = _sprung[g, g.x, 0.0, v[0], t]
+            if g.open
+                o = _say[o, 'close', n.id, '']
+            g.open = false
+    if g.sort_of eq 'honey'
+        b = _bounds_of[n, g]
+        g.th_x = released[g.x, v[0], low = b[0], high = b[1]]
+        g.th_y = released[g.y, v[1], low = b[2], high = b[3]]
+        g.g_x = motion.glide[g.th_x]
+        g.g_y = motion.glide[g.th_y]
+        g.gliding = true
+    if g.sort_of eq 'pinch'
+        o = _say[o, 'pinch', n.id, '']
+    o.grabs[n.id] = g
+    o
+
+fn _sign_of[x]
+    if x lt 0.0
+        return -1.0
+    1.0
+
+--- a card's or row's spring to `to` (Motion's spring, 300 stiff, 30
+--- damped), from `origin` at `velocity`
+fn _sprung[g, origin, to, velocity, t]
+    g.springing = true
+    g.sp_from = origin
+    g.sp_to = to
+    g.sp_v = velocity
+    g.sp_t = t
+    g
+
+fn _card_spring[]
+    motion.spring[300.0, 30.0, 1.0]
+
+--- the glides and springs let go into, at `t`
+fn _went_on[o, n, g, t]
+    if g.gliding
+        g.g_x = motion.glided[g.th_x, g.g_x, t - g.rel_t]
+        g.g_y = motion.glided[g.th_y, g.g_y, t - g.rel_t]
+        g.x = g.g_x.value
+        g.y = g.g_y.value
+        if g.g_x.done and g.g_y.done
+            g.gliding = false
+            if g.sort_of eq 'free'
+                o = _say[o, 'rest', n.id, '']
+    if g.springing
+        at = motion.spring_sample[_card_spring[], g.sp_from, g.sp_to, g.sp_v, t - g.sp_t]
+        g.x = at.value
+        if at.done
+            g.x = g.sp_to
+            g.springing = false
+            if g.ending eq 'gone'
+                o = _say[o, 'gone', n.id, _front_of[n]]
+                g.x = 0.0
+            if g.ending eq 'act'
+                o = _say[o, 'act', n.id, _first_action[n]]
+                o = _say[o, 'gone', n.id, '']
+                g.x = 0.0
+                g.open = false
+            g.ending = ''
+    o.grabs[n.id] = g
+    o
+
+fn _front_of[n]
+    if len[n.kids] gt 0
+        return n.kids[0].id
+    ''
+
+fn _first_action[n]
+    if len[n.kids] gt 1 and len[n.kids[1].kids] gt 0
+        return n.kids[1].kids[0].id
+    ''
+
+--- ---- pinches ----
+
+--- a finger down on a pinch (or a honeycomb): with a second, the pinch
+--- begins from the two's distance, middle and angle
+fn _touched[o, n, g, e, t]
+    if len[g.touch_ids] eq 0
+        o = _grabbed[o, n, g, e, t]
+        g = o.grabs[n.id]
+    if len[g.touch_ids] gte 2
+        return o
+    g.touch_ids = push[g.touch_ids, e.id]
+    if len[g.touch_ids] eq 1
+        g.touch_x = [e.x]
+        g.touch_y = [e.y]
+    else
+        g.touch_x = push[g.touch_x, e.x]
+        g.touch_y = push[g.touch_y, e.y]
+        g = _pinch_begun[g]
+        g.has_move = false
+    o.grabs[n.id] = g
+    o
+
+fn _pinch_begun[g]
+    dx = g.touch_x[1] - g.touch_x[0]
+    dy = g.touch_y[1] - g.touch_y[0]
+    d0 = _sure[max[sqrt[dx * dx + dy * dy], 1.0]]
+    mx0 = _sure[(g.touch_x[0] + g.touch_x[1]) / 2.0]
+    my0 = _sure[(g.touch_y[0] + g.touch_y[1]) / 2.0]
+    a0 = _sure[m.atan2[dy, dx]]
+    z0 = _sure[g.zoom]
+    x0 = _sure[g.x]
+    y0 = _sure[g.y]
+    turn0 = _sure[g.turn]
+    g.p0 = _eight[d0, mx0, my0, a0, z0, x0, y0, turn0]
+    g.started = true
+    g
+
+--- the two fingers moved: the scale their distance makes, the turn of
+--- the line between them, and the move that keeps what was under their
+--- middle under it
+fn _pinched[o, n, g, centre_x, centre_y]
+    dx = g.touch_x[1] - g.touch_x[0]
+    dy = g.touch_y[1] - g.touch_y[0]
+    d = max[sqrt[dx * dx + dy * dy], 1.0]
+    mx = (g.touch_x[0] + g.touch_x[1]) / 2.0
+    my = (g.touch_y[0] + g.touch_y[1]) / 2.0
+    p = g.p0
+    zoom = _zoom_held[n, p[4] * d / p[0]]
+    turn = p[7] + (m.atan2[dy, dx] - p[3]) * 180.0 / 3.141592653589793
+    --- (the point under the middle, in the control's own measure)
+    ux = (p[1] - centre_x - p[5]) / p[4]
+    uy = (p[2] - centre_y - p[6]) / p[4]
+    g.x = mx - centre_x - zoom * ux
+    g.y = my - centre_y - zoom * uy
+    g.zoom = zoom
+    g.turn = turn
+    o.grabs[n.id] = g
+    _say[o, 'pinch', n.id, '']
+
+fn _zoom_held[n, z]
+    least = _num[n, 'drag_least', 0.5]
+    most = _num[n, 'drag_most', 4.0]
+    if _is_kind[n, 'honey']
+        least = 0.5
+        most = 2.0
+    max[least, min[most, z]]
+
+--- the wheel with Ctrl (a trackpad's pinch) zooms about the pointer
+fn _wheel_zoomed[o, n, g, e]
+    b = o.boxes[n.id]
+    cx = b[0] + b[2] / 2.0
+    cy = b[1] + b[3] / 2.0
+    zoom = _zoom_held[n, g.zoom * exp[-e.dy / 100.0]]
+    ux = (e.x - cx - g.x) / g.zoom
+    uy = (e.y - cy - g.y) / g.zoom
+    g.x = e.x - cx - zoom * ux
+    g.y = e.y - cy - zoom * uy
+    g.zoom = zoom
+    o.grabs[n.id] = g
+    _say[o, 'pinch', n.id, '']
+
+--- ---- honeycombs ----
+
+--- where icon `i` of `count` stands on the honeycomb, from its middle,
+--- at zoom 1: rows of a hexagonal grid, every other one set half over
+fn _hex_at[i, count, size]
+    cols = max[1, int[ceil[sqrt[0.0 + count]]]]
+    r = i / cols
+    c = i % cols
+    rows = (count + cols - 1) / cols
+    step = size * 1.1
+    x = (0.0 + c - (cols - 1) / 2.0) * step
+    if r % 2 eq 1
+        x = x + step / 2.0
+    y = (0.0 + r - (rows - 1) / 2.0) * step * 0.866
+    [x, y]
+
+--- how far the honeycomb's view may be moved: its icons kept in sight
+fn _honey_bounds[n, g]
+    size = _num[n, 'drag_size', 64.0]
+    count = 0
+    if len[n.kids] gt 0
+        count = len[n.kids[0].kids]
+    cols = max[1, int[ceil[sqrt[0.0 + count]]]]
+    rows = max[1, (count + cols - 1) / cols]
+    half_w = (0.0 + cols) * size * 1.1 / 2.0 * g.zoom
+    half_h = (0.0 + rows) * size * 1.1 * 0.866 / 2.0 * g.zoom
+    [-half_w, half_w, -half_h, half_h]
+
+--- an icon's size where it stands: whole near the middle, smaller toward
+--- the edge (a watch's home screen)
+fn _honey_scale[dist, radius]
+    if dist lte radius * 0.45
+        return 1.0
+    max[0.35, 1.0 - (dist - radius * 0.45) / (radius * 0.9)]
+
+--- ---- the drags that are not a list's, each frame ----
+
+fn _others_driven[o, sensed, c, t]
+    px = lory.px[c]
+    k = recall['lory.drag', _fresh[]]
+    taken = ''
+    if k.stage ne ''
+        taken = k.pointer
+    --- (glides and springs on, to now)
+    for id in keys[sensed.others]
+        if id ne ''
+            n = sensed.others[id]
+            g = _grab_of[o, id, _opt[n, 'drag', '']]
+            if not g.held
+                o = _went_on[o, n, g, t]
+    for e in lory.events[c]
+        if e.on eq 'down' or e.on eq 'move' or e.on eq 'up' or e.on eq 'wheel'
+            p = _in_page[e, px]
+            o = _other_event[o, sensed, p, t, taken]
+    --- (a ray tells no moves: where it points while held is one)
+    if o.device eq 'ray' and o.active ne '' and o.active in sensed.others
+        x = lory.pointer_x[c] / px
+        y = lory.pointer_y[c] / px
+        g = _grab_of[o, o.active, '']
+        g.has_move = true
+        g.mx = x
+        g.my = y
+        o.grabs[o.active] = g
+    --- (each held drag's move this frame taken, once)
+    if o.active ne '' and o.active in sensed.others
+        n = sensed.others[o.active]
+        g = _grab_of[o, o.active, '']
+        if len[g.touch_ids] gte 2
+            if g.has_move
+                g.has_move = false
+                b = o.boxes[n.id]
+                o = _pinched[o, n, g, b[0] + b[2] / 2.0, b[1] + b[3] / 2.0]
+        else
+            o = _panned[o, n, g, t]
+    o.grabbing = o.active ne ''
+    o.moving = false
+    for id in keys[o.grabs]
+        if id ne ''
+            g = o.grabs[id]
+            if g.gliding or g.springing
+                o.moving = true
+    o
+
+fn _other_event[o, sensed, e, t, taken]
+    if e.on eq 'down'
+        if e.id eq taken
+            return o
+        --- (a second finger on a pinch or honeycomb held by one)
+        if o.active ne '' and o.active in sensed.others
+            n = sensed.others[o.active]
+            g = _grab_of[o, o.active, '']
+            if (g.sort_of eq 'pinch' or g.sort_of eq 'honey') and e.id ne g.pointer and _inside[e.x, e.y, _grab_box[o, n, g]]
+                return _touched[o, n, g, e, t]
+            return o
+        --- (an open row closes at a press anywhere else)
+        for id in keys[o.grabs]
+            if id ne ''
+                g = o.grabs[id]
+                if g.sort_of eq 'row' and g.open and id in sensed.others
+                    n = sensed.others[id]
+                    if not _inside[e.x, e.y, _grab_box[o, n, g]]
+                        g = _sprung[g, g.x, 0.0, 0.0, t]
+                        g.open = false
+                        o.grabs[id] = g
+                        o = _say[o, 'close', id, '']
+        hit = ''
+        for id in keys[sensed.others]
+            if id ne ''
+                n = sensed.others[id]
+                g = _grab_of[o, id, _opt[n, 'drag', '']]
+                if _inside[e.x, e.y, _grab_box[o, n, g]]
+                    hit = id
+        if hit eq ''
+            return o
+        n = sensed.others[hit]
+        g = _grab_of[o, hit, _opt[n, 'drag', '']]
+        g.sort_of = _opt[n, 'drag', '']
+        if g.sort_of eq 'pinch' or g.sort_of eq 'honey'
+            g.touch_ids = _no_texts[]
+            return _touched[o, n, g, e, t]
+        return _grabbed[o, n, g, e, t]
+    if e.on eq 'wheel'
+        if not e.ctrl
+            return o
+        for id in keys[sensed.others]
+            if id ne ''
+                n = sensed.others[id]
+                g = _grab_of[o, id, _opt[n, 'drag', '']]
+                g.sort_of = _opt[n, 'drag', '']
+                if (g.sort_of eq 'pinch' or g.sort_of eq 'honey') and _inside[e.x, e.y, _grab_box[o, n, g]]
+                    o = _wheel_zoomed[o, n, g, e]
+        return o
+    if o.active eq '' or not (o.active in sensed.others)
+        return o
+    n = sensed.others[o.active]
+    g = _grab_of[o, o.active, '']
+    if e.on eq 'move'
+        if len[g.touch_ids] gte 2
+            i = 0
+            while i lt 2
+                if g.touch_ids[i] eq e.id
+                    g.touch_x[i] = e.x
+                    g.touch_y[i] = e.y
+                    g.has_move = true
+                i = i + 1
+            o.grabs[n.id] = g
+            return o
+        if e.id eq g.pointer
+            g.has_move = true
+            g.mx = e.x
+            g.my = e.y
+            o.grabs[n.id] = g
+        return o
+    if e.on eq 'up'
+        if len[g.touch_ids] gte 2
+            if _in_texts[g.touch_ids, e.id]
+                --- (one finger lifted: the pinch is over, its turn come to
+                --- the nearest quarter, as Motion's pinch to rotate)
+                g.touch_ids = _no_texts[]
+                g.turn = 90.0 * _js_round[g.turn / 90.0]
+                g.held = false
+                g.started = false
+                o.active = ''
+                o.grabs[n.id] = g
+                o = _say[o, 'pinch', n.id, '']
+            return o
+        if e.id eq g.pointer
+            g.touch_ids = _no_texts[]
+            o = _dropped[o, n, g, t]
+    o
+
+--- ---- the drags that are not a list's, shown ----
+
+fn _others_rewritten[o, n, t, scale]
+    kind = _opt[n, 'drag', '']
+    if kind eq 'free' or kind eq 'cards' or kind eq 'row' or kind eq 'pinch' or kind eq 'honey'
+        g = _grab_of[o, n.id, kind]
+        if kind eq 'free'
+            n.kids = _one_kid[n, gui.moved[_sure_node[n.kids[0]], g.x / scale, g.y / scale]]
+            return n
+        if kind eq 'cards'
+            return _cards_shown[n, g, scale]
+        if kind eq 'row'
+            return _row_shown[n, g, scale]
+        if kind eq 'pinch'
+            kid = _sure_node[gui.moved[gui.scaled[_sure_node[n.kids[0]], g.zoom], g.x / scale, g.y / scale]]
+            n.kids = _one_kid[n, kid]
+            return n
+        return _honey_shown[o, n, g, scale]
+    out = slice[n.kids, 0, 0]
+    i = 0
+    while i lt len[n.kids]
+        kid = _sure_node[_others_rewritten[o, _sure_node[n.kids[i]], t, scale]]
+        out = push[out, kid]
+        i = i + 1
+    n.kids = out
+    n
+
+--- the stack drawn: the cards over each other, the front one where it
+--- is dragged, those behind it a little smaller
+fn _cards_shown[n, g, scale]
+    count = len[n.kids]
+    if count eq 0
+        return n
+    pulled_by = min[1.0, abs[g.x] / 150.0]
+    base = _sure_node[n.kids[count - 1]]
+    i = count - 1
+    while i gte 0
+        k = _sure_node[n.kids[i]]
+        if i eq 0
+            k = gui.moved[k, g.x / scale, 0.0]
+        else
+            depth = min[3.0, 0.0 + i - pulled_by]
+            k = gui.scaled[k, 1.0 - 0.05 * depth]
+        if i eq count - 1
+            base = k
+        else
+            base = gui.overlay[base, k, anchor = 'top_left']
+        i = i - 1
+    n.kids = _one_kid[n, base]
+    n
+
+--- the row drawn where it is swiped, its actions in the room it leaves
+fn _row_shown[n, g, scale]
+    kid = _sure_node[n.kids[0]]
+    actions = _sure_node[n.kids[1]]
+    moved = gui.moved[kid, g.x / scale, 0.0]
+    if g.x gte 0.0
+        n.kids = _one_kid[n, moved]
+        return n
+    shown_actions = gui.sized[actions, -g.x / scale]
+    n.kids = _one_kid[n, gui.overlay[moved, shown_actions, anchor = 'top_right']]
+    n
+
+--- the honeycomb drawn: each icon where it stands on the comb, moved
+--- with the view and zoomed, smaller toward the edge
+fn _honey_shown[o, n, g, scale]
+    size = _num[n, 'drag_size', 64.0]
+    row = _sure_node[n.kids[0]]
+    count = len[row.kids]
+    w = n.wide * scale
+    h = n.tall * scale
+    if n.id in o.boxes
+        w = o.boxes[n.id][2]
+        h = o.boxes[n.id][3]
+    radius = min[w, h] / 2.0
+    placed = slice[row.kids, 0, 0]
+    i = 0
+    while i lt count
+        at = _hex_at[i, count, size]
+        sx = at[0] * g.zoom + g.x
+        sy = at[1] * g.zoom + g.y
+        k = _honey_scale[sqrt[sx * sx + sy * sy], radius] * g.zoom
+        icon = gui.scaled[_sure_node[row.kids[i]], k]
+        icon = gui.moved[icon, (w / 2.0 + sx - size / 2.0) / scale, (h / 2.0 + sy - size / 2.0) / scale]
+        placed = push[placed, _sure_node[icon]]
+        i = i + 1
+    row.kids = placed
+    n.kids = _one_kid[n, row]
+    n
+
+--- where each was laid out (its home: what it shows moved from)
+fn _others_laid[o, sensed, boxes]
+    for id in keys[sensed.others]
+        if id ne '' and id in boxes
+            o.boxes[id] = _box_of[boxes[id]]
+            n = sensed.others[id]
+            front = _front_of[n]
+            if _is_kind[n, 'cards'] and front ne '' and front in boxes
+                o.boxes[front] = _box_of[boxes[front]]
+    o
+
+--- ---- tests ----
+
+--- a frame 900 by 700 at `t` ms, with the input given (a JSON list)
+fn _frame[t, given]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _ev[on, x, y]
+    '[{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _forgotten[]
+    forget[]
+    gui.unfocus[]
+
+fn _rows_of[prefix, count]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt count
+        out = push[out, gui.item['`prefix``i`', [gui.space[28.0]]]]
+        i = i + 1
+    out
+
+fn _two_lists[]
+    a = grouped[list['a', _rows_of['a', 4], gap = 0.0], 'shared']
+    b = grouped[list['b', _rows_of['b', 3], gap = 0.0], 'shared']
+    gui.row[[gui.sized[a, 300.0], gui.sized[b, 300.0]], gap = 20.0]
+
+fn _acts[shown]
+    out = _no_texts[]
+    for t in shown.told
+        out = push[out, '`t.act` `t.list` `t.item` `t.old_index` `t.new_index`']
+    out
+
+--- an item pressed, carried down two places and let go: the list tells
+--- what SortableJS tells, and its order is the drag's
+test an_item_dragged_down_a_list_takes_its_new_place[]
+    _forgotten[]
+    first = show[_frame[0, '[]'], _two_lists[]]
+    a0 = first.boxes['a0']
+    x = a0[0] + 100.0
+    y = a0[1] + 20.0
+    downed = show[_frame[50, _ev['down', x, y]], _two_lists[]]
+    downed.told[0].act eq 'choose'
+    started = show[_frame[100, _ev['move', x, y + 2.0]], _two_lists[]]
+    started.told[0].act eq 'clone'
+    started.told[1].act eq 'start'
+    moved = show[_frame[150, _ev['move', x, y + 90.0]], _two_lists[]]
+    show[_frame[200, '[]'], _two_lists[]]
+    shown_order['a'] eq ['a1', 'a2', 'a0', 'a3']
+    up = show[_frame[250, _ev['up', x, y + 90.0]], _two_lists[]]
+    _acts[up] eq ['unchoose a a0 0 -1', 'update a a0 0 2', 'sort a a0 0 2', 'end a a0 0 2']
+    after[map['a' = ['a0', 'a1', 'a2', 'a3']], up.told[3]]['a'] eq ['a1', 'a2', 'a0', 'a3']
+
+--- a headset's frame at `t`, its right hand's ray on the panel at (x, y)
+--- (the panel 1000 by 560, its pixels 2 mm, 1.5 m ahead), with the
+--- ray's events given
+fn _ray_frame[t, x, y, given]
+    dx = (0.002 * x - 1.0) / 1.5
+    dy = (1.8 - 0.002 * y - 1.25) / 1.5
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": `t`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": [`dx`, `dy`, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']]
+
+fn _ray[on]
+    '[{"type": "`on`", "device": "ray", "id": "right"}]'
+
+fn _touch[on, id, x, y]
+    '{"type": "`on`", "device": "touch", "id": `id`, "x": `x`, "y": `y`, "button": 0}'
+
+fn _all_acts[told]
+    out = _no_texts[]
+    for t in told
+        out = push[out, '`t.act` `t.list` `t.item` `t.to`']
+    out
+
+--- in a headset an item is carried by the ray into another place in its
+--- list and then into the other list, as a mouse carries it
+test in_a_headset_an_item_is_dragged_by_the_ray_into_another_list[]
+    _forgotten[]
+    first = show[_ray_frame[0, 10.0, 10.0, '[]'], _two_lists[]]
+    a1 = first.boxes['a1']
+    b1 = first.boxes['b1']
+    x = a1[0] + 100.0
+    y = a1[1] + 20.0
+    downed = show[_ray_frame[50, x, y, _ray['down']], _two_lists[]]
+    downed.told[0].act eq 'choose'
+    downed.told[0].item eq 'a1'
+    started = show[_ray_frame[100, x, y + 3.0, '[]'], _two_lists[]]
+    started.told[1].act eq 'start'
+    show[_ray_frame[150, x, y + 40.0, '[]'], _two_lists[]]
+    show[_ray_frame[200, x, y + 40.0, '[]'], _two_lists[]]
+    shown_order['a'] eq ['a0', 'a2', 'a1', 'a3']
+    show[_ray_frame[250, b1[0] + 100.0, b1[1] + 10.0, '[]'], _two_lists[]]
+    show[_ray_frame[300, b1[0] + 100.0, b1[1] + 10.0, '[]'], _two_lists[]]
+    shown_order['b'] eq ['b0', 'a1', 'b1', 'b2']
+    up = show[_ray_frame[350, b1[0] + 100.0, b1[1] + 10.0, _ray['up']], _two_lists[]]
+    _acts[up] eq ['unchoose a a1 1 -1', 'add b a1 1 1', 'remove a a1 1 1', 'sort b a1 1 1', 'sort a a1 1 1', 'end a a1 1 1']
+    lists = after[map['a' = ['a0', 'a1', 'a2', 'a3'], 'b' = ['b0', 'b1', 'b2']], up.told[5]]
+    lists['a'] eq ['a0', 'a2', 'a3']
+    lists['b'] eq ['b0', 'a1', 'b1', 'b2']
+
+fn _card[id]
+    n = gui.sized[gui.panel[[gui.text[id], gui.space[120.0]]], 260.0]
+    n.id = id
+    n
+
+fn _stack[ids]
+    kids = slice[[gui.space[0.0]], 0, 0]
+    for id in ids
+        kids = push[kids, _card[id]]
+    cards['deck', kids]
+
+--- the frames after `t0` every 16 ms, the ray held at (x, y), until the
+--- stack tells `gone` (or a second has passed): what it told
+fn _ray_until_gone[t0, x, y, ids]
+    told = _no_told[]
+    t = t0
+    while t lt t0 + 1000
+        shown = show[_ray_frame[t, x, y, '[]'], _stack[ids]]
+        for td in shown.told
+            told = push[told, td]
+            if td.act eq 'gone'
+                return told
+        t = t + 16
+    told
+
+--- in a headset the top card is swiped away by the ray: dragged to the
+--- right past its distance and let go, it tells `swipe` and, once off,
+--- `gone`
+test in_a_headset_a_card_is_swiped_away_by_the_ray[]
+    _forgotten[]
+    ids = ['one', 'two', 'three']
+    first = show[_ray_frame[0, 10.0, 10.0, '[]'], _stack[ids]]
+    deck = first.boxes['deck']
+    x = deck[0] + 100.0
+    y = deck[1] + 60.0
+    show[_ray_frame[16, x, y, _ray['down']], _stack[ids]]
+    show[_ray_frame[32, x + 40.0, y, '[]'], _stack[ids]]
+    show[_ray_frame[48, x + 90.0, y, '[]'], _stack[ids]]
+    held = show[_ray_frame[64, x + 150.0, y, '[]'], _stack[ids]]
+    --- (the front card follows the ray, the others stay)
+    place_of['deck'][0] eq 150.0
+    let_go = show[_ray_frame[80, x + 150.0, y, _ray['up']], _stack[ids]]
+    _all_acts[let_go.told] eq ['swipe deck deck right']
+    told = _ray_until_gone[96, x + 150.0, y, ids]
+    told[len[told] - 1].act eq 'gone'
+    told[len[told] - 1].to eq 'one'
+
+--- a card let go before its distance, and slowly, springs back
+test a_card_let_go_short_springs_back[]
+    _forgotten[]
+    ids = ['one', 'two']
+    first = show[_frame[0, '[]'], _stack[ids]]
+    deck = first.boxes['deck']
+    x = deck[0] + 100.0
+    y = deck[1] + 60.0
+    show[_frame[16, _ev['down', x, y]], _stack[ids]]
+    show[_frame[200, _ev['move', x + 20.0, y]], _stack[ids]]
+    show[_frame[400, _ev['move', x + 40.0, y]], _stack[ids]]
+    show[_frame[600, _ev['up', x + 40.0, y]], _stack[ids]]
+    t = 616
+    while t lt 2000
+        show[_frame[t, '[]'], _stack[ids]]
+        t = t + 16
+    place_of['deck'][0] eq 0.0
+
+fn _thrown_tree[]
+    free['ball', gui.sized[gui.panel[[gui.space[40.0]]], 80.0], axis = 'x', left = -100.0, right = 300.0]
+
+--- a control dragged and thrown glides on at its speed, as Motion's
+--- drag does, and comes to rest at its bound, sprung back from past it
+test a_thrown_control_glides_on_and_rests_at_its_bound[]
+    _forgotten[]
+    first = show[_frame[0, '[]'], _thrown_tree[]]
+    b = first.boxes['ball']
+    x = b[0] + 20.0
+    y = b[1] + 20.0
+    grabbed = show[_frame[16, _ev['down', x, y]], _thrown_tree[]]
+    _all_acts[grabbed.told] eq ['grab ball ball ']
+    show[_frame[32, _ev['move', x + 20.0, y + 30.0]], _thrown_tree[]]
+    --- (along x alone)
+    place_of['ball'] eq [20.0, 0.0]
+    show[_frame[48, _ev['move', x + 40.0, y]], _thrown_tree[]]
+    show[_frame[64, _ev['move', x + 60.0, y]], _thrown_tree[]]
+    let_go = show[_frame[80, _ev['up', x + 60.0, y]], _thrown_tree[]]
+    _all_acts[let_go.told] eq ['let_go ball ball ']
+    --- (its speed: 40 px over the last 32 ms, 1250 a second: Motion's own
+    --- glide, from 60, toward 60 + 0.8 × 1250, caught at 300)
+    rested = false
+    t = 96
+    while t lt 4000 and not rested
+        shown = show[_frame[t, '[]'], _thrown_tree[]]
+        for td in shown.told
+            if td.act eq 'rest'
+                rested = true
+        t = t + 16
+    rested
+    place_of['ball'][0] eq 300.0
+    th = released[60.0, 1250.0, low = -100.0, high = 300.0]
+    motion.glide[th].target eq 1060.0
+
+--- dragged past its bound it is pulled back (elastic), and let go there
+--- it springs back to the bound
+test a_control_dragged_past_its_bound_is_pulled_back[]
+    _forgotten[]
+    first = show[_frame[0, '[]'], _thrown_tree[]]
+    b = first.boxes['ball']
+    x = b[0] + 20.0
+    y = b[1] + 20.0
+    show[_frame[16, _ev['down', x, y]], _thrown_tree[]]
+    show[_frame[300, _ev['move', x - 200.0, y]], _thrown_tree[]]
+    place_of['ball'][0] eq pulled[-200.0, -100.0, 300.0, 0.35]
+    show[_frame[600, _ev['up', x - 200.0, y]], _thrown_tree[]]
+    t = 616
+    while t lt 3000
+        show[_frame[t, '[]'], _thrown_tree[]]
+        t = t + 16
+    place_of['ball'][0] eq -100.0
+
+fn _locked_tree[]
+    free['chip', gui.sized[gui.panel[[gui.space[40.0]]], 80.0], lock = true, momentum = false]
+
+--- with `lock`, the drag goes the way it was first moved alone
+test a_locked_drag_goes_one_way_alone[]
+    _forgotten[]
+    first = show[_frame[0, '[]'], _locked_tree[]]
+    b = first.boxes['chip']
+    x = b[0] + 20.0
+    y = b[1] + 20.0
+    show[_frame[16, _ev['down', x, y]], _locked_tree[]]
+    show[_frame[32, _ev['move', x + 2.0, y + 5.0]], _locked_tree[]]
+    place_of['chip'] eq [0.0, 0.0]
+    locked = show[_frame[48, _ev['move', x + 4.0, y + 12.0]], _locked_tree[]]
+    _all_acts[locked.told] eq ['lock chip chip y']
+    show[_frame[64, _ev['move', x + 30.0, y + 40.0]], _locked_tree[]]
+    place_of['chip'] eq [0.0, 40.0]
+
+fn _mail_row[]
+    gui.column[[swiped['m1', gui.item['m1:body', [gui.text['A letter'], gui.space[28.0]]], [gui.button['m1:archive', 'Archive'], gui.button['m1:delete', 'Delete']], wide = 160.0]]]
+
+--- a row swiped past half its actions stays open, showing them; swiped
+--- most of the way across, it acts, the first action's
+test a_row_swiped_opens_and_swiped_across_acts[]
+    _forgotten[]
+    first = show[_frame[0, '[]'], _mail_row[]]
+    r = first.boxes['m1']
+    x = r[0] + r[2] - 20.0
+    y = r[1] + 20.0
+    show[_frame[16, _ev['down', x, y]], _mail_row[]]
+    show[_frame[300, _ev['move', x - 50.0, y]], _mail_row[]]
+    show[_frame[600, _ev['move', x - 100.0, y]], _mail_row[]]
+    opened = show[_frame[900, _ev['up', x - 100.0, y]], _mail_row[]]
+    _all_acts[opened.told] eq ['open m1 m1 ']
+    t = 916
+    while t lt 2000
+        show[_frame[t, '[]'], _mail_row[]]
+        t = t + 16
+    place_of['m1'][0] eq -160.0
+    shown = show[_frame[2016, '[]'], _mail_row[]]
+    'm1:archive' in shown.boxes
+    --- (a press elsewhere closes it)
+    closed = show[_frame[2032, _ev['down', 800.0, 690.0]], _mail_row[]]
+    _all_acts[closed.told] eq ['close m1 m1 ']
+    show[_frame[2048, _ev['up', 800.0, 690.0]], _mail_row[]]
+    t = 2064
+    while t lt 3000
+        show[_frame[t, '[]'], _mail_row[]]
+        t = t + 16
+    place_of['m1'][0] eq 0.0
+    --- (swiped across: it acts)
+    show[_frame[3016, _ev['down', x, y]], _mail_row[]]
+    show[_frame[3100, _ev['move', x - 300.0, y]], _mail_row[]]
+    show[_frame[3400, _ev['move', x - 700.0, y]], _mail_row[]]
+    show[_frame[3700, _ev['up', x - 700.0, y]], _mail_row[]]
+    told = _no_texts[]
+    t = 3716
+    while t lt 5000
+        shown_now = show[_frame[t, '[]'], _mail_row[]]
+        for td in shown_now.told
+            told = push[told, '`td.act` `td.to`']
+        t = t + 16
+    told eq ['act m1:archive', 'gone ']
+
+fn _compare[v]
+    gui.column[[reveal['cmp', v, 400.0, 200.0, words = 'Before, After']]]
+
+--- the line of a reveal follows the press across it, told as a change
+test a_reveal_s_line_follows_the_press[]
+    _forgotten[]
+    first = show[_frame[0, '[]'], _compare[0.5]]
+    b = first.boxes['cmp']
+    pressed = show[_frame[16, _ev['down', b[0] + 100.0, b[1] + 50.0]], _compare[0.5]]
+    told = false
+    for e in pressed.events
+        if e.id eq 'cmp' and e.act eq 'change' and e.num eq 0.25
+            told = true
+    told
+
+fn _photo[]
+    gui.column[[pinch['photo', gui.sized[gui.panel[[gui.space[200.0]]], 300.0], 232.0]]]
+
+--- two fingers spread to twice their distance zoom it twice, about
+--- their middle; turned, the turn is told
+test two_fingers_zoom_and_turn_a_pinch[]
+    _forgotten[]
+    first = show[_frame[0, '[]'], _photo[]]
+    b = first.boxes['photo']
+    cx = b[0] + b[2] / 2.0
+    cy = b[1] + b[3] / 2.0
+    one = _touch['down', 1, cx - 20.0, cy]
+    two = _touch['down', 2, cx + 20.0, cy]
+    show[_frame[16, '[`one`, `two`]'], _photo[]]
+    m1 = _touch['move', 1, cx - 40.0, cy]
+    m2 = _touch['move', 2, cx + 40.0, cy]
+    spread = show[_frame[32, '[`m1`, `m2`]'], _photo[]]
+    _all_acts[spread.told] eq ['pinch photo photo ']
+    v = view_of['photo']
+    v[0] eq 2.0
+    abs[v[1]] lt 0.000001
+    abs[v[2]] lt 0.000001
+    t1 = _touch['move', 1, cx, cy - 40.0]
+    t2 = _touch['move', 2, cx, cy + 40.0]
+    show[_frame[48, '[`t1`, `t2`]'], _photo[]]
+    abs[view_of['photo'][3] - 90.0] lt 0.000001
+
+fn _comb[]
+    icons = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt 12
+        icons = push[icons, gui.sized[gui.button['app`i`', '`i`'], 64.0]]
+        i = i + 1
+    honeycomb['home', icons, 400.0, 300.0]
+
+--- a honeycomb dragged moves its icons, and the press that dragged it is
+--- told as no press of the icon under it
+test a_honeycomb_is_dragged_and_its_press_not_told[]
+    _forgotten[]
+    first = show[_frame[0, '[]'], _comb[]]
+    b = first.boxes['home']
+    x = b[0] + b[2] / 2.0
+    y = b[1] + b[3] / 2.0
+    before = first.boxes['app5']
+    show[_frame[16, _ev['down', x, y]], _comb[]]
+    show[_frame[32, _ev['move', x + 30.0, y]], _comb[]]
+    moved = show[_frame[48, _ev['up', x + 30.0, y]], _comb[]]
+    pressed = false
+    for e in moved.events
+        if e.act eq 'press'
+            pressed = true
+    not pressed
+    view_of['home'][1] gt 25.0

@@ -1,0 +1,189 @@
+--- Lory's navigation and display parts at work: an app bar over the page,
+--- breadcrumbs that open their ellipsis, a stepper with its Back and
+--- Continue, pagination over a grid of cards, chips chosen as filters,
+--- avatars in a group, a timeline, skeletons and spinners while a card
+--- "loads", and a gallery of pictures (drawn as SVG, by data address)
+--- that opens one large in a lightbox, the arrows moving through them.
+--- What is chosen is the program's, kept in process memory between
+--- frames; how each part stands (the crumbs opened, the gallery's focus)
+--- is Lory's.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.display
+use lory.navigation
+
+struct App [page, step, done, tags, opened, crumb]
+
+fn fresh[]
+    App[1, 1, [0], ['Ψall'], -1, 4]
+
+fn crumbs_of[]
+    ['Home', 'Library', 'Pictures', 'Summer', 'Coast']
+
+fn steps_of[]
+    ['Choose', 'Arrange', 'Share']
+
+fn tags_of[]
+    ['Ψall', 'Sea', 'Hills', 'Town']
+
+fn people_of[]
+    ['AL', 'BK', 'CM', 'DN', 'EO']
+
+--- a picture drawn as SVG: a sky of one colour, a sun, and hills of
+--- another, by a data address
+fn picture[sky, hill, sun_x]
+    head = 'data:image/svg+xml;utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27320%27 height=%27240%27 viewBox=%270 0 320 240%27%3E'
+    ground = '%3Crect width=%27320%27 height=%27240%27 fill=%27%23`sky`%27/%3E'
+    sun = '%3Ccircle cx=%27`sun_x`%27 cy=%2760%27 r=%2728%27 fill=%27%23ffd166%27/%3E'
+    hills = '%3Cpath d=%27M0 240 L0 160 Q80 100 160 160 T320 150 L320 240 Z%27 fill=%27%23`hill`%27/%3E'
+    join[[head, ground, sun, hills, '%3C/svg%3E'], '']
+
+fn pictures_of[]
+    [picture['8ecae6', '2a9d8f', 70], picture['ffb4a2', 'e76f51', 250], picture['bde0fe', '457b9d', 160], picture['cdb4db', '6d597a', 100], picture['caffbf', '386641', 220], picture['f1faee', 'e63946', 140]]
+
+fn captions_of[]
+    ['Ψmorning sea', 'Evening hills', 'The bay', 'Dusk', 'Fields', 'Harbour']
+
+fn cards_of[]
+    out = slice[[''], 0, 0]
+    i = 1
+    while i lte 22
+        out = push[out, 'Card `i`']
+        i = i + 1
+    out
+
+--- the cards on a page, six to a page
+fn page_cards[page]
+    every = cards_of[]
+    shown = []
+    k = (page - 1) * 6
+    while k lt min[len[every], page * 6]
+        n = k + 1
+        if k eq (page - 1) * 6 + 1
+            shown = push[shown, display.card[[display.placeholder[2]], '', every[k], 'loading', '', true, false, 260.0]]
+        else
+            shown = push[shown, display.card[[display.statistic['`n * 7`', 'Ψviews', 28.0]], 'card:`n`', every[k], 'Page `page`', '', false, false, 260.0]]
+        k = k + 1
+    rows = []
+    r = 0
+    while r lt len[shown]
+        rows = push[rows, gui.row[slice[shown, r, min[len[shown], r + 3]], gap = 12.0]]
+        r = r + 3
+    gui.column[rows, gap = 12.0]
+
+fn page_of[a, tall]
+    bar = navigation.app_bar['bar', 'Ωdisplay', [navigation.tool_button['bar:search', '', 'search'], navigation.tool_button['bar:more', '', 'dots-vertical']], navigation.unscrolled[], 'menu']
+    trail = navigation.breadcrumbs['trail', crumbs_of[], '/', 4]
+    steps = navigation.stepper['steps', steps_of[], a.step, a.done]
+    actions = navigation.step_actions['steps', a.step, len[steps_of[]]]
+    shown_step = steps_of[][a.step]
+    chips = display.chip_group['tags', tags_of[], a.tags, true, true, true]
+    people = gui.row[[display.avatar_group['people', ['', '', '', '', ''], people_of[], 4], display.badged[display.avatar['me', '', 'ΩV'], '3']], gap = 24.0, align = 'center']
+    times = display.timeline['times', ['Ωtaken', 'Arranged', 'Shared'], ['on the coast', 'in an album', 'with two people'], ['9:00', '11:30', '14:00'], ['accent', 'success', 'info'], '', true, '', 640.0]
+    loading = gui.row[[display.spinner[20.0], display.circular[64.0, 40.0, 4.0, 0.0, true, 'accent', '64'], display.dots['jump'], display.skeleton_of['paragraph', 240.0]], gap = 24.0, align = 'center']
+    pages = navigation.pagination['pages', 4, a.page, 0, 0.0, true]
+    gallery = display.gallery['gallery', pictures_of[], 'grid', 3, 600.0, 320.0]
+    picked = 'Press a picture to see it large.'
+    if a.opened gte 0
+        picked = 'Showing `captions_of[][a.opened]`.'
+    crumb = crumbs_of[][a.crumb]
+    body = gui.column[[trail, gui.note['In `crumb`.'], steps, actions, gui.note['Step: `shown_step`.'], chips, people, times, loading, page_cards[a.page], pages, gallery, gui.note[picked]], gap = 18.0, pad = 24.0]
+    box = display.lightbox['box', pictures_of[], a.opened, captions_of[]]
+    gui.column[[bar, gui.scroll['page', max[120.0, tall - 64.0], [body]], box], gap = 0.0]
+
+fn applied[a, shown]
+    for e in shown.events
+        if e.id eq 'pages' and e.act eq 'page'
+            a.page = int[e.num]
+        if e.id eq 'steps' and e.act eq 'step'
+            to = int[e.num]
+            if to gt a.step and not (a.step in a.done)
+                a.done = push[a.done, a.step]
+            a.step = to
+        if e.id eq 'tags' and e.act eq 'choose'
+            a.tags = split[e.words, '\n']
+        if e.id eq 'gallery' and e.act eq 'choose'
+            a.opened = int[e.num]
+        if e.id eq 'box' and e.act eq 'choose'
+            a.opened = int[e.num]
+        if e.id eq 'box' and e.act eq 'dismiss'
+            a.opened = -1
+        if e.id eq 'trail' and e.act eq 'press'
+            a.crumb = int[e.num]
+    a
+
+fn draw[frame]
+    a = recall['app', fresh[]]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    shown = gui.show[c, page_of[a, lory.height[c] / lory.px[c]]]
+    a = applied[a, shown]
+    remember['app', a]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+fn screen[t, given]
+    json['{"t": `t`, "width": 1000, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 900, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _press_at[b]
+    x = b[0] + b[2] / 2.0
+    y = b[1] + b[3] / 2.0
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _key[name]
+    '[{"type": "key", "key": "`name`", "code": "`name`", "shift": false}]'
+
+fn _shown[t, given, a]
+    gui.show[lory.begin[screen[t, given]], page_of[a, 900.0]]
+
+test the_page_shows_every_part[]
+    gui.unfocus[]
+    forget['lory.navigation.crumbs']
+    a = fresh[]
+    first = _shown[0, '[]', a]
+    again = _shown[16, '[]', a]
+    'trail:more' in again.boxes
+    'steps:0' in again.boxes
+    'tags:1' in again.boxes
+    'pages:next' in again.boxes
+    'gallery' in again.boxes
+    'card:1' in again.boxes
+    not ('box:view' in again.boxes)
+
+test the_pages_steps_and_chips_answer_a_press[]
+    gui.unfocus[]
+    a = fresh[]
+    first = _shown[0, '[]', a]
+    pressed = _shown[16, _press_at[first.boxes['pages:next']], a]
+    a = applied[a, pressed]
+    a.page eq 2
+    shown = _shown[32, '[]', a]
+    'card:7' in shown.boxes
+    stepped = _shown[48, _press_at[shown.boxes['steps:on']], a]
+    a = applied[a, stepped]
+    a.step eq 2
+    1 in a.done
+    chose = _shown[64, _press_at[stepped.boxes['tags:2']], a]
+    a = applied[a, chose]
+    'Hills' in a.tags
+
+test a_picture_opens_in_the_lightbox_and_the_arrows_move_it[]
+    gui.unfocus[]
+    a = fresh[]
+    first = _shown[0, '[]', a]
+    g = first.boxes['gallery']
+    spot = display.gallery_place['grid', 1, 6, 3, 600.0, 320.0]
+    pressed = _shown[16, _press_at[[g[0] + spot[0], g[1] + spot[1], spot[2], spot[3]]], a]
+    a = applied[a, pressed]
+    a.opened eq 1
+    opened = _shown[32, '[]', a]
+    'box:view' in opened.boxes
+    moved = _shown[48, _key['ArrowRight'], a]
+    a = applied[a, moved]
+    a.opened eq 2
+    closed = _shown[64, _key['Escape'], a]
+    a = applied[a, closed]
+    a.opened eq -1

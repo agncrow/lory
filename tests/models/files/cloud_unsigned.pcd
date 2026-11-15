@@ -1,0 +1,13 @@
+# a cloud whose colours are written as whole numbers, written for Lory's tests
+VERSION .7
+FIELDS x y z rgb
+SIZE 4 4 4 4
+TYPE F F F U
+COUNT 1 1 1 1
+WIDTH 3
+HEIGHT 1
+POINTS 3
+DATA ascii
+0 0 0 16711680
+1 0 0 65280
+0 1 0 4294967295

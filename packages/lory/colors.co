@@ -1,0 +1,1479 @@
+--- Colours and themes. A colour is a lory.Color: its sRGB channels and its
+--- opacity, each from 0 to 1. This module reads and writes a colour as CSS
+--- hex; turns it into linear light, OKLab, OKLCH, HSL and HSV and back;
+--- mixes two colours in any of those spaces; makes one lighter, darker or
+--- more saturated in OKLCH and fits it back inside sRGB; lays a translucent
+--- colour over another; and measures text on a background by WCAG 2's
+--- contrast ratio and by APCA's lightness contrast. Each number is held to
+--- the library it follows (culori 4.0.2, apca-w3 0.1.9) by
+--- tests/colors/reference.co.
+---
+--- It also makes twelve-step colour scales of its own, one for each of the
+--- 31 scales Radix Colors names (its six grays and 25 accents), in a light
+--- and a dark appearance, solid and translucent, with black and white
+--- overlays. The steps keep the roles Radix gives them: 1 an app's
+--- background, 2 a subtle background, 3, 4 and 5 a control's background at
+--- rest, hovered and pressed, 6, 7 and 8 borders (8 a focus ring's), 9 and
+--- 10 solid fills at rest and hovered, 11 and 12 text. Steps 11 and 12 keep
+--- the contrast Radix states for them, APCA Lc 60 and Lc 90 on steps 1 and
+--- 2 of their own scale, in both appearances. Every step comes from the
+--- curves of OKLCH lightness and chroma written here, out of a seed for
+--- each scale (the lightness, chroma and hue of its step 9, chosen so that
+--- a name means the colour it means in Radix); no step is taken from
+--- Radix's tables.
+---
+--- From the same scales come Semantic UI's thirteen named colours, with the
+--- hover, focus, pressed and active shades Semantic UI derives from each;
+--- Vuetify's palette (a base colour, five lighter shades, four darker and
+--- four accents for each of its names); and a theme's tokens (page, panel,
+--- edge, ink, accent, the states of a control, danger, success, warning and
+--- info) for an accent, a gray and an appearance, as Radix Themes resolves
+--- them. A program turns a Theme into whatever look it draws with.
+use math
+use lory
+
+--- a colour in OKLab: its lightness, its green-red and blue-yellow axes, and
+--- its opacity
+struct Lab [l, a, b, alpha]
+
+--- a colour in OKLCH: its lightness, its chroma (how far it is from gray),
+--- its hue in degrees (`nan` for a gray, which has none) and its opacity
+struct Lch [l, c, h, alpha]
+
+--- a colour in HSL: its hue in degrees (`nan` for a gray), its saturation
+--- and lightness from 0 to 1, and its opacity
+struct Hsl [h, s, l, alpha]
+
+--- a colour in HSV: its hue in degrees (`nan` for a gray), its saturation
+--- and value from 0 to 1, and its opacity
+struct Hsv [h, s, v, alpha]
+
+--- what the scale generator starts a scale from: the lightness, chroma and
+--- hue of its step 9; how far its light tints lean in hue (`tint`) and its
+--- text steps lean (`lean`); how early its light tints take chroma
+--- (`early`, 1 for most, less to take it sooner); and how much of the
+--- distance from white its light tints keep (`airy`, 1 for most, less for
+--- the bright scales whose tints stay pale)
+struct Seed [l, c, h, tint, lean, early, airy]
+
+--- a colour's states as Semantic UI derives them from the colour: hovered,
+--- focused, pressed (`down`) and active
+struct States [base, hover, focus, down, active]
+
+--- one of Semantic UI's named colours, made from Lory's scales: the colour,
+--- its states as Semantic UI derives them, its light version (for dark
+--- backgrounds), a soft background and the text that reads on it (`ink`),
+--- and the text that reads on the colour itself (`on`)
+struct Named [base, hover, focus, down, active, light, soft, ink, on]
+
+--- a theme's tokens for an accent, a gray and an appearance: the page and a
+--- panel on it; `surface`, the translucent fill of a field, and `field`,
+--- that fill laid over a panel; borders (`edge` subtle, `edge_strong` a
+--- control's); text (`ink`) and quieter text (`muted`); the accent's solid
+--- fill, hovered fill, soft background, text and the text on its fill; a
+--- control's background hovered and pressed; the focus ring; the overlay
+--- behind a dialog and the shadow under a raised layer; and danger,
+--- success, warning and info, each as a solid fill, a soft background,
+--- text, and the text on its fill
+struct Theme [page, panel, surface, field, edge, edge_strong, ink, muted, accent, accent_hover, accent_soft, accent_text, on_accent, hover, press, focus, overlay, shadow, danger, danger_soft, danger_text, on_danger, success, success_soft, success_text, on_success, warning, warning_soft, warning_text, on_warning, info, info_soft, info_text, on_info]
+
+--- ---- small pieces ----
+
+--- a number held into 0 to 1 (`nan` is 0, as culori's formatter reads an
+--- undefined channel)
+fn _unit[x]
+    if not (x eq x)
+        return 0.0
+    max[0.0, min[1.0, x]]
+
+--- whether a hue is missing: a gray's, held as `nan`
+fn _missing[h]
+    not (h eq h)
+
+--- a straight line from `a` to `b`, `t` of the way (culori's lerp)
+fn _lerp[a, b, t]
+    a + t * (b - a)
+
+--- a hue in degrees brought into [0, 360), as culori's normalizeHue brings
+--- it
+fn _turned[h]
+    if h gte 0.0 and h lt 360.0
+        return h
+    if h lt 0.0 and h gt -360.0
+        return h + 360.0
+    h - 360.0 * floor[h / 360.0]
+
+--- a hue, or 0 where it is missing, as culori reads a missing hue when it
+--- turns a colour back into sRGB
+fn _hue_or_zero[h]
+    if _missing[h]
+        return 0.0
+    _turned[h]
+
+fn _white[]
+    lory.Color[1.0, 1.0, 1.0, 1.0]
+
+fn _black[]
+    lory.Color[0.0, 0.0, 0.0, 1.0]
+
+--- ---- hex ----
+
+fn _hex_digits[]
+    '0123456789abcdef'
+
+--- the value of one hex digit, or -1 for any other character
+fn _digit[ch]
+    d = lower[ch]
+    chars = split[_hex_digits[], '']
+    i = 0
+    while i lt 16
+        if chars[i] eq d
+            return i
+        i = i + 1
+    -1
+
+--- a code's digits, without the `#` it may start with, in lower case
+fn _bare[code]
+    s = code
+    if starts[s, '#']
+        s = slice[s, 1, len[s]]
+    lower[s]
+
+--- whether a text is a CSS hex colour: three, four, six or eight hex
+--- digits after an optional `#`, in either case (culori's pattern)
+fn is_hex[code]
+    s = _bare[code]
+    n = len[s]
+    if not (n eq 3 or n eq 4 or n eq 6 or n eq 8)
+        return false
+    chars = split[s, '']
+    i = 0
+    while i lt n
+        if _digit[chars[i]] lt 0
+            return false
+        i = i + 1
+    true
+
+--- the colour a CSS hex code names: `#rgb`, `#rgba`, `#rrggbb` or
+--- `#rrggbbaa`, each pair of digits a channel's 0 to 255 and each digit of
+--- a short code doubled; the `#` may be left out. Any other text is black,
+--- as lory.hex answers it (`is_hex` asks first).
+fn parse[code]
+    if not is_hex[code]
+        return _black[]
+    s = _bare[code]
+    chars = split[s, '']
+    n = len[s]
+    if n lte 4
+        alpha = 1.0
+        if n eq 4
+            alpha = (_digit[chars[3]] * 17) / 255.0
+        return lory.Color[(_digit[chars[0]] * 17) / 255.0, (_digit[chars[1]] * 17) / 255.0, (_digit[chars[2]] * 17) / 255.0, alpha]
+    alpha = 1.0
+    if n eq 8
+        alpha = (_digit[chars[6]] * 16 + _digit[chars[7]]) / 255.0
+    lory.Color[(_digit[chars[0]] * 16 + _digit[chars[1]]) / 255.0, (_digit[chars[2]] * 16 + _digit[chars[3]]) / 255.0, (_digit[chars[4]] * 16 + _digit[chars[5]]) / 255.0, alpha]
+
+--- the two hex digits of a channel: held into 0 to 1, times 255, rounded
+fn _pair[x]
+    n = round[_unit[x] * 255.0]
+    d = _hex_digits[]
+    hi = n / 16
+    lo = n % 16
+    first = slice[d, hi, hi + 1]
+    second = slice[d, lo, lo + 1]
+    '`first``second`'
+
+--- the colour as `#rrggbb`: its channels held into 0 to 1 and rounded to
+--- 255ths, its opacity left out (culori's formatHex)
+fn hex_of[c]
+    r = _pair[c.r]
+    g = _pair[c.g]
+    b = _pair[c.b]
+    '#`r``g``b`'
+
+--- the colour as `#rrggbbaa`, its opacity the last pair (culori's
+--- formatHex8)
+fn hex_alpha_of[c]
+    rgb = hex_of[c]
+    a = _pair[c.a]
+    '`rgb``a`'
+
+--- ---- linear light ----
+
+--- an sRGB channel in linear light, by the sRGB curve: a straight line up
+--- to 0.04045 and a power of 2.4 past it, mirrored below zero
+fn linear_channel[x]
+    m = abs[x]
+    if m lte 0.04045
+        return x / 12.92
+    v = ((m + 0.055) / 1.055) ^ 2.4
+    if x lt 0.0
+        return 0.0 - v
+    v
+
+--- a channel in linear light put back on the sRGB curve, mirrored below
+--- zero
+fn srgb_channel[x]
+    m = abs[x]
+    if m gt 0.0031308
+        v = 1.055 * (m ^ (1.0 / 2.4)) - 0.055
+        if x lt 0.0
+            return 0.0 - v
+        return v
+    x * 12.92
+
+--- the colour with its channels in linear light (culori's lrgb), its
+--- opacity kept
+fn to_linear[c]
+    lory.Color[linear_channel[c.r], linear_channel[c.g], linear_channel[c.b], c.a]
+
+--- the sRGB colour of channels in linear light
+fn from_linear[c]
+    lory.Color[srgb_channel[c.r], srgb_channel[c.g], srgb_channel[c.b], c.a]
+
+--- ---- OKLab and OKLCH ----
+
+--- the cube root of a number of either sign: a power's estimate, then one
+--- step of Newton's method, which brings it within a unit in the last place
+fn _cube_root[x]
+    if x eq 0.0
+        return 0.0
+    m = abs[x]
+    y = m ^ (1.0 / 3.0)
+    y = y - (y * y * y - m) / (3.0 * y * y)
+    if x lt 0.0
+        return 0.0 - y
+    y
+
+--- the OKLab colour of channels in linear light: Björn Ottosson's two
+--- matrices (at the precision culori holds them) with a cube root between
+fn _oklab_of_linear[r, g, b, alpha]
+    lc = _cube_root[0.412221469470763 * r + 0.5363325372617348 * g + 0.0514459932675022 * b]
+    mc = _cube_root[0.2119034958178252 * r + 0.6806995506452344 * g + 0.1073969535369406 * b]
+    sc = _cube_root[0.0883024591900564 * r + 0.2817188391361215 * g + 0.6299787016738222 * b]
+    Lab[0.210454268309314 * lc + 0.7936177747023054 * mc - 0.0040720430116193 * sc, 1.9779985324311684 * lc - 2.4285922420485799 * mc + 0.450593709617411 * sc, 0.0259040424655478 * lc + 0.7827717124575296 * mc - 0.8086757549230774 * sc, alpha]
+
+--- the colour in OKLab; a gray in sRGB (three equal channels) has no a or
+--- b at all, as culori gives it none, so that it has no hue
+fn to_oklab[c]
+    x = to_linear[c]
+    lab = _oklab_of_linear[x.r, x.g, x.b, c.a]
+    if c.r eq c.g and c.g eq c.b
+        return Lab[lab.l, 0.0, 0.0, c.a]
+    lab
+
+--- the sRGB colour of an OKLab colour, not fitted: it may lie outside sRGB
+fn from_oklab[x]
+    lp = x.l + 0.3963377773761749 * x.a + 0.2158037573099136 * x.b
+    mp = x.l - 0.1055613458156586 * x.a - 0.0638541728258133 * x.b
+    sp = x.l - 0.0894841775298119 * x.a - 1.2914855480194092 * x.b
+    lc = lp * lp * lp
+    mc = mp * mp * mp
+    sc = sp * sp * sp
+    lory.Color[srgb_channel[4.0767416360759574 * lc - 3.3077115392580616 * mc + 0.2309699031821044 * sc], srgb_channel[-1.2684379732850317 * lc + 2.6097573492876887 * mc - 0.3413193760026573 * sc], srgb_channel[-0.0041960761386756 * lc - 0.7034186179359362 * mc + 1.7076146940746117 * sc], x.alpha]
+
+--- an OKLab colour in OKLCH: chroma the distance from the gray axis, hue
+--- its angle; a colour with no chroma has no hue
+fn _lch_of[x]
+    chroma = sqrt[x.a * x.a + x.b * x.b]
+    if chroma eq 0.0
+        return Lch[x.l, 0.0, nan, x.alpha]
+    Lch[x.l, chroma, _turned[atan2[x.b, x.a] * 180.0 / pi], x.alpha]
+
+--- an OKLCH colour in OKLab, a missing hue read as 0
+fn _lab_of[x]
+    if x.c eq 0.0
+        return Lab[x.l, 0.0, 0.0, x.alpha]
+    hue = x.h
+    if _missing[hue]
+        hue = 0.0
+    Lab[x.l, x.c * cos[hue / 180.0 * pi], x.c * sin[hue / 180.0 * pi], x.alpha]
+
+--- the colour in OKLCH: OKLab's lightness, chroma and hue
+fn to_oklch[c]
+    _lch_of[to_oklab[c]]
+
+--- the sRGB colour of an OKLCH colour, not fitted: it may lie outside sRGB
+fn from_oklch[x]
+    from_oklab[_lab_of[x]]
+
+--- the colour of an OKLCH lightness, chroma and hue, fitted inside sRGB
+fn oklch[l, c, h]
+    _fit[Lch[l, c, h, 1.0]]
+
+--- ---- HSL and HSV ----
+
+fn _most[c]
+    max[c.r, max[c.g, c.b]]
+
+fn _least[c]
+    min[c.r, min[c.g, c.b]]
+
+--- the hue HSL and HSV share, from a colour's largest and smallest
+--- channels: the sixth of the circle the largest channel names and how far
+--- along it the other two lean; a gray has none
+fn _hue_of[c, most, least]
+    if most eq least
+        return nan
+    d = most - least
+    if most eq c.r
+        h = (c.g - c.b) / d
+        if c.g lt c.b
+            h = h + 6.0
+        return h * 60.0
+    if most eq c.g
+        return ((c.b - c.r) / d + 2.0) * 60.0
+    ((c.r - c.g) / d + 4.0) * 60.0
+
+--- the colour in HSL
+fn to_hsl[c]
+    most = _most[c]
+    least = _least[c]
+    s = 0.0
+    if most ne least
+        s = (most - least) / (1.0 - abs[most + least - 1.0])
+    Hsl[_hue_of[c, most, least], s, 0.5 * (most + least), c.a]
+
+--- one channel of an HSL colour by CSS Color 4's formula (`n` 0 for red, 8
+--- for green, 4 for blue)
+fn _hsl_part[n, hue, l, k]
+    t = n + hue / 30.0
+    t = t - 12.0 * floor[t / 12.0]
+    l - k * max[-1.0, min[min[t - 3.0, 9.0 - t], 1.0]]
+
+--- the sRGB colour of an HSL colour; a missing hue is 0
+fn from_hsl[x]
+    hue = _hue_or_zero[x.h]
+    k = x.s * min[x.l, 1.0 - x.l]
+    lory.Color[_hsl_part[0.0, hue, x.l, k], _hsl_part[8.0, hue, x.l, k], _hsl_part[4.0, hue, x.l, k], x.alpha]
+
+--- the colour in HSV
+fn to_hsv[c]
+    most = _most[c]
+    least = _least[c]
+    s = 0.0
+    if most ne 0.0
+        s = 1.0 - least / most
+    Hsv[_hue_of[c, most, least], s, most, c.a]
+
+--- one channel of an HSV colour by CSS Color 4's formula (`n` 5 for red, 3
+--- for green, 1 for blue)
+fn _hsv_part[n, hue, s, v]
+    t = n + hue / 60.0
+    t = t - 6.0 * floor[t / 6.0]
+    v - v * s * max[0.0, min[min[t, 4.0 - t], 1.0]]
+
+--- the sRGB colour of an HSV colour; a missing hue is 0
+fn from_hsv[x]
+    hue = _hue_or_zero[x.h]
+    lory.Color[_hsv_part[5.0, hue, x.s, x.v], _hsv_part[3.0, hue, x.s, x.v], _hsv_part[1.0, hue, x.s, x.v], x.alpha]
+
+--- ---- mixing ----
+
+--- the hue a mix starts from: the first colour's, or the second's where
+--- the first has none
+fn _hue_from[h1, h2]
+    if _missing[h1]
+        if _missing[h2]
+            return nan
+        return _turned[h2]
+    _turned[h1]
+
+--- the hue a mix goes to, the shorter way round from where it starts (so
+--- it may lie past 360 or below 0), or the start where the second colour
+--- has no hue (culori's fixupHueShorter)
+fn _hue_to[h1, h2]
+    if _missing[h2]
+        return _hue_from[h1, h2]
+    if _missing[h1]
+        return _turned[h2]
+    p = _turned[h1]
+    d = _turned[h2] - p
+    if abs[d] gt 180.0
+        if d gt 0.0
+            d = d - 360.0
+        else
+            d = d + 360.0
+    d + p
+
+--- the colour `t` of the way from `a` to `b`, mixed in a space: 'srgb',
+--- 'linear', 'oklab' (the default), 'oklch', 'hsl' or 'hsv'. Each channel
+--- goes in a straight line, a hue the shorter way round, and a gray's
+--- missing hue takes the other colour's, so a gray mixed with red stays
+--- red's hue; the opacity goes in a straight line too. The answer is not
+--- fitted inside sRGB (culori's interpolate, read as rgb).
+fn mix[a, b, t, space = 'oklab']
+    if space eq 'srgb'
+        return lory.Color[_lerp[a.r, b.r, t], _lerp[a.g, b.g, t], _lerp[a.b, b.b, t], _lerp[a.a, b.a, t]]
+    if space eq 'linear'
+        x = to_linear[a]
+        y = to_linear[b]
+        return from_linear[lory.Color[_lerp[x.r, y.r, t], _lerp[x.g, y.g, t], _lerp[x.b, y.b, t], _lerp[a.a, b.a, t]]]
+    if space eq 'oklch'
+        x = to_oklch[a]
+        y = to_oklch[b]
+        return from_oklch[Lch[_lerp[x.l, y.l, t], _lerp[x.c, y.c, t], _lerp[_hue_from[x.h, y.h], _hue_to[x.h, y.h], t], _lerp[a.a, b.a, t]]]
+    if space eq 'hsl'
+        x = to_hsl[a]
+        y = to_hsl[b]
+        return from_hsl[Hsl[_lerp[_hue_from[x.h, y.h], _hue_to[x.h, y.h], t], _lerp[x.s, y.s, t], _lerp[x.l, y.l, t], _lerp[a.a, b.a, t]]]
+    if space eq 'hsv'
+        x = to_hsv[a]
+        y = to_hsv[b]
+        return from_hsv[Hsv[_lerp[_hue_from[x.h, y.h], _hue_to[x.h, y.h], t], _lerp[x.s, y.s, t], _lerp[x.v, y.v, t], _lerp[a.a, b.a, t]]]
+    x = to_oklab[a]
+    y = to_oklab[b]
+    from_oklab[Lab[_lerp[x.l, y.l, t], _lerp[x.a, y.a, t], _lerp[x.b, y.b, t], _lerp[a.a, b.a, t]]]
+
+--- ---- the sRGB gamut ----
+
+--- whether a colour lies inside sRGB: each channel from 0 to 1
+fn in_gamut[c]
+    c.r gte 0.0 and c.r lte 1.0 and c.g gte 0.0 and c.g lte 1.0 and c.b gte 0.0 and c.b lte 1.0
+
+--- the colour with each channel held into 0 to 1
+fn _clipped[c]
+    lory.Color[_unit[c.r], _unit[c.g], _unit[c.b], c.a]
+
+--- an OKLCH colour in sRGB, its chroma lowered until it fits as culori's
+--- clampChroma lowers it in 'oklch': kept where it fits; clipped channel by
+--- channel where not even its gray fits (a lightness past 0 or 1);
+--- otherwise its chroma halved between none and its own until the step is
+--- under 0.4 / 2^13, keeping the last that fits. Lightness and hue stay.
+fn _fit[x]
+    whole = from_oklch[x]
+    if in_gamut[whole]
+        return whole
+    gray = from_oklch[Lch[x.l, 0.0, x.h, x.alpha]]
+    if not in_gamut[gray]
+        return _clipped[gray]
+    lo = 0.0
+    hi = x.c
+    good = 0.0
+    tried = 0.0
+    while hi - lo gt 0.4 / 8192.0
+        tried = lo + (hi - lo) * 0.5
+        if in_gamut[from_oklch[Lch[x.l, tried, x.h, x.alpha]]]
+            good = tried
+            lo = tried
+        else
+            hi = tried
+    last = from_oklch[Lch[x.l, tried, x.h, x.alpha]]
+    if in_gamut[last]
+        return last
+    from_oklch[Lch[x.l, good, x.h, x.alpha]]
+
+--- the colour brought inside sRGB by lowering its OKLCH chroma, its
+--- lightness and hue kept (the colour itself where it is inside)
+fn fitted[c]
+    if in_gamut[c]
+        return c
+    _fit[to_oklch[c]]
+
+--- the colour lighter by `amount` of OKLCH lightness (which runs from 0 to
+--- 1), its chroma and hue kept as far as sRGB holds them
+fn lighter[c, amount]
+    x = to_oklch[c]
+    _fit[Lch[x.l + amount, x.c, x.h, x.alpha]]
+
+--- the colour darker by `amount` of OKLCH lightness
+fn darker[c, amount]
+    lighter[c, 0.0 - amount]
+
+--- the colour with `amount` more OKLCH chroma (less where it is negative,
+--- never below none), as far as sRGB holds it; a gray has no hue, so it
+--- takes hue 0
+fn saturated[c, amount]
+    x = to_oklch[c]
+    _fit[Lch[x.l, max[0.0, x.c + amount], x.h, x.alpha]]
+
+--- ---- laying one colour over another ----
+
+fn _over_part[s, b, sa, ba, alpha]
+    _unit[(sa * (1.0 - ba) * s + sa * ba * s + (1.0 - sa) * ba * b) / alpha]
+
+--- a colour laid over another (source-over, as culori's blend 'normal'
+--- lays it): the opacities combine, and each channel is the two colours
+--- weighed by how much of each shows, held into 0 to 1
+fn over[top, bottom]
+    alpha = top.a + bottom.a * (1.0 - top.a)
+    if alpha eq 0.0
+        return lory.Color[0.0, 0.0, 0.0, 0.0]
+    lory.Color[_over_part[top.r, bottom.r, top.a, bottom.a, alpha], _over_part[top.g, bottom.g, top.a, bottom.a, alpha], _over_part[top.b, bottom.b, top.a, bottom.a, alpha], alpha]
+
+--- the opacity one channel needs to reach `s` from `b`, as far as a colour
+--- inside sRGB can take it
+fn _reach[s, b]
+    if s gt b
+        return (s - b) / (1.0 - b)
+    if s lt b
+        return (b - s) / b
+    0.0
+
+--- the translucent colour that, laid over an opaque `background`, gives
+--- `solid`: the least opacity, in whole 255ths, at which every channel can
+--- reach the solid from the background, and the colour that does at that
+--- opacity (a scale's alpha step is this over the appearance's page)
+fn translucent[solid, background]
+    need = max[_reach[solid.r, background.r], max[_reach[solid.g, background.g], _reach[solid.b, background.b]]]
+    alpha = min[1.0, ceil[need * 255.0 - 0.000001] / 255.0]
+    if alpha lte 0.0
+        return lory.Color[background.r, background.g, background.b, 0.0]
+    lory.Color[_unit[background.r + (solid.r - background.r) / alpha], _unit[background.g + (solid.g - background.g) / alpha], _unit[background.b + (solid.b - background.b) / alpha], alpha]
+
+--- ---- contrast ----
+
+--- the colour's relative luminance by WCAG 2: its channels in linear light
+--- weighed 0.2126, 0.7152 and 0.0722 (culori's wcagLuminance, whose sRGB
+--- curve turns at 0.04045)
+fn luminance[c]
+    x = to_linear[c]
+    0.2126 * x.r + 0.7152 * x.g + 0.0722 * x.b
+
+--- the WCAG 2 contrast ratio of two colours, from 1 (none) to 21 (black and
+--- white): the lighter's luminance and 0.05 over the darker's and 0.05. It
+--- has no sign; the order of the two does not matter.
+fn contrast_ratio[a, b]
+    x = luminance[a]
+    y = luminance[b]
+    (max[x, y] + 0.05) / (min[x, y] + 0.05)
+
+--- the screen luminance APCA reads from a colour: each sRGB channel (held
+--- into 0 to 1) to the power 2.4, weighed 0.2126729, 0.7151522 and
+--- 0.0721750 (apca-w3's sRGBtoY, with no straight segment near black)
+fn apca_luminance[c]
+    0.2126729 * (_unit[c.r] ^ 2.4) + 0.7151522 * (_unit[c.g] ^ 2.4) + 0.072175 * (_unit[c.b] ^ 2.4)
+
+--- a screen luminance near black lifted by APCA's soft clamp
+fn _soft_black[y]
+    if y gt 0.022
+        return y
+    y + (0.022 - y) ^ 1.414
+
+--- APCA's lightness contrast (Lc) of a text's and a background's screen
+--- luminance, by the W3 formula of APCA 0.0.98G-4g (apca-w3's
+--- APCAcontrast): positive for darker text on a lighter background,
+--- negative for lighter text on a darker one, and 0 where the two are too
+--- near or a luminance lies outside 0 to 1.1
+fn apca_contrast[text_y, background_y]
+    if _missing[text_y] or _missing[background_y]
+        return 0.0
+    if min[text_y, background_y] lt 0.0 or max[text_y, background_y] gt 1.1
+        return 0.0
+    t = _soft_black[text_y]
+    b = _soft_black[background_y]
+    if abs[b - t] lt 0.0005
+        return 0.0
+    if b gt t
+        s = ((b ^ 0.56) - (t ^ 0.57)) * 1.14
+        if s lt 0.1
+            return 0.0
+        return (s - 0.027) * 100.0
+    s = ((b ^ 0.65) - (t ^ 0.62)) * 1.14
+    if s gt -0.1
+        return 0.0
+    (s + 0.027) * 100.0
+
+--- the APCA lightness contrast (Lc) of text in one colour on a background
+--- in another: about 106 for black on white, about -108 for white on
+--- black. A translucent text is laid over the background first.
+fn apca[text, background]
+    shown = text
+    if text.a lt 1.0
+        shown = over[text, background]
+    apca_contrast[apca_luminance[shown], apca_luminance[background]]
+
+--- the contrast Vuetify 3.7 reckons with when it picks a text colour: an
+--- earlier APCA (its own constants: exponents 0.55 and 0.58, 0.62 and 0.57,
+--- a soft clamp at 0.03, a scale of 1.25 and an offset of 0.06)
+fn _vuetify_contrast[text, background]
+    t = apca_luminance[text]
+    b = apca_luminance[background]
+    if t lte 0.03
+        t = t + (0.03 - t) ^ 1.45
+    if b lte 0.03
+        b = b + (0.03 - b) ^ 1.45
+    if abs[b - t] lt 0.0005
+        return 0.0
+    if b gt t
+        s = ((b ^ 0.55) - (t ^ 0.58)) * 1.25
+        if s lt 0.001
+            return 0.0
+        if s lt 0.078
+            return (s - s * 12.82051282051282 * 0.06) * 100.0
+        return (s - 0.06) * 100.0
+    s = ((b ^ 0.62) - (t ^ 0.57)) * 1.25
+    if s gt -0.001
+        return 0.0
+    if s gt -0.078
+        return (s - s * 12.82051282051282 * 0.06) * 100.0
+    (s + 0.06) * 100.0
+
+--- the text colour Vuetify puts on a colour (a theme's `on-` colours):
+--- white where white text has more contrast than black, or at least Lc 50,
+--- and black otherwise (Vuetify's getForeground)
+fn on_color[c]
+    on_black = abs[_vuetify_contrast[_black[], c]]
+    on_white = abs[_vuetify_contrast[_white[], c]]
+    if on_white gt min[on_black, 50.0]
+        return _white[]
+    _black[]
+
+--- ---- the scales ----
+
+--- the names of Radix's six grays
+fn gray_names[]
+    ['gray', 'mauve', 'slate', 'sage', 'olive', 'sand']
+
+--- the names of Radix's 25 accent scales
+fn accent_names[]
+    ['gold', 'bronze', 'brown', 'yellow', 'amber', 'orange', 'tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'lime', 'mint', 'sky']
+
+--- the names of all 31 scales, the grays first
+fn scale_names[]
+    concat[gray_names[], accent_names[]]
+
+--- whether a name is one of the 31 scales
+fn is_scale[name]
+    name in scale_names[]
+
+--- the seed of an accent scale: the lightness, chroma and hue of its step
+--- 9 in OKLCH, how far its light tints and its text lean in hue, how early
+--- its tints take chroma and how pale they stay (blue for a name that is
+--- not an accent)
+fn _seed[name]
+    if name eq 'gold'
+        return Seed[0.62, 0.05, 78.0, 8.0, 2.0, 1.0, 1.0]
+    if name eq 'bronze'
+        return Seed[0.63, 0.046, 44.0, 0.0, -6.0, 1.0, 1.0]
+    if name eq 'brown'
+        return Seed[0.63, 0.08, 61.0, 4.0, -10.0, 1.0, 1.0]
+    if name eq 'yellow'
+        return Seed[0.92, 0.19, 101.0, -4.0, -18.0, 0.45, 0.55]
+    if name eq 'amber'
+        return Seed[0.85, 0.16, 84.0, 8.0, -24.0, 0.55, 0.65]
+    if name eq 'orange'
+        return Seed[0.69, 0.19, 45.0, 20.0, -3.0, 0.85, 1.0]
+    if name eq 'tomato'
+        return Seed[0.63, 0.195, 33.0, 0.0, -1.0, 1.0, 1.0]
+    if name eq 'red'
+        return Seed[0.63, 0.195, 23.0, -6.0, -2.0, 1.0, 1.0]
+    if name eq 'ruby'
+        return Seed[0.63, 0.195, 13.0, -6.0, -1.0, 1.0, 1.0]
+    if name eq 'crimson'
+        return Seed[0.635, 0.21, 1.0, -6.0, 0.0, 1.0, 1.0]
+    if name eq 'pink'
+        return Seed[0.62, 0.21, 346.0, -5.0, 0.0, 1.0, 1.0]
+    if name eq 'plum'
+        return Seed[0.58, 0.19, 322.0, 2.0, 0.0, 1.0, 1.0]
+    if name eq 'purple'
+        return Seed[0.555, 0.185, 306.0, 5.0, -1.0, 1.0, 1.0]
+    if name eq 'violet'
+        return Seed[0.54, 0.18, 288.0, 7.0, 0.0, 1.0, 1.0]
+    if name eq 'iris'
+        return Seed[0.54, 0.185, 278.0, 5.0, 1.0, 1.0, 1.0]
+    if name eq 'indigo'
+        return Seed[0.545, 0.19, 267.0, 3.0, 1.0, 1.0, 1.0]
+    if name eq 'cyan'
+        return Seed[0.66, 0.125, 222.0, -14.0, -2.0, 1.0, 1.0]
+    if name eq 'teal'
+        return Seed[0.65, 0.115, 182.0, 0.0, 0.0, 1.0, 1.0]
+    if name eq 'jade'
+        return Seed[0.64, 0.115, 171.0, -4.0, -1.0, 1.0, 1.0]
+    if name eq 'green'
+        return Seed[0.64, 0.135, 158.0, 0.0, 4.0, 1.0, 1.0]
+    if name eq 'grass'
+        return Seed[0.65, 0.15, 147.0, 0.0, 0.0, 1.0, 1.0]
+    if name eq 'lime'
+        return Seed[0.885, 0.18, 126.0, -3.0, -1.0, 0.8, 1.0]
+    if name eq 'mint'
+        return Seed[0.87, 0.1, 178.0, 0.0, 0.0, 0.8, 1.0]
+    if name eq 'sky'
+        return Seed[0.86, 0.105, 218.0, 5.0, 18.0, 0.9, 1.0]
+    Seed[0.65, 0.195, 252.0, -11.0, 4.0, 1.0, 1.0]
+
+--- the seed of a gray: its hue and its chroma at step 9 (none for `gray`)
+fn _gray_seed[name]
+    if name eq 'mauve'
+        return Seed[0.0, 0.019, 295.0, 0.0, 0.0, 1.0, 1.0]
+    if name eq 'slate'
+        return Seed[0.0, 0.016, 275.0, 0.0, 0.0, 1.0, 1.0]
+    if name eq 'sage'
+        return Seed[0.0, 0.011, 170.0, 0.0, 0.0, 1.0, 1.0]
+    if name eq 'olive'
+        return Seed[0.0, 0.012, 138.0, 0.0, 0.0, 1.0, 1.0]
+    if name eq 'sand'
+        return Seed[0.0, 0.01, 100.0, 0.0, 0.0, 1.0, 1.0]
+    Seed[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0]
+
+--- a step's colour: the OKLCH colour fitted inside sRGB and rounded to
+--- 255ths, so that a scale is exactly what its hex says
+fn _solid[l, c, h]
+    x = _fit[Lch[l, c, h, 1.0]]
+    lory.Color[round[_unit[x.r] * 255.0] / 255.0, round[_unit[x.g] * 255.0] / 255.0, round[_unit[x.b] * 255.0] / 255.0, 1.0]
+
+--- the most chroma sRGB holds at an OKLCH lightness and hue, to within
+--- 0.4 / 2^14
+fn _most_chroma[l, h]
+    if not in_gamut[from_oklch[Lch[l, 0.0, h, 1.0]]]
+        return 0.0
+    lo = 0.0
+    hi = 0.4
+    i = 0
+    while i lt 14
+        mid = (lo + hi) / 2.0
+        if in_gamut[from_oklch[Lch[l, mid, h, 1.0]]]
+            lo = mid
+        else
+            hi = mid
+        i = i + 1
+    lo
+
+--- a text step's colour at a lightness: its chroma the smaller of `share`
+--- of the seed's chroma and `room` of what sRGB holds there
+fn _text_solid[l, h, share, chroma, room]
+    _solid[l, min[share * chroma, room * _most_chroma[l, h]], h]
+
+--- the lightness at which a text step reaches APCA contrast `target` (its
+--- size) on `background`: halved fourteen times between `near`, where it
+--- has contrast to spare, and `far`, keeping the side that reaches it. The
+--- colour is judged as it will be drawn (rounded to 255ths), so the step
+--- reaches the target on step 2 by construction.
+fn _text_lightness[target, background, h, share, chroma, room, near, far]
+    lo = near
+    hi = far
+    i = 0
+    while i lt 14
+        mid = (lo + hi) / 2.0
+        if abs[apca[_text_solid[mid, h, share, chroma, room], background]] gte target
+            lo = mid
+        else
+            hi = mid
+        i = i + 1
+    lo
+
+--- how much of an accent's tint chroma light step k takes: little at
+--- step 1, all of it at step 8, sooner where `early` is under 1
+fn _onset[k, early]
+    0.03 + 0.97 * (((k - 1.0) / 7.0) ^ (1.35 * early))
+
+--- the twelve steps of an accent scale in light. Steps 1 to 8 are tints:
+--- their lightness falls from white by 0.0035k + 0.0036k² (kept paler for
+--- an airy seed), their chroma rises to a top set by the seed's, and their
+--- hue turns from the tint's lean to the seed's over steps 6 to 9. Step 9
+--- is the seed, step 10 is 0.028 darker, and steps 11 and 12 are the
+--- lightnesses at which text of the seed's hue (leaned) reaches APCA Lc 70
+--- and 93.5 on step 2, Radix's 60 and 90 with room to spare.
+fn _accent_light[s]
+    top = min[0.125, 0.9 * s.c]
+    if s.l gt 0.8
+        top = top * 1.1
+    tint = s.h + s.tint
+    out = slice[[_white[]], 0, 0]
+    k = 1
+    while k lte 8
+        kf = 0.0 + k
+        lightness = 1.0 - 0.0035 * kf - 0.0036 * kf * kf
+        if k gte 2
+            lightness = 1.0 - (1.0 - lightness) * (s.airy + (1.0 - s.airy) * (kf - 2.0) / 6.0)
+        hue = tint + (s.h - tint) * max[0.0, (kf - 5.0) / 4.0]
+        chroma = min[top * _onset[kf, s.early], 0.97 * _most_chroma[lightness, hue]]
+        out = push[out, _solid[lightness, chroma, hue]]
+        k = k + 1
+    out = push[out, _solid[s.l, s.c, s.h]]
+    out = push[out, _solid[s.l - 0.028, s.c, s.h]]
+    background = out[1]
+    ink = s.h + s.lean
+    l11 = _text_lightness[70.0, background, ink, 0.95, s.c, 0.95, 0.2, 0.8]
+    out = push[out, _text_solid[l11, ink, 0.95, s.c, 0.95]]
+    l12 = _text_lightness[93.5, background, ink, 0.6, s.c, 0.8, 0.1, 0.6]
+    out = push[out, _text_solid[l12, ink, 0.6, s.c, 0.8]]
+    out
+
+--- the twelve steps of an accent scale in dark. Steps 1 to 8 rise from
+--- near black by 0.032(k - 1) + 0.0025(k - 1)², their chroma low for the
+--- two backgrounds and rising from step 3; step 9 is the seed (the same
+--- solid as in light), step 10 is 0.04 lighter (0.045 for a bright seed),
+--- and steps 11 and 12 are the lightnesses at which light text reaches Lc
+--- -62 and -91 on step 2.
+fn _accent_dark[s]
+    top = min[0.145, 0.8 * s.c]
+    out = slice[[_white[]], 0, 0]
+    k = 1
+    while k lte 8
+        kf = 0.0 + k
+        lightness = 0.187 + 0.032 * (kf - 1.0) + 0.0025 * (kf - 1.0) * (kf - 1.0)
+        share = 0.15 + 0.04 * (kf - 1.0)
+        if k gte 3
+            share = 0.46 + 0.54 * (((kf - 3.0) / 5.0) ^ 0.7)
+        chroma = min[top * share, 0.97 * _most_chroma[lightness, s.h]]
+        out = push[out, _solid[lightness, chroma, s.h]]
+        k = k + 1
+    out = push[out, _solid[s.l, s.c, s.h]]
+    rise = 0.04
+    if s.l gt 0.8
+        rise = 0.045
+    l10 = min[0.975, s.l + rise]
+    out = push[out, _solid[l10, s.c * 0.93, s.h]]
+    background = out[1]
+    ink = s.h + s.lean
+    l11 = _text_lightness[62.0, background, ink, 1.2, s.c, 0.98, 0.98, 0.5]
+    if s.l gt 0.8
+        l11 = max[l11, l10 - 0.075]
+    out = push[out, _text_solid[l11, ink, 1.2, s.c, 0.98]]
+    l12 = _text_lightness[91.0, background, ink, 0.4, s.c, 0.7, 0.995, 0.6]
+    out = push[out, _text_solid[l12, ink, 0.4, s.c, 0.7]]
+    out
+
+--- the lightness of gray step k (1 to 10) in an appearance: in light it
+--- falls from white by 0.0072k + 0.0023k², with step 9 0.15 below step 8
+--- and step 10 0.035 below that; in dark it rises from near black by
+--- 0.032(k - 1) + 0.00026(k - 1)³, with step 9 0.05 above step 8 and step 10
+--- 0.045 above that
+fn _gray_lightness[k, dark]
+    if dark
+        if k gt 8.0
+            return _gray_lightness[8.0, true] + 0.05 + 0.045 * (k - 9.0)
+        return 0.179 + 0.032 * (k - 1.0) + 0.00026 * (k - 1.0) * (k - 1.0) * (k - 1.0)
+    if k gt 8.0
+        return _gray_lightness[8.0, false] - 0.15 - 0.035 * (k - 9.0)
+    1.0 - 0.0072 * k - 0.0023 * k * k
+
+--- how much of a gray's chroma step k takes: rising to all of it at step
+--- 9 and easing off for the text steps
+fn _gray_share[k, dark]
+    if dark
+        if k gt 9.0
+            return 1.0 - 0.1 * ((k - 9.0) ^ 1.8)
+        return 0.25 + 0.75 * (((k - 1.0) / 8.0) ^ 1.5)
+    if k gt 9.0
+        return 1.0 - 0.1 * (k - 9.0)
+    0.12 + 0.88 * (((k - 1.0) / 8.0) ^ 1.2)
+
+--- the twelve steps of a gray: steps 1 to 10 by the gray's curves, steps
+--- 11 and 12 the lightnesses at which its text reaches APCA Lc 75 and 99 on
+--- step 2 in light, -61 and -95 in dark
+fn _gray_scale[s, dark]
+    out = slice[[_white[]], 0, 0]
+    k = 1
+    while k lte 10
+        kf = 0.0 + k
+        out = push[out, _solid[_gray_lightness[kf, dark], s.c * _gray_share[kf, dark], s.h]]
+        k = k + 1
+    background = out[1]
+    s11 = _gray_share[11.0, dark]
+    s12 = _gray_share[12.0, dark]
+    if dark
+        l11 = _text_lightness[61.0, background, s.h, s11, s.c, 1.0, 0.98, 0.5]
+        out = push[out, _text_solid[l11, s.h, s11, s.c, 1.0]]
+        l12 = _text_lightness[95.0, background, s.h, s12, s.c, 1.0, 0.999, 0.6]
+        return push[out, _text_solid[l12, s.h, s12, s.c, 1.0]]
+    l11 = _text_lightness[75.0, background, s.h, s11, s.c, 1.0, 0.2, 0.8]
+    out = push[out, _text_solid[l11, s.h, s11, s.c, 1.0]]
+    l12 = _text_lightness[99.0, background, s.h, s12, s.c, 1.0, 0.05, 0.6]
+    push[out, _text_solid[l12, s.h, s12, s.c, 1.0]]
+
+--- the twelve solid steps of a scale by name in an appearance ('light' or
+--- 'dark'; anything else is light), step 1 first. A name that is not a
+--- scale gives the neutral gray.
+fn scale[name, appearance]
+    dark = appearance eq 'dark'
+    if name in accent_names[]
+        s = _seed[name]
+        if dark
+            return _accent_dark[s]
+        return _accent_light[s]
+    _gray_scale[_gray_seed[name], dark]
+
+--- one step of a scale, 1 to 12 (held into that range)
+fn step[name, appearance, k]
+    steps = scale[name, appearance]
+    steps[max[1, min[12, k]] - 1]
+
+--- a scale of Lory's own whose step 9 is the given colour, in an
+--- appearance, by the accent curves (a colour with little chroma by the
+--- gray's): the custom palette Radix offers to make from a brand colour
+fn scale_from[c, appearance]
+    x = to_oklch[c]
+    hue = _hue_or_zero[x.h]
+    dark = appearance eq 'dark'
+    if x.c lt 0.03
+        return _gray_scale[Seed[0.0, x.c, hue, 0.0, 0.0, 1.0, 1.0], dark]
+    s = Seed[x.l, x.c, hue, 0.0, 0.0, 1.0, 1.0]
+    if dark
+        return _accent_dark[s]
+    _accent_light[s]
+
+--- the page an appearance's translucent steps are laid over: white in
+--- light, the neutral gray's step 1 in dark
+fn page_of[appearance]
+    if appearance eq 'dark'
+        return _solid[_gray_lightness[1.0, true], 0.0, 0.0]
+    _white[]
+
+--- the twelve translucent steps of a scale: each the least opaque colour
+--- that, laid over the appearance's page, is that step's solid
+fn alpha_scale[name, appearance]
+    solids = scale[name, appearance]
+    background = page_of[appearance]
+    out = slice[[_white[]], 0, 0]
+    i = 0
+    while i lt 12
+        out = push[out, translucent[solids[i], background]]
+        i = i + 1
+    out
+
+--- the opacity of overlay step k: (k / 12.5)^1.25, from 0.04 to 0.95
+fn _overlay_opacity[k]
+    (k / 12.5) ^ 1.25
+
+--- the twelve black overlays, black at rising opacity, the same in light
+--- and dark (Radix's blackA): for shadows, scrims and darkening
+fn black_overlay[]
+    out = slice[[_white[]], 0, 0]
+    k = 1
+    while k lte 12
+        out = push[out, lory.Color[0.0, 0.0, 0.0, _overlay_opacity[0.0 + k]]]
+        k = k + 1
+    out
+
+--- the twelve white overlays (Radix's whiteA): for lightening anything
+fn white_overlay[]
+    out = slice[[_white[]], 0, 0]
+    k = 1
+    while k lte 12
+        out = push[out, lory.Color[1.0, 1.0, 1.0, _overlay_opacity[0.0 + k]]]
+        k = k + 1
+    out
+
+--- the gray Radix Themes pairs with an accent: mauve for the reds, pinks
+--- and purples, slate for the blues, sage for the blue-greens, olive for
+--- the yellow-greens, sand for the yellows, oranges and browns
+fn gray_for[accent]
+    if accent in ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet']
+        return 'mauve'
+    if accent in ['iris', 'indigo', 'blue', 'sky', 'cyan']
+        return 'slate'
+    if accent in ['teal', 'jade', 'mint', 'green']
+        return 'sage'
+    if accent in ['grass', 'lime']
+        return 'olive'
+    if accent in ['yellow', 'amber', 'orange', 'brown', 'gold', 'bronze']
+        return 'sand'
+    'gray'
+
+--- whether a scale's solid steps (9 and 10) are bright, made for dark
+--- text: sky, mint, lime, yellow and amber, as Radix makes them
+fn is_bright[name]
+    name in ['sky', 'mint', 'lime', 'yellow', 'amber']
+
+--- the text that goes on a scale's solid steps (Radix Themes' accent
+--- contrast): white, or on a bright scale its paired gray's step 12 in
+--- light
+fn on_solid[name]
+    if is_bright[name]
+        return step[gray_for[name], 'light', 12]
+    _white[]
+
+--- ---- Semantic UI's named colours ----
+
+--- Semantic UI's thirteen named colours
+fn semantic_names[]
+    ['red', 'orange', 'yellow', 'olive', 'green', 'teal', 'blue', 'violet', 'purple', 'pink', 'brown', 'grey', 'black']
+
+--- the scale a Semantic UI name is made from
+fn _semantic_scale[name]
+    if name eq 'olive'
+        return 'lime'
+    if name eq 'grey' or name eq 'black'
+        return 'gray'
+    name
+
+--- the colour of a Semantic UI name, from Lory's light scales: step 9 of
+--- the scale of its name (olive is lime's), grey the gray's step 10, black
+--- its step 12; black for a name Semantic UI does not have
+fn named[name]
+    if not (name in semantic_names[])
+        return _black[]
+    if name eq 'grey'
+        return step['gray', 'light', 10]
+    if name eq 'black'
+        return step['gray', 'light', 12]
+    step[_semantic_scale[name], 'light', 9]
+
+--- a channel of 0 to 255 rounded to a whole byte, as LESS writes it in hex
+fn _byte[x]
+    min[255, max[0, round[x]]]
+
+--- a colour of channels from 0 to 255 in HSL as LESS reads it (its toHSL):
+--- the hue in degrees (0 for a gray), the saturation and the lightness
+fn _less_hsl[c]
+    r = c.r / 255.0
+    g = c.g / 255.0
+    b = c.b / 255.0
+    most = max[r, max[g, b]]
+    least = min[r, min[g, b]]
+    l = (most + least) / 2.0
+    d = most - least
+    if most eq least
+        return Hsl[0.0, 0.0, l, c.a]
+    s = d / (most + least)
+    if l gt 0.5
+        s = d / (2.0 - most - least)
+    h = (r - g) / d + 4.0
+    if most eq r
+        h = (g - b) / d
+        if g lt b
+            h = h + 6.0
+    else
+        if most eq g
+            h = (b - r) / d + 2.0
+    Hsl[h / 6.0 * 360.0, s, l, c.a]
+
+--- one channel of an HSL colour by CSS 2's formula, which LESS keeps: `h`
+--- in turns, shifted a third for red and blue
+fn _less_part[h, m1, m2]
+    t = h
+    if t lt 0.0
+        t = t + 1.0
+    else
+        if t gt 1.0
+            t = t - 1.0
+    if t * 6.0 lt 1.0
+        return m1 + (m2 - m1) * t * 6.0
+    if t * 2.0 lt 1.0
+        return m2
+    if t * 3.0 lt 2.0
+        return m1 + (m2 - m1) * (2.0 / 3.0 - t) * 6.0
+    m1
+
+--- the colour (channels from 0 to 255) of an HSL colour as LESS makes it
+--- (its hsla)
+fn _less_rgb[x]
+    h = x.h / 360.0
+    s = _unit[x.s]
+    l = _unit[x.l]
+    m2 = l + s - l * s
+    if l lte 0.5
+        m2 = l * (s + 1.0)
+    m1 = l * 2.0 - m2
+    lory.Color[_less_part[h + 1.0 / 3.0, m1, m2] * 255.0, _less_part[h, m1, m2] * 255.0, _less_part[h - 1.0 / 3.0, m1, m2] * 255.0, x.alpha]
+
+--- a colour (channels from 0 to 255) with `amount` percent more HSL
+--- lightness, held into 0 to 1 (LESS's lighten; darken is a negative
+--- amount)
+fn _less_lighter[c, amount]
+    x = _less_hsl[c]
+    _less_rgb[Hsl[x.h, x.s, _unit[x.l + amount / 100.0], x.alpha]]
+
+--- a colour (channels from 0 to 255) with its HSL saturation raised by
+--- `amount` percent of itself (LESS's saturate, relative)
+fn _less_richer[c, amount]
+    x = _less_hsl[c]
+    _less_rgb[Hsl[x.h, _unit[x.s + x.s * amount / 100.0], x.l, x.alpha]]
+
+--- a colour of channels from 0 to 255 as a hex code writes it
+fn _from_bytes[c]
+    lory.Color[_byte[c.r] / 255.0, _byte[c.g] / 255.0, _byte[c.b] / 255.0, c.a]
+
+--- a colour's states as Semantic UI's site variables derive them through
+--- LESS, the colour read in whole 255ths as a hex code gives it: a colour
+--- is hovered 5% darker and 10% more saturated, focused 8% darker and 20%
+--- more saturated, pressed 10% darker, and active 5% darker and 15% more
+--- saturated; a neutral one (grey, black) is hovered 5%, focused 8% and
+--- pressed 10% lighter, and active 5% darker. Each state is a hex colour,
+--- the same hex LESS writes.
+fn states_of[c, neutral]
+    base = lory.Color[0.0 + _byte[c.r * 255.0], 0.0 + _byte[c.g * 255.0], 0.0 + _byte[c.b * 255.0], c.a]
+    if neutral
+        return States[c, _from_bytes[_less_lighter[base, 5.0]], _from_bytes[_less_lighter[base, 8.0]], _from_bytes[_less_lighter[base, 10.0]], _from_bytes[_less_lighter[base, -5.0]]]
+    hover = _less_richer[_less_lighter[base, -5.0], 10.0]
+    focus = _less_richer[_less_lighter[base, -8.0], 20.0]
+    active = _less_richer[_less_lighter[base, -5.0], 15.0]
+    States[c, _from_bytes[hover], _from_bytes[focus], _from_bytes[_less_lighter[base, -10.0]], _from_bytes[active]]
+
+--- a Semantic UI name with all it carries: its colour and states, its
+--- light version for dark backgrounds (the scale's step 10 in dark; the
+--- gray's step 6 in light for grey, step 8 in dark for black), a soft
+--- background (step 3 in light) with the text that reads on it (step 11),
+--- and the text that reads on the colour
+fn named_states[name]
+    base = named[name]
+    neutral = name eq 'grey' or name eq 'black'
+    st = states_of[base, neutral]
+    source = _semantic_scale[name]
+    lit = step[source, 'dark', 10]
+    if name eq 'grey'
+        lit = step['gray', 'light', 6]
+    if name eq 'black'
+        lit = step['gray', 'dark', 8]
+    on = _white[]
+    if is_bright[source]
+        on = on_solid[source]
+    Named[base, st.hover, st.focus, st.down, st.active, lit, step[source, 'light', 3], step[source, 'light', 11], on]
+
+--- ---- Vuetify's palette ----
+
+--- the names of Vuetify's palette, as its classes spell them
+fn palette_names[]
+    ['red', 'pink', 'purple', 'deep-purple', 'indigo', 'blue', 'light-blue', 'cyan', 'teal', 'green', 'light-green', 'lime', 'yellow', 'amber', 'orange', 'deep-orange', 'brown', 'blue-grey', 'grey', 'black', 'white', 'transparent']
+
+--- a palette name or shade without its dashes, in lower case, so that
+--- 'deep-purple', 'deepPurple' and 'deep purple' are one name; gray is
+--- grey
+fn _key[name]
+    k = lower[replace[replace[name, '-', ''], ' ', '']]
+    if k eq 'gray'
+        return 'grey'
+    if k eq 'bluegray'
+        return 'bluegrey'
+    k
+
+--- the palette's names without their dashes
+fn _palette_keys[]
+    ['red', 'pink', 'purple', 'deeppurple', 'indigo', 'blue', 'lightblue', 'cyan', 'teal', 'green', 'lightgreen', 'lime', 'yellow', 'amber', 'orange', 'deeporange', 'brown', 'bluegrey', 'grey', 'black', 'white', 'transparent']
+
+--- whether a name is one of Vuetify's palette (dashes and case aside)
+fn is_palette[name]
+    _key[name] in _palette_keys[]
+
+--- the shades a palette name has: the base, five lighter, four darker and
+--- four accents; brown, blue-grey and grey have no accents, and black,
+--- white and transparent only a base
+fn shade_names[name]
+    k = _key[name]
+    if k eq 'black' or k eq 'white' or k eq 'transparent'
+        return ['base']
+    plain = ['base', 'lighten-5', 'lighten-4', 'lighten-3', 'lighten-2', 'lighten-1', 'darken-1', 'darken-2', 'darken-3', 'darken-4']
+    if k eq 'brown' or k eq 'bluegrey' or k eq 'grey'
+        return plain
+    concat[plain, ['accent-1', 'accent-2', 'accent-3', 'accent-4']]
+
+--- the scale a palette name is made from
+fn _palette_scale[k]
+    if k eq 'deeppurple'
+        return 'violet'
+    if k eq 'lightblue'
+        return 'sky'
+    if k eq 'lightgreen'
+        return 'grass'
+    if k eq 'deeporange'
+        return 'tomato'
+    if k eq 'bluegrey'
+        return 'slate'
+    if k eq 'grey'
+        return 'gray'
+    k
+
+--- a colour of Vuetify's palette by name and shade ('base' by default),
+--- made from the step 9 of the scale the name comes from (deep-purple is
+--- violet's, light-blue sky's, light-green grass's, deep-orange tomato's,
+--- blue-grey slate's): lighten-n climbs (n / 5)^0.8 of the way to
+--- lightness 0.97 as its chroma falls; darken-n falls 0.16n of the way to
+--- 0.25 as its chroma eases; accent-1 to accent-4 are as vivid as sRGB
+--- holds at lightnesses from 0.6 of the way to 0.96 down to 0.07 below the
+--- base. Black for a name or shade the palette does not have.
+fn palette[name, shade = 'base']
+    k = _key[name]
+    if k eq 'black'
+        return _black[]
+    if k eq 'white'
+        return _white[]
+    if k eq 'transparent'
+        return lory.Color[0.0, 0.0, 0.0, 0.0]
+    if not is_palette[name]
+        return _black[]
+    if not (_key[shade] in ['base', 'lighten5', 'lighten4', 'lighten3', 'lighten2', 'lighten1', 'darken1', 'darken2', 'darken3', 'darken4', 'accent1', 'accent2', 'accent3', 'accent4'])
+        return _black[]
+    base = to_oklch[step[_palette_scale[k], 'light', 9]]
+    hue = _hue_or_zero[base.h]
+    sh = _key[shade]
+    if starts[sh, 'lighten']
+        t = ((0.0 + _digit[slice[sh, 7, 8]]) / 5.0) ^ 0.8
+        return _solid[base.l + (0.97 - base.l) * t, base.c * (1.0 - 0.8 * t), hue]
+    if starts[sh, 'darken']
+        n = 0.0 + _digit[slice[sh, 6, 7]]
+        return _solid[base.l - (base.l - 0.25) * 0.16 * n, base.c * (1.0 - 0.05 * n), hue]
+    if starts[sh, 'accent']
+        if k eq 'brown' or k eq 'bluegrey' or k eq 'grey'
+            return _black[]
+        lightness = base.l - 0.07
+        if sh eq 'accent1'
+            lightness = base.l + (0.96 - base.l) * 0.6
+        if sh eq 'accent2'
+            lightness = base.l + (0.96 - base.l) * 0.3
+        if sh eq 'accent3'
+            lightness = base.l
+        return _solid[lightness, 0.98 * _most_chroma[lightness, hue], hue]
+    _solid[base.l, base.c, hue]
+
+--- ---- themes ----
+
+--- a theme's tokens for an accent scale, a gray scale ('auto' for the gray
+--- Radix Themes pairs with the accent) and an appearance, with red for
+--- danger, green for success, amber for warning and blue for info
+fn theme[accent, gray, appearance]
+    theme_with[accent, gray, appearance, 'red', 'green', 'amber', 'blue']
+
+--- a theme's tokens with its four status scales named, resolved as Radix
+--- Themes resolves them: in light the page and a panel are white, in dark
+--- the page is the gray's step 1 and a panel its step 2; a field's
+--- translucent surface is white at 0.85 in light and black at 0.25 in dark;
+--- the overlay behind a dialog is black overlay 6 in light and 8 in dark,
+--- and a raised layer's shadow black overlay 3 in light and 5 in dark (the
+--- widest layer of the shadow Radix Themes puts under a popover); edges are
+--- the gray's steps 6 and 7, text its 12 and 11, a hovered and a pressed
+--- control its 4 and 5; the accent is its scale's step 9, hovered 10, soft
+--- 3 and text 11, with its contrast for text on it; the focus ring is the
+--- accent's step 8; each status is its scale's 9, 3 and 11 and the text on
+--- its 9
+fn theme_with[accent, gray, appearance, danger, success, warning, info]
+    dark = appearance eq 'dark'
+    look = appearance
+    if not dark
+        look = 'light'
+    pair = gray
+    if gray eq 'auto'
+        pair = gray_for[accent]
+    g = scale[pair, look]
+    x = scale[accent, look]
+    bad = scale[danger, look]
+    good = scale[success, look]
+    warn = scale[warning, look]
+    note = scale[info, look]
+    page = _white[]
+    panel = _white[]
+    surface = lory.Color[1.0, 1.0, 1.0, 0.85]
+    overlay = black_overlay[][5]
+    shadow = black_overlay[][2]
+    if dark
+        page = g[0]
+        panel = g[1]
+        surface = lory.Color[0.0, 0.0, 0.0, 0.25]
+        overlay = black_overlay[][7]
+        shadow = black_overlay[][4]
+    Theme[page, panel, surface, over[surface, panel], g[5], g[6], g[11], g[10], x[8], x[9], x[2], x[10], on_solid[accent], g[3], g[4], x[7], overlay, shadow, bad[8], bad[2], bad[10], on_solid[danger], good[8], good[2], good[10], on_solid[success], warn[8], warn[2], warn[10], on_solid[warning], note[8], note[2], note[10], on_solid[info]]
+
+--- ---- tests ----
+
+fn _near[a, b, tolerance]
+    abs[a - b] lte tolerance
+
+fn _same_color[c, d, tolerance]
+    _near[c.r, d.r, tolerance] and _near[c.g, d.g, tolerance] and _near[c.b, d.b, tolerance] and _near[c.a, d.a, tolerance]
+
+test hex_codes_read_and_write_back[]
+    c = parse['#ff8000']
+    c.r eq 1.0
+    _near[c.g, 128.0 / 255.0, 0.0000000001]
+    c.b eq 0.0
+    c.a eq 1.0
+    hex_of[c] eq '#ff8000'
+    hex_of[parse['F80']] eq '#ff8800'
+    hex_alpha_of[parse['#12345678']] eq '#12345678'
+    hex_alpha_of[parse['#abcd']] eq '#aabbccdd'
+    parse['#12345678'].a eq 120.0 / 255.0
+    is_hex['#abc']
+    is_hex['ABCDEF']
+    not is_hex['#abcde']
+    not is_hex['#ggg']
+    not is_hex[' #fff']
+    parse['nope'].r eq 0.0
+    hex_of[lory.Color[1.2, -0.1, 0.5, 1.0]] eq '#ff0080'
+
+test conversions_come_back_to_the_colour[]
+    c = parse['#3a7bd5']
+    _same_color[from_linear[to_linear[c]], c, 0.000000000001]
+    _same_color[from_oklab[to_oklab[c]], c, 0.000000000001]
+    _same_color[from_oklch[to_oklch[c]], c, 0.000000000001]
+    _same_color[from_hsl[to_hsl[c]], c, 0.000000000001]
+    _same_color[from_hsv[to_hsv[c]], c, 0.000000000001]
+    white = to_oklab[_white[]]
+    _near[white.l, 1.0, 0.0000000001]
+    white.a eq 0.0
+    white.b eq 0.0
+
+test grays_have_no_hue[]
+    _missing[to_oklch[parse['#777777']].h]
+    _missing[to_hsl[parse['#777777']].h]
+    _missing[to_hsv[_black[]].h]
+    not _missing[to_oklch[parse['#777778']].h]
+    _same_color[from_oklch[to_oklch[parse['#777777']]], parse['#777777'], 0.000000000001]
+
+test hues_of_the_primaries[]
+    _near[to_hsl[parse['#ff0000']].h, 0.0, 0.0000001]
+    _near[to_hsl[parse['#00ff00']].h, 120.0, 0.0000001]
+    _near[to_hsv[parse['#0000ff']].h, 240.0, 0.0000001]
+    _near[to_hsl[parse['#ff00ff']].h, 300.0, 0.0000001]
+    _near[to_oklch[parse['#ff0000']].h, 29.233880279627854, 0.000000001]
+
+test mixing_takes_the_shorter_way_round[]
+    red = parse['#ff0000']
+    blue = parse['#0000ff']
+    _same_color[mix[red, blue, 0.5, 'srgb'], lory.Color[0.5, 0.0, 0.5, 1.0], 0.0000000001]
+    _same_color[mix[red, blue, 0.0, 'oklch'], red, 0.000000001]
+    _same_color[mix[red, blue, 1.0, 'hsl'], blue, 0.000000001]
+    halfway = to_hsl[mix[red, blue, 0.5, 'hsl']]
+    _near[halfway.h, 300.0, 0.0000001]
+    grayish = to_oklch[mix[parse['#808080'], red, 0.5, 'oklch']]
+    _near[grayish.h, to_oklch[red].h, 0.000001]
+    mix[red, lory.Color[0.0, 0.0, 1.0, 0.0], 0.5, 'oklab'].a eq 0.5
+
+test lighter_darker_and_saturated_move_one_thing[]
+    c = parse['#3a7bd5']
+    x = to_oklch[c]
+    up = to_oklch[lighter[c, 0.1]]
+    _near[up.l, x.l + 0.1, 0.000001]
+    down = to_oklch[darker[c, 0.1]]
+    _near[down.l, x.l - 0.1, 0.000001]
+    _near[down.h, x.h, 0.01]
+    in_gamut[saturated[c, 0.3]]
+    rich = to_oklch[saturated[c, 0.3]]
+    rich.c gt x.c
+    _near[rich.l, x.l, 0.000001]
+    to_oklch[saturated[c, -1.0]].c lt 0.000001
+    hex_of[lighter[_white[], 0.2]] eq '#ffffff'
+
+test fitting_lowers_chroma_alone[]
+    wild = from_oklch[Lch[0.7, 0.35, 150.0, 1.0]]
+    not in_gamut[wild]
+    tame = fitted[wild]
+    in_gamut[tame]
+    y = to_oklch[tame]
+    _near[y.l, 0.7, 0.000001]
+    _near[y.h, 150.0, 0.001]
+    y.c lt 0.35
+    in_gamut[oklch[0.5, 0.4, 30.0]]
+
+test a_translucent_colour_over_its_background_is_the_solid[]
+    solid = parse['#3a7bd5']
+    page = _white[]
+    glass = translucent[solid, page]
+    glass.a lt 1.0
+    _same_color[over[glass, page], solid, 0.000000001]
+    dim = translucent[solid, page_of['dark']]
+    _same_color[over[dim, page_of['dark']], solid, 0.000000001]
+    translucent[page, page].a eq 0.0
+    half = over[lory.Color[0.0, 0.0, 0.0, 0.5], page]
+    _same_color[half, lory.Color[0.5, 0.5, 0.5, 1.0], 0.0000000001]
+
+test contrast_by_wcag_and_by_apca[]
+    contrast_ratio[_black[], _white[]] eq 21.0
+    contrast_ratio[_white[], _black[]] eq 21.0
+    contrast_ratio[parse['#777777'], parse['#777777']] eq 1.0
+    _near[apca[_black[], _white[]], 106.04067321268862, 0.000000001]
+    _near[apca[_white[], _black[]], -107.88473318309848, 0.000000001]
+    apca[parse['#777777'], parse['#777777']] eq 0.0
+    apca[lory.Color[0.0, 0.0, 0.0, 0.0], _white[]] eq 0.0
+    hex_of[on_color[parse['#ffc53d']]] eq '#000000'
+    hex_of[on_color[parse['#0090ff']]] eq '#ffffff'
+
+test every_scale_has_twelve_steps_and_a_known_name[]
+    len[scale_names[]] eq 31
+    is_scale['jade']
+    not is_scale['chartreuse']
+    blue = scale['blue', 'light']
+    len[blue] eq 12
+    len[scale['blue', 'dark']] eq 12
+    hex_of[step['chartreuse', 'light', 5]] eq hex_of[step['gray', 'light', 5]]
+    hex_of[step['blue', 'light', 9]] eq hex_of[step['blue', 'dark', 9]]
+    hex_of[step['blue', 'light', 99]] eq hex_of[blue[11]]
+
+test light_steps_darken_and_dark_steps_lighten[]
+    for name in ['gray', 'blue', 'amber', 'sky']
+        lit = scale[name, 'light']
+        dim = scale[name, 'dark']
+        for i in range[7]
+            to_oklab[lit[i + 1]].l lt to_oklab[lit[i]].l
+            to_oklab[dim[i + 1]].l gt to_oklab[dim[i]].l
+        to_oklab[lit[11]].l lt to_oklab[lit[10]].l
+        to_oklab[dim[11]].l gt to_oklab[dim[10]].l
+
+test text_steps_keep_radix_contrast[]
+    for name in ['slate', 'indigo', 'yellow', 'lime']
+        for look in ['light', 'dark']
+            s = scale[name, look]
+            abs[apca[s[10], s[0]]] gte 60.0
+            abs[apca[s[10], s[1]]] gte 60.0
+            abs[apca[s[11], s[0]]] gte 90.0
+            abs[apca[s[11], s[1]]] gte 90.0
+
+test alpha_steps_lay_over_the_page_to_the_solid[]
+    for look in ['light', 'dark']
+        solids = scale['crimson', look]
+        glass = alpha_scale['crimson', look]
+        for i in range[12]
+            _same_color[over[glass[i], page_of[look]], solids[i], 0.000000001]
+            glass[i].a lte 1.0
+
+test overlays_rise_in_opacity[]
+    blacks = black_overlay[]
+    whites = white_overlay[]
+    len[blacks] eq 12
+    for i in range[11]
+        blacks[i + 1].a gt blacks[i].a
+        whites[i].a eq blacks[i].a
+    blacks[0].a gt 0.03
+    blacks[11].a lt 0.96
+    whites[0].r eq 1.0
+
+test bright_scales_take_dark_text[]
+    is_bright['amber']
+    not is_bright['orange']
+    hex_of[on_solid['blue']] eq '#ffffff'
+    hex_of[on_solid['amber']] eq hex_of[step['sand', 'light', 12]]
+    gray_for['crimson'] eq 'mauve'
+    gray_for['cyan'] eq 'slate'
+    gray_for['gray'] eq 'gray'
+
+test a_custom_scale_keeps_its_colour_and_contrast[]
+    brand = parse['#7c3aed']
+    for look in ['light', 'dark']
+        s = scale_from[brand, look]
+        hex_of[s[8]] eq '#7c3aed'
+        abs[apca[s[10], s[1]]] gte 60.0
+        abs[apca[s[11], s[1]]] gte 90.0
+
+test semantic_colours_and_their_states[]
+    len[semantic_names[]] eq 13
+    hex_of[named['red']] eq hex_of[step['red', 'light', 9]]
+    hex_of[named['olive']] eq hex_of[step['lime', 'light', 9]]
+    hex_of[named['nope']] eq '#000000'
+    st = states_of[parse['#DB2828'], false]
+    to_hsl[st.hover].l lt to_hsl[st.base].l
+    to_hsl[st.down].l lt to_hsl[st.hover].l
+    grey = states_of[parse['#767676'], true]
+    to_hsl[grey.hover].l gt to_hsl[grey.base].l
+    to_hsl[grey.active].l lt to_hsl[grey.base].l
+    n = named_states['yellow']
+    hex_of[n.on] eq hex_of[step['sand', 'light', 12]]
+
+test the_palette_has_vuetifys_shape[]
+    len[palette_names[]] eq 22
+    len[shade_names['red']] eq 14
+    len[shade_names['blue-grey']] eq 10
+    shade_names['white'] eq ['base']
+    hex_of[palette['deep-purple', 'base']] eq hex_of[palette['deepPurple', 'base']]
+    hex_of[palette['red']] eq hex_of[step['red', 'light', 9]]
+    palette['transparent'].a eq 0.0
+    hex_of[palette['grey', 'accent-1']] eq '#000000'
+    hex_of[palette['chartreuse']] eq '#000000'
+    to_oklab[palette['red', 'lighten-5']].l gt to_oklab[palette['red', 'lighten-1']].l
+    to_oklab[palette['red', 'darken-1']].l gt to_oklab[palette['red', 'darken-4']].l
+
+test a_theme_resolves_its_tokens[]
+    t = theme['indigo', 'auto', 'light']
+    hex_of[t.page] eq '#ffffff'
+    hex_of[t.ink] eq hex_of[step['slate', 'light', 12]]
+    hex_of[t.accent] eq hex_of[step['indigo', 'light', 9]]
+    hex_of[t.focus] eq hex_of[step['indigo', 'light', 8]]
+    hex_of[t.field] eq '#ffffff'
+    hex_of[t.on_warning] eq hex_of[step['sand', 'light', 12]]
+    d = theme['indigo', 'gray', 'dark']
+    hex_of[d.page] eq hex_of[step['gray', 'dark', 1]]
+    hex_of[d.panel] eq hex_of[step['gray', 'dark', 2]]
+    to_oklab[d.field].l lt to_oklab[d.panel].l
+    d.overlay.a gt t.overlay.a
+    d.shadow.a gt t.shadow.a
+    t.shadow.a lt t.overlay.a

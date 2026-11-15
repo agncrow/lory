@@ -1,0 +1,3697 @@
+{
+ "commits": {
+  "main": "[{\"sha\": \"3f1c2a9e8b7d6c5a4f3e2d1c0b9a8f7e6d5c4b3a\", \"html_url\": \"https://github.com/vuejs/core/commit/3f1c2a9e8b7d6c5a4f3e2d1c0b9a8f7e6d5c4b3a\", \"author\": {\"html_url\": \"https://github.com/ada-builder\"}, \"commit\": {\"message\": \"fix(runtime-core): keep a slot's fallback when its content is empty\\n\\ncloses #13001\", \"author\": {\"name\": \"Ada Builder\", \"date\": \"2026-11-12T08:30:00Z\"}}}, {\"sha\": \"b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7\", \"html_url\": \"https://github.com/vuejs/core/commit/b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7\", \"author\": {\"html_url\": \"https://github.com/lin-reviewer\"}, \"commit\": {\"message\": \"chore: bump the compiler's tests\", \"author\": {\"name\": \"Lin Reviewer\", \"date\": \"2026-11-11T17:05:42Z\"}}}, {\"sha\": \"0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b\", \"html_url\": \"https://github.com/vuejs/core/commit/0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b\", \"author\": {\"html_url\": \"https://github.com/sam-maintainer\"}, \"commit\": {\"message\": \"perf(reactivity): fewer allocations in effect scopes\\n\\nMeasured on the\\nbenchmarks.\", \"author\": {\"name\": \"Sam Maintainer\", \"date\": \"2026-11-10T23:59:01Z\"}}}]",
+  "minor": "[{\"sha\": \"c0ffee1234567890abcdef1234567890abcdef12\", \"html_url\": \"https://github.com/vuejs/core/commit/c0ffee1234567890abcdef1234567890abcdef12\", \"author\": {\"html_url\": \"https://github.com/kai-contributor\"}, \"commit\": {\"message\": \"feat(compiler-sfc): read a type's props from a re-export\", \"author\": {\"name\": \"Kai Contributor\", \"date\": \"2026-11-13T06:00:00Z\"}}}, {\"sha\": \"deadbeef00112233445566778899aabbccddeeff\", \"html_url\": \"https://github.com/vuejs/core/commit/deadbeef00112233445566778899aabbccddeeff\", \"author\": {\"html_url\": \"https://github.com/ada-builder\"}, \"commit\": {\"message\": \"release: v3.6.0-rc.16\", \"author\": {\"name\": \"Ada Builder\", \"date\": \"2026-11-12T12:12:12Z\"}}}, {\"sha\": \"1234abcd5678ef901234abcd5678ef901234abcd\", \"html_url\": \"https://github.com/vuejs/core/commit/1234abcd5678ef901234abcd5678ef901234abcd\", \"author\": {\"html_url\": \"https://github.com/lin-reviewer\"}, \"commit\": {\"message\": \"test: cover the vapor mode's teleport\\n\\nand its unmount\", \"author\": {\"name\": \"Lin Reviewer\", \"date\": \"2026-11-09T09:09:09Z\"}}}]"
+ },
+ "examples": {
+  "attribute-bindings": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "color": "green",
+     "red": "true",
+     "title": "Hello World!"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "press",
+    "on": "red",
+    "seen": {
+     "color": "green",
+     "red": "false",
+     "title": "Hello World!"
+    }
+   },
+   {
+    "at": 2000,
+    "do": "press",
+    "on": "red",
+    "seen": {
+     "color": "green",
+     "red": "true",
+     "title": "Hello World!"
+    }
+   },
+   {
+    "at": 3000,
+    "do": "press",
+    "on": "color",
+    "seen": {
+     "color": "blue",
+     "red": "true",
+     "title": "Hello World!"
+    }
+   },
+   {
+    "at": 4000,
+    "do": "press",
+    "on": "color",
+    "seen": {
+     "color": "green",
+     "red": "true",
+     "title": "Hello World!"
+    }
+   },
+   {
+    "at": 5000,
+    "do": "press",
+    "on": "color",
+    "seen": {
+     "color": "blue",
+     "red": "true",
+     "title": "Hello World!"
+    }
+   }
+  ],
+  "cells": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "cells": "",
+     "editing": ""
+    }
+   },
+   {
+    "at": 1000,
+    "do": "press",
+    "of": "A0",
+    "on": "cell",
+    "seen": {
+     "cells": "",
+     "editing": "A0"
+    }
+   },
+   {
+    "at": 2000,
+    "do": "fill",
+    "of": "A0",
+    "on": "cell",
+    "seen": {
+     "cells": "",
+     "editing": "A0"
+    },
+    "text": "2"
+   },
+   {
+    "at": 3000,
+    "do": "commit",
+    "of": "A0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=2",
+     "editing": ""
+    }
+   },
+   {
+    "at": 4000,
+    "do": "press",
+    "of": "B0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=2",
+     "editing": "B0"
+    }
+   },
+   {
+    "at": 5000,
+    "do": "fill",
+    "of": "B0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=2",
+     "editing": "B0"
+    },
+    "text": "=A0*3"
+   },
+   {
+    "at": 6000,
+    "do": "commit",
+    "of": "B0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=2\nB0=6",
+     "editing": ""
+    }
+   },
+   {
+    "at": 7000,
+    "do": "press",
+    "of": "A0",
+    "on": "cell",
+    "seen": {
+     "cells": "B0=6",
+     "editing": "A0"
+    }
+   },
+   {
+    "at": 8000,
+    "do": "fill",
+    "of": "A0",
+    "on": "cell",
+    "seen": {
+     "cells": "B0=6",
+     "editing": "A0"
+    },
+    "text": "5"
+   },
+   {
+    "at": 9000,
+    "do": "commit",
+    "of": "A0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15",
+     "editing": ""
+    }
+   },
+   {
+    "at": 10000,
+    "do": "press",
+    "of": "C0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15",
+     "editing": "C0"
+    }
+   },
+   {
+    "at": 11000,
+    "do": "fill",
+    "of": "C0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15",
+     "editing": "C0"
+    },
+    "text": "=A0+B0"
+   },
+   {
+    "at": 12000,
+    "do": "commit",
+    "of": "C0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20",
+     "editing": ""
+    }
+   },
+   {
+    "at": 13000,
+    "do": "press",
+    "of": "D0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20",
+     "editing": "D0"
+    }
+   },
+   {
+    "at": 14000,
+    "do": "fill",
+    "of": "D0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20",
+     "editing": "D0"
+    },
+    "text": "=C0/0"
+   },
+   {
+    "at": 15000,
+    "do": "commit",
+    "of": "D0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity",
+     "editing": ""
+    }
+   },
+   {
+    "at": 16000,
+    "do": "press",
+    "of": "E0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity",
+     "editing": "E0"
+    }
+   },
+   {
+    "at": 17000,
+    "do": "fill",
+    "of": "E0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity",
+     "editing": "E0"
+    },
+    "text": "=("
+   },
+   {
+    "at": 18000,
+    "do": "commit",
+    "of": "E0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'",
+     "editing": ""
+    }
+   },
+   {
+    "at": 19000,
+    "do": "press",
+    "of": "A1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'",
+     "editing": "A1"
+    }
+   },
+   {
+    "at": 20000,
+    "do": "fill",
+    "of": "A1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'",
+     "editing": "A1"
+    },
+    "text": "  hello  "
+   },
+   {
+    "at": 21000,
+    "do": "commit",
+    "of": "A1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello",
+     "editing": ""
+    }
+   },
+   {
+    "at": 22000,
+    "do": "press",
+    "of": "B1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello",
+     "editing": "B1"
+    }
+   },
+   {
+    "at": 23000,
+    "do": "fill",
+    "of": "B1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello",
+     "editing": "B1"
+    },
+    "text": "=A1*2"
+   },
+   {
+    "at": 24000,
+    "do": "commit",
+    "of": "B1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN",
+     "editing": ""
+    }
+   },
+   {
+    "at": 25000,
+    "do": "press",
+    "of": "C1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN",
+     "editing": "C1"
+    }
+   },
+   {
+    "at": 26000,
+    "do": "fill",
+    "of": "C1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN",
+     "editing": "C1"
+    },
+    "text": "=A1+1"
+   },
+   {
+    "at": 27000,
+    "do": "commit",
+    "of": "C1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1",
+     "editing": ""
+    }
+   },
+   {
+    "at": 28000,
+    "do": "press",
+    "of": "D1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1",
+     "editing": "D1"
+    }
+   },
+   {
+    "at": 29000,
+    "do": "fill",
+    "of": "D1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1",
+     "editing": "D1"
+    },
+    "text": "=A19"
+   },
+   {
+    "at": 30000,
+    "do": "commit",
+    "of": "D1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0",
+     "editing": ""
+    }
+   },
+   {
+    "at": 31000,
+    "do": "press",
+    "of": "E1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0",
+     "editing": "E1"
+    }
+   },
+   {
+    "at": 32000,
+    "do": "fill",
+    "of": "E1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0",
+     "editing": "E1"
+    },
+    "text": "=(A0+1)*2-B0/5"
+   },
+   {
+    "at": 33000,
+    "do": "commit",
+    "of": "E1",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9",
+     "editing": ""
+    }
+   },
+   {
+    "at": 34000,
+    "do": "press",
+    "of": "A2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9",
+     "editing": "A2"
+    }
+   },
+   {
+    "at": 35000,
+    "do": "fill",
+    "of": "A2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9",
+     "editing": "A2"
+    },
+    "text": "=A0%3"
+   },
+   {
+    "at": 36000,
+    "do": "commit",
+    "of": "A2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2",
+     "editing": ""
+    }
+   },
+   {
+    "at": 37000,
+    "do": "press",
+    "of": "B2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2",
+     "editing": "B2"
+    }
+   },
+   {
+    "at": 38000,
+    "do": "fill",
+    "of": "B2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2",
+     "editing": "B2"
+    },
+    "text": "=-A0+0.5"
+   },
+   {
+    "at": 39000,
+    "do": "commit",
+    "of": "B2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5",
+     "editing": ""
+    }
+   },
+   {
+    "at": 40000,
+    "do": "press",
+    "of": "C2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5",
+     "editing": "C2"
+    }
+   },
+   {
+    "at": 41000,
+    "do": "fill",
+    "of": "C2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5",
+     "editing": "C2"
+    },
+    "text": "=1/3"
+   },
+   {
+    "at": 42000,
+    "do": "commit",
+    "of": "C2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333",
+     "editing": ""
+    }
+   },
+   {
+    "at": 43000,
+    "do": "press",
+    "of": "D2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333",
+     "editing": "D2"
+    }
+   },
+   {
+    "at": 44000,
+    "do": "fill",
+    "of": "D2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333",
+     "editing": "D2"
+    },
+    "text": "=A0/4"
+   },
+   {
+    "at": 45000,
+    "do": "commit",
+    "of": "D2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25",
+     "editing": ""
+    }
+   },
+   {
+    "at": 46000,
+    "do": "press",
+    "of": "E2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25",
+     "editing": "E2"
+    }
+   },
+   {
+    "at": 47000,
+    "do": "fill",
+    "of": "E2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25",
+     "editing": "E2"
+    },
+    "text": "2.50"
+   },
+   {
+    "at": 48000,
+    "do": "commit",
+    "of": "E2",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50",
+     "editing": ""
+    }
+   },
+   {
+    "at": 49000,
+    "do": "press",
+    "of": "A3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50",
+     "editing": "A3"
+    }
+   },
+   {
+    "at": 50000,
+    "do": "fill",
+    "of": "A3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50",
+     "editing": "A3"
+    },
+    "text": "=E2*2"
+   },
+   {
+    "at": 51000,
+    "do": "commit",
+    "of": "A3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5",
+     "editing": ""
+    }
+   },
+   {
+    "at": 52000,
+    "do": "press",
+    "of": "B3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5",
+     "editing": "B3"
+    }
+   },
+   {
+    "at": 53000,
+    "do": "fill",
+    "of": "B3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5",
+     "editing": "B3"
+    },
+    "text": "=E0"
+   },
+   {
+    "at": 54000,
+    "do": "commit",
+    "of": "B3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'",
+     "editing": ""
+    }
+   },
+   {
+    "at": 55000,
+    "do": "press",
+    "of": "C3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'",
+     "editing": "C3"
+    }
+   },
+   {
+    "at": 56000,
+    "do": "fill",
+    "of": "C3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'",
+     "editing": "C3"
+    },
+    "text": "=E0*2"
+   },
+   {
+    "at": 57000,
+    "do": "commit",
+    "of": "C3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN",
+     "editing": ""
+    }
+   },
+   {
+    "at": 58000,
+    "do": "press",
+    "of": "D3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN",
+     "editing": "D3"
+    }
+   },
+   {
+    "at": 59000,
+    "do": "fill",
+    "of": "D3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN",
+     "editing": "D3"
+    },
+    "text": "=D3"
+   },
+   {
+    "at": 60000,
+    "do": "commit",
+    "of": "D3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=5\nB0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded",
+     "editing": ""
+    }
+   },
+   {
+    "at": 61000,
+    "do": "press",
+    "of": "A0",
+    "on": "cell",
+    "seen": {
+     "cells": "B0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded",
+     "editing": "A0"
+    }
+   },
+   {
+    "at": 62000,
+    "do": "fill",
+    "of": "A0",
+    "on": "cell",
+    "seen": {
+     "cells": "B0=15\nC0=20\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=9\nA2=2\nB2=-4.5\nC2=0.3333333333333333\nD2=1.25\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded",
+     "editing": "A0"
+    },
+    "text": "10"
+   },
+   {
+    "at": 63000,
+    "do": "commit",
+    "of": "A0",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded",
+     "editing": ""
+    }
+   },
+   {
+    "at": 64000,
+    "do": "press",
+    "of": "E3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded",
+     "editing": "E3"
+    }
+   },
+   {
+    "at": 65000,
+    "do": "fill",
+    "of": "E3",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded",
+     "editing": "E3"
+    },
+    "text": "=A0+1"
+   },
+   {
+    "at": 66000,
+    "do": "press",
+    "of": "A4",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded\nE3=11",
+     "editing": "A4"
+    }
+   },
+   {
+    "at": 67000,
+    "do": "fill",
+    "of": "A4",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded\nE3=11",
+     "editing": "A4"
+    },
+    "text": "=E3*E3"
+   },
+   {
+    "at": 68000,
+    "do": "commit",
+    "of": "A4",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded\nE3=11\nA4=121",
+     "editing": ""
+    }
+   },
+   {
+    "at": 69000,
+    "do": "press",
+    "of": "B4",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded\nE3=11\nA4=121",
+     "editing": "B4"
+    }
+   },
+   {
+    "at": 70000,
+    "do": "fill",
+    "of": "B4",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded\nE3=11\nA4=121",
+     "editing": "B4"
+    },
+    "text": "=F0"
+   },
+   {
+    "at": 71000,
+    "do": "commit",
+    "of": "B4",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded\nE3=11\nA4=121\nB4=#ERROR TypeError: Cannot read properties of undefined (reading '0')",
+     "editing": ""
+    }
+   },
+   {
+    "at": 72000,
+    "do": "press",
+    "of": "C4",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded\nE3=11\nA4=121\nB4=#ERROR TypeError: Cannot read properties of undefined (reading '0')",
+     "editing": "C4"
+    }
+   },
+   {
+    "at": 73000,
+    "do": "fill",
+    "of": "C4",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded\nE3=11\nA4=121\nB4=#ERROR TypeError: Cannot read properties of undefined (reading '0')",
+     "editing": "C4"
+    },
+    "text": "=1+"
+   },
+   {
+    "at": 74000,
+    "do": "commit",
+    "of": "C4",
+    "on": "cell",
+    "seen": {
+     "cells": "A0=10\nB0=30\nC0=40\nD0=Infinity\nE0=#ERROR SyntaxError: Unexpected token '}'\nA1=hello\nB1=NaN\nC1=hello1\nD1=0\nE1=16\nA2=1\nB2=-9.5\nC2=0.3333333333333333\nD2=2.5\nE2=2.50\nA3=5\nB3=#ERROR SyntaxError: Unexpected token '}'\nC3=NaN\nD3=#ERROR RangeError: Maximum call stack size exceeded\nE3=11\nA4=121\nB4=#ERROR TypeError: Cannot read properties of undefined (reading '0')\nC4=#ERROR SyntaxError: Unexpected token '}'",
+     "editing": ""
+    }
+   }
+  ],
+  "circle-drawer": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "circles": "",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "disabled"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "click",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 100,
+    "y": 120
+   },
+   {
+    "at": 2000,
+    "do": "click",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 50 #fff\n300 200 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 300,
+    "y": 200
+   },
+   {
+    "at": 3000,
+    "do": "click",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 50 #ccc\n300 200 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 110,
+    "y": 130
+   },
+   {
+    "at": 4000,
+    "do": "context",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 50 #ccc\n300 200 50 #fff",
+     "dialog": "Adjust radius of circle at (100, 120)",
+     "radius": "50",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 110,
+    "y": 130
+   },
+   {
+    "at": 5000,
+    "do": "slide",
+    "on": "radius",
+    "seen": {
+     "circles": "100 120 100 #ccc\n300 200 50 #fff",
+     "dialog": "Adjust radius of circle at (100, 120)",
+     "radius": "100",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "value": 100
+   },
+   {
+    "at": 6000,
+    "do": "click",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 100 #fff\n300 200 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 40,
+    "y": 380
+   },
+   {
+    "at": 7000,
+    "do": "press",
+    "on": "undo",
+    "seen": {
+     "circles": "100 120 50 #fff\n300 200 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "enabled",
+     "undo": "enabled"
+    }
+   },
+   {
+    "at": 8000,
+    "do": "press",
+    "on": "redo",
+    "seen": {
+     "circles": "100 120 100 #fff\n300 200 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "enabled"
+    }
+   },
+   {
+    "at": 9000,
+    "do": "press",
+    "on": "undo",
+    "seen": {
+     "circles": "100 120 50 #fff\n300 200 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "enabled",
+     "undo": "enabled"
+    }
+   },
+   {
+    "at": 10000,
+    "do": "press",
+    "on": "undo",
+    "seen": {
+     "circles": "100 120 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "enabled",
+     "undo": "enabled"
+    }
+   },
+   {
+    "at": 11000,
+    "do": "click",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 50 #fff\n450 120 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 450,
+    "y": 120
+   },
+   {
+    "at": 12000,
+    "do": "context",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 50 #fff\n450 120 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 560,
+    "y": 330
+   },
+   {
+    "at": 13000,
+    "do": "click",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 50 #fff\n450 120 50 #ccc",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 455,
+    "y": 125
+   },
+   {
+    "at": 14000,
+    "do": "context",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 50 #fff\n450 120 50 #ccc",
+     "dialog": "Adjust radius of circle at (450, 120)",
+     "radius": "50",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 455,
+    "y": 125
+   },
+   {
+    "at": 15000,
+    "do": "slide",
+    "on": "radius",
+    "seen": {
+     "circles": "100 120 50 #fff\n450 120 20 #ccc",
+     "dialog": "Adjust radius of circle at (450, 120)",
+     "radius": "20",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "value": 20
+   },
+   {
+    "at": 16000,
+    "do": "click",
+    "on": "canvas",
+    "seen": {
+     "circles": "100 120 50 #fff\n450 120 20 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "disabled",
+     "undo": "enabled"
+    },
+    "x": 40,
+    "y": 380
+   },
+   {
+    "at": 17000,
+    "do": "press",
+    "on": "undo",
+    "seen": {
+     "circles": "100 120 50 #fff\n450 120 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "enabled",
+     "undo": "enabled"
+    }
+   },
+   {
+    "at": 18000,
+    "do": "press",
+    "on": "undo",
+    "seen": {
+     "circles": "100 120 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "enabled",
+     "undo": "enabled"
+    }
+   },
+   {
+    "at": 19000,
+    "do": "press",
+    "on": "undo",
+    "seen": {
+     "circles": "",
+     "dialog": "",
+     "radius": "",
+     "redo": "enabled",
+     "undo": "disabled"
+    }
+   },
+   {
+    "at": 20000,
+    "do": "press",
+    "on": "redo",
+    "seen": {
+     "circles": "100 120 50 #fff",
+     "dialog": "",
+     "radius": "",
+     "redo": "enabled",
+     "undo": "enabled"
+    }
+   }
+  ],
+  "conditionals-and-loops": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "items": "1\n2\n3",
+     "message": ""
+    }
+   },
+   {
+    "at": 1000,
+    "do": "press",
+    "on": "push",
+    "seen": {
+     "items": "1\n2\n3\n4",
+     "message": ""
+    }
+   },
+   {
+    "at": 2000,
+    "do": "press",
+    "on": "reverse",
+    "seen": {
+     "items": "4\n3\n2\n1",
+     "message": ""
+    }
+   },
+   {
+    "at": 3000,
+    "do": "press",
+    "on": "toggle",
+    "seen": {
+     "items": "",
+     "message": "List is not empty, but hidden."
+    }
+   },
+   {
+    "at": 4000,
+    "do": "press",
+    "on": "toggle",
+    "seen": {
+     "items": "4\n3\n2\n1",
+     "message": ""
+    }
+   },
+   {
+    "at": 5000,
+    "do": "press",
+    "on": "pop",
+    "seen": {
+     "items": "4\n3\n2",
+     "message": ""
+    }
+   },
+   {
+    "at": 6000,
+    "do": "press",
+    "on": "pop",
+    "seen": {
+     "items": "4\n3",
+     "message": ""
+    }
+   },
+   {
+    "at": 7000,
+    "do": "press",
+    "on": "pop",
+    "seen": {
+     "items": "4",
+     "message": ""
+    }
+   },
+   {
+    "at": 8000,
+    "do": "press",
+    "on": "pop",
+    "seen": {
+     "items": "",
+     "message": "List is empty."
+    }
+   },
+   {
+    "at": 9000,
+    "do": "press",
+    "on": "pop",
+    "seen": {
+     "items": "",
+     "message": "List is empty."
+    }
+   },
+   {
+    "at": 10000,
+    "do": "press",
+    "on": "push",
+    "seen": {
+     "items": "1",
+     "message": ""
+    }
+   },
+   {
+    "at": 11000,
+    "do": "press",
+    "on": "toggle",
+    "seen": {
+     "items": "",
+     "message": "List is not empty, but hidden."
+    }
+   },
+   {
+    "at": 12000,
+    "do": "press",
+    "on": "push",
+    "seen": {
+     "items": "",
+     "message": "List is not empty, but hidden."
+    }
+   },
+   {
+    "at": 13000,
+    "do": "press",
+    "on": "toggle",
+    "seen": {
+     "items": "1\n2",
+     "message": ""
+    }
+   },
+   {
+    "at": 14000,
+    "do": "press",
+    "on": "reverse",
+    "seen": {
+     "items": "2\n1",
+     "message": ""
+    }
+   }
+  ],
+  "counter": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "count": "0"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "press",
+    "on": "count",
+    "seen": {
+     "count": "1"
+    }
+   },
+   {
+    "at": 2000,
+    "do": "press",
+    "on": "count",
+    "seen": {
+     "count": "2"
+    }
+   },
+   {
+    "at": 3000,
+    "do": "press",
+    "on": "count",
+    "seen": {
+     "count": "3"
+    }
+   }
+  ],
+  "crud": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "first": "",
+     "last": "",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": ""
+    }
+   },
+   {
+    "at": 1000,
+    "do": "fill",
+    "on": "prefix",
+    "seen": {
+     "first": "",
+     "last": "",
+     "names": "Tisch, Roman",
+     "prefix": "t",
+     "selected": ""
+    },
+    "text": "t"
+   },
+   {
+    "at": 2000,
+    "do": "fill",
+    "on": "prefix",
+    "seen": {
+     "first": "",
+     "last": "",
+     "names": "Mustermann, Max",
+     "prefix": "M",
+     "selected": ""
+    },
+    "text": "M"
+   },
+   {
+    "at": 3000,
+    "do": "fill",
+    "on": "prefix",
+    "seen": {
+     "first": "",
+     "last": "",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": ""
+    },
+    "text": ""
+   },
+   {
+    "at": 4000,
+    "do": "choose",
+    "label": "Emil, Hans",
+    "on": "names",
+    "seen": {
+     "first": "Hans",
+     "last": "Emil",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": "Emil, Hans"
+    },
+    "value": "Emil, Hans"
+   },
+   {
+    "at": 5000,
+    "do": "fill",
+    "on": "first",
+    "seen": {
+     "first": "Jane",
+     "last": "Emil",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": "Emil, Hans"
+    },
+    "text": "Jane"
+   },
+   {
+    "at": 6000,
+    "do": "fill",
+    "on": "last",
+    "seen": {
+     "first": "Jane",
+     "last": "Doe",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": "Emil, Hans"
+    },
+    "text": "Doe"
+   },
+   {
+    "at": 7000,
+    "do": "press",
+    "on": "create",
+    "seen": {
+     "first": "",
+     "last": "",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman\nDoe, Jane",
+     "prefix": "",
+     "selected": "Emil, Hans"
+    }
+   },
+   {
+    "at": 8000,
+    "do": "choose",
+    "label": "Doe, Jane",
+    "on": "names",
+    "seen": {
+     "first": "Jane",
+     "last": "Doe",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman\nDoe, Jane",
+     "prefix": "",
+     "selected": "Doe, Jane"
+    },
+    "value": "Doe, Jane"
+   },
+   {
+    "at": 9000,
+    "do": "fill",
+    "on": "first",
+    "seen": {
+     "first": "John",
+     "last": "Doe",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman\nDoe, Jane",
+     "prefix": "",
+     "selected": "Doe, Jane"
+    },
+    "text": "John"
+   },
+   {
+    "at": 10000,
+    "do": "press",
+    "on": "update",
+    "seen": {
+     "first": "John",
+     "last": "Doe",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman\nDoe, John",
+     "prefix": "",
+     "selected": "Doe, John"
+    }
+   },
+   {
+    "at": 11000,
+    "do": "press",
+    "on": "delete",
+    "seen": {
+     "first": "",
+     "last": "",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": ""
+    }
+   },
+   {
+    "at": 12000,
+    "do": "press",
+    "on": "create",
+    "seen": {
+     "first": "",
+     "last": "",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": ""
+    }
+   },
+   {
+    "at": 13000,
+    "do": "fill",
+    "on": "first",
+    "seen": {
+     "first": "Hans",
+     "last": "",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": ""
+    },
+    "text": "Hans"
+   },
+   {
+    "at": 14000,
+    "do": "fill",
+    "on": "last",
+    "seen": {
+     "first": "Hans",
+     "last": "Emil",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": ""
+    },
+    "text": "Emil"
+   },
+   {
+    "at": 15000,
+    "do": "press",
+    "on": "create",
+    "seen": {
+     "first": "Hans",
+     "last": "Emil",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": ""
+    }
+   },
+   {
+    "at": 16000,
+    "do": "fill",
+    "on": "first",
+    "seen": {
+     "first": "  ",
+     "last": "Emil",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": ""
+    },
+    "text": "  "
+   },
+   {
+    "at": 17000,
+    "do": "press",
+    "on": "create",
+    "seen": {
+     "first": "  ",
+     "last": "Emil",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": ""
+    }
+   },
+   {
+    "at": 18000,
+    "do": "choose",
+    "label": "Tisch, Roman",
+    "on": "names",
+    "seen": {
+     "first": "Roman",
+     "last": "Tisch",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": "Tisch, Roman"
+    },
+    "value": "Tisch, Roman"
+   },
+   {
+    "at": 19000,
+    "do": "fill",
+    "on": "last",
+    "seen": {
+     "first": "Roman",
+     "last": "Tusch",
+     "names": "Emil, Hans\nMustermann, Max\nTisch, Roman",
+     "prefix": "",
+     "selected": "Tisch, Roman"
+    },
+    "text": "Tusch"
+   },
+   {
+    "at": 20000,
+    "do": "press",
+    "on": "update",
+    "seen": {
+     "first": "Roman",
+     "last": "Tusch",
+     "names": "Emil, Hans\nMustermann, Max\nTusch, Roman",
+     "prefix": "",
+     "selected": "Tusch, Roman"
+    }
+   },
+   {
+    "at": 21000,
+    "do": "fill",
+    "on": "prefix",
+    "seen": {
+     "first": "Roman",
+     "last": "Tusch",
+     "names": "Tusch, Roman",
+     "prefix": "tu",
+     "selected": "Tusch, Roman"
+    },
+    "text": "tu"
+   }
+  ],
+  "fetching-data": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "branch": "vuejs/core@main",
+     "links": "",
+     "picked": "main",
+     "requests": "https://api.github.com/repos/vuejs/core/commits?per_page=3&sha=main",
+     "rows": ""
+    }
+   },
+   {
+    "at": 1000,
+    "do": "answer",
+    "request": 0,
+    "seen": {
+     "branch": "vuejs/core@main",
+     "links": "https://github.com/vuejs/core/commit/3f1c2a9e8b7d6c5a4f3e2d1c0b9a8f7e6d5c4b3a https://github.com/ada-builder\nhttps://github.com/vuejs/core/commit/b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7 https://github.com/lin-reviewer\nhttps://github.com/vuejs/core/commit/0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b https://github.com/sam-maintainer",
+     "picked": "main",
+     "requests": "https://api.github.com/repos/vuejs/core/commits?per_page=3&sha=main",
+     "rows": "3f1c2a9 - fix(runtime-core): keep a slot's fallback when its content is empty by Ada Builder at 2026-11-12 08:30:00\nb4d5e6f - chore: bump the compiler's tests by Lin Reviewer at 2026-11-11 17:05:42\n0a9b8c7 - perf(reactivity): fewer allocations in effect scopes by Sam Maintainer at 2026-11-10 23:59:01"
+    }
+   },
+   {
+    "at": 2000,
+    "do": "choose",
+    "label": "minor",
+    "on": "branch",
+    "seen": {
+     "branch": "vuejs/core@minor",
+     "links": "https://github.com/vuejs/core/commit/3f1c2a9e8b7d6c5a4f3e2d1c0b9a8f7e6d5c4b3a https://github.com/ada-builder\nhttps://github.com/vuejs/core/commit/b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7 https://github.com/lin-reviewer\nhttps://github.com/vuejs/core/commit/0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b https://github.com/sam-maintainer",
+     "picked": "minor",
+     "requests": "https://api.github.com/repos/vuejs/core/commits?per_page=3&sha=main\nhttps://api.github.com/repos/vuejs/core/commits?per_page=3&sha=minor",
+     "rows": "3f1c2a9 - fix(runtime-core): keep a slot's fallback when its content is empty by Ada Builder at 2026-11-12 08:30:00\nb4d5e6f - chore: bump the compiler's tests by Lin Reviewer at 2026-11-11 17:05:42\n0a9b8c7 - perf(reactivity): fewer allocations in effect scopes by Sam Maintainer at 2026-11-10 23:59:01"
+    },
+    "value": "minor"
+   },
+   {
+    "at": 3000,
+    "do": "answer",
+    "request": 1,
+    "seen": {
+     "branch": "vuejs/core@minor",
+     "links": "https://github.com/vuejs/core/commit/c0ffee1234567890abcdef1234567890abcdef12 https://github.com/kai-contributor\nhttps://github.com/vuejs/core/commit/deadbeef00112233445566778899aabbccddeeff https://github.com/ada-builder\nhttps://github.com/vuejs/core/commit/1234abcd5678ef901234abcd5678ef901234abcd https://github.com/lin-reviewer",
+     "picked": "minor",
+     "requests": "https://api.github.com/repos/vuejs/core/commits?per_page=3&sha=main\nhttps://api.github.com/repos/vuejs/core/commits?per_page=3&sha=minor",
+     "rows": "c0ffee1 - feat(compiler-sfc): read a type's props from a re-export by Kai Contributor at 2026-11-13 06:00:00\ndeadbee - release: v3.6.0-rc.16 by Ada Builder at 2026-11-12 12:12:12\n1234abc - test: cover the vapor mode's teleport by Lin Reviewer at 2026-11-09 09:09:09"
+    }
+   },
+   {
+    "at": 4000,
+    "do": "choose",
+    "label": "main",
+    "on": "branch",
+    "seen": {
+     "branch": "vuejs/core@main",
+     "links": "https://github.com/vuejs/core/commit/c0ffee1234567890abcdef1234567890abcdef12 https://github.com/kai-contributor\nhttps://github.com/vuejs/core/commit/deadbeef00112233445566778899aabbccddeeff https://github.com/ada-builder\nhttps://github.com/vuejs/core/commit/1234abcd5678ef901234abcd5678ef901234abcd https://github.com/lin-reviewer",
+     "picked": "main",
+     "requests": "https://api.github.com/repos/vuejs/core/commits?per_page=3&sha=main\nhttps://api.github.com/repos/vuejs/core/commits?per_page=3&sha=minor\nhttps://api.github.com/repos/vuejs/core/commits?per_page=3&sha=main",
+     "rows": "c0ffee1 - feat(compiler-sfc): read a type's props from a re-export by Kai Contributor at 2026-11-13 06:00:00\ndeadbee - release: v3.6.0-rc.16 by Ada Builder at 2026-11-12 12:12:12\n1234abc - test: cover the vapor mode's teleport by Lin Reviewer at 2026-11-09 09:09:09"
+    },
+    "value": "main"
+   },
+   {
+    "at": 5000,
+    "do": "answer",
+    "request": 2,
+    "seen": {
+     "branch": "vuejs/core@main",
+     "links": "https://github.com/vuejs/core/commit/3f1c2a9e8b7d6c5a4f3e2d1c0b9a8f7e6d5c4b3a https://github.com/ada-builder\nhttps://github.com/vuejs/core/commit/b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7 https://github.com/lin-reviewer\nhttps://github.com/vuejs/core/commit/0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b https://github.com/sam-maintainer",
+     "picked": "main",
+     "requests": "https://api.github.com/repos/vuejs/core/commits?per_page=3&sha=main\nhttps://api.github.com/repos/vuejs/core/commits?per_page=3&sha=minor\nhttps://api.github.com/repos/vuejs/core/commits?per_page=3&sha=main",
+     "rows": "3f1c2a9 - fix(runtime-core): keep a slot's fallback when its content is empty by Ada Builder at 2026-11-12 08:30:00\nb4d5e6f - chore: bump the compiler's tests by Lin Reviewer at 2026-11-11 17:05:42\n0a9b8c7 - perf(reactivity): fewer allocations in effect scopes by Sam Maintainer at 2026-11-10 23:59:01"
+    }
+   }
+  ],
+  "flight-booker": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "alert": "",
+     "book_disabled": "false",
+     "departure": "2026-11-14",
+     "message": "",
+     "return": "2026-11-14",
+     "return_disabled": "true",
+     "type": "one-way flight"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "choose",
+    "label": "Return Flight",
+    "on": "type",
+    "seen": {
+     "alert": "",
+     "book_disabled": "true",
+     "departure": "2026-11-14",
+     "message": "Return date must be after departure date.",
+     "return": "2026-11-14",
+     "return_disabled": "false",
+     "type": "return flight"
+    },
+    "value": "return flight"
+   },
+   {
+    "at": 2000,
+    "do": "fill",
+    "on": "return",
+    "seen": {
+     "alert": "",
+     "book_disabled": "false",
+     "departure": "2026-11-14",
+     "message": "",
+     "return": "2026-11-15",
+     "return_disabled": "false",
+     "type": "return flight"
+    },
+    "text": "2026-11-15"
+   },
+   {
+    "at": 3000,
+    "do": "press",
+    "on": "book",
+    "seen": {
+     "alert": "You have booked a return flight leaving on 2026-11-14 and returning on 2026-11-15.",
+     "book_disabled": "false",
+     "departure": "2026-11-14",
+     "message": "",
+     "return": "2026-11-15",
+     "return_disabled": "false",
+     "type": "return flight"
+    }
+   },
+   {
+    "at": 4000,
+    "do": "dismiss",
+    "seen": {
+     "alert": "",
+     "book_disabled": "false",
+     "departure": "2026-11-14",
+     "message": "",
+     "return": "2026-11-15",
+     "return_disabled": "false",
+     "type": "return flight"
+    }
+   },
+   {
+    "at": 5000,
+    "do": "fill",
+    "on": "departure",
+    "seen": {
+     "alert": "",
+     "book_disabled": "true",
+     "departure": "2026-11-16",
+     "message": "Return date must be after departure date.",
+     "return": "2026-11-15",
+     "return_disabled": "false",
+     "type": "return flight"
+    },
+    "text": "2026-11-16"
+   },
+   {
+    "at": 6000,
+    "do": "choose",
+    "label": "One-way Flight",
+    "on": "type",
+    "seen": {
+     "alert": "",
+     "book_disabled": "false",
+     "departure": "2026-11-16",
+     "message": "",
+     "return": "2026-11-15",
+     "return_disabled": "true",
+     "type": "one-way flight"
+    },
+    "value": "one-way flight"
+   },
+   {
+    "at": 7000,
+    "do": "press",
+    "on": "book",
+    "seen": {
+     "alert": "You have booked a one-way flight leaving on 2026-11-16.",
+     "book_disabled": "false",
+     "departure": "2026-11-16",
+     "message": "",
+     "return": "2026-11-15",
+     "return_disabled": "true",
+     "type": "one-way flight"
+    }
+   },
+   {
+    "at": 8000,
+    "do": "dismiss",
+    "seen": {
+     "alert": "",
+     "book_disabled": "false",
+     "departure": "2026-11-16",
+     "message": "",
+     "return": "2026-11-15",
+     "return_disabled": "true",
+     "type": "one-way flight"
+    }
+   },
+   {
+    "at": 9000,
+    "do": "choose",
+    "label": "Return Flight",
+    "on": "type",
+    "seen": {
+     "alert": "",
+     "book_disabled": "true",
+     "departure": "2026-11-16",
+     "message": "Return date must be after departure date.",
+     "return": "2026-11-15",
+     "return_disabled": "false",
+     "type": "return flight"
+    },
+    "value": "return flight"
+   },
+   {
+    "at": 10000,
+    "do": "fill",
+    "on": "return",
+    "seen": {
+     "alert": "",
+     "book_disabled": "false",
+     "departure": "2026-11-16",
+     "message": "",
+     "return": "2026-11-17",
+     "return_disabled": "false",
+     "type": "return flight"
+    },
+    "text": "2026-11-17"
+   },
+   {
+    "at": 11000,
+    "do": "fill",
+    "on": "departure",
+    "seen": {
+     "alert": "",
+     "book_disabled": "false",
+     "departure": "2026-11-13",
+     "message": "",
+     "return": "2026-11-17",
+     "return_disabled": "false",
+     "type": "return flight"
+    },
+    "text": "2026-11-13"
+   },
+   {
+    "at": 12000,
+    "do": "choose",
+    "label": "One-way Flight",
+    "on": "type",
+    "seen": {
+     "alert": "",
+     "book_disabled": "false",
+     "departure": "2026-11-13",
+     "message": "",
+     "return": "2026-11-17",
+     "return_disabled": "true",
+     "type": "one-way flight"
+    },
+    "value": "one-way flight"
+   }
+  ],
+  "form-bindings": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "checked": "true",
+     "checked_echo": "Checked: true",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: A",
+     "text": "Edit me",
+     "text_echo": "Edit me"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "fill",
+    "on": "text",
+    "seen": {
+     "checked": "true",
+     "checked_echo": "Checked: true",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: A",
+     "text": "Hi there",
+     "text_echo": "Hi there"
+    },
+    "text": "Hi there"
+   },
+   {
+    "at": 2000,
+    "do": "fill",
+    "on": "text",
+    "seen": {
+     "checked": "true",
+     "checked_echo": "Checked: true",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: A",
+     "text": "",
+     "text_echo": ""
+    },
+    "text": ""
+   },
+   {
+    "at": 3000,
+    "do": "check",
+    "on": "checked",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: A",
+     "text": "",
+     "text_echo": ""
+    }
+   },
+   {
+    "at": 4000,
+    "do": "check",
+    "of": "John",
+    "on": "names",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"Jack\", \"John\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: A",
+     "text": "",
+     "text_echo": ""
+    }
+   },
+   {
+    "at": 5000,
+    "do": "check",
+    "of": "Jack",
+    "on": "names",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"John\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: A",
+     "text": "",
+     "text_echo": ""
+    }
+   },
+   {
+    "at": 6000,
+    "do": "check",
+    "of": "Mike",
+    "on": "names",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: A",
+     "text": "",
+     "text_echo": ""
+    }
+   },
+   {
+    "at": 7000,
+    "do": "check",
+    "of": "Jack",
+    "on": "names",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: A",
+     "text": "",
+     "text_echo": ""
+    }
+   },
+   {
+    "at": 8000,
+    "do": "choose",
+    "label": "Two",
+    "on": "picked",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: Two",
+     "selected_echo": "Selected: A",
+     "text": "",
+     "text_echo": ""
+    },
+    "value": "Two"
+   },
+   {
+    "at": 9000,
+    "do": "choose",
+    "label": "One",
+    "on": "picked",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: A",
+     "text": "",
+     "text_echo": ""
+    },
+    "value": "One"
+   },
+   {
+    "at": 10000,
+    "do": "choose",
+    "label": "C",
+    "on": "selected",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: C",
+     "text": "",
+     "text_echo": ""
+    },
+    "value": "C"
+   },
+   {
+    "at": 11000,
+    "do": "choose",
+    "label": "B",
+    "on": "selected",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: B",
+     "text": "",
+     "text_echo": ""
+    },
+    "value": "B"
+   },
+   {
+    "add": false,
+    "at": 12000,
+    "do": "pick",
+    "on": "multi",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"B\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: B",
+     "text": "",
+     "text_echo": ""
+    },
+    "value": "B"
+   },
+   {
+    "add": true,
+    "at": 13000,
+    "do": "pick",
+    "on": "multi",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"B\", \"C\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: B",
+     "text": "",
+     "text_echo": ""
+    },
+    "value": "C"
+   },
+   {
+    "add": true,
+    "at": 14000,
+    "do": "pick",
+    "on": "multi",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\", \"B\", \"C\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: B",
+     "text": "",
+     "text_echo": ""
+    },
+    "value": "A"
+   },
+   {
+    "add": true,
+    "at": 15000,
+    "do": "pick",
+    "on": "multi",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"A\", \"C\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: B",
+     "text": "",
+     "text_echo": ""
+    },
+    "value": "B"
+   },
+   {
+    "add": false,
+    "at": 16000,
+    "do": "pick",
+    "on": "multi",
+    "seen": {
+     "checked": "false",
+     "checked_echo": "Checked: false",
+     "multi_echo": "Selected: [ \"C\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: B",
+     "text": "",
+     "text_echo": ""
+    },
+    "value": "C"
+   },
+   {
+    "at": 17000,
+    "do": "check",
+    "on": "checked",
+    "seen": {
+     "checked": "true",
+     "checked_echo": "Checked: true",
+     "multi_echo": "Selected: [ \"C\" ]",
+     "names_echo": "Checked names: [ \"John\", \"Mike\", \"Jack\" ]",
+     "picked_echo": "Picked: One",
+     "selected_echo": "Selected: B",
+     "text": "",
+     "text_echo": ""
+    }
+   }
+  ],
+  "grid": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc\nPower asc",
+     "rows": "Chuck Norris | Infinity\nBruce Lee | 9000\nJackie Chan | 7000\nJet Li | 8000"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "press",
+    "of": "power",
+    "on": "sort",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc\nPower dsc active",
+     "rows": "Chuck Norris | Infinity\nBruce Lee | 9000\nJet Li | 8000\nJackie Chan | 7000"
+    }
+   },
+   {
+    "at": 2000,
+    "do": "press",
+    "of": "power",
+    "on": "sort",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc\nPower asc active",
+     "rows": "Jackie Chan | 7000\nJet Li | 8000\nBruce Lee | 9000\nChuck Norris | Infinity"
+    }
+   },
+   {
+    "at": 3000,
+    "do": "press",
+    "of": "name",
+    "on": "sort",
+    "seen": {
+     "empty": "",
+     "headers": "Name dsc active\nPower asc",
+     "rows": "Jet Li | 8000\nJackie Chan | 7000\nChuck Norris | Infinity\nBruce Lee | 9000"
+    }
+   },
+   {
+    "at": 4000,
+    "do": "press",
+    "of": "name",
+    "on": "sort",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc active\nPower asc",
+     "rows": "Bruce Lee | 9000\nChuck Norris | Infinity\nJackie Chan | 7000\nJet Li | 8000"
+    }
+   },
+   {
+    "at": 5000,
+    "do": "fill",
+    "on": "query",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc active\nPower asc",
+     "rows": "Jet Li | 8000"
+    },
+    "text": "li"
+   },
+   {
+    "at": 6000,
+    "do": "fill",
+    "on": "query",
+    "seen": {
+     "empty": "No matches found.",
+     "headers": "",
+     "rows": ""
+    },
+    "text": "zzz"
+   },
+   {
+    "at": 7000,
+    "do": "fill",
+    "on": "query",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc active\nPower asc",
+     "rows": "Bruce Lee | 9000\nChuck Norris | Infinity\nJackie Chan | 7000\nJet Li | 8000"
+    },
+    "text": ""
+   },
+   {
+    "at": 8000,
+    "do": "fill",
+    "on": "query",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc active\nPower asc",
+     "rows": "Bruce Lee | 9000"
+    },
+    "text": "9"
+   },
+   {
+    "at": 9000,
+    "do": "fill",
+    "on": "query",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc active\nPower asc",
+     "rows": "Chuck Norris | Infinity"
+    },
+    "text": "INF"
+   },
+   {
+    "at": 10000,
+    "do": "fill",
+    "on": "query",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc active\nPower asc",
+     "rows": "Bruce Lee | 9000\nJackie Chan | 7000\nJet Li | 8000"
+    },
+    "text": "e"
+   },
+   {
+    "at": 11000,
+    "do": "fill",
+    "on": "query",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc active\nPower asc",
+     "rows": "Bruce Lee | 9000\nChuck Norris | Infinity\nJackie Chan | 7000\nJet Li | 8000"
+    },
+    "text": ""
+   },
+   {
+    "at": 12000,
+    "do": "press",
+    "of": "power",
+    "on": "sort",
+    "seen": {
+     "empty": "",
+     "headers": "Name asc\nPower dsc active",
+     "rows": "Chuck Norris | Infinity\nBruce Lee | 9000\nJet Li | 8000\nJackie Chan | 7000"
+    }
+   }
+  ],
+  "handling-input": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "alert": "",
+     "heading": "Hello World!",
+     "prevented": ""
+    }
+   },
+   {
+    "at": 1000,
+    "do": "press",
+    "on": "reverse",
+    "seen": {
+     "alert": "",
+     "heading": "!dlroW olleH",
+     "prevented": ""
+    }
+   },
+   {
+    "at": 2000,
+    "do": "press",
+    "on": "reverse",
+    "seen": {
+     "alert": "",
+     "heading": "Hello World!",
+     "prevented": ""
+    }
+   },
+   {
+    "at": 3000,
+    "do": "press",
+    "on": "append",
+    "seen": {
+     "alert": "",
+     "heading": "Hello World!!",
+     "prevented": ""
+    }
+   },
+   {
+    "at": 4000,
+    "do": "press",
+    "on": "link",
+    "seen": {
+     "alert": "navigation was prevented.",
+     "heading": "Hello World!!",
+     "prevented": "true"
+    }
+   },
+   {
+    "at": 5000,
+    "do": "dismiss",
+    "seen": {
+     "alert": "",
+     "heading": "Hello World!!",
+     "prevented": "true"
+    }
+   },
+   {
+    "at": 6000,
+    "do": "press",
+    "on": "reverse",
+    "seen": {
+     "alert": "",
+     "heading": "!!dlroW olleH",
+     "prevented": "true"
+    }
+   }
+  ],
+  "hello-world": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "heading": "Hello World!"
+    }
+   }
+  ],
+  "list-transition": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "enter": "",
+     "items": "1 2 3 4 5",
+     "leave": "",
+     "move": ""
+    }
+   },
+   {
+    "at": 1000,
+    "do": "press",
+    "on": "insert",
+    "seen": {
+     "enter": "0 0.01 30",
+     "items": "6 1 2 3 4 5",
+     "leave": "",
+     "move": "1 -30"
+    }
+   },
+   {
+    "after": 0,
+    "at": 1000,
+    "do": "sample",
+    "seen": {
+     "enter": "0 0.01 30",
+     "items": "6 1 2 3 4 5",
+     "leave": "",
+     "move": "1 -30"
+    }
+   },
+   {
+    "after": 125,
+    "at": 1125,
+    "do": "sample",
+    "seen": {
+     "enter": "0.135374 0.14402 25.9388",
+     "items": "6 1 2 3 4 5",
+     "leave": "",
+     "move": "1 -25.9388"
+    }
+   },
+   {
+    "after": 250,
+    "at": 1250,
+    "do": "sample",
+    "seen": {
+     "enter": "0.796097 0.798136 6.11709",
+     "items": "6 1 2 3 4 5",
+     "leave": "",
+     "move": "1 -6.11709"
+    }
+   },
+   {
+    "after": 375,
+    "at": 1375,
+    "do": "sample",
+    "seen": {
+     "enter": "0.966709 0.967042 0.99873",
+     "items": "6 1 2 3 4 5",
+     "leave": "",
+     "move": "1 -0.99873"
+    }
+   },
+   {
+    "after": 500,
+    "at": 1500,
+    "do": "sample",
+    "seen": {
+     "enter": "1 1 0",
+     "items": "6 1 2 3 4 5",
+     "leave": "",
+     "move": "1 0"
+    }
+   },
+   {
+    "at": 2000,
+    "do": "settle",
+    "seen": {
+     "enter": "",
+     "items": "6 1 2 3 4 5",
+     "leave": "",
+     "move": ""
+    }
+   },
+   {
+    "at": 3000,
+    "do": "press",
+    "on": "insert",
+    "seen": {
+     "enter": "0 0.01 30",
+     "items": "6 1 2 7 3 4 5",
+     "leave": "",
+     "move": "3 -30"
+    }
+   },
+   {
+    "at": 4000,
+    "do": "settle",
+    "seen": {
+     "enter": "",
+     "items": "6 1 2 7 3 4 5",
+     "leave": "",
+     "move": ""
+    }
+   },
+   {
+    "at": 5000,
+    "do": "press",
+    "of": "3",
+    "on": "remove",
+    "seen": {
+     "enter": "",
+     "items": "6 1 2 7 4 5",
+     "leave": "1 1 0",
+     "move": "4 30"
+    }
+   },
+   {
+    "after": 0,
+    "at": 5000,
+    "do": "sample",
+    "seen": {
+     "enter": "",
+     "items": "6 1 2 7 4 5",
+     "leave": "1 1 0",
+     "move": "4 30"
+    }
+   },
+   {
+    "after": 125,
+    "at": 5125,
+    "do": "sample",
+    "seen": {
+     "enter": "",
+     "items": "6 1 2 7 4 5",
+     "leave": "0.864626 0.86598 4.06121",
+     "move": "4 25.9388"
+    }
+   },
+   {
+    "after": 250,
+    "at": 5250,
+    "do": "sample",
+    "seen": {
+     "enter": "",
+     "items": "6 1 2 7 4 5",
+     "leave": "0.203903 0.211864 23.8829",
+     "move": "4 6.11709"
+    }
+   },
+   {
+    "after": 375,
+    "at": 5375,
+    "do": "sample",
+    "seen": {
+     "enter": "",
+     "items": "6 1 2 7 4 5",
+     "leave": "0.033291 0.042958 29.0013",
+     "move": "4 0.99873"
+    }
+   },
+   {
+    "after": 500,
+    "at": 5500,
+    "do": "sample",
+    "seen": {
+     "enter": "",
+     "items": "6 1 2 7 4 5",
+     "leave": "0 0.01 30",
+     "move": "4 0"
+    }
+   },
+   {
+    "at": 6000,
+    "do": "settle",
+    "seen": {
+     "enter": "",
+     "items": "6 1 2 7 4 5",
+     "leave": "",
+     "move": ""
+    }
+   },
+   {
+    "at": 7000,
+    "do": "press",
+    "on": "shuffle",
+    "seen": {
+     "enter": "",
+     "items": "4 2 7 1 5 6",
+     "leave": "",
+     "move": "4 120"
+    }
+   },
+   {
+    "at": 8000,
+    "do": "settle",
+    "seen": {
+     "enter": "",
+     "items": "4 2 7 1 5 6",
+     "leave": "",
+     "move": ""
+    }
+   },
+   {
+    "at": 9000,
+    "do": "press",
+    "on": "reset",
+    "seen": {
+     "enter": "0 0.01 30",
+     "items": "1 2 3 4 5",
+     "leave": "1 1 0",
+     "move": "1 90"
+    }
+   },
+   {
+    "at": 10000,
+    "do": "settle",
+    "seen": {
+     "enter": "",
+     "items": "1 2 3 4 5",
+     "leave": "",
+     "move": ""
+    }
+   },
+   {
+    "at": 11000,
+    "do": "press",
+    "on": "shuffle",
+    "seen": {
+     "enter": "",
+     "items": "3 1 2 5 4",
+     "leave": "",
+     "move": "3 60"
+    }
+   },
+   {
+    "at": 12000,
+    "do": "settle",
+    "seen": {
+     "enter": "",
+     "items": "3 1 2 5 4",
+     "leave": "",
+     "move": ""
+    }
+   },
+   {
+    "at": 13000,
+    "do": "press",
+    "on": "insert",
+    "seen": {
+     "enter": "0 0.01 30",
+     "items": "3 1 6 2 5 4",
+     "leave": "",
+     "move": "2 -30"
+    }
+   },
+   {
+    "at": 14000,
+    "do": "settle",
+    "seen": {
+     "enter": "",
+     "items": "3 1 6 2 5 4",
+     "leave": "",
+     "move": ""
+    }
+   },
+   {
+    "at": 15000,
+    "do": "press",
+    "of": "1",
+    "on": "remove",
+    "seen": {
+     "enter": "",
+     "items": "3 6 2 5 4",
+     "leave": "1 1 0",
+     "move": "6 30"
+    }
+   },
+   {
+    "at": 16000,
+    "do": "settle",
+    "seen": {
+     "enter": "",
+     "items": "3 6 2 5 4",
+     "leave": "",
+     "move": ""
+    }
+   }
+  ],
+  "markdown": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "preview": "h1{hello}",
+     "source": "# hello"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "fill",
+    "on": "source",
+    "seen": {
+     "preview": "h1{hello}",
+     "source": "# hello\n\n**a**"
+    },
+    "text": "# hello\n\n**a**"
+   },
+   {
+    "at": 1050,
+    "do": "frame",
+    "seen": {
+     "preview": "h1{hello}",
+     "source": "# hello\n\n**a**"
+    }
+   },
+   {
+    "at": 1150,
+    "do": "frame",
+    "seen": {
+     "preview": "h1{hello}p{strong{a}}",
+     "source": "# hello\n\n**a**"
+    }
+   },
+   {
+    "at": 3000,
+    "do": "fill",
+    "on": "source",
+    "seen": {
+     "preview": "h1{hello}p{strong{a}}",
+     "source": "x"
+    },
+    "text": "x"
+   },
+   {
+    "at": 3060,
+    "do": "fill",
+    "on": "source",
+    "seen": {
+     "preview": "h1{hello}p{strong{a}}",
+     "source": "xy"
+    },
+    "text": "xy"
+   },
+   {
+    "at": 3120,
+    "do": "fill",
+    "on": "source",
+    "seen": {
+     "preview": "h1{hello}p{strong{a}}",
+     "source": "xyz"
+    },
+    "text": "xyz"
+   },
+   {
+    "at": 3200,
+    "do": "frame",
+    "seen": {
+     "preview": "h1{hello}p{strong{a}}",
+     "source": "xyz"
+    }
+   },
+   {
+    "at": 3230,
+    "do": "frame",
+    "seen": {
+     "preview": "p{xyz}",
+     "source": "xyz"
+    }
+   },
+   {
+    "at": 4000,
+    "do": "fill",
+    "on": "source",
+    "seen": {
+     "preview": "p{xyz}",
+     "source": "- a *b*\n- `c`"
+    },
+    "text": "- a *b*\n- `c`"
+   },
+   {
+    "at": 4099,
+    "do": "frame",
+    "seen": {
+     "preview": "p{xyz}",
+     "source": "- a *b*\n- `c`"
+    }
+   },
+   {
+    "at": 4101,
+    "do": "frame",
+    "seen": {
+     "preview": "ul{li{a em{b}}li{code{c}}}",
+     "source": "- a *b*\n- `c`"
+    }
+   },
+   {
+    "at": 5000,
+    "do": "fill",
+    "on": "source",
+    "seen": {
+     "preview": "ul{li{a em{b}}li{code{c}}}",
+     "source": ""
+    },
+    "text": ""
+   },
+   {
+    "at": 5200,
+    "do": "frame",
+    "seen": {
+     "preview": "",
+     "source": ""
+    }
+   }
+  ],
+  "modal": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "body": "",
+     "footer": "",
+     "header": "",
+     "opacity": "",
+     "scale": "",
+     "shown": "false"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "press",
+    "on": "show",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0",
+     "scale": "1.1",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 0,
+    "at": 1000,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0",
+     "scale": "1.1",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 75,
+    "at": 1075,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0.408511",
+     "scale": "1.05915",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 150,
+    "at": 1150,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0.802403",
+     "scale": "1.01976",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 225,
+    "at": 1225,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0.960459",
+     "scale": "1.00395",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 300,
+    "at": 1300,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "1",
+     "scale": "1",
+     "shown": "true"
+    }
+   },
+   {
+    "at": 1500,
+    "do": "settle",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "1",
+     "scale": "1",
+     "shown": "true"
+    }
+   },
+   {
+    "at": 2000,
+    "do": "press",
+    "on": "ok",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "1",
+     "scale": "1",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 0,
+    "at": 2000,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "1",
+     "scale": "1",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 75,
+    "at": 2075,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0.591489",
+     "scale": "1.04085",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 150,
+    "at": 2150,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0.197597",
+     "scale": "1.08024",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 225,
+    "at": 2225,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0.039541",
+     "scale": "1.09605",
+     "shown": "true"
+    }
+   },
+   {
+    "after": 300,
+    "at": 2300,
+    "do": "sample",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0",
+     "scale": "1.1",
+     "shown": "true"
+    }
+   },
+   {
+    "at": 2500,
+    "do": "settle",
+    "seen": {
+     "body": "",
+     "footer": "",
+     "header": "",
+     "opacity": "",
+     "scale": "",
+     "shown": "false"
+    }
+   },
+   {
+    "at": 3000,
+    "do": "press",
+    "on": "show",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "0",
+     "scale": "1.1",
+     "shown": "true"
+    }
+   },
+   {
+    "at": 3500,
+    "do": "settle",
+    "seen": {
+     "body": "default body",
+     "footer": "default footer OK",
+     "header": "Custom Header",
+     "opacity": "1",
+     "scale": "1",
+     "shown": "true"
+    }
+   }
+  ],
+  "simple-component": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "items": "Vegetables\nCheese\nWhatever else humans are supposed to eat"
+    }
+   }
+  ],
+  "svg": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 12\nB 176.21023553303058 55.99999999999999\nC 176.2102355330306 143.99999999999997\nD 100.00000000000001 188\nE 23.789764466969416 144.00000000000006\nF 23.78976446696936 56.00000000000006",
+     "points": "100,20 169.28203230275508,59.99999999999999 169.2820323027551,140 100.00000000000001,180 30.71796769724493,140.00000000000003 30.717967697244873,60.00000000000006",
+     "raw": "[ { \"label\": \"A\", \"value\": 100 }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": 100 }, { \"label\": \"D\", \"value\": 100 }, { \"label\": \"E\", \"value\": 100 }, { \"label\": \"F\", \"value\": 100 } ]",
+     "values": "A=100 B=100 C=100 D=100 E=100 F=100"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "slide",
+    "of": "A",
+    "on": "value",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 176.21023553303058 55.99999999999999\nC 176.2102355330306 143.99999999999997\nD 100.00000000000001 188\nE 23.789764466969416 144.00000000000006\nF 23.78976446696936 56.00000000000006",
+     "points": "100,60 169.28203230275508,59.99999999999999 169.2820323027551,140 100.00000000000001,180 30.71796769724493,140.00000000000003 30.717967697244873,60.00000000000006",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": 100 }, { \"label\": \"D\", \"value\": 100 }, { \"label\": \"E\", \"value\": 100 }, { \"label\": \"F\", \"value\": 100 } ]",
+     "values": "A=50 B=100 C=100 D=100 E=100 F=100"
+    },
+    "value": 50
+   },
+   {
+    "at": 2000,
+    "do": "slide",
+    "of": "C",
+    "on": "value",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 176.21023553303058 55.99999999999999\nC 106.92820323027551 104\nD 100.00000000000001 188\nE 23.789764466969416 144.00000000000006\nF 23.78976446696936 56.00000000000006",
+     "points": "100,60 169.28203230275508,59.99999999999999 100,100 100.00000000000001,180 30.71796769724493,140.00000000000003 30.717967697244873,60.00000000000006",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" }, { \"label\": \"D\", \"value\": 100 }, { \"label\": \"E\", \"value\": 100 }, { \"label\": \"F\", \"value\": 100 } ]",
+     "values": "A=50 B=100 C=0 D=100 E=100 F=100"
+    },
+    "value": 0
+   },
+   {
+    "at": 3000,
+    "do": "press",
+    "of": "F",
+    "on": "remove",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 183.69297343397352 72.80650449500462\nC 104.70228201833979 106.47213595499957\nD 48.27489779826237 171.19349550499538\nE 16.30702656602648 72.80650449500465",
+     "points": "100,60 176.0845213036123,75.2786404500042 100,100 52.97717981660216,164.7213595499958 23.91547869638771,75.27864045000422",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" }, { \"label\": \"D\", \"value\": 100 }, { \"label\": \"E\", \"value\": 100 } ]",
+     "values": "A=50 B=100 C=0 D=100 E=100"
+    }
+   },
+   {
+    "at": 4000,
+    "do": "press",
+    "of": "E",
+    "on": "remove",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 188 100\nC 100 108\nD 12 100.00000000000001",
+     "points": "100,60 180,100 100,100 20,100.00000000000001",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" }, { \"label\": \"D\", \"value\": 100 } ]",
+     "values": "A=50 B=100 C=0 D=100"
+    }
+   },
+   {
+    "at": 5000,
+    "do": "press",
+    "of": "D",
+    "on": "remove",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 176.2102355330306 143.99999999999997\nC 93.0717967697245 104",
+     "points": "100,60 169.2820323027551,140 100,100",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" } ]",
+     "values": "A=50 B=100 C=0"
+    }
+   },
+   {
+    "at": 6000,
+    "do": "press",
+    "of": "C",
+    "on": "remove",
+    "seen": {
+     "alert": "Can't delete more!",
+     "label": "",
+     "labels": "A 100 52\nB 176.2102355330306 143.99999999999997\nC 93.0717967697245 104",
+     "points": "100,60 169.2820323027551,140 100,100",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" } ]",
+     "values": "A=50 B=100 C=0"
+    }
+   },
+   {
+    "at": 7000,
+    "do": "dismiss",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 176.2102355330306 143.99999999999997\nC 93.0717967697245 104",
+     "points": "100,60 169.2820323027551,140 100,100",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" } ]",
+     "values": "A=50 B=100 C=0"
+    }
+   },
+   {
+    "at": 8000,
+    "do": "fill",
+    "on": "label",
+    "seen": {
+     "alert": "",
+     "label": "G",
+     "labels": "A 100 52\nB 176.2102355330306 143.99999999999997\nC 93.0717967697245 104",
+     "points": "100,60 169.2820323027551,140 100,100",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" } ]",
+     "values": "A=50 B=100 C=0"
+    },
+    "text": "G"
+   },
+   {
+    "at": 9000,
+    "do": "press",
+    "on": "add",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 188 100\nC 100 108\nG 12 100.00000000000001",
+     "points": "100,60 180,100 100,100 20,100.00000000000001",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" }, { \"label\": \"G\", \"value\": 100 } ]",
+     "values": "A=50 B=100 C=0 G=100"
+    }
+   },
+   {
+    "at": 10000,
+    "do": "press",
+    "on": "add",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 188 100\nC 100 108\nG 12 100.00000000000001",
+     "points": "100,60 180,100 100,100 20,100.00000000000001",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" }, { \"label\": \"G\", \"value\": 100 } ]",
+     "values": "A=50 B=100 C=0 G=100"
+    }
+   },
+   {
+    "at": 11000,
+    "do": "slide",
+    "of": "G",
+    "on": "value",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 188 100\nC 100 108\nG 72 100",
+     "points": "100,60 180,100 100,100 80,100",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" }, { \"label\": \"G\", \"value\": \"25\" } ]",
+     "values": "A=50 B=100 C=0 G=25"
+    },
+    "value": 25
+   },
+   {
+    "at": 12000,
+    "do": "fill",
+    "on": "label",
+    "seen": {
+     "alert": "",
+     "label": "H",
+     "labels": "A 100 52\nB 188 100\nC 100 108\nG 72 100",
+     "points": "100,60 180,100 100,100 80,100",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" }, { \"label\": \"G\", \"value\": \"25\" } ]",
+     "values": "A=50 B=100 C=0 G=25"
+    },
+    "text": "H"
+   },
+   {
+    "at": 13000,
+    "do": "commit",
+    "on": "label",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "A 100 52\nB 183.69297343397352 72.80650449500462\nC 104.70228201833979 106.47213595499957\nG 83.54201293581076 122.65247584249853\nH 16.30702656602648 72.80650449500465",
+     "points": "100,60 176.0845213036123,75.2786404500042 100,100 88.24429495415055,116.18033988749895 23.91547869638771,75.27864045000422",
+     "raw": "[ { \"label\": \"A\", \"value\": \"50\" }, { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" }, { \"label\": \"G\", \"value\": \"25\" }, { \"label\": \"H\", \"value\": 100 } ]",
+     "values": "A=50 B=100 C=0 G=25 H=100"
+    }
+   },
+   {
+    "at": 14000,
+    "do": "press",
+    "of": "A",
+    "on": "remove",
+    "seen": {
+     "alert": "",
+     "label": "",
+     "labels": "B 100 12\nC 108 100\nG 100 128\nH 12 100.00000000000001",
+     "points": "100,20 100,100 100,120 20,100.00000000000001",
+     "raw": "[ { \"label\": \"B\", \"value\": 100 }, { \"label\": \"C\", \"value\": \"0\" }, { \"label\": \"G\", \"value\": \"25\" }, { \"label\": \"H\", \"value\": 100 } ]",
+     "values": "B=100 C=0 G=25 H=100"
+    }
+   }
+  ],
+  "temperature-converter": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "celsius": "0",
+     "fahrenheit": "32"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "fill",
+    "on": "celsius",
+    "seen": {
+     "celsius": "100",
+     "fahrenheit": "32"
+    },
+    "text": "100"
+   },
+   {
+    "at": 2000,
+    "do": "commit",
+    "on": "celsius",
+    "seen": {
+     "celsius": "100",
+     "fahrenheit": "212"
+    }
+   },
+   {
+    "at": 3000,
+    "do": "fill",
+    "on": "fahrenheit",
+    "seen": {
+     "celsius": "100",
+     "fahrenheit": "50"
+    },
+    "text": "50"
+   },
+   {
+    "at": 4000,
+    "do": "commit",
+    "on": "fahrenheit",
+    "seen": {
+     "celsius": "10",
+     "fahrenheit": "50"
+    }
+   },
+   {
+    "at": 5000,
+    "do": "fill",
+    "on": "celsius",
+    "seen": {
+     "celsius": "-40",
+     "fahrenheit": "50"
+    },
+    "text": "-40"
+   },
+   {
+    "at": 6000,
+    "do": "commit",
+    "on": "celsius",
+    "seen": {
+     "celsius": "-40",
+     "fahrenheit": "-40"
+    }
+   },
+   {
+    "at": 7000,
+    "do": "fill",
+    "on": "celsius",
+    "seen": {
+     "celsius": "",
+     "fahrenheit": "-40"
+    },
+    "text": ""
+   },
+   {
+    "at": 8000,
+    "do": "commit",
+    "on": "celsius",
+    "seen": {
+     "celsius": "0",
+     "fahrenheit": "32"
+    }
+   },
+   {
+    "at": 9000,
+    "do": "fill",
+    "on": "fahrenheit",
+    "seen": {
+     "celsius": "0",
+     "fahrenheit": "0"
+    },
+    "text": "0"
+   },
+   {
+    "at": 10000,
+    "do": "commit",
+    "on": "fahrenheit",
+    "seen": {
+     "celsius": "-17.77777777777778",
+     "fahrenheit": "0"
+    }
+   },
+   {
+    "at": 11000,
+    "do": "fill",
+    "on": "celsius",
+    "seen": {
+     "celsius": "37.5",
+     "fahrenheit": "0"
+    },
+    "text": "37.5"
+   },
+   {
+    "at": 12000,
+    "do": "commit",
+    "on": "celsius",
+    "seen": {
+     "celsius": "37.5",
+     "fahrenheit": "99.5"
+    }
+   }
+  ],
+  "timer": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "duration": "15.0s",
+     "elapsed": "0.0s",
+     "progress": "0"
+    }
+   },
+   {
+    "at": 2500,
+    "do": "frame",
+    "seen": {
+     "duration": "15.0s",
+     "elapsed": "2.5s",
+     "progress": "0.16666666666666666"
+    }
+   },
+   {
+    "at": 7500,
+    "do": "frame",
+    "seen": {
+     "duration": "15.0s",
+     "elapsed": "7.5s",
+     "progress": "0.5"
+    }
+   },
+   {
+    "at": 15000,
+    "do": "frame",
+    "seen": {
+     "duration": "15.0s",
+     "elapsed": "15.0s",
+     "progress": "1"
+    }
+   },
+   {
+    "at": 16000,
+    "do": "frame",
+    "seen": {
+     "duration": "15.0s",
+     "elapsed": "15.0s",
+     "progress": "1"
+    }
+   },
+   {
+    "at": 16000,
+    "do": "slide",
+    "on": "duration",
+    "seen": {
+     "duration": "20.0s",
+     "elapsed": "15.0s",
+     "progress": "0.75"
+    },
+    "value": 20000
+   },
+   {
+    "at": 17000,
+    "do": "frame",
+    "seen": {
+     "duration": "20.0s",
+     "elapsed": "15.0s",
+     "progress": "0.75"
+    }
+   },
+   {
+    "at": 17000,
+    "do": "press",
+    "on": "reset",
+    "seen": {
+     "duration": "20.0s",
+     "elapsed": "0.0s",
+     "progress": "0"
+    }
+   },
+   {
+    "at": 18000,
+    "do": "frame",
+    "seen": {
+     "duration": "20.0s",
+     "elapsed": "1.0s",
+     "progress": "0.05"
+    }
+   },
+   {
+    "at": 18000,
+    "do": "slide",
+    "on": "duration",
+    "seen": {
+     "duration": "0.5s",
+     "elapsed": "1.0s",
+     "progress": "1"
+    },
+    "value": 500
+   },
+   {
+    "at": 18100,
+    "do": "frame",
+    "seen": {
+     "duration": "0.5s",
+     "elapsed": "1.1s",
+     "progress": "1"
+    }
+   },
+   {
+    "at": 19000,
+    "do": "frame",
+    "seen": {
+     "duration": "0.5s",
+     "elapsed": "1.1s",
+     "progress": "1"
+    }
+   },
+   {
+    "at": 19000,
+    "do": "slide",
+    "on": "duration",
+    "seen": {
+     "duration": "30.0s",
+     "elapsed": "1.1s",
+     "progress": "0.03666666666666667"
+    },
+    "value": 30000
+   },
+   {
+    "at": 20000,
+    "do": "frame",
+    "seen": {
+     "duration": "30.0s",
+     "elapsed": "1.1s",
+     "progress": "0.03666666666666667"
+    }
+   }
+  ],
+  "tree": [
+   {
+    "at": 0,
+    "do": "start",
+    "seen": {
+     "lines": "0 My Tree [+] bold"
+    }
+   },
+   {
+    "at": 1000,
+    "do": "press",
+    "of": "r",
+    "on": "row",
+    "seen": {
+     "lines": "0 My Tree [-] bold\n1 hello\n1 world\n1 child folder [+] bold\n1 +"
+    }
+   },
+   {
+    "at": 2000,
+    "do": "press",
+    "of": "r.2",
+    "on": "row",
+    "seen": {
+     "lines": "0 My Tree [-] bold\n1 hello\n1 world\n1 child folder [-] bold\n2 child folder [+] bold\n2 hello\n2 world\n2 child folder [+] bold\n2 +\n1 +"
+    }
+   },
+   {
+    "at": 3000,
+    "do": "double",
+    "of": "r.0",
+    "on": "row",
+    "seen": {
+     "lines": "0 My Tree [-] bold\n1 hello [-] bold\n2 new stuff\n2 +\n1 world\n1 child folder [-] bold\n2 child folder [+] bold\n2 hello\n2 world\n2 child folder [+] bold\n2 +\n1 +"
+    }
+   },
+   {
+    "at": 4000,
+    "do": "press",
+    "of": "r.0",
+    "on": "add",
+    "seen": {
+     "lines": "0 My Tree [-] bold\n1 hello [-] bold\n2 new stuff\n2 new stuff\n2 +\n1 world\n1 child folder [-] bold\n2 child folder [+] bold\n2 hello\n2 world\n2 child folder [+] bold\n2 +\n1 +"
+    }
+   },
+   {
+    "at": 5000,
+    "do": "press",
+    "of": "r.0",
+    "on": "row",
+    "seen": {
+     "lines": "0 My Tree [-] bold\n1 hello [+] bold\n1 world\n1 child folder [-] bold\n2 child folder [+] bold\n2 hello\n2 world\n2 child folder [+] bold\n2 +\n1 +"
+    }
+   },
+   {
+    "at": 6000,
+    "do": "press",
+    "of": "r.2.0",
+    "on": "row",
+    "seen": {
+     "lines": "0 My Tree [-] bold\n1 hello [+] bold\n1 world\n1 child folder [-] bold\n2 child folder [-] bold\n3 hello\n3 world\n3 +\n2 hello\n2 world\n2 child folder [+] bold\n2 +\n1 +"
+    }
+   },
+   {
+    "at": 7000,
+    "do": "double",
+    "of": "r.1",
+    "on": "row",
+    "seen": {
+     "lines": "0 My Tree [-] bold\n1 hello [+] bold\n1 world [-] bold\n2 new stuff\n2 +\n1 child folder [-] bold\n2 child folder [-] bold\n3 hello\n3 world\n3 +\n2 hello\n2 world\n2 child folder [+] bold\n2 +\n1 +"
+    }
+   },
+   {
+    "at": 8000,
+    "do": "press",
+    "of": "r",
+    "on": "add",
+    "seen": {
+     "lines": "0 My Tree [-] bold\n1 hello [+] bold\n1 world [-] bold\n2 new stuff\n2 +\n1 child folder [-] bold\n2 child folder [-] bold\n3 hello\n3 world\n3 +\n2 hello\n2 world\n2 child folder [+] bold\n2 +\n1 new stuff\n1 +"
+    }
+   },
+   {
+    "at": 9000,
+    "do": "press",
+    "of": "r.2",
+    "on": "row",
+    "seen": {
+     "lines": "0 My Tree [-] bold\n1 hello [+] bold\n1 world [-] bold\n2 new stuff\n2 +\n1 child folder [+] bold\n1 new stuff\n1 +"
+    }
+   },
+   {
+    "at": 10000,
+    "do": "press",
+    "of": "r",
+    "on": "row",
+    "seen": {
+     "lines": "0 My Tree [+] bold"
+    }
+   }
+  ]
+ },
+ "markdown": [
+  {
+   "source": "# hello",
+   "structure": "h1{hello}"
+  },
+  {
+   "source": "## Second\n\nSome *emphasis* and **strong** text.",
+   "structure": "h2{Second}p{Some em{emphasis} and strong{strong} text.}"
+  },
+  {
+   "source": "Inline `code` and a [link](https://vuejs.org).",
+   "structure": "p{Inline code{code} and a a[href=https://vuejs.org]{link}.}"
+  },
+  {
+   "source": "- one\n- two\n- three",
+   "structure": "ul{li{one}li{two}li{three}}"
+  },
+  {
+   "source": "1. first\n2. second\n3. third",
+   "structure": "ol{li{first}li{second}li{third}}"
+  },
+  {
+   "source": "3. three\n4. four",
+   "structure": "ol[start=3]{li{three}li{four}}"
+  },
+  {
+   "source": "> quoted *words*\n> and more",
+   "structure": "blockquote{p{quoted em{words} and more}}"
+  },
+  {
+   "source": "```js\nconst a = 1\nconsole.log(a)\n```",
+   "structure": "pre{code[class=language-js]{const a = 1\\nconsole.log(a)\\n}}"
+  },
+  {
+   "source": "above\n\n---\n\nbelow",
+   "structure": "p{above}hr{}p{below}"
+  },
+  {
+   "source": "***both*** and _under_ and __strong__",
+   "structure": "p{em{strong{both}} and em{under} and strong{strong}}"
+  },
+  {
+   "source": "line one\nline two",
+   "structure": "p{line one line two}"
+  },
+  {
+   "source": "# A\n\nB\n\n## C\n\nD",
+   "structure": "h1{A}p{B}h2{C}p{D}"
+  },
+  {
+   "source": "- a\n  - nested\n- b",
+   "structure": "ul{li{aul{li{nested}}}li{b}}"
+  },
+  {
+   "source": "\\*not emphasis\\*",
+   "structure": "p{*not emphasis*}"
+  },
+  {
+   "source": "Hard  \nbreak",
+   "structure": "p{Hardbr{}break}"
+  },
+  {
+   "source": "    indented code",
+   "structure": "pre{code{indented code\\n}}"
+  },
+  {
+   "source": "Setext\n===",
+   "structure": "h1{Setext}"
+  },
+  {
+   "source": "* star\n* list",
+   "structure": "ul{li{star}li{list}}"
+  },
+  {
+   "source": "**a**",
+   "structure": "p{strong{a}}"
+  },
+  {
+   "source": "[link *em*](http://x.y \"the title\")",
+   "structure": "p{a[href=http://x.y,title=the title]{link em{em}}}"
+  },
+  {
+   "source": "~~gone~~ and `two` and **bold `code`**",
+   "structure": "p{del{gone} and code{two} and strong{bold code{code}}}"
+  },
+  {
+   "source": "###### six",
+   "structure": "h6{six}"
+  },
+  {
+   "source": "- loose\n\n- items",
+   "structure": "ul{li{p{loose}}li{p{items}}}"
+  },
+  {
+   "source": "a *b **c** d* e",
+   "structure": "p{a em{b strong{c} d} e}"
+  }
+ ],
+ "order": [
+  "hello-world",
+  "handling-input",
+  "attribute-bindings",
+  "conditionals-and-loops",
+  "form-bindings",
+  "simple-component",
+  "markdown",
+  "fetching-data",
+  "grid",
+  "tree",
+  "svg",
+  "modal",
+  "list-transition",
+  "counter",
+  "temperature-converter",
+  "flight-booker",
+  "timer",
+  "crud",
+  "circle-drawer",
+  "cells"
+ ],
+ "seed": 42,
+ "today": "2026-11-14",
+ "versions": {
+  "lodash-es": "4.18.1",
+  "marked": "18.1.2",
+  "vue": "3.5.44",
+  "vuejs/docs": "40aa88af0094f7bab4aaf786e55c748a6a251d88"
+ }
+}

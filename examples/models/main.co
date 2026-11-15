@@ -1,0 +1,399 @@
+--- Model files, read and written by Lory's models as three.js reads and
+--- writes them: pick one of six models written below as the text of their
+--- files (an OBJ with its MTL, a PLY, an STL, an XYZ, a VTK and an OFF),
+--- read when it is picked and drawn in the scene — drag to turn it, the
+--- wheel to come nearer. The panel says what the model holds, and a
+--- writer's button shows the file Lory writes of it (OBJ, STL, PLY or
+--- glTF), as three's exporters write it. In a headset the model stands
+--- to the right of the page, and the controller's ray presses the buttons.
+use sys
+use math
+use memory
+use lory
+use lory.gui
+use lory.space
+use lory.models
+
+--- a model written here: its name, its file's name (its extension says
+--- how it is read), the file's text, and an OBJ's MTL
+struct Sample [name, file, words, mtl]
+
+--- the program's state: the model on show, and the writer whose file is
+--- shown ('' for none)
+struct App [chosen, form]
+
+--- what the model on show was read into and is drawn as: its key, the
+--- model, its pieces and lines, the middle and size of its box, and the
+--- file written of it (the writer's key, its first lines, its length)
+struct Held [key, model, told, pieces, strands, middle, size, written, lines, length]
+
+--- ---- the models, as their files' text ----
+
+fn _cottage[]
+    join[['# a cottage: its walls, roof, door and path, and smoke rising', 'mtllib cottage.mtl', 'o walls', 'v -1 0 1', 'v 1 0 1', 'v 1 1 1', 'v -1 1 1', 'v -1 0 -1', 'v 1 0 -1', 'v 1 1 -1', 'v -1 1 -1', 'v 0 1.7 1', 'v 0 1.7 -1', 'usemtl plaster', 'f 1 2 3 4', 'f 2 6 7 3', 'f 6 5 8 7', 'f 5 1 4 8', 'f 4 3 9', 'f 7 8 10', 'o roof', 'v -1.2 0.9 1.15', 'v 0 1.75 1.15', 'v 0 1.75 -1.15', 'v -1.2 0.9 -1.15', 'v 1.2 0.9 1.15', 'v 1.2 0.9 -1.15', 'usemtl tiles', 'f 11 12 13 14', 'f 15 16 13 12', 'o door', 'v -0.22 0 1.01', 'v 0.22 0 1.01', 'v 0.22 0.62 1.01', 'v -0.22 0.62 1.01', 'usemtl door', 'f 17 18 19 20', 'o path', 'v 0 0.01 1.05', 'v 0.2 0.01 1.6', 'v 0.2 0.01 1.6', 'v -0.1 0.01 2.2', 'usemtl stone', 'l 21 22', 'l 23 24', 'o smoke', 'v 0.55 1.9 -0.4 0.8 0.8 0.8', 'v 0.6 2.1 -0.42 0.85 0.85 0.85', 'v 0.52 2.3 -0.45 0.9 0.9 0.9', 'v 0.62 2.5 -0.4 0.95 0.95 0.95', 'p 25 26 27 28'], '\n']
+
+fn _cottage_mtl[]
+    join[['newmtl plaster', 'Kd 0.93 0.87 0.74', 'newmtl tiles', 'Kd 0.66 0.23 0.16', 'Ks 0.2 0.2 0.2', 'Ns 40', 'newmtl door', 'Kd 0.36 0.2 0.1', 'newmtl stone', 'Kd 0.55 0.55 0.5'], '\n']
+
+fn _cube[]
+    join[['ply', 'format ascii 1.0', 'comment a cube, its corners painted', 'element vertex 8', 'property float x', 'property float y', 'property float z', 'property uchar red', 'property uchar green', 'property uchar blue', 'element face 6', 'property list uchar int vertex_indices', 'end_header', '-1 -1 -1 20 20 20', '1 -1 -1 230 40 40', '1 1 -1 240 220 60', '-1 1 -1 60 200 70', '-1 -1 1 50 80 230', '1 -1 1 220 70 220', '1 1 1 250 250 250', '-1 1 1 60 210 220', '4 0 3 2 1', '4 4 5 6 7', '4 0 1 5 4', '4 1 2 6 5', '4 2 3 7 6', '4 3 0 4 7'], '\n']
+
+--- a point of three numbers (a list built by pushing, not a tensor)
+fn _point[x, y, z]
+    out = []
+    out = push[out, x]
+    out = push[out, y]
+    push[out, z]
+
+fn _origin[]
+    _point[0.0, 0.0, 0.0]
+
+--- a gem: two pyramids base to base, each facet with its normal (the
+--- unit cross of its two edges from its first corner)
+fn _gem[]
+    lines = ['solid gem']
+    tips = [_point[1.0, 0.0, 0.0], _point[0.0, 0.0, 1.0], _point[-1.0, 0.0, 0.0], _point[0.0, 0.0, -1.0]]
+    for pole in [1.4, -1.0]
+        for k in range[4]
+            a = tips[(k + 1) % 4]
+            b = tips[k]
+            if pole lt 0.0
+                a = tips[k]
+                b = tips[(k + 1) % 4]
+            top = _point[0.0, pole, 0.0]
+            ux = b[0] - a[0]
+            uy = b[1] - a[1]
+            uz = b[2] - a[2]
+            vx = top[0] - a[0]
+            vy = top[1] - a[1]
+            vz = top[2] - a[2]
+            nx = uy * vz - uz * vy
+            ny = uz * vx - ux * vz
+            nz = ux * vy - uy * vx
+            long = sqrt[nx * nx + ny * ny + nz * nz]
+            lines = push[lines, '  facet normal `nx / long` `ny / long` `nz / long`']
+            lines = push[lines, '    outer loop']
+            for q in [a, b, top]
+                lines = push[lines, '      vertex `q[0]` `q[1]` `q[2]`']
+            lines = push[lines, '    endloop']
+            lines = push[lines, '  endfacet']
+    lines = push[lines, 'endsolid gem']
+    join[lines, '\n']
+
+--- a spiral of points, each in a colour of the rainbow, as XYZ's lines
+fn _spiral[]
+    lines = ['# a spiral of points: x y z and a colour of 0 to 255']
+    for i in range[180]
+        t = (0.0 + i) / 179.0
+        angle = t * 6.0 * pi
+        x = fmt[cos[angle] * (0.3 + t), decimals = 4]
+        y = fmt[2.0 * t - 1.0, decimals = 4]
+        z = fmt[sin[angle] * (0.3 + t), decimals = 4]
+        r = floor[127.5 + 127.5 * cos[t * 2.0 * pi]]
+        g = floor[127.5 + 127.5 * cos[t * 2.0 * pi - 2.094]]
+        b = floor[127.5 + 127.5 * cos[t * 2.0 * pi + 2.094]]
+        lines = push[lines, '`x` `y` `z` `r` `g` `b`']
+    join[lines, '\n']
+
+fn _pyramid[]
+    join[['# vtk DataFile Version 3.0', 'a square pyramid, its corners coloured', 'ASCII', 'DATASET POLYDATA', 'POINTS 5 float', '-1 0 -1 1 0 -1 1 0 1', '-1 0 1 0 1.6 0', 'POLYGONS 5 21', '4 3 2 1 0', '3 0 1 4', '3 1 2 4', '3 2 3 4', '3 3 0 4', 'POINT_DATA 5', 'COLOR_SCALARS colours 3', '0.9 0.3 0.2 0.95 0.75 0.2 0.3 0.7 0.35', '0.25 0.45 0.9 1 1 1'], '\n']
+
+fn _tetrahedron[]
+    join[['OFF', '# a tetrahedron, each face its own colour', '4 4 6', '1 1 1', '-1 -1 1', '-1 1 -1', '1 -1 -1', '3 0 1 2 230 80 60', '3 0 3 1 250 200 60', '3 0 2 3 70 180 90', '3 1 3 2 70 120 230'], '\n']
+
+fn samples[]
+    [Sample['a cottage (OBJ and MTL)', 'cottage.obj', _cottage[], _cottage_mtl[]], Sample['a painted cube (PLY)', 'cube.ply', _cube[], ''], Sample['a gem (STL)', 'gem.stl', _gem[], ''], Sample['a spiral of points (XYZ)', 'spiral.xyz', _spiral[], ''], Sample['a pyramid (VTK)', 'pyramid.vtk', _pyramid[], ''], Sample['a tetrahedron (OFF)', 'tetrahedron.off', _tetrahedron[], '']]
+
+fn _names[]
+    out = slice[[''], 0, 0]
+    for s in samples[]
+        out = push[out, s.name]
+    out
+
+--- the model a sample's file is read into
+fn read_sample[name]
+    for s in samples[]
+        if s.name eq name
+            if ends[s.file, '.obj']
+                return models.read_obj[s.words, s.mtl]
+            return models.model_of[s.file, sys.bytes[s.words]]
+    models.model_of['none', sys.bytes['']]
+
+--- ---- the program ----
+
+fn fresh[]
+    App[_names[][0], '']
+
+fn _none_held[]
+    nothing = models.read_obj['']
+    Held['', nothing, '', slice[[models.Piece[space.Shape[[], [], []], lory.white[]]], 0, 0], models.strands_of[nothing], _origin[], 1.0, '', slice[[''], 0, 0], 0]
+
+fn _held[]
+    recall['models.held', _none_held[]]
+
+--- the file a writer writes of a model: its text (glTF's is one long line)
+fn written_text[m, form]
+    if form eq 'obj'
+        return models.obj_text[m]
+    if form eq 'stl'
+        return models.stl_text[m]
+    if form eq 'ply'
+        return models.ply_text[m]
+    if form eq 'gltf'
+        return models.gltf_text[m]
+    ''
+
+--- a file's first lines as the panel shows them: at most ten, each cut
+--- to 44 characters
+fn _first_lines[words]
+    out = slice[[''], 0, 0]
+    for line in split[words, '\n']
+        if len[out] lt 10 and line ne ''
+            out = push[out, _cut_to[replace[line, '\t', '  '], 44]]
+    out
+
+--- a line cut to `most` characters, its last an ellipsis where it is cut
+fn _cut_to[line, most]
+    chars = split[line, '']
+    if len[chars] lte most
+        return line
+    kept = slice[[''], 0, 0]
+    for k in range[most - 1]
+        kept = push[kept, chars[k]]
+    kept = push[kept, '…']
+    join[kept, '']
+
+--- what a model holds, in words: its parts, their forms, its vertices
+fn _told_of[m]
+    kinds = slice[[''], 0, 0]
+    for p in m.parts
+        if not (p.form in kinds)
+            kinds = push[kinds, p.form]
+    forms = join[kinds, ', ']
+    parts = len[m.parts]
+    vertices = models.vertex_total[m]
+    '`parts` parts (`forms`), `vertices` vertices'
+
+--- the canvas with the chosen model read, its pieces held as meshes, and
+--- the file of the chosen writer written: each made again only where what
+--- it is made of changed
+fn _readied[c, a]
+    h = _held[]
+    if h.key ne a.chosen
+        m = read_sample[a.chosen]
+        if not m.ok
+            return c
+        h.key = a.chosen
+        h.model = m
+        h.told = _told_of[m]
+        h.pieces = models.pieces_of[m]
+        h.strands = models.strands_of[m]
+        h.middle = models.middle_of[m]
+        h.size = models.size_of[m]
+        h.written = ''
+        c = models.meshed[c, 'models.piece', h.pieces]
+    if h.written ne a.form
+        words = written_text[h.model, a.form]
+        if not words.ok
+            return c
+        h.written = a.form
+        h.lines = _first_lines[words]
+        h.length = len[sys.bytes[words]]
+    remember['models.held', h]
+    c
+
+--- the panel's width in CSS pixels
+fn _panel_wide[]
+    320.0
+
+--- where the model is put: on a screen as it is, the camera orbiting its
+--- middle; in a headset 0.7 m across, its middle to the right of the page
+fn placed[c, h]
+    if not c.xr
+        return lory.identity[]
+    k = 0.7 / h.size
+    m = h.middle
+    lory.mul[lory.translation[1.45, 1.2, -1.4], lory.mul[lory.scaling[k, k, k], lory.translation[0.0 - m[0], 0.0 - m[1], 0.0 - m[2]]]]
+
+--- the scene: right of the panel, the model seen through a camera that
+--- orbits it (its own for each model), drawn in its pieces and its lines
+fn picture[c, a]
+    s = lory.px[c]
+    if not lory.seen_through[c]
+        c = lory.clear[c, gui.dark[].page]
+    aside = (_panel_wide[] + 48.0) * s
+    c = space.within[c, [aside, 24.0 * s, lory.width[c] - aside - 24.0 * s, lory.height[c] - 48.0 * s]]
+    c = _readied[c, a]
+    h = _held[]
+    camera = space.orbit[c, 'models `h.key`', h.middle, 1.7 * h.size]
+    c = space.scene[c, camera, space.daylight[]]
+    models.drawn[c, 'models.piece', h.pieces, h.strands, placed[c, h]]
+
+fn _form_words[form]
+    if form eq 'gltf'
+        return 'glTF'
+    upper[form]
+
+--- the panel: the models to choose from, what the one on show holds, the
+--- writers, and the first lines of the file the chosen one writes
+fn view_of[a, h]
+    m = h.model
+    kids = [gui.heading['Models'], gui.note['Files read as three.js reads them, written as its exporters write them. Drag the model to turn it; the wheel brings it nearer.'], gui.label['Model'], gui.select['model', _names[], a.chosen], gui.note[h.told], gui.label['Write it as'], gui.row[[gui.button['obj', 'OBJ'], gui.button['stl', 'STL'], gui.button['ply', 'PLY'], gui.button['gltf', 'glTF']]]]
+    if a.form ne ''
+        named = _form_words[a.form]
+        kids = push[kids, gui.label['`named`, `h.length` bytes:']]
+        for line in h.lines
+            kids = push[kids, gui.text[line, 11.0, 'muted']]
+    gui.panel[kids]
+
+--- the state after one of the panel's events: a model chosen, or a
+--- writer pressed (pressed again, its file is put away)
+fn applied[a, ev]
+    if ev.id eq 'model' and ev.act eq 'choose'
+        a.chosen = ev.words
+    if ev.id in ['obj', 'stl', 'ply', 'gltf']
+        if a.form eq ev.id
+            a.form = ''
+        else
+            a.form = ev.id
+    a
+
+fn shown_at[c, a]
+    gui.show_at[c, view_of[a, _held[]], 24.0, 24.0, _panel_wide[], gui.dark[]]
+
+fn draw[frame]
+    a = recall['app', fresh[]]
+    c = picture[lory.begin[frame], a]
+    shown = shown_at[c, a]
+    for ev in shown.events
+        a = applied[a, ev]
+    remember['app', a]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+--- ---- tests ----
+
+fn _frame[given]
+    json['{"t": 0, "width": 960, "height": 640, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 960, "height": 640, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _drag[on, x, y]
+    '[{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+--- a headset's frame at `ms`, as the page hands it: the page is 1000 by
+--- 560 there, on a panel 2 m wide standing 1.5 m ahead with its top 1.8 m
+--- up (a page pixel is 2 mm); the right hand's ray, from 1.25 m up, aimed
+--- at the page's point (x, y), and the frame's input
+fn _headset[ms, x, y, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    way = encode[[(0.002 * x - 1.0) / 1.5, (0.55 - 0.002 * y) / 1.5, -1.0]]
+    json['{"t": `ms`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": `way`, "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']
+
+--- the trigger pulled and let go: a press where the ray points
+fn _trigger[]
+    '[{"type": "down", "device": "ray", "id": "right"}, {"type": "up", "device": "ray", "id": "right"}]'
+
+fn _draws[c]
+    n = 0
+    for call in lory.batch[c]
+        if call[0] eq 'drawArrays'
+            n = n + 1
+    n
+
+test every_model_written_here_is_read_and_drawn[]
+    for s in samples[]
+        m = read_sample[s.name]
+        assert[models.readable[m], '`s.name`: `m.failure`']
+        assert[len[models.pieces_of[m]] gt 0, '`s.name` has nothing to draw']
+    cottage = read_sample[_names[][0]]
+    len[cottage.parts] eq 5
+    cottage.libraries eq ['cottage.mtl']
+    len[models.strands_of[cottage]] eq 1
+    cube = read_sample['a painted cube (PLY)']
+    models.vertex_total[cube] eq 8
+    len[cube.parts[0].colors] eq 24
+    spiral = read_sample['a spiral of points (XYZ)']
+    spiral.parts[0].form eq 'points'
+    models.vertex_total[spiral] eq 180
+    gem = read_sample['a gem (STL)']
+    models.vertex_total[gem] eq 24
+    tetrahedron = read_sample['a tetrahedron (OFF)']
+    len[tetrahedron.parts[0].colors] eq 36
+
+test the_first_frame_reads_the_cottage_and_draws_it_in_its_pieces[]
+    c = picture[lory.begin[_frame['[]']], fresh[]]
+    h = _held[]
+    h.key eq _names[][0]
+    --- (plaster, tiles, the door and the smoke's greys, and the path's line)
+    len[h.pieces] gte 4
+    len[h.strands] eq 1
+    --- (a draw a piece, and one of the flat drawing the path's line is in)
+    _draws[c] eq len[h.pieces] + 1
+    'DEPTH_TEST' in str[lory.batch[c]]
+
+test choosing_a_model_and_a_writer_shows_the_file_it_writes[]
+    a = applied[fresh[], gui.Event['model', 'choose', 'a painted cube (PLY)', 0.0]]
+    a.chosen eq 'a painted cube (PLY)'
+    a = applied[a, gui.Event['obj', 'press', '', 0.0]]
+    a.form eq 'obj'
+    picture[lory.begin[_frame['[]']], a]
+    h = _held[]
+    h.lines[0] eq 'o '
+    starts[h.lines[1], 'v -1 -1 -1 ']
+    h.length eq len[sys.bytes[models.obj_text[h.model]]]
+    a = applied[a, gui.Event['gltf', 'press', '', 0.0]]
+    picture[lory.begin[_frame['[]']], a]
+    starts[_held[].lines[0], '{"asset":{"version":"2.0","generator":']
+    --- (pressed again, the file is put away)
+    applied[a, gui.Event['gltf', 'press', '', 0.0]].form eq ''
+
+test a_press_on_a_writer_button_shows_its_file[]
+    gui.unfocus[]
+    a = fresh[]
+    c = picture[lory.begin[_frame['[]']], a]
+    first = shown_at[c, a]
+    lory.end[first.canvas]
+    b = first.boxes['stl']
+    c = picture[lory.begin[_frame[_press_at[b[0] + 5.0, b[1] + 5.0]]], a]
+    pressed = shown_at[c, a]
+    after = a
+    for ev in pressed.events
+        after = applied[after, ev]
+    after.form eq 'stl'
+
+test a_drag_across_the_scene_turns_it_and_one_across_the_panel_does_not[]
+    a = fresh[]
+    key = 'models `_names[][0]`'
+    still = picture[lory.begin[_frame['[]']], a]
+    before = space.orbit[still, key, _origin[], 1.0].yaw
+    picture[lory.begin[_frame[_drag['down', 640, 300]]], a]
+    turned = picture[lory.begin[_frame[_drag['move', 740, 300]]], a]
+    picture[lory.begin[_frame[_drag['up', 740, 300]]], a]
+    after = space.orbit[turned, key, _origin[], 1.0].yaw
+    after ne before
+    picture[lory.begin[_frame[_drag['down', 100, 300]]], a]
+    picture[lory.begin[_frame[_drag['move', 200, 300]]], a]
+    picture[lory.begin[_frame[_drag['up', 200, 300]]], a]
+    space.orbit[still, key, _origin[], 1.0].yaw eq after
+
+--- in a headset the model stands to the right of the page, and the
+--- controller's ray pressing a writer's button shows its file
+test in_a_headset_the_model_stands_beside_the_page_and_the_ray_presses_a_writer[]
+    gui.unfocus[]
+    a = fresh[]
+    c = picture[lory.begin[_headset[1000.0, 995.0, 555.0, '[]']], a]
+    placed[c, _held[]][12] eq 1.45
+    _draws[c] gt 0
+    first = shown_at[c, a]
+    lory.end[first.canvas]
+    b = first.boxes['ply']
+    c = picture[lory.begin[_headset[1100.0, b[0] + b[2] / 2.0, b[1] + b[3] / 2.0, _trigger[]]], a]
+    pressed = shown_at[c, a]
+    lory.end[pressed.canvas]
+    after = a
+    for ev in pressed.events
+        after = applied[after, ev]
+    after.form eq 'ply'

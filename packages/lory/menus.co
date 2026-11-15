@@ -1,0 +1,3135 @@
+--- Lory's menus (docs/components/menus.md): a dropdown menu, a context
+--- menu, a menubar, a navigation menu, a command palette, and a floating
+--- action button with its speed dial, made of gui's layers and drawn
+--- controls. A menu's entries are items, checkboxes, radio items, labels,
+--- separators and submenus:
+---
+---     entries = [menus.item['new', 'New file', shortcut = '⌘N'], menus.separator[], menus.submenu['share', 'Share', [menus.item['mail', 'Mail']]]]
+---     menus.dropdown[c, 'file', 'File', entries]
+---
+--- A menu answers the keys and the pointer as Radix's menus do (their
+--- keyboard maps, typing ahead, a submenu's opening delay and the grace
+--- the pointer is given on its way to one), and tells what was chosen as
+--- gui's events: `choose` (the menu's id, the item's id), `toggle` (a
+--- checkbox's id, 1 or 0), `choose` (a radio item's group, its value),
+--- `open` and `dismiss` (the menu's id, why: `chosen`, `escape`,
+--- `outside`, `toggle`, `tab`, `blur`, `switch`). Which menu is open, what
+--- is highlighted and what is typed ahead is held here (`use memory`,
+--- under 'lory.menus'); what the entries are is the program's, handed
+--- again each frame. Builders take the frame's canvas first: they measure
+--- words with it and read its time.
+
+use memory
+use lory
+use gui
+use icons
+use motion
+
+--- ---- a menu's entries ----
+
+--- one entry of a menu: what it is (`role`: `item`, `check`, `radio`,
+--- `label`, `separator` or `sub`), its id (a radio item's value), its
+--- words, its shortcut's keys (shown beside it), its state (a
+--- checkbox's 1 ticked and 0.5 mixed, a radio item's 1 chosen), whether it
+--- is set aside (`off`), a radio item's group (`name`), and a submenu's
+--- entries
+struct Entry [role, id, words, shortcut, num, off, name, kids]
+
+fn _no_entries[]
+    nothing = [Entry['', '', '', '', 0.0, false, '', []]]
+    slice[nothing, 0, 0]
+
+--- an entry chosen as one: its id is told when it is chosen
+fn item[id, words, shortcut = '', off = false]
+    Entry['item', id, words, shortcut, 0.0, off, '', _no_entries[]]
+
+--- an entry ticked or not (`mixed`: neither, shown with a dash): chosen,
+--- it is told toggled to the other (a mixed one to ticked)
+fn check[id, words, on, mixed = false, shortcut = '', off = false]
+    n = 0.0
+    if on
+        n = 1.0
+    if mixed
+        n = 0.5
+    Entry['check', id, words, shortcut, n, off, '', _no_entries[]]
+
+--- one of a group of entries named `name`, one of which is chosen:
+--- chosen, the group is told its `value`
+fn option[name, value, words, chosen, shortcut = '', off = false]
+    n = 0.0
+    if chosen
+        n = 1.0
+    Entry['radio', value, words, shortcut, n, off, name, _no_entries[]]
+
+--- quieter words over the entries after them, never chosen
+fn label[words]
+    Entry['label', '', words, '', 0.0, true, '', _no_entries[]]
+
+--- a rule between entries
+fn separator[]
+    Entry['separator', '', '', '', 0.0, true, '', _no_entries[]]
+
+--- an entry that opens a menu of its own entries beside it
+fn submenu[id, words, kids, off = false]
+    Entry['sub', id, words, '', 0.0, off, '', kids]
+
+--- ---- what the menus hold between frames ----
+
+--- the menu open (by the id its layers are named for, '' for none) and
+--- the id its events name; the submenus open from it, each by its entry's
+--- id; the row highlighted at each level (-1 none, -2 the first, which
+--- the rows find, -3 the last), the row the pointer was last over at each
+--- (-1 none) and the level the keys reach; whether the
+--- keys were used last (the pointer clears it); what is typed ahead,
+--- when, and at which level; a submenu waiting under the pointer to open, at which level and
+--- since when; the grace the pointer has on its way to an open submenu
+--- (its area's corners, x then y, the side the submenu stands on, the
+--- level it is given at, and when it ends); the way the pointer last
+--- moved over each level and where it was; where a context menu was
+--- opened; when the menu opened; each level's box (CSS pixels); the open
+--- menu's entries; the box a press on which is no press outside the menu
+--- (a menubar's); whether the menu keeps the pointer and Tab to itself
+--- (`modal`); whether its opening is still to be told; whether its rows'
+--- arrows go round; the menubar it belongs to, which of its menus is open
+--- and how many it has and whether its arrows go round; each menubar's
+--- place; and a touch held on a context menu's area (where and since when)
+struct Held [open, named, path, hot, under, level, keyboard, search, searched, search_level, pending, pending_level, pending_at, grace, grace_side, grace_level, grace_until, dirs, last_xs, x, y, since, boxes, entries, spared, modal, told_open, loop, bar, at, count, bar_loop, places, long_area, long_at, long_x, long_y]
+
+fn _no_words[]
+    slice[[''], 0, 0]
+
+fn _no_floats[]
+    slice[[0.0], 0, 0]
+
+fn _no_boxes[]
+    slice[[[0.0, 0.0, 0.0, 0.0]], 0, 0]
+
+fn _no_told[]
+    nothing = [gui.Event['', '', '', 0.0]]
+    slice[nothing, 0, 0]
+
+fn _fresh[]
+    Held['', '', _no_words[], [-1], [-1], 0, false, '', -1000000.0, 0, '', 0, -1.0, _no_floats[], 'right', 0, -1.0, ['right'], [0.0], 0.0, 0.0, 0.0, _no_boxes[], _no_entries[], [0.0, 0.0, 0.0, 0.0], true, false, false, '', 0, 0, true, map['' = 0], '', -1.0, 0.0, 0.0]
+
+fn _held[]
+    recall['lory.menus', _fresh[]]
+
+--- whether the menu of that id is open
+fn opened[id]
+    _held[].open eq id
+
+--- every menu closed, as a program does when its view changes under one
+fn close_menus[]
+    h = _held[]
+    h.open = ''
+    h.path = _no_words[]
+    h.hot = [-1]
+    h.under = [-1]
+    h.level = 0
+    h.pending = ''
+    h.grace = _no_floats[]
+    h.boxes = _no_boxes[]
+    h.long_area = ''
+    remember['lory.menus', h]
+    ''
+
+--- what a painter's pass over the frame did: the state it leaves, the
+--- events it tells, and whether the menu closed in it (nothing after
+--- that counts)
+struct Turn [h, told, done]
+
+--- ---- the numbers held to Radix's (docs/components/menus.md) ----
+
+--- how long the pointer rests on a submenu's row before it opens (ms)
+fn submenu_delay[]
+    100.0
+
+--- how long the pointer's grace toward an open submenu lasts (ms)
+fn grace_time[]
+    300.0
+
+--- how far the grace area's corner at the pointer is pushed into it
+fn grace_bleed[]
+    5.0
+
+--- how long typed letters are kept to type ahead with (ms)
+fn typeahead_time[]
+    1000.0
+
+--- how long a touch is held on a context menu's area to open it (ms)
+fn long_press[]
+    700.0
+
+--- how far a context menu stands from the point it was opened at
+fn context_gap[]
+    2.0
+
+--- ---- sizes (CSS pixels) ----
+
+fn _pad[]
+    4.0
+
+fn _row_h[]
+    30.0
+
+fn _label_h[]
+    26.0
+
+fn _rule_h[]
+    9.0
+
+fn _inset[]
+    28.0
+
+fn _font[]
+    14.0
+
+fn _small[]
+    12.0
+
+--- how tall an entry's row is
+fn _height_of[e]
+    if e.role eq 'separator'
+        return _rule_h[]
+    if e.role eq 'label'
+        return _label_h[]
+    _row_h[]
+
+--- whether the keys and the pointer reach an entry: a label, a rule and
+--- an entry set aside are passed over
+fn _reachable[e]
+    (e.role eq 'item' or e.role eq 'check' or e.role eq 'radio' or e.role eq 'sub') and not e.off
+
+--- the size of a menu's rows, `[wide, tall]` in CSS pixels: its widest
+--- words with room for a tick before them, a shortcut and a submenu's
+--- mark after them, and every row's height, inside its edge (words are
+--- measured at their size in CSS pixels: a width grows with the size)
+fn _sized[c, entries]
+    words = 0.0
+    shortcut = 0.0
+    subs = false
+    tall = 2.0 * _pad[]
+    for e in entries
+        tall = tall + _height_of[e]
+        if e.role eq 'label'
+            words = max[words, lory.measure[c, e.words, _small[]]]
+        else
+            if e.role ne 'separator'
+                words = max[words, lory.measure[c, e.words, _font[]]]
+        if e.shortcut ne ''
+            shortcut = max[shortcut, lory.measure[c, e.shortcut, 13.0]]
+        if e.role eq 'sub'
+            subs = true
+    wide = _inset[] + words + 14.0
+    if shortcut gt 0.0
+        wide = wide + 24.0 + shortcut
+    if subs
+        wide = wide + 18.0
+    [max[wide + _pad[], 180.0], tall]
+
+--- the top of row `i`, from the rows' top
+fn _row_top[entries, i]
+    y = _pad[]
+    j = 0
+    while j lt i and j lt len[entries]
+        y = y + _height_of[entries[j]]
+        j = j + 1
+    y
+
+--- the row at `oy` from the rows' top (-1: none, the edge's room)
+fn _row_at[entries, oy]
+    y = _pad[]
+    j = 0
+    while j lt len[entries]
+        rh = _height_of[entries[j]]
+        if oy gte y and oy lt y + rh
+            return j
+        y = y + rh
+        j = j + 1
+    -1
+
+--- the entries at level `k` of the open menu: its own, or a submenu's
+fn _entries_at[h, k]
+    es = h.entries
+    j = 0
+    while j lt k and j lt len[h.path]
+        es = _kids_of[es, h.path[j]]
+        j = j + 1
+    es
+
+fn _kids_of[es, id]
+    for e in es
+        if e.role eq 'sub' and e.id eq id
+            return e.kids
+    _no_entries[]
+
+--- the row of the submenu entry of that id (-1: none)
+fn _index_of[es, id]
+    j = 0
+    while j lt len[es]
+        if es[j].role eq 'sub' and es[j].id eq id
+            return j
+        j = j + 1
+    -1
+
+--- a radio item's place among the items of its group
+fn _place_in[es, r]
+    n = 0
+    j = 0
+    while j lt r
+        if es[j].role eq 'radio' and es[j].name eq es[r].name
+            n = n + 1
+        j = j + 1
+    n
+
+--- the first and the last row the keys reach (-1: none)
+fn _first_of[es]
+    j = 0
+    while j lt len[es]
+        if _reachable[es[j]]
+            return j
+        j = j + 1
+    -1
+
+fn _last_of[es]
+    j = len[es] - 1
+    while j gte 0
+        if _reachable[es[j]]
+            return j
+        j = j - 1
+    -1
+
+--- the next row the keys reach after `r`, going `step` (1 down, -1 up):
+--- round past the end where the rows go round, or `r` where none is
+fn _next_of[es, r, step, loop]
+    j = r + step
+    while j gte 0 and j lt len[es]
+        if _reachable[es[j]]
+            return j
+        j = j + step
+    if loop
+        if step gt 0
+            return _first_of[es]
+        return _last_of[es]
+    r
+
+fn _inside[x, y, b]
+    x gte b[0] and y gte b[1] and x lt b[0] + b[2] and y lt b[1] + b[3]
+
+fn _one[yes]
+    if yes
+        return 1.0
+    0.0
+
+--- ---- the state, changed ----
+
+fn _hot_at[h, k]
+    if k lt len[h.hot]
+        return h.hot[k]
+    -1
+
+--- the state with row `r` highlighted at level `k`
+fn _hot_set[h, k, r]
+    hot = h.hot
+    while len[hot] lte k
+        hot = push[hot, -1]
+    hot[k] = r
+    h.hot = hot
+    h
+
+fn _dir_at[h, k]
+    if k lt len[h.dirs]
+        return h.dirs[k]
+    'right'
+
+fn _last_x_at[h, k]
+    if k lt len[h.last_xs]
+        return h.last_xs[k]
+    0.0
+
+--- the state with level `k`'s box kept (CSS pixels)
+fn _boxed[h, k, box]
+    boxes = h.boxes
+    while len[boxes] lte k
+        boxes = push[boxes, [0.0, 0.0, 0.0, 0.0]]
+    boxes[k] = box
+    h.boxes = boxes
+    h
+
+fn _box_of[h, k]
+    if k lt len[h.boxes]
+        return h.boxes[k]
+    [0.0, 0.0, 0.0, 0.0]
+
+--- the submenus past level `k` closed (the keys kept to `k` at most)
+fn _shut_past[h, k]
+    if len[h.path] gt k
+        h.path = slice[h.path, 0, k]
+    if len[h.hot] gt k + 1
+        h.hot = slice[h.hot, 0, k + 1]
+    if len[h.under] gt k + 1
+        h.under = slice[h.under, 0, k + 1]
+    if len[h.boxes] gt k + 1
+        h.boxes = slice[h.boxes, 0, k + 1]
+    if h.level gt k
+        h.level = k
+    if h.pending_level gt k
+        h.pending = ''
+    h
+
+--- the submenu of row `r` at level `k` opened: the keys open it on its
+--- first row and reach it; the pointer opens it on none, and the keys
+--- stay on its row
+fn _sub_opened[h, k, entries, r, keyed]
+    h = _shut_past[h, k]
+    h = _hot_set[h, k, r]
+    h.path = push[h.path, entries[r].id]
+    first = -1
+    if keyed
+        first = _first_of[entries[r].kids]
+    h = _hot_set[h, k + 1, first]
+    h.level = k
+    if keyed
+        h.level = k + 1
+    h.pending = ''
+    h
+
+--- the state with menu `id` opened (its events naming `named`) at
+--- `clock`, its first row highlighted where the keys opened it
+fn _opening[h, id, named, keyed, clock]
+    h.open = id
+    h.named = named
+    h.path = _no_words[]
+    h.hot = [-1]
+    if keyed
+        h.hot = [-2]
+    h.under = [-1]
+    h.level = 0
+    h.keyboard = keyed
+    h.search = ''
+    h.pending = ''
+    h.grace = _no_floats[]
+    h.since = clock
+    h.boxes = _no_boxes[]
+    h.told_open = true
+    h.dirs = ['right']
+    h.last_xs = [0.0]
+    h
+
+--- the open menu closed, and told why (nothing after it in the turn
+--- counts)
+fn _closed[t, why]
+    if t.h.open eq ''
+        return t
+    t = _told_opening[t]
+    h = t.h
+    t.told = push[t.told, gui.Event[h.named, 'dismiss', why, 0.0]]
+    if h.bar ne ''
+        h.places[h.bar] = h.at
+    h.open = ''
+    h.path = _no_words[]
+    h.hot = [-1]
+    h.under = [-1]
+    h.level = 0
+    h.pending = ''
+    h.grace = _no_floats[]
+    h.search = ''
+    h.boxes = _no_boxes[]
+    h.told_open = false
+    t.h = h
+    t.done = true
+    t
+
+--- ---- typing ahead and the pointer's grace (Radix's, number for
+--- number: tests/menus/reference.json) ----
+
+--- the words typing ahead reaches: of `names` (the rows' words), the
+--- first after `current` (the highlighted row's, '' for none), round past
+--- the end, that starts with `search`, its case aside — a search of one
+--- letter typed again and again is that letter, and passes over
+--- `current`; '' where none does, or the one found is `current`
+fn next_match[names, search, current]
+    letters = split[search, '']
+    normal = search
+    if len[letters] gt 1
+        same = true
+        for l in letters
+            if l ne letters[0]
+                same = false
+        if same
+            normal = letters[0]
+    at = -1
+    if current ne ''
+        j = 0
+        while j lt len[names] and at lt 0
+            if names[j] eq current
+                at = j
+            j = j + 1
+    start = max[at, 0]
+    one = len[split[normal, '']] eq 1
+    wanted = lower[normal]
+    k = len[names]
+    i = 0
+    while i lt k
+        v = names[(start + i) % k]
+        if not (one and current ne '' and v eq current)
+            if starts[lower[v], wanted]
+                if current ne '' and v eq current
+                    return ''
+                return v
+        i = i + 1
+    ''
+
+--- whether the point (x, y) is inside the polygon of `corners` (x then y
+--- of each, in turn): a ray from it to the right crosses its edges an odd
+--- number of times
+fn inside_polygon[x, y, corners]
+    k = len[corners] / 2
+    inside = false
+    i = 0
+    j = k - 1
+    while i lt k
+        xi = corners[2 * i]
+        yi = corners[2 * i + 1]
+        xj = corners[2 * j]
+        yj = corners[2 * j + 1]
+        if (yi gt y) ne (yj gt y)
+            if x lt (xj - xi) * (y - yi) / (yj - yi) + xi
+                inside = not inside
+        j = i
+        i = i + 1
+    inside
+
+--- the grace area the pointer leaving a submenu's row at (x, y) is given
+--- toward the submenu's box (`right`: it stands to the right): a
+--- five-cornered area from the point, pushed into it, to the submenu's
+--- near edge and around its far one
+fn grace_area[x, y, box, right]
+    near = box[0] + box[2]
+    far = box[0]
+    bleed = grace_bleed[]
+    if right
+        near = box[0]
+        far = box[0] + box[2]
+        bleed = 0.0 - grace_bleed[]
+    top = box[1]
+    bottom = box[1] + box[3]
+    [x + bleed, y, near, top, far, top, far, bottom, near, bottom]
+
+--- whether the pointer at (x, y) over level `k` is on its way to the
+--- submenu open from it: inside its grace area, still given, and moving
+--- toward its side
+fn _toward_sub[h, k, x, y, clock]
+    if len[h.grace] eq 0 or h.grace_level ne k or clock gte h.grace_until
+        return false
+    _dir_at[h, k] eq h.grace_side and inside_polygon[x, y, h.grace]
+
+--- the grace given as the pointer leaves the row of level `k`'s open
+--- submenu at (x, y)
+fn _graced[h, k, x, y, clock]
+    inner = _box_of[h, k + 1]
+    right = inner[0] gte _box_of[h, k][0]
+    h.grace = grace_area[x, y, inner, right]
+    h.grace_side = 'left'
+    if right
+        h.grace_side = 'right'
+    h.grace_level = k
+    h.grace_until = clock + grace_time[]
+    h
+
+--- ---- the rows: drawn, and answered ----
+
+--- a menu's rows at one level (`num`), drawn and answered: the pointer
+--- over them highlights a row (a submenu's opens once it has rested
+--- there), a release on one chooses it, the keys move the highlight, type
+--- ahead, choose, and open and close submenus; at the first level, a press
+--- outside and the page losing the keyboard close it. The level with the
+--- focus answers the keys for the level they reach (`level`); each level
+--- answers the pointer over itself (gui keeps what is over a level from
+--- the levels under it)
+fn _rows[d]
+    h = _held[]
+    if h.open ne d.words
+        return d
+    k = int[d.num]
+    if k gt len[h.path]
+        return d
+    --- (a bar's menu drawn in the frame the bar moved on to another is
+    --- drawn as it was, and answers nothing: the next frame draws the
+    --- other)
+    if h.bar ne '' and int[d.lo] ne h.at
+        d.c = _drawn_rows[d, h, k, _entries_at[h, k]]
+        return d
+    c = d.c
+    s = d.s
+    --- (the frame's time and input read where no painter's answer can
+    --- fail: gui's node holds one kind of painter)
+    clock = lory.time[c]
+    if not clock.ok
+        return d
+    evs = lory.events[c]
+    if not evs.ok
+        return d
+    h = _boxed[h, k, [d.x / s, d.y / s, d.w / s, d.h / s]]
+    entries = _entries_at[h, k]
+    h = _resolved[h, k, entries]
+    t = Turn[h, _no_told[], false]
+    --- (the keys typed in the frame the menu is first drawn are its own:
+    --- gui gives its rows the focus only as that frame ends)
+    keyed = d.focused or (k eq 0 and h.told_open)
+    if k eq 0
+        t = _outside[t, evs, s]
+    if not t.done
+        t = _pointed[t, evs, s, k, entries, clock]
+    if not t.done and keyed
+        t = _keyed[t, evs, clock]
+    if not t.done and k eq 0
+        t = _waited[t, clock]
+    remember['lory.menus', t.h]
+    d.c = _drawn_rows[d, t.h, k, entries]
+    for e in t.told
+        d.told = push[d.told, e]
+    d
+
+--- a highlight asked as the first or the last row, found
+fn _resolved[h, k, entries]
+    r = _hot_at[h, k]
+    if r eq -2
+        h = _hot_set[h, k, _first_of[entries]]
+    if r eq -3
+        h = _hot_set[h, k, _last_of[entries]]
+    h
+
+--- the menu's opening told, and what closes it from outside: a press
+--- outside all its levels (and the box it spares), and the page losing
+--- the keyboard
+fn _outside[t, evs, s]
+    t = _told_opening[t]
+    for e in evs
+        if not t.done
+            if e.on eq 'down' and not _in_menu[t.h, e.x / s, e.y / s]
+                t = _closed[t, 'outside']
+            if e.on eq 'blur'
+                t = _closed[t, 'blur']
+    t
+
+--- the menu's opening told, where it has not been yet (every `dismiss`
+--- follows its `open`)
+fn _told_opening[t]
+    h = t.h
+    if h.told_open
+        t.told = push[t.told, gui.Event[h.named, 'open', '', 1.0]]
+        h.told_open = false
+        t.h = h
+    t
+
+fn _in_menu[h, x, y]
+    for b in h.boxes
+        if _inside[x, y, b]
+            return true
+    _inside[x, y, h.spared]
+
+--- the pointer over level `k`: each move of a mouse's answered in turn,
+--- and a release on a row choosing it
+fn _pointed[t, evs, s, k, entries, clock]
+    for e in evs
+        if not t.done
+            if e.on eq 'down' or e.on eq 'move' or e.on eq 'up'
+                h = t.h
+                h.keyboard = false
+                t.h = h
+            if e.on eq 'move' and e.device eq 'mouse'
+                t.h = _moved[t.h, k, entries, e.x / s, e.y / s, clock]
+            if e.on eq 'up'
+                b = _box_of[t.h, k]
+                if _inside[e.x / s, e.y / s, b]
+                    r = _row_at[entries, e.y / s - b[1]]
+                    if r gte 0
+                        if _reachable[entries[r]]
+                            t = _picked[t, k, entries, r, false]
+    t
+
+fn _under_at[h, k]
+    if k lt len[h.under]
+        return h.under[k]
+    -1
+
+fn _under_set[h, k, r]
+    under = h.under
+    while len[under] lte k
+        under = push[under, -1]
+    under[k] = r
+    h.under = under
+    h
+
+--- the entry row (-1: none) under (x, y) at level `k`: a label's or a
+--- rule's is none
+fn _entry_under[h, k, entries, x, y]
+    b = _box_of[h, k]
+    if not _inside[x, y, b]
+        return -1
+    r = _row_at[entries, y - b[1]]
+    if r lt 0
+        return -1
+    if entries[r].role eq 'label' or entries[r].role eq 'separator'
+        return -1
+    r
+
+--- the pointer moved to (x, y) over level `k`, as Radix's menu answers
+--- it, in its order: the row the pointer leaves is left; the row it is on
+--- takes the highlight, unless the pointer is on its way to the open
+--- submenu (one set aside gives it up instead), and a submenu's row starts
+--- its wait to open; then the way it moves along is kept. A move off the
+--- level while the submenu open from it is not yet laid waits a frame
+--- (the next move counts): gui has not kept the submenu's place from
+--- the levels under it, nor this level its grace toward it
+fn _moved[h, k, entries, x, y, clock]
+    if k lt len[h.path] and k + 1 gte len[h.boxes] and not _inside[x, y, _box_of[h, k]]
+        return h
+    r = _entry_under[h, k, entries, x, y]
+    was = _under_at[h, k]
+    if was gte 0 and was lt len[entries] and r ne was
+        h = _left[h, k, entries, was, x, y, clock]
+    h = _under_set[h, k, r]
+    if r gte 0
+        e = entries[r]
+        toward = _toward_sub[h, k, x, y, clock]
+        if e.off
+            if not toward
+                h = _unlit[h, k]
+        else
+            if not toward
+                if e.role eq 'sub'
+                    shown = k lt len[h.path]
+                    if shown
+                        shown = h.path[k] eq e.id
+                    waiting = h.pending eq e.id and h.pending_level eq k
+                    if not shown and not waiting
+                        h.grace = _no_floats[]
+                        h.pending = e.id
+                        h.pending_level = k
+                        h.pending_at = clock
+                h = _lit[h, k, entries, r]
+    if _inside[x, y, _box_of[h, k]] and x ne _last_x_at[h, k]
+        dirs = h.dirs
+        lasts = h.last_xs
+        while len[dirs] lte k
+            dirs = push[dirs, 'right']
+            lasts = push[lasts, 0.0]
+        dirs[k] = 'left'
+        if x gt lasts[k]
+            dirs[k] = 'right'
+        lasts[k] = x
+        h.dirs = dirs
+        h.last_xs = lasts
+    h
+
+--- row `r` of level `k` highlighted, the keys there: a submenu open from
+--- the level stays open only where the row is its own, and those past it
+--- close
+fn _lit[h, k, entries, r]
+    h = _hot_set[h, k, r]
+    keep = k
+    if k lt len[h.path] and entries[r].role eq 'sub'
+        if h.path[k] eq entries[r].id
+            keep = k + 1
+    h = _shut_past[h, keep]
+    h.level = k
+    h
+
+--- no row of level `k` highlighted (the keys at the level itself), and
+--- the submenus open from it closed
+fn _unlit[h, k]
+    h = _hot_set[h, k, -1]
+    h = _shut_past[h, k]
+    h.level = k
+    h
+
+--- the pointer left row `was` of level `k` at (x, y): a submenu's row
+--- stops its wait and, its submenu open, gives the pointer its grace
+--- toward it; the highlight goes (and the submenus open from the level
+--- close) unless the pointer is on its way to the submenu
+fn _left[h, k, entries, was, x, y, clock]
+    e = entries[was]
+    if e.role eq 'sub'
+        if h.pending eq e.id and h.pending_level eq k
+            h.pending = ''
+        shown = k lt len[h.path] and k + 1 lt len[h.boxes]
+        if shown
+            shown = h.path[k] eq e.id
+        if shown
+            h = _graced[h, k, x, y, clock]
+        else
+            if _toward_sub[h, k, x, y, clock]
+                return h
+            h.grace = _no_floats[]
+    if _toward_sub[h, k, x, y, clock]
+        return h
+    _unlit[h, k]
+
+--- row `r` of level `k` chosen: an item told chosen, a checkbox told
+--- toggled to the other state, a radio item told chosen in its group,
+--- each closing the menu; a submenu's row opens its submenu (and, open,
+--- the keys move into it)
+fn _picked[t, k, entries, r, keyed]
+    e = entries[r]
+    h = t.h
+    if e.role eq 'sub'
+        shown = k lt len[h.path]
+        if shown
+            shown = h.path[k] eq e.id
+        if not shown
+            h = _sub_opened[h, k, entries, r, keyed]
+        else
+            h = _hot_set[h, k, r]
+            h.level = k
+            if keyed
+                h.level = k + 1
+                if _hot_at[h, k + 1] lt 0
+                    h = _hot_set[h, k + 1, _first_of[e.kids]]
+        t.h = h
+        return t
+    if e.role eq 'item'
+        t.told = push[t.told, gui.Event[h.named, 'choose', e.id, 0.0]]
+    if e.role eq 'check'
+        on = 1.0
+        if e.num eq 1.0
+            on = 0.0
+        t.told = push[t.told, gui.Event[e.id, 'toggle', e.words, on]]
+    if e.role eq 'radio'
+        t.told = push[t.told, gui.Event[e.name, 'choose', e.id, _place_in[entries, r] + 0.0]]
+    _closed[t, 'chosen']
+
+--- the keys typed while the menu has the focus, each in turn, at the
+--- level the keys reach: Tab, which moves the focus on, closes a menu
+--- that keeps nothing to itself (Radix's closes as the focus leaves it)
+fn _keyed[t, evs, clock]
+    for e in evs
+        if not t.done and e.on eq 'key'
+            if e.key eq 'Tab'
+                if not t.h.modal
+                    t = _closed[t, 'tab']
+            else
+                t = _key[t, e, clock]
+    t
+
+--- one key, as Radix's menu answers it. On a highlighted row: Enter and
+--- space choose it (space types ahead while letters are being typed), a
+--- submenu's row opens on Enter, space and the right arrow, and the arrows
+--- move the highlight (down and up, round where the rows go round; Home
+--- and Page Up to the first, End and Page Down to the last; nothing with
+--- a modifier held). Then, of the rows: the left arrow closes a submenu,
+--- a menubar's menu moves to the next or the last menu on the arrows
+--- along it, a letter types ahead, and with no row highlighted the down
+--- arrow, Page Up and Home highlight the first row, the up arrow, Page
+--- Down and End the last. Escape closes the menu
+fn _key[t, e, clock]
+    h = t.h
+    h.keyboard = true
+    t.h = h
+    key = e.key
+    if key eq 'Escape'
+        return _closed[t, 'escape']
+    at = h.level
+    es = _entries_at[h, at]
+    r = _hot_at[h, at]
+    mods = e.ctrl or e.alt or e.meta
+    typing = h.search ne '' and h.search_level eq at and clock - h.searched lt typeahead_time[]
+    if r gte 0 and r lt len[es]
+        it = es[r]
+        if it.role eq 'sub' and (key eq 'Enter' or key eq 'ArrowRight' or (key eq ' ' and not typing))
+            return _picked[t, at, es, r, true]
+        if it.role ne 'sub' and (key eq 'Enter' or (key eq ' ' and not typing))
+            return _picked[t, at, es, r, true]
+        to = -5
+        if key eq 'ArrowDown'
+            to = _next_of[es, r, 1, h.loop]
+        if key eq 'ArrowUp'
+            to = _next_of[es, r, -1, h.loop]
+        if key eq 'Home' or key eq 'PageUp'
+            to = _first_of[es]
+        if key eq 'End' or key eq 'PageDown'
+            to = _last_of[es]
+        if to ne -5
+            if not (mods or e.shift) and to gte 0 and to ne r
+                t.h = _lit[t.h, at, es, to]
+            return t
+    if key eq 'ArrowLeft' and at gt 0
+        h = _shut_past[t.h, at - 1]
+        h.level = at - 1
+        t.h = h
+        return t
+    if t.h.bar ne '' and (key eq 'ArrowRight' or key eq 'ArrowLeft')
+        return _bar_moved[t, key, clock]
+    if len[split[key, '']] eq 1 and not mods
+        t.h = _typed_ahead[t.h, at, es, key, clock]
+        return t
+    if r lt 0
+        to = -1
+        if key eq 'ArrowDown' or key eq 'PageUp' or key eq 'Home'
+            to = _first_of[es]
+        if key eq 'ArrowUp' or key eq 'PageDown' or key eq 'End'
+            to = _last_of[es]
+        if to gte 0
+            t.h = _lit[t.h, at, es, to]
+    t
+
+--- a letter typed ahead at level `at`: it joins the letters typed there
+--- less than a second ago, and the row their search reaches is
+--- highlighted
+fn _typed_ahead[h, at, es, key, clock]
+    search = h.search
+    if clock - h.searched gte typeahead_time[] or h.search_level ne at
+        search = ''
+    search = '`search``key`'
+    names = _no_words[]
+    for e in es
+        if _reachable[e]
+            names = push[names, trim[e.words]]
+    current = ''
+    r = _hot_at[h, at]
+    if r gte 0 and r lt len[es]
+        current = trim[es[r].words]
+    found = next_match[names, search, current]
+    if found ne ''
+        j = 0
+        hit = -1
+        while j lt len[es] and hit lt 0
+            if _reachable[es[j]] and trim[es[j].words] eq found
+                hit = j
+            j = j + 1
+        if hit gte 0
+            h = _lit[h, at, es, hit]
+    h.search = search
+    h.searched = clock
+    h.search_level = at
+    h
+
+--- the time's work: a submenu waited on long enough opens, the pointer's
+--- grace ends, and letters typed ahead are let go
+fn _waited[t, clock]
+    h = t.h
+    if h.pending ne '' and clock - h.pending_at gte submenu_delay[]
+        k = h.pending_level
+        if k lte len[h.path]
+            es = _entries_at[h, k]
+            r = _index_of[es, h.pending]
+            if r gte 0
+                h = _sub_opened[h, k, es, r, false]
+        h.pending = ''
+    if len[h.grace] gt 0 and clock gte h.grace_until
+        h.grace = _no_floats[]
+    if h.search ne '' and clock - h.searched gte typeahead_time[]
+        h.search = ''
+    t.h = h
+    t
+
+--- ---- drawing ----
+
+--- the rows of level `k`: a rule, a label's quieter words, and each entry
+--- on its row — the highlighted one on the accent where the keys are at
+--- this level, a submenu's row whose submenu is open on the hover's
+--- ground — with its tick or dot, its words, its shortcut and a
+--- submenu's mark
+fn _drawn_rows[d, h, k, entries]
+    c = d.c
+    s = d.s
+    look = d.look
+    hot = _hot_at[h, k]
+    open_row = -1
+    if k lt len[h.path]
+        open_row = _index_of[entries, h.path[k]]
+    x0 = d.x + _pad[] * s
+    rw = d.w - 2.0 * _pad[] * s
+    y = d.y + _pad[] * s
+    j = 0
+    while j lt len[entries]
+        e = entries[j]
+        rh = _height_of[e] * s
+        tx = x0 + (_inset[] - _pad[]) * s
+        if e.role eq 'separator'
+            c = lory.rect[c, x0, y + rh / 2.0, rw, 1.0 * s, look.edge]
+        else
+            if e.role eq 'label'
+                c = lory.text[c, tx, y + (rh - lory.line_height[c, _small[] * s]) / 2.0, e.words, _small[] * s, look.muted]
+            else
+                ink = look.ink
+                quiet = look.muted
+                if e.off
+                    ink = look.muted
+                if j eq hot and not e.off and k eq h.level
+                    c = lory.round_rect[c, x0, y, rw, rh, 5.0 * s, look.accent]
+                    ink = look.on_accent
+                    quiet = lory.fade[look.on_accent, 0.8]
+                else
+                    if j eq open_row
+                        c = lory.round_rect[c, x0, y, rw, rh, 5.0 * s, look.hover]
+                c = _marked[c, e, x0, y, rh, s, ink]
+                c = lory.text[c, tx, y + (rh - lory.line_height[c, _font[] * s]) / 2.0, e.words, _font[] * s, ink]
+                right = x0 + rw - 10.0 * s
+                if e.role eq 'sub'
+                    c = icons.draw[c, 'chevron-right', x0 + rw - 21.0 * s, y + (rh - 15.0 * s) / 2.0, 15.0 * s, ink]
+                if e.shortcut ne ''
+                    c = lory.text_right[c, right, y + (rh - lory.line_height[c, 13.0 * s]) / 2.0, e.shortcut, 13.0 * s, quiet]
+        y = y + rh
+        j = j + 1
+    c
+
+--- a checkbox's tick (or a mixed one's dash) and a chosen radio item's
+--- dot, before its words: Lory's icons, 15 CSS pixels square
+fn _marked[c, e, x0, y, rh, s, ink]
+    size = 15.0 * s
+    ix = x0 + 5.0 * s
+    iy = y + (rh - size) / 2.0
+    if e.role eq 'check' and e.num eq 1.0
+        return icons.draw[c, 'check', ix, iy, size, ink]
+    if e.role eq 'check' and e.num eq 0.5
+        return icons.draw[c, 'minus', ix, iy, size, ink]
+    if e.role eq 'radio' and e.num eq 1.0
+        return icons.draw[c, 'dot-filled', ix, iy, size, ink]
+    c
+
+--- a menu's raised ground: soft edges under it, the panel, its edge
+fn _ground[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    r = 8.0 * s
+    i = 0
+    while i lt 3
+        spread = (2.0 + 3.0 * i) * s
+        c = lory.round_rect[c, d.x - spread, d.y - spread + 4.0 * s, d.w + 2.0 * spread, d.h + 2.0 * spread, r + spread, lory.fade[look.shadow, look.shadow.a * 0.22]]
+        i = i + 1
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, look.panel]
+    d.c = lory.round_outline[c, d.x, d.y, d.w, d.h, r, 1.0 * s, look.edge]
+    d
+
+--- ---- motion ----
+
+--- how far an arrival `t` milliseconds old has come (0 to 1), over
+--- `lasts` ms on Radix's demos' curve (cubic-bezier(0.16, 1, 0.3, 1)),
+--- drawn by Lory's motion
+fn _come[t, lasts]
+    if t gte lasts
+        return 1.0
+    motion.eased[motion.cubic_bezier[0.16, 1.0, 0.3, 1.0], max[t, 0.0] / lasts]
+
+--- a menu arriving: faded in, slid 4 CSS pixels toward the side it opens
+--- on and grown from 0.97 of its size, over 150 ms
+fn _arrived[c, n, since, side]
+    k = _come[lory.time[c] - since, 150.0]
+    if k gte 1.0
+        return n
+    dx = 0.0
+    dy = 0.0
+    if side eq 'bottom'
+        dy = -4.0
+    if side eq 'top'
+        dy = 4.0
+    if side eq 'right'
+        dx = -4.0
+    if side eq 'left'
+        dx = 4.0
+    gui.scaled[gui.moved[gui.faded[n, k], dx * (1.0 - k), dy * (1.0 - k)], 0.97 + 0.03 * k]
+
+--- ---- a menu's levels, as layers ----
+
+--- level `k` of the open menu `menu`: its rows on their ground, in a layer
+--- standing against `at` (or where it stands in the tree) on its `side`,
+--- `align`ed and `gap` away, keeping the pointer and Tab to itself where
+--- it is `modal`; the submenu open from it stands beside its row. Its
+--- rows take the focus as it opens (their ring is kept inside their clip:
+--- the highlight shows where the keys are)
+fn _level[c, h, menu, k, entries, at, side, align, gap, modal, moving, slot = 0]
+    size = _sized[c, entries]
+    wide = size[0]
+    tall = size[1]
+    rows = gui.drawn['`menu`:rows:`k`', k + 0.0, wide, tall, _rows, lo = slot + 0.0, words = menu]
+    ground = gui.drawn['', 0.0, wide, tall, _ground]
+    kids = [gui.overlay[ground, gui.scroll['`menu`:clip:`k`', tall, [rows]], anchor = 'top_left']]
+    if k lt len[h.path]
+        r = _index_of[entries, h.path[k]]
+        if r gte 0
+            inner = _level[c, h, menu, k + 1, entries[r].kids, '', 'right', 'start', 2.0, false, 'right', slot = slot]
+            kids = push[kids, gui.moved[inner, 0.0, _row_top[entries, r] - _pad[] - tall]]
+    body = gui.column[kids, gap = 0.0]
+    if k eq 0
+        body = _arrived[c, body, h.since, moving]
+    gui.layer['`menu`:level:`k`', [body], at = at, side = side, align = align, gap = gap, modal = modal and k eq 0, dismiss = false, focused = true, bare = true, pad = 0.0]
+
+--- a layer stood with its top left at (x, y) of the page (CSS pixels):
+--- inside a layer along the page's top that is no taller than nothing
+--- (it keeps no pointer from anything), where it is placed in a row
+fn _stood[id, n, x, y]
+    gui.layer['`id`:host', [gui.row[[gui.moved[n, x, y]], gap = 0.0]], place = 'top', bare = true, pad = 0.0, dismiss = false]
+
+--- ---- a dropdown menu ----
+
+--- a button that opens a menu of `entries` on its `side`, `align`ed along
+--- it and `gap` away (Radix's DropdownMenu: below and centred; its demos'
+--- offset, 5). A press on the button (the left button, Control not held)
+--- opens it with no row highlighted and, open, closes it; Enter and space
+--- open it on its first row, and the down arrow too. While it is open and
+--- `modal`, nothing under it is reached and Tab stays in it; its rows go
+--- round past their ends where it `loop`s
+fn dropdown[c, id, words, entries, side = 'bottom', align = 'center', gap = 5.0, modal = true, loop = false]
+    h = _held[]
+    open = h.open eq id
+    if open
+        h.entries = entries
+        h.named = id
+        h.modal = modal
+        h.loop = loop
+        h.bar = ''
+        h.spared = [0.0, 0.0, 0.0, 0.0]
+        remember['lory.menus', h]
+    tw = max[lory.measure[c, words, 15.0] + 46.0, 64.0]
+    trigger = gui.drawn[id, _one[open], tw, 34.0, _trigger, words = words]
+    if not open
+        return gui.row[[trigger], gap = 0.0]
+    gui.row[[trigger, _level[c, h, id, 0, entries, id, side, align, gap, modal, side]], gap = 0.0]
+
+--- a dropdown's button: a press opens or closes its menu, the keys open
+--- it on its first row; drawn as a button with a mark pointing down
+fn _trigger[d]
+    h = _held[]
+    c = d.c
+    s = d.s
+    clock = lory.time[c]
+    if not clock.ok
+        return d
+    t = Turn[h, _no_told[], false]
+    box = [d.x / s, d.y / s, d.w / s, d.h / s]
+    evs = lory.events[c]
+    if not evs.ok
+        return d
+    for e in evs
+        if e.on eq 'down' and e.button eq 0 and not e.ctrl and _inside[e.x / s, e.y / s, box]
+            if t.h.open eq d.id
+                t = _closed[t, 'toggle']
+            else
+                t.h = _opening[t.h, d.id, d.id, false, clock]
+        if d.focused and e.on eq 'key'
+            if e.key eq 'Enter' or e.key eq ' '
+                if t.h.open eq d.id
+                    t = _closed[t, 'toggle']
+                else
+                    t.h = _opening[t.h, d.id, d.id, true, clock]
+            if e.key eq 'ArrowDown' and t.h.open ne d.id
+                t.h = _opening[t.h, d.id, d.id, true, clock]
+    remember['lory.menus', t.h]
+    for e in t.told
+        d.told = push[d.told, e]
+    d.c = _button_drawn[d, d.words, d.num gt 0.5, true]
+    d
+
+--- a drawn button: the accent, lighter under the pointer, darker pressed
+--- or `held` down, its words in the middle (a mark pointing down after
+--- them where it opens a menu)
+fn _button_drawn[d, words, held, mark]
+    c = d.c
+    s = d.s
+    look = d.look
+    fill = look.accent
+    if d.hover
+        fill = lory.mix[look.accent, lory.white[], 0.12]
+    if held or d.down
+        fill = lory.mix[look.accent, lory.black[], 0.15]
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * s, fill]
+    if not mark
+        return lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, words, 15.0 * s, look.on_accent]
+    ww = lory.measure[c, words, 15.0 * s]
+    left = d.x + (d.w - ww - 21.0 * s) / 2.0
+    c = lory.text[c, left, d.y + (d.h - lory.line_height[c, 15.0 * s]) / 2.0, words, 15.0 * s, look.on_accent]
+    icons.draw[c, 'chevron-down', left + ww + 6.0 * s, d.y + (d.h - 15.0 * s) / 2.0, 15.0 * s, look.on_accent]
+
+--- ---- a context menu ----
+
+--- `kids` in a column, opening a menu of `entries` at the pointer where it
+--- is pressed with the right button (or the left with Control held), or a
+--- touch is held on it 700 ms without moving (Radix's ContextMenu): the
+--- menu stands 2 CSS pixels right of and level with the point (flipped and
+--- shifted to stay on the page, as Floating UI places it), with no row
+--- highlighted, keeping the pointer and Tab to itself
+fn context[c, id, kids, entries, loop = false]
+    h = _held[]
+    open = h.open eq id
+    if open
+        h.entries = entries
+        h.named = id
+        h.modal = true
+        h.loop = loop
+        h.bar = ''
+        h.spared = [0.0, 0.0, 0.0, 0.0]
+        remember['lory.menus', h]
+    area = gui.overlay[gui.overlay[gui.column[kids], _probe[id, 0.0], anchor = 'top_left'], _probe[id, 1.0], anchor = 'bottom_right']
+    if not open
+        return area
+    s = lory.px[c]
+    size = _sized[c, entries]
+    placed = gui.anchored[h.x, h.y, 0.0, 0.0, size[0], size[1], 'right', 'start', context_gap[], lory.width[c] / s, lory.height[c] / s, 8.0]
+    root = _level[c, h, id, 0, entries, '', 'bottom', 'start', 0.0, true, placed.side]
+    gui.column[[area, _stood[id, root, placed.x, placed.y]], gap = 0.0]
+
+--- a point the program draws nothing at, at a corner of what it is laid
+--- over (`corner` 0 its top left, 1 its bottom right), for the box
+--- between the two
+fn _probe[id, corner]
+    gui.drawn['', corner, 0.0, 0.0, _probed, words = id]
+
+--- the boxes of the areas the probes found, by id, and the top left of
+--- each as its first probe found it
+struct Areas [starts, boxes]
+
+fn _no_areas[]
+    Areas[map['' = [0.0, 0.0]], map['' = [0.0, 0.0, 0.0, 0.0]]]
+
+--- the box of the area of that id, as its probes last found it (CSS
+--- pixels; all 0 before it is drawn)
+fn area_box[id]
+    a = recall['lory.menus.areas', _no_areas[]]
+    if id in a.boxes
+        return a.boxes[id]
+    [0.0, 0.0, 0.0, 0.0]
+
+--- a probe at its corner: the first keeps where the area starts, the
+--- second its box, and answers the presses on it that open its menu
+fn _probed[d]
+    s = d.s
+    a = recall['lory.menus.areas', _no_areas[]]
+    if d.num lt 0.5
+        a.starts[d.words] = [d.x / s, d.y / s]
+        remember['lory.menus.areas', a]
+        return d
+    if not (d.words in a.starts)
+        return d
+    start = a.starts[d.words]
+    --- (a probe of no width is as wide as the area: its right is the area's)
+    box = [start[0], start[1], (d.x + d.w) / s - start[0], d.y / s - start[1]]
+    a.boxes[d.words] = box
+    remember['lory.menus.areas', a]
+    h = _held[]
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    clock = lory.time[d.c]
+    if not clock.ok
+        return d
+    remember['lory.menus', _contexted[h, d.words, evs, clock, s, box]]
+    d
+
+--- the presses on a context menu's area: the right button (or Control
+--- with the left) opens it at the point; a touch or a pen held there
+--- opens it after 700 ms, unless it moves or lifts first
+fn _contexted[h, id, evs, clock, s, box]
+    for e in evs
+        x = e.x / s
+        y = e.y / s
+        held_down = e.device eq 'touch' or e.device eq 'pen'
+        if e.on eq 'down' and _inside[x, y, box]
+            if e.button eq 2 or (e.button eq 0 and e.ctrl)
+                h = _opening[h, id, id, false, clock]
+                h.x = x
+                h.y = y
+                h.long_area = ''
+            else
+                if held_down
+                    h.long_area = id
+                    h.long_at = clock
+                    h.long_x = x
+                    h.long_y = y
+        if (e.on eq 'move' or e.on eq 'up' or e.on eq 'leave') and held_down and h.long_area eq id
+            h.long_area = ''
+    if h.long_area eq id and clock - h.long_at gte long_press[]
+        h = _opening[h, id, id, false, clock]
+        h.x = h.long_x
+        h.y = h.long_y
+        h.long_area = ''
+    h
+
+--- ---- a menubar ----
+
+--- one of a menubar's menus: its id (its events name it), its title and
+--- its entries
+struct Pull [id, words, kids]
+
+fn bar_menu[id, words, entries]
+    Pull[id, words, entries]
+
+--- a bar of menus' titles (Radix's Menubar): a press on one (the left
+--- button, Control not held) opens its menu and, while one is open, closes
+--- it; the pointer moving onto another title while one is open opens that
+--- one. With the focus on the bar, the arrows along it move between the
+--- titles (round past the ends where it `loop`s; Home and End to the
+--- ends), and Enter, space and the down arrow open the title's menu on its
+--- first row. In an open menu, the right arrow moves to the next menu (on
+--- a submenu's row, it opens the submenu) and the left arrow at its first
+--- level to the one before, each with no row highlighted. A menu stands
+--- under its title, `gap` away; it keeps nothing to itself: what is under
+--- it is reached, and Tab closes it
+fn menubar[c, id, pulls, loop = true, gap = 4.0]
+    h = _held[]
+    open = h.open eq id
+    titles = _no_words[]
+    for m in pulls
+        titles = push[titles, m.words]
+    slots = _slots[c, titles]
+    _keep_slots[id, slots]
+    if open and h.at lt len[pulls]
+        m = pulls[h.at]
+        h.entries = m.kids
+        h.named = m.id
+        h.modal = false
+        h.loop = false
+        h.bar = id
+        h.count = len[pulls]
+        h.bar_loop = loop
+        remember['lory.menus', h]
+    wide = 8.0
+    if len[slots] gt 0
+        last = slots[len[slots] - 1]
+        wide = last[0] + last[1] + 4.0
+    bar = gui.drawn[id, 0.0, wide, 38.0, _bar, words = join[titles, '\n'], lo = _one[loop]]
+    clip = gui.scroll['`id`:clip', 38.0, [bar]]
+    if not (open and h.at lt len[pulls])
+        return gui.row[[clip], gap = 0.0]
+    root = _level[c, h, id, 0, pulls[h.at].kids, '', 'bottom', 'start', gap, false, 'bottom', slot = h.at]
+    gui.row[[clip, gui.moved[root, slots[h.at][0] - wide, 38.0]], gap = 0.0]
+
+--- where each title stands along the bar: its left and its width (CSS
+--- pixels from the bar's left)
+fn _slots[c, titles]
+    out = slice[[[0.0, 0.0]], 0, 0]
+    x = 4.0
+    for t in titles
+        w = lory.measure[c, t, 14.0] + 24.0
+        out = push[out, [x, w]]
+        x = x + w
+    out
+
+--- each bar's slots, as its builder measured them (a painter keeps from
+--- measuring: what it reads of the canvas may fail, and a painter's
+--- answer must not)
+struct Slots [by]
+
+fn _keep_slots[id, slots]
+    kept = recall['lory.menus.slots', Slots[map['' = slice[[[0.0, 0.0]], 0, 0]]]]
+    kept.by[id] = slots
+    remember['lory.menus.slots', kept]
+
+fn _kept_slots[id]
+    kept = recall['lory.menus.slots', Slots[map['' = slice[[[0.0, 0.0]], 0, 0]]]]
+    if id in kept.by
+        return kept.by[id]
+    slice[[[0.0, 0.0]], 0, 0]
+
+--- the title at `ox` from the bar's left (-1: none)
+fn _slot_at[slots, ox]
+    j = 0
+    while j lt len[slots]
+        if ox gte slots[j][0] and ox lt slots[j][0] + slots[j][1]
+            return j
+        j = j + 1
+    -1
+
+--- the bar's menu `slot` opened in place of the one open, with no row
+--- highlighted (its title the bar's place)
+fn _switched[t, slot, clock]
+    t = _told_opening[t]
+    h = t.h
+    t.told = push[t.told, gui.Event[h.named, 'dismiss', 'switch', 0.0]]
+    h.at = slot
+    h.path = _no_words[]
+    h.hot = [-1]
+    h.under = [-1]
+    h.level = 0
+    h.search = ''
+    h.pending = ''
+    h.grace = _no_floats[]
+    h.boxes = _no_boxes[]
+    h.since = clock
+    h.told_open = true
+    h.places[h.bar] = slot
+    t.h = h
+    t
+
+--- the open menubar's next menu (the right arrow) or the one before (the
+--- left), round past the ends where the bar goes round
+fn _bar_moved[t, key, clock]
+    h = t.h
+    n = h.count
+    to = h.at + 1
+    if key eq 'ArrowLeft'
+        to = h.at - 1
+    if to lt 0 or to gte n
+        if not h.bar_loop or n eq 0
+            return t
+        to = (to + n) % n
+    if to eq h.at
+        return t
+    _switched[t, to, clock]
+
+--- a menubar's titles: drawn, the pointer's presses and moves over them
+--- and the keys along them answered
+fn _bar[d]
+    h = _held[]
+    c = d.c
+    s = d.s
+    clock = lory.time[c]
+    if not clock.ok
+        return d
+    titles = split[d.words, '\n']
+    slots = _kept_slots[d.id]
+    n = len[slots]
+    box = [d.x / s, d.y / s, d.w / s, d.h / s]
+    loop = d.lo gt 0.5
+    t = Turn[h, _no_told[], false]
+    place = 0
+    if d.id in h.places
+        place = h.places[d.id]
+    if t.h.open eq d.id
+        place = t.h.at
+        h = t.h
+        h.spared = box
+        t.h = h
+    evs = lory.events[c]
+    if not evs.ok
+        return d
+    for e in evs
+        x = e.x / s
+        y = e.y / s
+        slot = -1
+        if _inside[x, y, box]
+            slot = _slot_at[slots, x - box[0]]
+        if e.on eq 'down' and slot gte 0 and e.button eq 0 and not e.ctrl
+            if t.h.open eq d.id
+                t = _closed[t, 'toggle']
+                t.done = false
+            else
+                h = _opening[t.h, d.id, '', false, clock]
+                h.at = slot
+                h.bar = d.id
+                h.count = n
+                h.bar_loop = loop
+                h.spared = box
+                t.h = h
+            place = slot
+        if e.on eq 'move' and slot gte 0 and t.h.open eq d.id and slot ne t.h.at
+            t = _switched[t, slot, clock]
+            place = slot
+        if d.focused and e.on eq 'key' and t.h.open ne d.id and n gt 0
+            mods = e.ctrl or e.alt or e.meta or e.shift
+            if e.key eq 'ArrowRight' and not mods
+                place = place + 1
+                if place gte n
+                    place = n - 1
+                    if loop
+                        place = 0
+            if e.key eq 'ArrowLeft' and not mods
+                place = place - 1
+                if place lt 0
+                    place = 0
+                    if loop
+                        place = n - 1
+            if (e.key eq 'Home' or e.key eq 'PageUp') and not mods
+                place = 0
+            if (e.key eq 'End' or e.key eq 'PageDown') and not mods
+                place = n - 1
+            if e.key eq 'Enter' or e.key eq ' ' or e.key eq 'ArrowDown'
+                h = _opening[t.h, d.id, '', true, clock]
+                h.at = place
+                h.bar = d.id
+                h.count = n
+                h.bar_loop = loop
+                h.spared = box
+                t.h = h
+    h = t.h
+    h.places[d.id] = place
+    remember['lory.menus', h]
+    for e in t.told
+        d.told = push[d.told, e]
+    d.c = _bar_drawn[d, h, titles, slots, place]
+    d
+
+--- the bar: its ground, each title (the open one's on the accent's tint,
+--- one under the pointer on the hover's ground) and the ring of the one
+--- the keys are on while the bar has the focus
+fn _bar_drawn[d, h, titles, slots, place]
+    c = d.c
+    s = d.s
+    look = d.look
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * s, look.panel]
+    c = lory.round_outline[c, d.x, d.y, d.w, d.h, 8.0 * s, 1.0 * s, look.edge]
+    open = h.open eq d.id
+    j = 0
+    while j lt len[slots]
+        sx = d.x + slots[j][0] * s
+        sw = slots[j][1] * s
+        sy = d.y + 3.0 * s
+        sh = d.h - 6.0 * s
+        over = d.hover and d.px gte slots[j][0] * s and d.px lt (slots[j][0] + slots[j][1]) * s
+        if open and j eq h.at
+            c = lory.round_rect[c, sx, sy, sw, sh, 6.0 * s, lory.fade[look.accent, 0.25]]
+        else
+            if over
+                c = lory.round_rect[c, sx, sy, sw, sh, 6.0 * s, look.hover]
+        if d.focused and not open and j eq place
+            c = lory.round_outline[c, sx, sy, sw, sh, 6.0 * s, 2.0 * s, lory.fade[look.focus, 0.8]]
+        c = lory.text_centered[c, sx + sw / 2.0, d.y + d.h / 2.0, titles[j], 14.0 * s, look.ink]
+        j = j + 1
+    if _over_any[d, slots]
+        c = lory.cursor[c, 'pointer']
+    c
+
+--- whether the pointer is over one of the bar's titles
+fn _over_any[d, slots]
+    if not d.hover
+        return false
+    _slot_at[slots, d.px / d.s] gte 0
+
+--- what the menus hold, in words: which is open, its submenus' path, the
+--- rows highlighted, the level the keys reach and gui's focus (for the
+--- tests)
+fn _said[]
+    h = _held[]
+    hot = h.hot
+    path = join[h.path, '>']
+    focus = recall['lory.gui', gui._fresh[]].focus
+    'open=`h.open` path=`path` hot=`hot` level=`h.level` focus=`focus`'
+
+--- ---- a command palette (cmdk's Command, in a dialog) ----
+
+--- one command: its id (told when it is chosen), its words, other words
+--- it is found by (`keywords`, spaced), the group it is shown in
+--- (`family`, '' for none), the keys shown beside it, and whether it is
+--- set aside
+struct Command [id, words, keywords, family, shortcut, off]
+
+fn command[id, words, keywords = '', family = '', shortcut = '', off = false]
+    Command[id, words, keywords, family, shortcut, off]
+
+fn _no_commands[]
+    nothing = [Command['', '', '', '', '', false]]
+    slice[nothing, 0, 0]
+
+--- what a palette holds between frames: its id, the query its commands
+--- were ranked for, those commands in their order, the one picked (by
+--- id), the first row shown, where a press on a row began (-1: none), and
+--- whether its arrows go round
+struct Pal [id, query, shown, picked, top, pressed, loop, rows]
+
+fn _pal[]
+    recall['lory.menus.palette', Pal['', '', _no_commands[], '', 0, -1, false, 7]]
+
+--- the characters cmdk passes over to reach a word's start after a mark,
+--- and after a space (a space or a hyphen)
+fn _gap[ch]
+    ch in ['\\', '/', '_', '+', '.', '#', '"', '@', '[', '(', '{', '&']
+
+fn _spacing[ch]
+    ch in [' ', '\t', '\n', '\r', '-']
+
+--- the letters of the words lowered, and each space or hyphen a space, as
+--- cmdk reads both what it searches and what is typed
+fn _formed[words]
+    out = slice[[''], 0, 0]
+    for ch in split[lower[words], '']
+        if _spacing[ch]
+            out = push[out, ' ']
+        else
+            out = push[out, ch]
+    out
+
+--- how many of the characters from `lo` to before `hi` pass a test (a
+--- mark's, `gaps`; else a space's)
+fn _counted[chars, lo, hi, gaps]
+    n = 0
+    j = lo
+    while j lt hi
+        if gaps
+            if _gap[chars[j]]
+                n = n + 1
+        else
+            if _spacing[chars[j]]
+                n = n + 1
+        j = j + 1
+    n
+
+--- how well `query` matches `words` with `keywords` beside them (a space
+--- between), as cmdk 1.1.1 scores a command (its command-score, written
+--- anew here and held to its numbers by tests/menus/reference.json): 0 is
+--- no match (the command is hidden), 1 the words themselves. The query's
+--- letters are found in turn, its case aside: a letter that goes on from
+--- the last keeps the score, one starting a word after a space keeps 0.9
+--- of it and after a mark 0.8, any other jump 0.17; past the words' start,
+--- each word or letter passed over keeps 0.999 of it, a letter of another
+--- case 0.9999, and words not reached to their end 0.99; two letters
+--- typed the wrong way round are found at a tenth. Each start and letter
+--- is scored once, from the end back (cmdk asks the same of a memo)
+fn command_score[words, query, keywords]
+    whole = words
+    if keywords ne ''
+        whole = '`words` `keywords`'
+    chars = split[whole, '']
+    lowered = _formed[whole]
+    typed = split[query, '']
+    sought = _formed[query]
+    n = len[chars]
+    m = len[typed]
+    --- (the best scores from each start for the query's letters from
+    --- `ai`, from `ai + 1` and from `ai + 2`)
+    ahead = slice[[0.0], 0, 0]
+    beyond = slice[[0.0], 0, 0]
+    si = 0
+    while si lte n
+        if si eq n
+            ahead = push[ahead, 1.0]
+        else
+            ahead = push[ahead, 0.99]
+        si = si + 1
+    ai = m - 1
+    while ai gte 0
+        row = _scored_row[chars, lowered, typed, sought, ai, ahead, beyond]
+        beyond = ahead
+        ahead = row
+        ai = ai - 1
+    ahead[0]
+
+--- the best scores for the query's letters from `ai`, from each start of
+--- the words (`ahead`: from `ai + 1`; `beyond`: from `ai + 2`)
+fn _scored_row[chars, lowered, typed, sought, ai, ahead, beyond]
+    n = len[chars]
+    m = len[typed]
+    letter = sought[ai]
+    following = ''
+    if ai + 1 lt m
+        following = sought[ai + 1]
+    places = slice[[0], 0, 0]
+    j = 0
+    while j lt n
+        if lowered[j] eq letter
+            places = push[places, j]
+        j = j + 1
+    row = slice[[0.0], 0, 0]
+    si = 0
+    while si lte n
+        best = 0.0
+        for index in places
+            if index gte si
+                sc = ahead[index + 1]
+                if sc gt best
+                    if index ne si
+                        before = chars[index - 1]
+                        if _gap[before]
+                            sc = sc * 0.8
+                            breaks = _counted[chars, si, index - 1, true]
+                            if breaks gt 0 and si gt 0
+                                sc = sc * 0.999 ^ breaks
+                        else
+                            if _spacing[before]
+                                sc = sc * 0.9
+                                breaks = _counted[chars, si, index - 1, false]
+                                if breaks gt 0 and si gt 0
+                                    sc = sc * 0.999 ^ breaks
+                            else
+                                sc = sc * 0.17
+                                if si gt 0
+                                    sc = sc * 0.999 ^ (index - si)
+                    if chars[index] ne typed[ai]
+                        sc = sc * 0.9999
+                prior = ''
+                if index gt 0
+                    prior = lowered[index - 1]
+                if ai + 2 lte m
+                    if (sc lt 0.1 and prior eq following) or (following eq letter and prior ne letter)
+                        turned = beyond[index + 1] * 0.1
+                        if turned gt sc
+                            sc = turned
+                if sc gt best
+                    best = sc
+        row = push[row, best]
+        si = si + 1
+    row
+
+--- the commands `query` finds, in cmdk's order: all as given while
+--- nothing is typed; else those it scores above 0, the ones of no group
+--- first, then each group, the group of the best score first, each by its
+--- score, best first (an equal score keeps the order given: cmdk keeps the
+--- order of its last sort)
+fn ranked[commands, query]
+    if query eq ''
+        return commands
+    scores = slice[[0.0], 0, 0]
+    kept = _no_commands[]
+    for cmd in commands
+        sc = command_score[cmd.words, query, cmd.keywords]
+        if sc gt 0.0
+            kept = push[kept, cmd]
+            scores = push[scores, sc]
+    order = _by_score[scores]
+    out = _no_commands[]
+    for i in order
+        if kept[i].family eq ''
+            out = push[out, kept[i]]
+    families = slice[[''], 0, 0]
+    bests = slice[[0.0], 0, 0]
+    for i in order
+        f = kept[i].family
+        if f ne '' and not (f in families)
+            families = push[families, f]
+            bests = push[bests, scores[i]]
+    --- (the groups in the order they were met among the commands given,
+    --- then by their best score)
+    met = slice[[''], 0, 0]
+    met_bests = slice[[0.0], 0, 0]
+    for cmd in kept
+        if cmd.family ne '' and not (cmd.family in met)
+            met = push[met, cmd.family]
+            k = 0
+            while k lt len[families]
+                if families[k] eq cmd.family
+                    met_bests = push[met_bests, bests[k]]
+                k = k + 1
+    for g in _by_score[met_bests]
+        for i in order
+            if kept[i].family eq met[g]
+                out = push[out, kept[i]]
+    out
+
+--- the places of the scores, best first, an equal score keeping its
+--- place (a stable sort, by insertion)
+fn _by_score[scores]
+    order = slice[[0], 0, 0]
+    i = 0
+    while i lt len[scores]
+        at = len[order]
+        while at gt 0 and scores[order[at - 1]] lt scores[i]
+            at = at - 1
+        order = concat[slice[order, 0, at], [i], slice[order, at, len[order]]]
+        i = i + 1
+    order
+
+--- whether Control-K or Command-K was typed this frame (the key a palette
+--- opens on)
+fn palette_key[c]
+    for e in lory.events[c]
+        if e.on eq 'key' and lower[e.key] eq 'k' and (e.ctrl or e.meta)
+            return true
+    false
+
+--- the query typed into palette `id`'s field this frame (`query` where
+--- nothing was)
+fn typed_query[shown, id, query]
+    out = query
+    for e in shown.events
+        if e.id eq '`id`:query' and e.act eq 'edit'
+            out = e.words
+    out
+
+fn _row_of_pal[]
+    36.0
+
+fn _heading_of_pal[]
+    28.0
+
+--- a command palette: a dialog in the middle of the page (its scrim keeps the page
+--- from the pointer and Tab) holding a field for `query` (the program
+--- keeps it: `typed_query`) and the commands it finds, `rows` of them
+--- shown at once, scrolled to keep the one picked in sight. The first
+--- command found is picked as the query changes; the arrows move the pick
+--- (round where it `loop`s; with Command to the ends, with Alt to the next
+--- group), Control with N or J and with P or K too, Home and End to the
+--- ends, and Enter chooses it, as the pointer moved over one picks it and
+--- a press chooses it: `choose` (the palette's id, the command's id).
+--- Escape and a press outside tell gui's `dismiss` (the palette's id): the
+--- program closes it
+fn palette[c, id, commands, query, wide = 560.0, rows = 7, hint = 'Type a command or search…', empty = 'No results found.', loop = false]
+    pal = _pal[]
+    found = ranked[commands, query]
+    if pal.id ne id or pal.query ne query
+        pal.top = 0
+        pal.pressed = -1
+        pal.picked = _first_command[found]
+    else
+        if not _holds_command[found, pal.picked]
+            pal.picked = _first_command[found]
+    pal.id = id
+    pal.query = query
+    pal.shown = found
+    pal.loop = loop
+    pal.rows = rows
+    remember['lory.menus.palette', pal]
+    tall = rows * _row_of_pal[] + 8.0
+    list = gui.drawn['`id`:list', 0.0, 0.0, tall, _palette_rows, words = empty]
+    body = gui.column[[gui.field['`id`:query', query, hint = hint], list], gap = 8.0]
+    gui.layer[id, [body], place = 'center', modal = true, scrim = true, focused = true, wide = wide, pad = 10.0, fade = 150.0]
+
+fn _first_command[found]
+    for cmd in found
+        if not cmd.off
+            return cmd.id
+    ''
+
+fn _holds_command[found, picked]
+    for cmd in found
+        if cmd.id eq picked and not cmd.off
+            return true
+    false
+
+--- the rows of a palette's list: for each command its place among the
+--- commands (-1: a group's heading), and each heading's words
+struct Lines [at, words]
+
+fn _lines[found]
+    at = slice[[0], 0, 0]
+    words = slice[[''], 0, 0]
+    last = ''
+    i = 0
+    while i lt len[found]
+        f = found[i].family
+        if f ne '' and f ne last
+            at = push[at, -1]
+            words = push[words, f]
+        last = f
+        at = push[at, i]
+        words = push[words, found[i].words]
+        i = i + 1
+    Lines[at, words]
+
+fn _line_h[lines, r]
+    if lines.at[r] lt 0
+        return _heading_of_pal[]
+    _row_of_pal[]
+
+--- the row the pointer is on, from the list's top (-1: none)
+fn _line_at[lines, top, oy]
+    y = 4.0
+    r = top
+    while r lt len[lines.at]
+        h = _line_h[lines, r]
+        if oy gte y and oy lt y + h
+            return r
+        y = y + h
+        r = r + 1
+    -1
+
+--- the line of a command (-1: none)
+fn _line_of[lines, found, id]
+    r = 0
+    while r lt len[lines.at]
+        if lines.at[r] gte 0
+            if found[lines.at[r]].id eq id
+                return r
+        r = r + 1
+    -1
+
+--- the commands that can be picked, by their places among those found
+fn _pickable[found]
+    out = slice[[0], 0, 0]
+    i = 0
+    while i lt len[found]
+        if not found[i].off
+            out = push[out, i]
+        i = i + 1
+    out
+
+--- the pick moved, as cmdk moves it: `step` commands on (round where the
+--- list goes round), to an end, or to the first of the next or the last
+--- group (none there: one command on)
+fn _pick_moved[found, picked, step, loop]
+    valid = _pickable[found]
+    if len[valid] eq 0
+        return picked
+    at = -1
+    k = 0
+    while k lt len[valid]
+        if found[valid[k]].id eq picked
+            at = k
+        k = k + 1
+    to = at + step
+    if loop
+        if to lt 0
+            to = len[valid] - 1
+        if to gte len[valid]
+            to = 0
+    if to lt 0 or to gte len[valid]
+        return picked
+    found[valid[to]].id
+
+fn _pick_end[found, last]
+    valid = _pickable[found]
+    if len[valid] eq 0
+        return ''
+    if last
+        return found[valid[len[valid] - 1]].id
+    found[valid[0]].id
+
+fn _pick_group[found, picked, step, loop]
+    at = -1
+    i = 0
+    while i lt len[found]
+        if found[i].id eq picked
+            at = i
+        i = i + 1
+    if at lt 0
+        return _pick_moved[found, picked, step, loop]
+    family = found[at].family
+    j = at + step
+    while j gte 0 and j lt len[found]
+        if found[j].family ne family and not found[j].off
+            --- (the first of that group that can be picked)
+            g = found[j].family
+            k = j
+            while step lt 0 and k - 1 gte 0 and found[k - 1].family eq g
+                k = k - 1
+            while k lt len[found] and found[k].off
+                k = k + 1
+            if k lt len[found]
+                return found[k].id
+        j = j + step
+    _pick_moved[found, picked, step, loop]
+
+--- a palette's commands: drawn, the keys typed in its field (or on the
+--- list itself, pressed) moving the pick and choosing, the pointer
+--- picking and choosing, the wheel scrolling
+fn _palette_rows[d]
+    pal = _pal[]
+    c = d.c
+    s = d.s
+    evs = lory.events[c]
+    if not evs.ok
+        return d
+    found = pal.shown
+    lines = _lines[found]
+    id = pal.id
+    gui_held = recall['lory.gui', gui._fresh[]]
+    keyed = d.focused or gui_held.focus eq '`id`:query'
+    box = [d.x / s, d.y / s, d.w / s, d.h / s]
+    picked = pal.picked
+    top = pal.top
+    chosen = ''
+    for e in evs
+        x = e.x / s
+        y = e.y / s
+        inside = _inside[x, y, box]
+        if e.on eq 'move' and inside and e.device eq 'mouse'
+            r = _line_at[lines, top, y - box[1]]
+            if r gte 0 and lines.at[r] gte 0
+                if not found[lines.at[r]].off
+                    picked = found[lines.at[r]].id
+        if e.on eq 'down'
+            pal.pressed = -1
+            if inside
+                pal.pressed = _line_at[lines, top, y - box[1]]
+        if e.on eq 'up' and inside
+            r = _line_at[lines, top, y - box[1]]
+            if r gte 0 and r eq pal.pressed and lines.at[r] gte 0
+                if not found[lines.at[r]].off
+                    picked = found[lines.at[r]].id
+                    chosen = picked
+            pal.pressed = -1
+        if e.on eq 'wheel' and inside
+            if e.dy gt 0.0
+                top = top + 1
+            if e.dy lt 0.0
+                top = top - 1
+        if keyed and e.on eq 'key'
+            k = e.key
+            if k eq 'ArrowDown' or (e.ctrl and (k eq 'n' or k eq 'j'))
+                if e.meta
+                    picked = _pick_end[found, true]
+                else
+                    if e.alt
+                        picked = _pick_group[found, picked, 1, pal.loop]
+                    else
+                        picked = _pick_moved[found, picked, 1, pal.loop]
+                top = _kept_in_sight[lines, found, picked, top, pal.rows]
+            if k eq 'ArrowUp' or (e.ctrl and (k eq 'p' or k eq 'k'))
+                if e.meta
+                    picked = _pick_end[found, false]
+                else
+                    if e.alt
+                        picked = _pick_group[found, picked, -1, pal.loop]
+                    else
+                        picked = _pick_moved[found, picked, -1, pal.loop]
+                top = _kept_in_sight[lines, found, picked, top, pal.rows]
+            if k eq 'Home'
+                picked = _pick_end[found, false]
+                top = _kept_in_sight[lines, found, picked, top, pal.rows]
+            if k eq 'End'
+                picked = _pick_end[found, true]
+                top = _kept_in_sight[lines, found, picked, top, pal.rows]
+            if k eq 'Enter' and picked ne ''
+                chosen = picked
+    most = max[0, len[lines.at] - pal.rows]
+    top = max[0, min[top, most]]
+    pal.picked = picked
+    pal.top = top
+    remember['lory.menus.palette', pal]
+    if chosen ne ''
+        d.told = push[d.told, gui.Event[id, 'choose', chosen, 0.0]]
+    d.c = _palette_drawn[d, found, lines, picked, top]
+    d
+
+--- the first row shown that keeps the picked command's row in sight (and
+--- its group's heading, where it is the group's first)
+fn _kept_in_sight[lines, found, picked, top, rows]
+    r = _line_of[lines, found, picked]
+    if r lt 0
+        return top
+    first = r
+    if r gt 0 and lines.at[r - 1] lt 0
+        first = r - 1
+    if first lt top
+        return first
+    if r gte top + rows
+        return r - rows + 1
+    top
+
+--- a palette's list: its rows from `top` (a group's heading quieter and
+--- smaller, the picked command on the hover's ground), each command's
+--- shortcut at its right; words of their own where nothing is found
+fn _palette_drawn[d, found, lines, picked, top]
+    c = d.c
+    s = d.s
+    look = d.look
+    kept = lory.clipped[c]
+    c = lory.clip[c, d.x, d.y, d.w, d.h]
+    if len[found] eq 0
+        c = lory.text_centered[c, d.x + d.w / 2.0, d.y + 40.0 * s, d.words, 14.0 * s, look.muted]
+        return lory.unclip[c, kept]
+    y = d.y + 4.0 * s
+    r = top
+    while r lt len[lines.at] and y lt d.y + d.h
+        h = _line_h[lines, r] * s
+        if lines.at[r] lt 0
+            c = lory.text[c, d.x + 12.0 * s, y + (h - lory.line_height[c, 12.0 * s]) / 2.0, lines.words[r], 12.0 * s, look.muted]
+        else
+            cmd = found[lines.at[r]]
+            ink = look.ink
+            if cmd.off
+                ink = look.muted
+            if cmd.id eq picked
+                c = lory.round_rect[c, d.x + 4.0 * s, y, d.w - 8.0 * s, h, 6.0 * s, look.hover]
+            c = lory.text[c, d.x + 14.0 * s, y + (h - lory.line_height[c, 15.0 * s]) / 2.0, cmd.words, 15.0 * s, ink]
+            if cmd.shortcut ne ''
+                c = lory.text_right[c, d.x + d.w - 14.0 * s, y + (h - lory.line_height[c, 13.0 * s]) / 2.0, cmd.shortcut, 13.0 * s, look.muted]
+        y = y + h
+        r = r + 1
+    lory.unclip[c, kept]
+
+--- ---- a navigation menu (Radix's NavigationMenu) ----
+
+--- one of a navigation menu's items: its id, its words, and what its
+--- panel holds (gui's controls; none: it is a link, chosen as one)
+struct Place [id, words, kids]
+
+fn nav_item[id, words, kids]
+    Place[id, words, kids]
+
+fn nav_link[id, words]
+    nothing = [gui.space[0.0]]
+    Place[id, words, slice[nothing, 0, 0]]
+
+--- what a navigation menu holds between frames: the menu open (its id)
+--- and the item open in it (by id and place, and the place open before
+--- it); whether an item opens only after the pointer rests on it
+--- (`delayed`) and when the menu last closed; the item waiting to open and
+--- since when; when the menu began to close (-1: it is not); the item the
+--- pointer is over (-1: none) and whether its rest has been answered; the
+--- item a press closed, and one Escape closed, which the pointer does not
+--- open again until it leaves; the item the keys are on; when the item
+--- opened and the side its panel came from; where a press began; the
+--- panel's box and whether the pointer is in it
+struct Nav [open, value, at, last, delayed, closed_at, waiting, waiting_at, closing_at, hovered, entered, click_closed, escape_closed, place, since, from, down_slot, panel, in_panel]
+
+fn _nav[]
+    recall['lory.menus.nav', Nav['', '', -1, -1, true, -1000000.0, -1, 0.0, -1.0, -1, false, -1, -1, 0, 0.0, '', -1, [0.0, 0.0, 0.0, 0.0], false]]
+
+--- the numbers held to Radix's NavigationMenu: the rest before an item
+--- opens, the time after a close in which another opens at once, and the
+--- time the menu waits to close once the pointer leaves it (ms)
+fn nav_delay[]
+    200.0
+
+fn nav_skip_delay[]
+    300.0
+
+fn nav_close_delay[]
+    150.0
+
+--- a bar of items, each opening a panel of its own controls under the bar
+--- (a mega menu) or chosen as a link, as Radix's NavigationMenu: the
+--- pointer resting on an item 200 ms opens it, and once one is open the
+--- pointer moving to another opens that at once (and for 300 ms after the
+--- menu closes); the pointer leaving the items and the panel closes it
+--- after 150 ms; a press on an item opens or closes it (and the pointer
+--- does not open it again until it leaves); with the focus on the bar, the
+--- arrows along it move between the items, Home and End to the ends, and
+--- Enter and space open or close one; Escape and a press outside close
+--- it. Its events: `open` and `dismiss` (the menu's id, the item's id),
+--- and `choose` (the menu's id, a link's id)
+fn navigation[c, id, items, gap = 6.0]
+    v = _nav[]
+    titles = _no_words[]
+    for m in items
+        mark = '+'
+        if len[m.kids] eq 0
+            mark = '-'
+        titles = push[titles, '`mark``m.id`\t`m.words`']
+    slots = _nav_slots[c, items]
+    _keep_slots[id, slots]
+    wide = 8.0
+    if len[slots] gt 0
+        last = slots[len[slots] - 1]
+        wide = last[0] + last[1] + 4.0
+    bar = gui.drawn[id, 0.0, wide, 40.0, _nav_bar, words = join[titles, '\n']]
+    clip = gui.scroll['`id`:clip', 40.0, [bar]]
+    open = v.open eq id and v.at gte 0 and v.at lt len[items]
+    if not open
+        return gui.row[[clip], gap = 0.0]
+    m = items[v.at]
+    content = gui.column[m.kids]
+    k = _nav_come[lory.time[c] - v.since]
+    if k lt 1.0
+        dx = 40.0
+        if v.from eq 'start'
+            dx = -40.0
+        content = gui.moved[gui.faded[content, k], dx * (1.0 - k), 0.0]
+    probed = gui.overlay[gui.overlay[content, _nav_probe[id, 0.0], anchor = 'top_left'], _nav_probe[id, 1.0], anchor = 'bottom_right']
+    panel = gui.layer['`id`:panel', [probed], at = id, side = 'bottom', align = 'center', gap = gap, dismiss = false, pad = 12.0]
+    gui.row[[clip, panel], gap = 0.0]
+
+--- how far a panel's arrival `t` ms old has come: 250 ms on CSS's `ease`
+--- (Radix's demos' panel slides in so)
+fn _nav_come[t]
+    if t gte 250.0
+        return 1.0
+    motion.eased[motion.cubic_bezier[0.25, 0.1, 0.25, 1.0], max[t, 0.0] / 250.0]
+
+--- where each item stands along the bar: its left and its width (CSS
+--- pixels from the bar's left; an item that opens a panel has room for
+--- its mark)
+fn _nav_slots[c, items]
+    out = slice[[[0.0, 0.0]], 0, 0]
+    x = 4.0
+    for m in items
+        w = lory.measure[c, m.words, 14.0] + 28.0
+        if len[m.kids] gt 0
+            w = w + 18.0
+        out = push[out, [x, w]]
+        x = x + w
+    out
+
+fn _nav_probe[id, corner]
+    gui.drawn['', corner, 0.0, 0.0, _nav_probed, words = id]
+
+--- a probe at a corner of the open panel: the first keeps where it
+--- starts, the second its box and the pointer coming into it (the menu
+--- stays) and leaving it (the menu begins to close)
+fn _nav_probed[d]
+    s = d.s
+    v = _nav[]
+    if d.num lt 0.5
+        v.panel = [d.x / s, d.y / s, 0.0, 0.0]
+        remember['lory.menus.nav', v]
+        return d
+    clock = lory.time[d.c]
+    if not clock.ok
+        return d
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    box = [v.panel[0], v.panel[1], (d.x + d.w) / s - v.panel[0], d.y / s - v.panel[1]]
+    v.panel = box
+    for e in evs
+        if e.on eq 'move' and e.device eq 'mouse'
+            inside = _inside[e.x / s, e.y / s, box]
+            if inside and not v.in_panel
+                v.closing_at = -1.0
+            if not inside and v.in_panel
+                v.closing_at = clock
+            v.in_panel = inside
+    remember['lory.menus.nav', v]
+    d
+
+--- the navigation menu's item `slot` opened, from the side of the one
+--- open before (an open one stays, its closing let go)
+fn _nav_open[v, id, slot, item, clock]
+    if v.open eq id and v.at eq slot and v.value ne ''
+        v.closing_at = -1.0
+        return v
+    v.last = -1
+    if v.open eq id and v.value ne ''
+        v.last = v.at
+    v.from = 'end'
+    if v.last gte 0 and slot lt v.last
+        v.from = 'start'
+    v.open = id
+    v.value = item
+    v.at = slot
+    v.since = clock
+    v.delayed = false
+    v.closing_at = -1.0
+    v.waiting = -1
+    v.in_panel = false
+    v
+
+fn _nav_shut[v, clock]
+    v.value = ''
+    v.at = -1
+    v.closed_at = clock
+    v.closing_at = -1.0
+    v.waiting = -1
+    v.in_panel = false
+    v
+
+--- a navigation menu's bar: drawn; the pointer resting on, leaving,
+--- pressing its items, the keys along it, Escape and a press outside,
+--- answered; the times of its waits kept
+fn _nav_bar[d]
+    v = _nav[]
+    c = d.c
+    s = d.s
+    clock = lory.time[c]
+    if not clock.ok
+        return d
+    evs = lory.events[c]
+    if not evs.ok
+        return d
+    titles = split[d.words, '\n']
+    slots = _kept_slots[d.id]
+    n = len[slots]
+    box = [d.x / s, d.y / s, d.w / s, d.h / s]
+    told = _no_told[]
+    was_value = ''
+    was_at = -1
+    if v.open eq d.id
+        was_value = v.value
+        was_at = v.at
+    if v.open ne d.id
+        if v.open ne '' and v.value ne ''
+            --- (another menu's: this one takes no part until it closes)
+            return _nav_drawn_into[d, v, titles, slots]
+        v.open = d.id
+    v = _nav_skipped[v, clock]
+    for e in evs
+        x = e.x / s
+        y = e.y / s
+        slot = -1
+        if _inside[x, y, box]
+            slot = _slot_at[slots, x - box[0]]
+        if e.on eq 'move' or e.on eq 'leave'
+            if e.on eq 'leave'
+                slot = -1
+            if slot ne v.hovered
+                if v.hovered gte 0 and e.device eq 'mouse'
+                    v.waiting = -1
+                    v.closing_at = clock
+                    v.entered = false
+                if slot gte 0
+                    if v.click_closed eq slot
+                        v.click_closed = -1
+                    if v.escape_closed eq slot
+                        v.escape_closed = -1
+                v.hovered = slot
+            if e.on eq 'move' and e.device eq 'mouse' and slot gte 0 and starts[titles[slot], '+']
+                if not (v.click_closed eq slot or v.escape_closed eq slot or v.entered)
+                    v = _nav_entered[v, d.id, slot, titles, clock]
+                    v.entered = true
+        if e.on eq 'down'
+            v.down_slot = -1
+            if slot gte 0 and e.button eq 0
+                v.down_slot = slot
+            else
+                if v.value ne '' and not _inside[x, y, v.panel]
+                    v = _nav_shut[v, clock]
+        if e.on eq 'up'
+            if slot gte 0 and slot eq v.down_slot
+                v = _nav_pressed[v, d.id, slot, titles, clock]
+                if not starts[titles[slot], '+']
+                    told = push[told, gui.Event[d.id, 'choose', _nav_word[titles[slot]], 0.0]]
+            v.down_slot = -1
+        if e.on eq 'key' and e.key eq 'Escape' and v.value ne ''
+            v.escape_closed = v.at
+            v = _nav_shut[v, clock]
+        if e.on eq 'key' and d.focused and n gt 0
+            mods = e.ctrl or e.alt or e.meta or e.shift
+            if e.key eq 'ArrowRight' and not mods
+                v.place = min[v.place + 1, n - 1]
+            if e.key eq 'ArrowLeft' and not mods
+                v.place = max[v.place - 1, 0]
+            if e.key eq 'Home' and not mods
+                v.place = 0
+            if e.key eq 'End' and not mods
+                v.place = n - 1
+            if e.key eq 'Enter' or e.key eq ' '
+                place = min[v.place, n - 1]
+                v = _nav_pressed[v, d.id, place, titles, clock]
+                if not starts[titles[place], '+']
+                    told = push[told, gui.Event[d.id, 'choose', _nav_word[titles[place]], 0.0]]
+    --- (the waits: an item rested on opens, a menu left closes, and a
+    --- while after closing, an item again waits its rest)
+    if v.waiting gte 0 and clock - v.waiting_at gte nav_delay[]
+        v = _nav_open[v, d.id, v.waiting, _nav_word[titles[v.waiting]], clock]
+    if v.closing_at gte 0.0 and clock - v.closing_at gte nav_close_delay[] and not v.in_panel
+        if v.value ne ''
+            v = _nav_shut[v, clock]
+        v.closing_at = -1.0
+    v = _nav_skipped[v, clock]
+    if v.value ne was_value
+        if was_value ne ''
+            told = push[told, gui.Event[d.id, 'dismiss', was_value, 0.0]]
+        if v.value ne ''
+            told = push[told, gui.Event[d.id, 'open', v.value, 0.0]]
+    if v.value eq ''
+        v.open = ''
+    remember['lory.menus.nav', v]
+    for e in told
+        d.told = push[d.told, e]
+    d.c = _nav_drawn[d, v, titles, slots]
+    d
+
+--- a while after the menu closed, an item again waits its rest
+fn _nav_skipped[v, clock]
+    if v.value eq '' and not v.delayed and clock - v.closed_at gte nav_skip_delay[]
+        v.delayed = true
+    v
+
+--- an item's id and its words, from the bar's words for it (its mark,
+--- its id, a tab and its words)
+fn _nav_word[title]
+    split[slice[title, 1, len[title]], '\t'][0]
+
+fn _nav_shown[title]
+    parts = split[title, '\t']
+    parts[len[parts] - 1]
+
+--- the pointer has rested on item `slot`: it opens at once where one has
+--- just been open, else after its rest (an open one stays)
+fn _nav_entered[v, id, slot, titles, clock]
+    v.waiting = -1
+    item = _nav_word[titles[slot]]
+    if v.delayed
+        if v.value eq item
+            v.closing_at = -1.0
+        else
+            v.waiting = slot
+            v.waiting_at = clock
+        return v
+    _nav_open[v, id, slot, item, clock]
+
+--- item `slot` pressed: open, it closes (and stays closed under the
+--- pointer); closed, it opens; a link opens nothing
+fn _nav_pressed[v, id, slot, titles, clock]
+    if not starts[titles[slot], '+']
+        return v
+    item = _nav_word[titles[slot]]
+    if v.value eq item
+        v.click_closed = slot
+        return _nav_shut[v, clock]
+    v.click_closed = -1
+    _nav_open[v, id, slot, item, clock]
+
+fn _nav_drawn_into[d, v, titles, slots]
+    d.c = _nav_drawn[d, v, titles, slots]
+    d
+
+--- the bar: its ground, each item (the open one on the accent's tint and
+--- its mark turned up, one under the pointer on the hover's ground) and
+--- the ring of the one the keys are on while the bar has the focus
+fn _nav_drawn[d, v, titles, slots]
+    c = d.c
+    s = d.s
+    look = d.look
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * s, look.panel]
+    c = lory.round_outline[c, d.x, d.y, d.w, d.h, 8.0 * s, 1.0 * s, look.edge]
+    j = 0
+    while j lt len[slots]
+        sx = d.x + slots[j][0] * s
+        sw = slots[j][1] * s
+        sy = d.y + 4.0 * s
+        sh = d.h - 8.0 * s
+        open = v.open eq d.id and v.at eq j and v.value ne ''
+        over = d.hover and d.px gte slots[j][0] * s and d.px lt (slots[j][0] + slots[j][1]) * s
+        if open
+            c = lory.round_rect[c, sx, sy, sw, sh, 6.0 * s, lory.fade[look.accent, 0.25]]
+        else
+            if over
+                c = lory.round_rect[c, sx, sy, sw, sh, 6.0 * s, look.hover]
+        if d.focused and j eq v.place
+            c = lory.round_outline[c, sx, sy, sw, sh, 6.0 * s, 2.0 * s, lory.fade[look.focus, 0.8]]
+        words = _nav_shown[titles[j]]
+        tx = sx + 14.0 * s
+        c = lory.text[c, tx, d.y + (d.h - lory.line_height[c, 14.0 * s]) / 2.0, words, 14.0 * s, look.ink]
+        if starts[titles[j], '+']
+            ix = tx + lory.measure[c, words, 14.0 * s] + 4.0 * s
+            iy = d.y + (d.h - 15.0 * s) / 2.0
+            turn = 0.0
+            if open
+                turn = 180.0
+            c = icons.turned[c, 'chevron-down', ix, iy, 15.0 * s, look.muted, turn]
+        j = j + 1
+    if _over_any[d, slots]
+        c = lory.cursor[c, 'pointer']
+    c
+
+--- ---- a floating action button and its speed dial (Vuetify's VFab
+--- and VSpeedDial) ----
+
+--- one of a speed dial's actions: its id (told when it is chosen), its
+--- words (shown as its tip) and its icon's name
+struct Action [id, words, icon]
+
+fn dial_action[id, words, icon]
+    Action[id, words, icon]
+
+--- the speed dial open (its id, '' for none) and since when, and when
+--- each button was first drawn (for its entrance)
+struct Dial [open, since, seen]
+
+fn _dial[]
+    recall['lory.menus.dial', Dial['', 0.0, map['' = 0.0]]]
+
+--- the numbers held to Vuetify's: a button's entrance and a dial's
+--- actions growing in (ms, on its standard curve, cubic-bezier(0.4, 0,
+--- 0.2, 1)), each action after the one before it, the room between them,
+--- and a button's size
+fn fab_time[]
+    300.0
+
+fn dial_stagger[]
+    50.0
+
+fn dial_gap[]
+    8.0
+
+fn fab_size[]
+    56.0
+
+fn _standard[t, lasts]
+    if t gte lasts
+        return 1.0
+    motion.eased[motion.cubic_bezier[0.4, 0.0, 0.2, 1.0], max[t, 0.0] / lasts]
+
+--- how far a button's entrance has come: the first frame it is drawn
+--- starts it
+fn _entered[c, id]
+    dial = _dial[]
+    clock = lory.time[c]
+    if not (id in dial.seen)
+        dial.seen[id] = clock
+        remember['lory.menus.dial', dial]
+    _standard[clock - dial.seen[id], fab_time[]]
+
+--- a floating action button at a `place` of the page (gui's places), its
+--- icon on the accent (with `words`, a wider one with its words after
+--- the icon), growing in as it first shows: a press, Enter or space on it
+--- tells `press` (its id)
+fn fab[c, id, icon = 'plus', words = '', place = 'bottom_right']
+    k = _entered[c, id]
+    n = gui.scaled[_fab_node[c, id, icon, words, 0.0], k]
+    gui.layer['`id`:spot', [n], place = place, bare = true, pad = 8.0, dismiss = false]
+
+fn _fab_node[c, id, icon, words, open]
+    if words eq ''
+        return gui.drawn[id, open, fab_size[], fab_size[], _fab_drawn, words = icon]
+    wide = lory.measure[c, words, 15.0] + 64.0
+    gui.drawn[id, open, wide, 48.0, _fab_drawn, words = '`icon`\n`words`']
+
+--- a button: pressed (or Enter or space with the focus), it tells
+--- `press`; drawn round on the accent, its icon turned 45° while its dial
+--- is open
+fn _fab_drawn[d]
+    pressed = d.pressed
+    for k in d.keys
+        if k eq 'Enter' or k eq ' '
+            pressed = true
+    if pressed
+        d = gui.tell[d, 'press', '', 0.0]
+    d.c = _fab_painted[d, 0.0]
+    d
+
+fn _fab_painted[d, turn]
+    c = d.c
+    s = d.s
+    look = d.look
+    parts = split[d.words, '\n']
+    fill = look.accent
+    if d.hover
+        fill = lory.mix[look.accent, lory.white[], 0.12]
+    if d.down
+        fill = lory.mix[look.accent, lory.black[], 0.15]
+    r = min[d.w, d.h] / 2.0
+    c = lory.round_rect[c, d.x - 1.0 * s, d.y + 2.0 * s, d.w + 2.0 * s, d.h + 2.0 * s, r + 1.0 * s, lory.fade[look.shadow, look.shadow.a * 0.5]]
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, fill]
+    size = 24.0 * s
+    if len[parts] gt 1
+        c = icons.turned[c, parts[0], d.x + 16.0 * s, d.y + (d.h - size) / 2.0, size, look.on_accent, turn]
+        return lory.text[c, d.x + 48.0 * s, d.y + (d.h - lory.line_height[c, 15.0 * s]) / 2.0, parts[1], 15.0 * s, look.on_accent]
+    icons.turned[c, parts[0], d.x + (d.w - size) / 2.0, d.y + (d.h - size) / 2.0, size, look.on_accent, turn]
+
+--- a floating action button that opens its `actions` above it (Vuetify's
+--- VSpeedDial: its location `top center`): a press on it, Enter or space
+--- opens and closes them, each growing in 50 ms after the one nearer the
+--- button; Escape and a press outside close them, and choosing one tells
+--- `choose` (the dial's id, the action's id) and closes them. Its
+--- events: `open` and `dismiss` (the dial's id) too. The arrows move
+--- between the actions, one stop of Tab after the button
+fn speed_dial[c, id, actions, icon = 'plus', place = 'bottom_right']
+    dial = _dial[]
+    open = dial.open eq id
+    k = _entered[c, id]
+    button = gui.scaled[gui.drawn[id, _one[open], fab_size[], fab_size[], _dial_fab, words = icon], k]
+    if not open
+        return gui.layer['`id`:spot', [button], place = place, bare = true, pad = 8.0, dismiss = false]
+    clock = lory.time[c]
+    shown = slice[[gui.space[0.0]], 0, 0]
+    i = len[actions] - 1
+    while i gte 0
+        a = actions[i]
+        grown = _standard[clock - dial.since - dial_stagger[] * i, fab_time[]]
+        n = gui.drawn['`id`:`a.id`', 0.0, 40.0, 40.0, _dial_action, words = '`a.icon`\n`id`\n`a.id`']
+        shown = push[shown, gui.tip[gui.scaled[gui.faded[n, grown], grown], a.words, delay = 300.0]]
+        i = i - 1
+    list = gui.roving['`id`:actions', shown, along = 'column', loop = false, gap = dial_gap[]]
+    over = gui.layer['`id`:dial', [list], at = id, side = 'top', align = 'center', gap = dial_gap[], bare = true, pad = 0.0, dismiss = false]
+    gui.layer['`id`:spot', [gui.column[[button, over], gap = 0.0]], place = place, bare = true, pad = 8.0, dismiss = false]
+
+--- the dial `id` opened or closed at `clock`, and told
+fn _dial_set[d, id, open, clock, why]
+    dial = _dial[]
+    if open
+        dial.open = id
+        dial.since = clock
+        remember['lory.menus.dial', dial]
+        return gui.tell[d, 'open', '', 1.0]
+    if dial.open ne id
+        return d
+    dial.open = ''
+    remember['lory.menus.dial', dial]
+    d.told = push[d.told, gui.Event[id, 'dismiss', why, 0.0]]
+    d
+
+--- a speed dial's button: a press, Enter or space opens or closes its
+--- actions; Escape with the focus, and a press outside, close them
+fn _dial_fab[d]
+    clock = lory.time[d.c]
+    if not clock.ok
+        return d
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    s = d.s
+    open = d.num gt 0.5
+    box = [d.x / s, d.y / s, d.w / s, d.h / s]
+    pressed = d.pressed
+    escaped = false
+    for k in d.keys
+        if k eq 'Enter' or k eq ' '
+            pressed = true
+        if k eq 'Escape'
+            escaped = true
+    outside = false
+    for e in evs
+        if e.on eq 'down' and not _inside[e.x / s, e.y / s, box]
+            outside = true
+    if open and (escaped or outside)
+        why = 'outside'
+        if escaped
+            why = 'escape'
+        d = _dial_set[d, d.id, false, clock, why]
+    else
+        if pressed
+            d = _dial_set[d, d.id, not open, clock, 'toggle']
+    d.c = _fab_painted[d, 45.0 * _one[open]]
+    d
+
+--- one of a speed dial's actions: a press, Enter or space chooses it and
+--- closes the dial; Escape closes it; drawn as a small round button
+fn _dial_action[d]
+    clock = lory.time[d.c]
+    if not clock.ok
+        return d
+    parts = split[d.words, '\n']
+    pressed = d.pressed
+    escaped = false
+    for k in d.keys
+        if k eq 'Enter' or k eq ' '
+            pressed = true
+        if k eq 'Escape'
+            escaped = true
+    if pressed
+        d.told = push[d.told, gui.Event[parts[1], 'choose', parts[2], 0.0]]
+        d = _dial_set[d, parts[1], false, clock, 'chosen']
+    else
+        if escaped
+            d = _dial_set[d, parts[1], false, clock, 'escape']
+    c = d.c
+    s = d.s
+    look = d.look
+    fill = look.panel
+    if d.hover
+        fill = look.hover
+    r = d.w / 2.0
+    c = lory.round_rect[c, d.x - 1.0 * s, d.y + 2.0 * s, d.w + 2.0 * s, d.h + 2.0 * s, r + 1.0 * s, lory.fade[look.shadow, look.shadow.a * 0.4]]
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, fill]
+    c = lory.round_outline[c, d.x, d.y, d.w, d.h, r, 1.0 * s, look.edge]
+    d.c = icons.draw[c, parts[0], d.x + 10.0 * s, d.y + 10.0 * s, 20.0 * s, look.ink]
+    d
+
+--- ---- tests: frames as a page hands them ----
+
+--- a frame at `t` ms, 900 by 700 (a headset's where `xr`), with the input
+--- given (a JSON list)
+fn _frame_at[t, given]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+--- a pointer's event (`on`: down, up or move) of a device and a button
+fn _event_at[on, x, y, button, device]
+    '{"type": "`on`", "device": "`device`", "id": 1, "x": `x`, "y": `y`, "button": `button`}'
+
+fn _press[x, y]
+    down = _event_at['down', x, y, 0, 'mouse']
+    up = _event_at['up', x, y, 0, 'mouse']
+    '[`down`, `up`]'
+
+fn _move[x, y]
+    one = _event_at['move', x, y, 0, 'mouse']
+    '[`one`]'
+
+fn _typed_key[name]
+    '[{"type": "key", "key": "`name`", "code": "`name`", "shift": false}]'
+
+fn _typed_with[name, held]
+    '[{"type": "key", "key": "`name`", "code": "`name`", "`held`": true}]'
+
+--- a press of a button (0 the left, 2 the right) of a device, down and up
+fn _pressed_with[x, y, button, device]
+    down = _event_at['down', x, y, button, device]
+    up = _event_at['up', x, y, button, device]
+    '[`down`, `up`]'
+
+--- one pointer's event
+fn _one_event[on, x, y, button, device]
+    one = _event_at[on, x, y, button, device]
+    '[`one`]'
+
+--- a headset's frame at `t` ms: the page on its panel, the input given
+--- as a page's (the rays' presses arrive as a pointer's)
+fn _headset_at[t, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 900, "height": 700, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+--- the menus closed and the focus let go, as a test begins (a frame
+--- with nothing in it first: gui gives back the focus a closed menu's
+--- layer took, then lets it go)
+fn _begun[]
+    _blank[]
+    gui.unfocus[]
+    ''
+
+fn _blank[]
+    c = _frame_at[0.0, '[]']
+    gui.show[c, gui.column[[gui.space[10.0]]]]
+    _reset[]
+
+fn _reset[]
+    close_menus[]
+    gui.unfocus[]
+    v = _nav[]
+    v.open = ''
+    v.value = ''
+    v.at = -1
+    v.delayed = true
+    v.waiting = -1
+    v.closing_at = -1.0
+    v.hovered = -1
+    v.entered = false
+    remember['lory.menus.nav', v]
+    dial = _dial[]
+    dial.open = ''
+    remember['lory.menus.dial', dial]
+    ''
+
+--- the events of a frame, in words (`id/act/words/num`, a space between)
+fn _told_words[shown]
+    out = slice[[''], 0, 0]
+    for e in shown.events
+        n = int[e.num]
+        out = push[out, '`e.id`/`e.act`/`e.words`/`n`']
+    join[out, ' ']
+
+--- a file menu: items (one with a shortcut, one set aside), a rule, a
+--- checkbox, a submenu and radio items under a label
+fn _file_entries[]
+    share = [item['mail', 'Mail'], item['copy', 'Copy link'], submenu['more', 'More', [item['print', 'Print']]]]
+    [item['new', 'New file', shortcut = 'Ctrl+N'], item['open', 'Open'], separator[], check['wrap', 'Wrap lines', true], submenu['share', 'Share', share], item['quit', 'Quit', off = true], separator[], label['Zoom'], option['zoom', 'small', 'Small', false], option['zoom', 'large', 'Large', true]]
+
+--- a page of a file menu's button and a button after it
+fn _file_page[t, given]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[dropdown[c, 'file', 'File', _file_entries[]], gui.button['after', 'After']]]]
+
+--- a press on the menu's button opens it below the button, centred on it
+--- and 5 CSS pixels away (Radix's DropdownMenu: side `bottom`, align
+--- `center`; its demos' sideOffset 5), shifted to stay 8 from the page's
+--- edge (Floating UI's shift, as gui places a layer), with no row
+--- highlighted; its opening is told as it is first drawn, and a press
+--- outside closes it
+test a_press_opens_a_dropdown_below_its_button_and_a_press_outside_closes_it[]
+    _begun[]
+    b = _file_page[0.0, _press[899.0, 699.0]].boxes['file']
+    pressed = _file_page[16.0, _press[b[0] + 10.0, b[1] + 10.0]]
+    len[pressed.events] eq 0
+    opened = _file_page[32.0, '[]']
+    _told_words[opened] eq 'file/open//1'
+    m = opened.boxes['file:level:0']
+    m[1] eq b[1] + b[3] + 5.0
+    m[0] eq max[8.0, b[0] + b[2] / 2.0 - m[2] / 2.0]
+    --- (the rows: 4 of edge, 30 each, 9 a rule, 26 a label; 180 at least)
+    m[3] eq 4.0 + 30.0 * 7.0 + 9.0 * 2.0 + 26.0 + 4.0
+    m[2] gte 180.0
+    _said[] eq 'open=file path= hot=[-1] level=0 focus=file:rows:0'
+    closed = _file_page[48.0, _press[600.0, 600.0]]
+    _told_words[closed] eq 'file/dismiss/outside/0'
+    gone = _file_page[64.0, '[]']
+    not ('file:level:0' in gone.boxes)
+
+--- Enter on the button opens the menu on its first row (Radix's
+--- DropdownMenu: Enter, space and the down arrow open it so); the down
+--- and up arrows pass over rules, labels and a row set aside and stop at
+--- the ends (`loop` is false, as Radix's is), Home and End go to the
+--- ends, and Enter chooses: the item is told and the menu closes, the
+--- focus given back to the button
+test keys_open_a_dropdown_on_its_first_row_and_move_and_choose[]
+    _begun[]
+    b = _file_page[0.0, _press[899.0, 699.0]].boxes['file']
+    _file_page[16.0, _press[b[0] + 10.0, b[1] + 10.0]]
+    _file_page[32.0, '[]']
+    _file_page[48.0, _typed_key['Escape']]
+    _file_page[64.0, '[]']
+    _said[] eq 'open= path= hot=[-1] level=0 focus=file'
+    _file_page[80.0, _typed_key['Enter']]
+    _file_page[96.0, '[]']
+    _said[] eq 'open=file path= hot=[0] level=0 focus=file:rows:0'
+    _file_page[112.0, _typed_key['ArrowDown']]
+    _file_page[128.0, _typed_key['ArrowDown']]
+    --- (past the rule to the checkbox, then the submenu's row)
+    _said[] eq 'open=file path= hot=[3] level=0 focus=file:rows:0'
+    _file_page[144.0, _typed_key['ArrowDown']]
+    _file_page[160.0, _typed_key['ArrowDown']]
+    --- (past the row set aside, the rule and the label, to the radio items)
+    _said[] eq 'open=file path= hot=[8] level=0 focus=file:rows:0'
+    _file_page[176.0, _typed_key['End']]
+    _file_page[192.0, _typed_key['ArrowDown']]
+    _said[] eq 'open=file path= hot=[9] level=0 focus=file:rows:0'
+    _file_page[208.0, _typed_key['Home']]
+    _file_page[224.0, _typed_key['ArrowUp']]
+    _said[] eq 'open=file path= hot=[0] level=0 focus=file:rows:0'
+    _file_page[240.0, _typed_key['ArrowDown']]
+    chosen = _file_page[256.0, _typed_key['Enter']]
+    _told_words[chosen] eq 'file/choose/open/0 file/dismiss/chosen/0'
+    _file_page[272.0, '[]']
+    _said[] eq 'open= path= hot=[-1] level=0 focus=file'
+
+--- a checkbox is told the state it is toggled to (a ticked one 0, one
+--- not ticked or mixed 1) and a radio item its group, its value and its
+--- place in the group, each closing the menu (Radix's onCheckedChange
+--- and onValueChange)
+test a_checkbox_and_a_radio_item_tell_what_they_become[]
+    _begun[]
+    b = _file_page[0.0, _press[899.0, 699.0]].boxes['file']
+    _file_page[16.0, _typed_key['Tab']]
+    _file_page[32.0, _typed_key['ArrowDown']]
+    _file_page[48.0, _typed_key['ArrowDown']]
+    _file_page[64.0, _typed_key['ArrowDown']]
+    ticked = _file_page[80.0, _typed_key['Enter']]
+    _told_words[ticked] eq 'wrap/toggle/Wrap lines/0 file/dismiss/chosen/0'
+    _file_page[96.0, '[]']
+    _file_page[112.0, _typed_key['ArrowDown']]
+    _file_page[128.0, '[]']
+    _file_page[144.0, _typed_key['End']]
+    _file_page[160.0, _typed_key['ArrowUp']]
+    small = _file_page[176.0, _typed_key[' ']]
+    _told_words[small] eq 'zoom/choose/small/0 file/dismiss/chosen/0'
+    mixed = check['all', 'All', false, mixed = true]
+    mixed.num eq 0.5
+    check['all', 'All', true].num eq 1.0
+
+--- typing ahead (Radix's typeahead): a letter goes to the next row that
+--- starts with it after the one highlighted, round past the end, and the
+--- same letter again to the next; letters typed within a second make one
+--- search ('co' after 'c'), and one typed a second or more after the last
+--- begins a new one (tests/menus/reference.co holds `next_match` to
+--- Radix's own)
+test typing_ahead_finds_rows_by_their_first_letters[]
+    _begun[]
+    b = _file_page[0.0, _press[899.0, 699.0]].boxes['file']
+    _file_page[16.0, _typed_key['Tab']]
+    _file_page[32.0, _typed_key['Enter']]
+    _file_page[48.0, '[]']
+    _file_page[64.0, _typed_key['o']]
+    _said[] eq 'open=file path= hot=[1] level=0 focus=file:rows:0'
+    _file_page[80.0, _typed_key['s']]
+    --- ('os' finds nothing: the highlight stays)
+    _said[] eq 'open=file path= hot=[1] level=0 focus=file:rows:0'
+    _file_page[1200.0, _typed_key['s']]
+    _said[] eq 'open=file path= hot=[4] level=0 focus=file:rows:0'
+    _file_page[1300.0, _typed_key['s']]
+    --- (the same letter again: the next row starting with it)
+    _said[] eq 'open=file path= hot=[8] level=0 focus=file:rows:0'
+    _file_page[1400.0, _typed_key['s']]
+    _said[] eq 'open=file path= hot=[4] level=0 focus=file:rows:0'
+    _file_page[2600.0, _typed_key['w']]
+    _said[] eq 'open=file path= hot=[3] level=0 focus=file:rows:0'
+    next_match[['Apple', 'Banana', 'Cherry'], 'b', ''] eq 'Banana'
+    next_match[['Apple', 'Banana', 'Blueberry'], 'bb', 'Banana'] eq 'Blueberry'
+    next_match[['Apple', 'Banana'], 'a', 'Apple'] eq ''
+
+--- the pointer resting on a submenu's row 100 ms opens it beside the row
+--- (Radix: 100 ms; side `right`, align `start`; the demos' sideOffset 2,
+--- its rows level with the row's), its rows not highlighted; the right
+--- arrow opens one on its first row and the left arrow closes it, the
+--- keys back on its row
+test a_submenu_opens_after_the_pointer_rests_and_keys_open_and_close_it[]
+    _begun[]
+    b = _file_page[0.0, _press[899.0, 699.0]].boxes['file']
+    _file_page[16.0, _press[b[0] + 10.0, b[1] + 10.0]]
+    m = _file_page[32.0, '[]'].boxes['file:level:0']
+    share_y = m[1] + 4.0 + 30.0 * 3.0 + 9.0 + 15.0
+    _file_page[300.0, _move[m[0] + 40.0, share_y]]
+    _file_page[390.0, _move[m[0] + 41.0, share_y]]
+    _said[] eq 'open=file path= hot=[4] level=0 focus=file:rows:0'
+    _file_page[400.0, '[]']
+    _said[] eq 'open=file path=share hot=[4, -1] level=0 focus=file:rows:0'
+    opened = _file_page[416.0, '[]']
+    beside = opened.boxes['file:level:1']
+    beside[0] eq m[0] + m[2] + 2.0
+    beside[1] eq m[1] + 4.0 + 30.0 * 3.0 + 9.0 - 4.0
+    --- (opened by the pointer, the keys stay on its row: the right arrow
+    --- takes them in, on its first row, and the left arrow closes it)
+    _file_page[432.0, _typed_key['ArrowRight']]
+    _said[] eq 'open=file path=share hot=[4, 0] level=1 focus=file:rows:1'
+    _file_page[448.0, _typed_key['ArrowLeft']]
+    _said[] eq 'open=file path= hot=[4] level=0 focus=file:rows:1'
+    _file_page[464.0, '[]']
+    _said[] eq 'open=file path= hot=[4] level=0 focus=file:rows:0'
+    _file_page[480.0, _typed_key['ArrowRight']]
+    _said[] eq 'open=file path=share hot=[4, 0] level=1 focus=file:rows:0'
+    _file_page[496.0, _typed_key['ArrowDown']]
+    _file_page[512.0, _typed_key['ArrowDown']]
+    _file_page[528.0, _typed_key['Enter']]
+    _said[] eq 'open=file path=share>more hot=[4, 2, 0] level=2 focus=file:rows:1'
+    _file_page[544.0, '[]']
+    escaped = _file_page[560.0, _typed_key['Escape']]
+    --- (Escape closes every level)
+    _told_words[escaped] eq 'file/dismiss/escape/0'
+
+--- on the way to an open submenu across other rows, the pointer keeps it
+--- open while it moves toward it inside the area from where it left the
+--- submenu's row to the submenu's near corners (5 pixels behind the
+--- point: Radix's grace), for 300 ms; after that, a row it moves over
+--- takes the highlight and the submenu closes
+test the_pointer_on_its_way_to_a_submenu_keeps_it_open_for_300_ms[]
+    _begun[]
+    b = _file_page[0.0, _press[899.0, 699.0]].boxes['file']
+    _file_page[16.0, _press[b[0] + 10.0, b[1] + 10.0]]
+    m = _file_page[32.0, '[]'].boxes['file:level:0']
+    share_y = m[1] + 4.0 + 30.0 * 3.0 + 9.0 + 15.0
+    _file_page[300.0, _move[m[0] + 100.0, share_y]]
+    _file_page[316.0, _move[m[0] + 110.0, share_y]]
+    _file_page[420.0, '[]']
+    _file_page[436.0, '[]']
+    --- (down and right, across the row set aside: the submenu stays)
+    _file_page[452.0, _move[m[0] + 150.0, share_y + 22.0]]
+    _said[] eq 'open=file path=share hot=[4, -1] level=0 focus=file:rows:1'
+    _file_page[470.0, _move[m[0] + 170.0, share_y + 30.0]]
+    _said[] eq 'open=file path=share hot=[4, -1] level=0 focus=file:rows:1'
+    --- (still there 300 ms after the pointer left the row: it moves on)
+    _file_page[800.0, _move[m[0] + 171.0, share_y + 31.0]]
+    _said[] eq 'open=file path= hot=[-1] level=0 focus=file:rows:1'
+    --- (moving away from it at once is no way to it)
+    _file_page[816.0, _move[m[0] + 100.0, share_y]]
+    _file_page[1000.0, '[]']
+    _file_page[1016.0, '[]']
+    _said[] eq 'open=file path=share hot=[4, -1] level=0 focus=file:rows:1'
+    _file_page[1032.0, _move[m[0] + 90.0, share_y + 40.0]]
+    _said[] eq 'open=file path= hot=[-1] level=0 focus=file:rows:1'
+
+
+--- a page whose area (600 CSS pixels high) has a context menu, a button
+--- after it
+fn _canvas_entries[]
+    [item['back', 'Back'], item['reload', 'Reload', shortcut = 'Ctrl+R'], separator[], submenu['more', 'More tools', [item['save', 'Save page']]], check['bookmarks', 'Show bookmarks', false]]
+
+fn _canvas_page[t, given]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[context[c, 'canvas', [gui.space[600.0]], _canvas_entries[]], gui.button['after', 'After']]]]
+
+--- the right button pressed on the area opens its menu by the pointer,
+--- 2 CSS pixels to its right, its top at the pointer (Radix's
+--- ContextMenu: side `right`, align `start`, sideOffset 2); where the
+--- page has no room on the right it opens on the left, and it is moved
+--- up to stay 8 from the page's foot; the left button with Control opens
+--- it too
+test a_right_press_opens_a_context_menu_by_the_pointer_and_it_flips_at_the_edge[]
+    _begun[]
+    _canvas_page[0.0, '[]']
+    area_box['canvas'] eq [24.0, 24.0, 852.0, 600.0]
+    _canvas_page[16.0, _pressed_with[300.0, 100.0, 2, 'mouse']]
+    first = _canvas_page[32.0, '[]']
+    _told_words[first] eq 'canvas/open//1'
+    m = first.boxes['canvas:level:0']
+    m[0] eq 302.0
+    m[1] eq 100.0
+    _canvas_page[48.0, _typed_key['ArrowDown']]
+    _said[] eq 'open=canvas path= hot=[0] level=0 focus=canvas:rows:0'
+    _told_words[_canvas_page[64.0, _typed_key['Escape']]] eq 'canvas/dismiss/escape/0'
+    _canvas_page[80.0, '[]']
+    _canvas_page[96.0, _one_event['down', 870.0, 600.0, 2, 'mouse']]
+    flipped = _canvas_page[112.0, '[]'].boxes['canvas:level:0']
+    flipped[0] eq 870.0 - 2.0 - m[2]
+    flipped[1] eq 700.0 - 8.0 - m[3]
+    _told_words[_canvas_page[128.0, _pressed_with[5.0, 690.0, 0, 'mouse']]] eq 'canvas/dismiss/outside/0'
+    --- (the left button alone opens nothing; with Control, the menu)
+    _canvas_page[144.0, _pressed_with[200.0, 50.0, 0, 'mouse']]
+    not opened['canvas']
+    _canvas_page[160.0, '[{"type": "down", "device": "mouse", "id": 1, "x": 200, "y": 50, "button": 0, "ctrl": true}]']
+    _canvas_page[176.0, '[]'].boxes['canvas:level:0'][0] eq 202.0
+
+--- a touch held still on the area for 700 ms opens its menu where it is
+--- held (Radix's long press); a touch that moves first does not
+test a_touch_held_700_ms_opens_a_context_menu_and_one_that_moves_does_not[]
+    _begun[]
+    _canvas_page[0.0, '[]']
+    _canvas_page[200.0, _one_event['down', 100.0, 150.0, 0, 'touch']]
+    _canvas_page[899.0, '[]']
+    not opened['canvas']
+    _canvas_page[900.0, '[]']
+    opened['canvas']
+    held = _canvas_page[916.0, '[]']
+    _told_words[held] eq 'canvas/open//1'
+    held.boxes['canvas:level:0'][0] eq 102.0
+    held.boxes['canvas:level:0'][1] eq 150.0
+    _canvas_page[932.0, _one_event['up', 100.0, 150.0, 0, 'touch']]
+    _told_words[_canvas_page[948.0, _pressed_with[5.0, 690.0, 0, 'mouse']]] eq 'canvas/dismiss/outside/0'
+    _canvas_page[1000.0, _one_event['down', 100.0, 150.0, 0, 'touch']]
+    _canvas_page[1200.0, _one_event['move', 104.0, 150.0, 0, 'touch']]
+    _canvas_page[1800.0, '[]']
+    not opened['canvas']
+
+--- a menubar of three menus, a button after it
+fn _pulls[]
+    file = [item['new', 'New'], item['open', 'Open'], separator[], item['quit', 'Quit']]
+    edit = [item['undo', 'Undo'], item['redo', 'Redo'], submenu['find', 'Find', [item['search', 'Search'], item['replace', 'Replace']]]]
+    seen = [check['ruler', 'Ruler', true], item['full', 'Full screen']]
+    [bar_menu['file', 'File', file], bar_menu['edit', 'Edit', edit], bar_menu['view', 'View', seen]]
+
+fn _bar_page[t, given]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[menubar[c, 'bar', _pulls[]], gui.button['after', 'After']]]]
+
+--- a press on a title opens its menu under it with no row highlighted;
+--- the pointer onto another title opens that one in its place; in an
+--- open menu the arrows along the bar open the next menu and the one
+--- before (round past the ends), each with no row highlighted (Radix's
+--- Menubar highlights a first row only where its title's keys opened
+--- it); Escape closes it and gives the bar the focus, where the arrows
+--- move between the titles and Enter opens one on its first row; Tab
+--- closes it. Each menu tells its opening once it is drawn, and its
+--- closing before the next opens
+test a_menubar_opens_its_menus_on_a_press_and_moves_with_the_pointer_and_the_arrows[]
+    _begun[]
+    bar = _bar_page[0.0, '[]'].boxes['bar']
+    bar[0] eq 24.0 and bar[3] eq 38.0
+    _bar_page[16.0, _press[38.0, 43.0]]
+    first = _bar_page[32.0, '[]']
+    _told_words[first] eq 'file/open//1'
+    first.boxes['bar:level:0'][0] eq 28.0
+    first.boxes['bar:level:0'][1] eq 24.0 + 38.0 + 4.0
+    _said[] eq 'open=bar path= hot=[-1] level=0 focus=bar:rows:0'
+    --- (File's title is 4 CSS pixels in, its words and 24 wide: Edit's
+    --- begins after it)
+    edit_x = 24.0 + 4.0 + lory.measure[first.canvas, 'File', 14.0] + 24.0
+    _told_words[_bar_page[48.0, _move[edit_x + 10.0, 43.0]]] eq 'file/dismiss/switch/0'
+    moved = _bar_page[64.0, '[]']
+    _told_words[moved] eq 'edit/open//1'
+    abs[moved.boxes['bar:level:0'][0] - edit_x] lt 0.000001
+    _told_words[_bar_page[80.0, _typed_key['ArrowRight']]] eq 'edit/dismiss/switch/0'
+    _told_words[_bar_page[96.0, _typed_key['ArrowRight']]] eq 'view/open//1 view/dismiss/switch/0'
+    _told_words[_bar_page[112.0, _typed_key['ArrowLeft']]] eq 'file/open//1 file/dismiss/switch/0'
+    _said[] eq 'open=bar path= hot=[-1] level=0 focus=bar:rows:0'
+    _told_words[_bar_page[128.0, _typed_key['ArrowDown']]] eq 'view/open//1'
+    _said[] eq 'open=bar path= hot=[0] level=0 focus=bar:rows:0'
+    _told_words[_bar_page[144.0, _typed_key['Escape']]] eq 'view/dismiss/escape/0'
+    _bar_page[160.0, '[]']
+    _said[] eq 'open= path= hot=[-1] level=0 focus=bar'
+    --- (from View the right arrow goes round to File)
+    _bar_page[176.0, _typed_key['ArrowRight']]
+    _bar_page[192.0, _typed_key['Enter']]
+    _told_words[_bar_page[208.0, '[]']] eq 'file/open//1'
+    _said[] eq 'open=bar path= hot=[0] level=0 focus=bar:rows:0'
+    _told_words[_bar_page[224.0, _typed_key['Tab']]] eq 'file/dismiss/tab/0'
+    --- (a press on the open menu's title closes it)
+    _bar_page[240.0, _press[38.0, 43.0]]
+    _bar_page[256.0, '[]']
+    _told_words[_bar_page[272.0, _press[38.0, 43.0]]] eq 'file/dismiss/toggle/0'
+
+--- a navigation menu of two items with panels and a link
+fn _site_items[]
+    [nav_item['learn', 'Learn', [gui.button['start', 'Start'], gui.text['Docs']]], nav_item['overview', 'Overview', [gui.button['intro', 'Intro']]], nav_link['github', 'Github']]
+
+fn _site_page[t, given]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[navigation[c, 'site', _site_items[]], gui.button['after', 'After']]]]
+
+--- the pointer resting on an item 200 ms opens its panel under the bar,
+--- 6 CSS pixels away; once one is open, the pointer onto another opens
+--- that at once; leaving the bar and the panel closes it 150 ms later,
+--- and for 300 ms after that an item opens at once, then waits its rest
+--- again (Radix's NavigationMenu: delayDuration 200, skipDelayDuration
+--- 300, its close timer 150). A press closes an open item, which the
+--- pointer resting on does not open until it has left; Escape closes it;
+--- a link is chosen; the keys along the bar move and open
+test a_navigation_menu_opens_after_a_rest_and_at_once_while_one_is_open[]
+    _begun[]
+    _site_page[0.0, '[]']
+    _site_page[16.0, _move[48.0, 44.0]]
+    _site_page[150.0, _move[49.0, 44.0]]
+    _told_words[_site_page[215.0, '[]']] eq ''
+    _told_words[_site_page[216.0, '[]']] eq 'site/open/learn/0'
+    _site_page[232.0, '[]'].boxes['site:panel'][1] eq 24.0 + 40.0 + 6.0
+    _told_words[_site_page[248.0, _move[132.0, 44.0]]] eq 'site/dismiss/learn/0 site/open/overview/0'
+    _site_page[264.0, _move[600.0, 400.0]]
+    _told_words[_site_page[413.0, '[]']] eq ''
+    _told_words[_site_page[414.0, '[]']] eq 'site/dismiss/overview/0'
+    _told_words[_site_page[500.0, _move[48.0, 44.0]]] eq 'site/open/learn/0'
+    _site_page[516.0, '[]']
+    _told_words[_site_page[532.0, _press[48.0, 44.0]]] eq 'site/dismiss/learn/0'
+    _told_words[_site_page[548.0, _move[50.0, 44.0]]] eq ''
+    _site_page[564.0, _move[600.0, 400.0]]
+    _told_words[_site_page[580.0, _move[48.0, 44.0]]] eq 'site/open/learn/0'
+    _told_words[_site_page[600.0, _typed_key['Escape']]] eq 'site/dismiss/learn/0'
+    _told_words[_site_page[616.0, _press[240.0, 44.0]]] eq 'site/choose/github/0'
+    _site_page[1000.0, _move[132.0, 44.0]]
+    _told_words[_site_page[1199.0, '[]']] eq ''
+    _told_words[_site_page[1200.0, '[]']] eq 'site/open/overview/0'
+    --- (the pointer into the panel keeps it)
+    _site_page[1216.0, _move[132.0, 90.0]]
+    _told_words[_site_page[1400.0, '[]']] eq ''
+    _told_words[_site_page[1416.0, _press[132.0, 44.0]]] eq 'site/dismiss/overview/0'
+    _site_page[1432.0, _typed_key['ArrowRight']]
+    _told_words[_site_page[1448.0, _typed_key['Enter']]] eq 'site/open/overview/0'
+    _site_page[1464.0, '[]']
+    _told_words[_site_page[1480.0, _typed_key['Enter']]] eq 'site/dismiss/overview/0'
+
+--- cmdk's own demo's commands, in two groups
+fn _palette_commands[]
+    [command['calendar', 'Calendar', family = 'Suggestions'], command['emoji', 'Search Emoji', family = 'Suggestions'], command['calculator', 'Calculator', family = 'Suggestions'], command['profile', 'Profile', shortcut = 'Ctrl+P', family = 'Settings'], command['billing', 'Billing', shortcut = 'Ctrl+B', family = 'Settings'], command['settings', 'Settings', shortcut = 'Ctrl+S', family = 'Settings']]
+
+fn _palette_page[t, given, query]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[gui.button['before', 'Before'], palette[c, 'cmd', _palette_commands[], query]]]]
+
+fn _picked_now[]
+    _pal[].picked
+
+--- a palette takes the focus in its field; what is typed there finds the
+--- commands it matches, the first picked; the arrows move the pick (not
+--- past the ends: it does not `loop`), End and Home to the ends, Alt
+--- with an arrow to the next group's first, Control with N on; Enter
+--- chooses the one picked, the pointer over one picks it and a press
+--- chooses it; Escape tells the palette's `dismiss`
+test a_command_palette_finds_what_is_typed_and_its_keys_pick_and_choose[]
+    _begun[]
+    _palette_page[0.0, '[]', '']
+    typed = _palette_page[16.0, '[{"type": "text", "text": "ca"}]', '']
+    q = typed_query[typed, 'cmd', '']
+    q eq 'ca'
+    _palette_page[32.0, '[]', q]
+    _picked_now[] eq 'calendar'
+    len[_pal[].shown] eq 2
+    _palette_page[48.0, _typed_key['ArrowDown'], q]
+    _picked_now[] eq 'calculator'
+    _palette_page[64.0, _typed_key['ArrowDown'], q]
+    _picked_now[] eq 'calculator'
+    chosen = _palette_page[80.0, _typed_key['Enter'], q]
+    'cmd/choose/calculator/0' in split[_told_words[chosen], ' ']
+    _palette_page[96.0, '[]', '']
+    _picked_now[] eq 'calendar'
+    _palette_page[112.0, _typed_key['End'], '']
+    _picked_now[] eq 'settings'
+    --- (8 rows, two of them headings, and 7 shown: scrolled by one)
+    _pal[].top eq 1
+    _palette_page[128.0, _typed_key['ArrowUp'], '']
+    _picked_now[] eq 'billing'
+    _palette_page[144.0, _typed_with['ArrowUp', 'alt'], '']
+    _picked_now[] eq 'calendar'
+    _palette_page[160.0, '[{"type": "key", "key": "n", "code": "KeyN", "ctrl": true}]', '']
+    _picked_now[] eq 'emoji'
+    _pal[].top eq 0
+    list = _palette_page[176.0, '[]', ''].boxes['cmd:list']
+    --- (the heading's 28, two rows of 36: the third row, Calculator)
+    y = list[1] + 4.0 + 28.0 + 36.0 * 2.0 + 10.0
+    _palette_page[192.0, _move[list[0] + 100.0, y], '']
+    _picked_now[] eq 'calculator'
+    _told_words[_palette_page[208.0, _press[list[0] + 100.0, y], '']] eq 'cmd/choose/calculator/0'
+    _told_words[_palette_page[224.0, _typed_key['Escape'], '']] eq 'cmd/dismiss/escape/0'
+
+fn _dial_actions[]
+    [dial_action['edit', 'Edit', 'pencil-1'], dial_action['share', 'Share', 'share-1'], dial_action['delete', 'Delete', 'trash']]
+
+fn _dial_page[t, given]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[gui.button['before', 'Before'], speed_dial[c, 'dial', _dial_actions[]]]]]
+
+--- a speed dial's button stands 16 CSS pixels in from the page's corner
+--- (gui's margin and the layer's own 8), 56 square (Vuetify's VFab); a press opens its actions above it, 8
+--- apart, the first nearest it, each growing in 50 ms after the one
+--- before over 300 ms; choosing one tells it and closes the dial; a press
+--- outside and Escape close it
+test a_speed_dial_opens_its_actions_above_it_and_closes_as_one_is_chosen[]
+    _begun[]
+    b = _dial_page[0.0, '[]'].boxes['dial']
+    b eq [900.0 - 16.0 - 56.0, 700.0 - 16.0 - 56.0, 56.0, 56.0]
+    _told_words[_dial_page[316.0, _press[b[0] + 28.0, b[1] + 28.0]]] eq 'dial/open//1'
+    opened_dial = _dial_page[332.0, '[]']
+    edit = opened_dial.boxes['dial:edit']
+    share = opened_dial.boxes['dial:share']
+    edit eq [b[0] + 8.0, b[1] - 8.0 - 40.0, 40.0, 40.0]
+    share[1] eq edit[1] - 8.0 - 40.0
+    opened_dial.boxes['dial:delete'][1] eq share[1] - 48.0
+    --- (each action's growth: the first's begins as the dial opens, the
+    --- next's 50 ms later, on Vuetify's standard curve)
+    _standard[0.0, fab_time[]] eq 0.0
+    _standard[fab_time[], fab_time[]] eq 1.0
+    abs[_standard[150.0, 300.0] - motion.eased[motion.cubic_bezier[0.4, 0.0, 0.2, 1.0], 0.5]] lt 0.0000001
+    _told_words[_dial_page[716.0, _press[share[0] + 20.0, share[1] + 20.0]]] eq 'dial/choose/share/0 dial/dismiss/chosen/0'
+    _dial_page[732.0, '[]']
+    _dial_page[748.0, _press[b[0] + 28.0, b[1] + 28.0]]
+    _dial_page[764.0, '[]']
+    _told_words[_dial_page[780.0, _press[100.0, 400.0]]] eq 'dial/dismiss/outside/0'
+    _dial_page[796.0, _press[b[0] + 28.0, b[1] + 28.0]]
+    _dial_page[812.0, '[]']
+    _told_words[_dial_page[828.0, _typed_key['Escape']]] eq 'dial/dismiss/escape/0'
+
+--- in a headset the page is drawn on its panel and the rays' presses
+--- reach it as a pointer's: a dropdown opens, is drawn, and chooses as on
+--- a screen
+test in_a_headset_a_dropdown_opens_and_chooses_as_on_a_page[]
+    _begun[]
+    c = _headset_at[0.0, _press[899.0, 699.0]]
+    first = gui.show[c, gui.column[[dropdown[c, 'file', 'File', _file_entries[]], gui.button['after', 'After']]]]
+    b = first.boxes['file']
+    c = _headset_at[16.0, _press[b[0] + 10.0, b[1] + 10.0]]
+    gui.show[c, gui.column[[dropdown[c, 'file', 'File', _file_entries[]], gui.button['after', 'After']]]]
+    c = _headset_at[32.0, '[]']
+    shown = gui.show[c, gui.column[[dropdown[c, 'file', 'File', _file_entries[]], gui.button['after', 'After']]]]
+    _told_words[shown] eq 'file/open//1'
+    len[shown.canvas.verts] gt len[first.canvas.verts]
+    lory.end[shown.canvas] gt 0
+    m = shown.boxes['file:level:0']
+    c = _headset_at[48.0, _press[m[0] + 40.0, m[1] + 4.0 + 15.0]]
+    picked = gui.show[c, gui.column[[dropdown[c, 'file', 'File', _file_entries[]], gui.button['after', 'After']]]]
+    _told_words[picked] eq 'file/choose/new/0 file/dismiss/chosen/0'

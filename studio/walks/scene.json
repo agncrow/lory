@@ -1,0 +1,19 @@
+{"name": "the scene example, in a headset",
+ "note": "Lory's own scene (examples/scene), entered as a headset enters it: stood in, pointed at, looked about, walked through. Build it first: (cd examples/scene && crow build --target web main.co).",
+ "build": "../../examples/scene/main_web",
+ "at": "/index.html",
+ "steps": [
+  {"do": "enter"},
+  {"do": "wait", "frames": 20},
+  {"do": "check", "js": "sim.state.frames >= 20 && sim.state.mode === 'immersive-vr'", "says": "the program draws a headset's frames"},
+  {"do": "shot", "name": "standing"},
+  {"do": "aim", "at": [0, 1, -2], "note": "the right hand's ray on the ball, which lights where a ray meets it"},
+  {"do": "shot", "name": "the ball pointed at"},
+  {"do": "head", "turn": 40, "nod": -10},
+  {"do": "shot", "name": "looking to the right"},
+  {"do": "head", "turn": 0, "nod": 0},
+  {"do": "stick", "hand": "left", "y": -1, "frames": 36, "note": "a stick pushed walks the reader"},
+  {"do": "shot", "name": "walked"},
+  {"do": "cost", "frames": 120},
+  {"do": "count"}
+ ]}

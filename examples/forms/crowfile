@@ -1,0 +1,2 @@
+name = 'lory_forms'
+deps = map[lory = '../../packages/lory']

@@ -1,0 +1,220 @@
+--- Circle Drawer: a press on the canvas draws a circle there (radius 50),
+--- or selects the circle pressed (the last drawn of those under it); a
+--- right press on a circle (in a headset, the grip) opens a dialog whose
+--- slider sets its radius, and the next press on the canvas closes it.
+--- Each circle drawn and each dialog closed is a step Undo takes back and
+--- Redo gives again; a step taken after an undo forgets the steps undone.
+use memory
+use lory
+use lory.gui
+use common
+
+--- a circle: its middle and radius in the canvas's CSS pixels (the radius
+--- as its slider writes it: words)
+struct Circle [cx, cy, r]
+
+--- the circle selected: its place among the circles (-1 for none), and
+--- the circle itself, which an undo leaves behind: still the dialog's,
+--- no longer one of those drawn (`kept` false)
+struct Chosen [at, circle, kept]
+
+--- the circles, the steps (each the circles as they then stood) and the
+--- step they stand at, the circle selected, and whether its dialog is open
+struct Circles [circles, history, index, chosen, adjusting]
+
+fn _none[]
+    slice[[Circle[0.0, 0.0, '']], 0, 0]
+
+fn _unchosen[]
+    Chosen[-1, Circle[0.0, 0.0, '50'], false]
+
+fn fresh[]
+    Circles[_none[], [_none[]], 0, _unchosen[], false]
+
+fn ticked[s, c]
+    s
+
+--- what the canvas's painter draws: the circles and the one selected
+struct Plan [circles, at]
+
+fn _radius[circle]
+    common.js_parse[circle.r]
+
+fn _canvas_painter[d]
+    plan = recall['vue.circle-drawer.plan', Plan[_none[], -1]]
+    s = d.s
+    c = lory.clip[d.c, d.x, d.y, d.w, d.h]
+    c = lory.rect[c, d.x, d.y, d.w, d.h, lory.hex['#eeeeee']]
+    tip = lory.hex['#bbbbbb']
+    mid = d.x + d.w / 2.0
+    top = d.y + d.h * 0.4
+    c = lory.text_centered[c, mid, top + 10.0 * s, 'A press on the canvas draws a circle; a press on a circle selects it.', 15.0 * s, tip]
+    c = lory.text_centered[c, mid, top + 32.0 * s, 'A right press on a circle (the grip, in a headset) sets its radius.', 15.0 * s, tip]
+    i = 0
+    while i lt len[plan.circles]
+        one = plan.circles[i]
+        fill = lory.white[]
+        if i eq plan.at
+            fill = lory.hex['#cccccc']
+        x = d.x + one.cx * s
+        y = d.y + one.cy * s
+        r = _radius[one] * s
+        c = lory.circle[c, x, y, r + 0.5 * s, lory.black[]]
+        c = lory.circle[c, x, y, max[0.0, r - 0.5 * s], fill]
+        i = i + 1
+    d.c = c
+    if d.pressed
+        --- (where, in the canvas's CSS pixels, whole as a mouse's are)
+        --- (a painter's answer cannot fail, so the place is told as whole
+        --- numbers, not as JavaScript writes numbers)
+        x = floor[d.px / s + 0.5]
+        y = floor[d.py / s + 0.5]
+        d = gui.tell[d, 'click', '`x` `y`', 0.0]
+    d
+
+fn controls[s, c, room]
+    at = -1
+    if s.chosen.kept
+        at = s.chosen.at
+    remember['vue.circle-drawer.plan', Plan[s.circles, at]]
+    undo = gui.button['circle-drawer:undo', 'Undo']
+    if s.index lte 0
+        undo = gui.disabled[undo]
+    redo = gui.button['circle-drawer:redo', 'Redo']
+    if s.index gte len[s.history] - 1
+        redo = gui.disabled[redo]
+    kids = [gui.row[[undo, redo], gap = 6.0, justify = 'center'], gui.drawn['circle-drawer:canvas', 0.0, 0.0, 440.0, _canvas_painter]]
+    if s.adjusting
+        one = s.chosen.circle
+        if s.chosen.kept
+            one = s.circles[s.chosen.at]
+        words = common.with_id[gui.text['Adjust radius of circle at (`common.js_number[one.cx]`, `common.js_number[one.cy]`)'], 'circle-drawer:dialog:words']
+        slider = gui.slider['circle-drawer:radius', _radius[one], 1.0, 300.0, step = 1.0]
+        kids = push[kids, gui.layer['circle-drawer:dialog', [words, gui.row[[slider], justify = 'center']], place = 'center', dismiss = false, wide = 350.0, pad = 12.0]]
+    gui.column[kids, gap = 8.0]
+
+--- a copy of the circles (a step holds its own)
+fn _cloned[circles]
+    out = _none[]
+    for one in circles
+        out = push[out, Circle[one.cx, one.cy, one.r]]
+    out
+
+--- a step taken: the steps past this one forgotten, the circles as they
+--- stand kept as the next
+fn _pushed[s]
+    s.index = s.index + 1
+    s.history = push[slice[s.history, 0, s.index], _cloned[s.circles]]
+    s
+
+--- the last drawn of the circles under a place, or -1
+fn _under[s, x, y]
+    found = -1
+    i = 0
+    while i lt len[s.circles]
+        one = s.circles[i]
+        dx = one.cx - x
+        dy = one.cy - y
+        if sqrt[dx * dx + dy * dy] lte _radius[one]
+            found = i
+        i = i + 1
+    found
+
+--- a press on the canvas at a place
+fn clicked[s, x, y]
+    if s.adjusting
+        s.adjusting = false
+        s.chosen = _unchosen[]
+        return _pushed[s]
+    at = _under[s, x, y]
+    if at gte 0
+        s.chosen = Chosen[at, s.circles[at], true]
+        return s
+    s.chosen = _unchosen[]
+    s.circles = push[s.circles, Circle[x, y, '50']]
+    _pushed[s]
+
+--- a right press (or the grip) at a place: the circle under it, if any,
+--- selected and its dialog opened
+fn adjusted[s, x, y]
+    at = _under[s, x, y]
+    if at lt 0
+        return s
+    s.chosen = Chosen[at, s.circles[at], true]
+    s.adjusting = true
+    s
+
+--- the circle selected left behind (an undo or a redo draws copies of a
+--- step's circles: the one selected is none of them)
+fn _left_behind[s]
+    if s.chosen.kept
+        s.chosen = Chosen[-1, s.circles[s.chosen.at], false]
+    s
+
+fn handled[s, shown, c]
+    box = common.box_of[shown, 'circle-drawer:canvas']
+    --- (a right press is not a press on the canvas: it is its own, as a
+    --- grip is in a headset, where the ray points)
+    right = false
+    for ev in lory.events[c]
+        inside = len[box] eq 4 and ev.x gte box[0] and ev.y gte box[1] and ev.x lt box[0] + box[2] and ev.y lt box[1] + box[3]
+        if (ev.on eq 'down' or ev.on eq 'up') and ev.button eq 2
+            right = true
+        if inside and ((ev.on eq 'down' and ev.button eq 2) or ev.on eq 'squeeze')
+            right = true
+            s = adjusted[s, common.js_round[(ev.x - box[0]) / lory.px[c]], common.js_round[(ev.y - box[1]) / lory.px[c]]]
+    for ev in shown.events
+        if ev.id eq 'circle-drawer:canvas' and ev.act eq 'click' and not right
+            at = split[ev.words, ' ']
+            s = clicked[s, common.js_parse[at[0]], common.js_parse[at[1]]]
+        if ev.id eq 'circle-drawer:undo' and ev.act eq 'press' and s.index gt 0
+            s = _left_behind[s]
+            s.index = s.index - 1
+            s.circles = _cloned[s.history[s.index]]
+        if ev.id eq 'circle-drawer:redo' and ev.act eq 'press' and s.index lt len[s.history] - 1
+            s = _left_behind[s]
+            s.index = s.index + 1
+            s.circles = _cloned[s.history[s.index]]
+        if ev.id eq 'circle-drawer:radius' and ev.act eq 'change' and s.adjusting
+            r = common.js_number[ev.num]
+            one = s.chosen.circle
+            one.r = r
+            s.chosen.circle = one
+            if s.chosen.kept
+                circles = s.circles
+                held = circles[s.chosen.at]
+                held.r = r
+                circles[s.chosen.at] = held
+                s.circles = circles
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    lines = slice[[''], 0, 0]
+    i = 0
+    while i lt len[s.circles]
+        one = s.circles[i]
+        fill = '#fff'
+        if s.chosen.kept and s.chosen.at eq i
+            fill = '#ccc'
+        lines = push[lines, '`common.js_number[one.cx]` `common.js_number[one.cy]` `one.r` `fill`']
+        i = i + 1
+    out['circles'] = join[lines, '\n']
+    out['undo'] = 'enabled'
+    if common.off_by[tree, 'circle-drawer:undo']
+        out['undo'] = 'disabled'
+    out['redo'] = 'enabled'
+    if common.off_by[tree, 'circle-drawer:redo']
+        out['redo'] = 'disabled'
+    out['dialog'] = common.words_by[tree, 'circle-drawer:dialog:words']
+    out['radius'] = ''
+    if common.holds[tree, 'circle-drawer:radius']
+        out['radius'] = common.js_number[common.node_by[tree, 'circle-drawer:radius'].num]
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

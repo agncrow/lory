@@ -1,0 +1,360 @@
+--- The map package held to Leaflet's own answers: reference.json is what
+--- Leaflet 1.9.4 answered on fixed inputs in a browser (reference.py ran
+--- it). Every count, width, label, tile key and address, snapped zoom and
+--- throw must be the same; every other number the same float, or — where
+--- it passed through a sine, a logarithm, an exponential, an arc tangent
+--- or a power — within a ten-billionth of a part of it (`_near`): V8's
+--- Math functions and the platform's (the ones Crow calls) round their
+--- last bit differently for some numbers (1 in 30 for a sine, 1 in 6 for
+--- an arc cosine, measured on 2000 numbers each), and the package does
+--- Leaflet's steps in Leaflet's order, so no other difference is left.
+--- How many are the same float is counted (`exact`). Run from the
+--- repository's root: `crow test tests/map/reference.co`.
+use map.geo
+use map.camera
+use map.grid
+
+--- what a comparison found: how many numbers and words were held, how
+--- many were the same to the last bit, the largest difference of the
+--- rest (as a part of Leaflet's number), and the places where the
+--- package differs from Leaflet, as text
+struct Tally [held, exact, worst, wrong]
+
+fn _answers[]
+    j = json[read['tests/map/reference.json']]
+    j
+
+fn _tally[]
+    Tally[0, 0, 0.0, slice[[''], 0, 0]]
+
+--- how near a number passed through the platform's Math functions must
+--- come to Leaflet's, as a part of it (or of 1, for a number below 1)
+fn _near[]
+    0.0000000001
+
+--- a number of the answers as the float JavaScript held: read from its
+--- text, as a whole number past 2^53 (a box's edge near a pole) is
+--- written without a point
+fn _num[x]
+    v = float['`x`']
+    if not v.ok
+        return nan
+    v
+
+--- one number held to Leaflet's: the same float, or as near as the
+--- platform's Math functions let it be
+fn _number[t, what, mine, theirs]
+    t.held = t.held + 1
+    if mine eq theirs
+        t.exact = t.exact + 1
+        return t
+    part = abs[mine - theirs] / max[1.0, abs[theirs]]
+    if part lte _near[]
+        t.worst = max[t.worst, part]
+    else
+        t.wrong = push[t.wrong, '`what`: Leaflet has `theirs`, the map package has `mine`']
+    t
+
+--- one number that must be Leaflet's exactly: a count, a width in whole
+--- pixels, a snapped zoom, a throw
+fn _exact[t, what, mine, theirs]
+    t.held = t.held + 1
+    if mine eq theirs
+        t.exact = t.exact + 1
+    else
+        t.wrong = push[t.wrong, '`what`: Leaflet has `theirs`, the map package has `mine`']
+    t
+
+--- one text held to Leaflet's, exactly
+fn _words[t, what, mine, theirs]
+    t.held = t.held + 1
+    if mine eq theirs
+        t.exact = t.exact + 1
+    else
+        t.wrong = push[t.wrong, '`what`: Leaflet has `theirs`, the map package has `mine`']
+    t
+
+fn _box[b]
+    lat_a = 0.0 + b[0][0]
+    lng_a = 0.0 + b[0][1]
+    lat_b = 0.0 + b[1][0]
+    lng_b = 0.0 + b[1][1]
+    geo.Bounds[min[lat_a, lat_b], min[lng_a, lng_b], max[lat_a, lat_b], max[lng_a, lng_b]]
+
+fn projections[j]
+    t = _tally[]
+    cases = j.cases.project
+    answers = j.answers.project
+    for i in range[len[cases]]
+        c = cases[i]
+        p = geo.project[0.0 + c.lat, 0.0 + c.lng, 0.0 + c.zoom]
+        t = _number[t, 'project `i` x', p.x, _num[answers[i][0]]]
+        t = _number[t, 'project `i` y', p.y, _num[answers[i][1]]]
+    cases = j.cases.unproject
+    answers = j.answers.unproject
+    for i in range[len[cases]]
+        c = cases[i]
+        q = geo.unproject[0.0 + c.x, 0.0 + c.y, 0.0 + c.zoom]
+        t = _number[t, 'unproject `i` lat', q.lat, _num[answers[i][0]]]
+        t = _number[t, 'unproject `i` lng', q.lng, _num[answers[i][1]]]
+    cases = j.cases.wrap
+    answers = j.answers.wrap
+    for i in range[len[cases]]
+        c = cases[i]
+        w = geo.wrap[0.0 + c.lat, 0.0 + c.lng]
+        t = _number[t, 'wrap `i` lat', w.lat, _num[answers[i][0]]]
+        t = _number[t, 'wrap `i` lng', w.lng, _num[answers[i][1]]]
+    cases = j.cases.zoom_scale
+    answers = j.answers.zoom_scale
+    for i in range[len[cases]]
+        c = cases[i]
+        t = _number[t, 'zoom scale `i`', geo.zoom_scale[0.0 + c.to, 0.0 + c.from], _num[answers[i]]]
+    cases = j.cases.scale_zoom
+    answers = j.answers.scale_zoom
+    for i in range[len[cases]]
+        c = cases[i]
+        t = _number[t, 'scale zoom `i`', geo.scale_zoom[0.0 + c.scale, 0.0 + c.from], _num[answers[i]]]
+    t
+
+fn distances[j]
+    t = _tally[]
+    cases = j.cases.distance
+    answers = j.answers.distance
+    for i in range[len[cases]]
+        c = cases[i]
+        d = geo.distance[0.0 + c.a[0], 0.0 + c.a[1], 0.0 + c.b[0], 0.0 + c.b[1]]
+        t = _number[t, 'distance `i`', d, _num[answers[i]]]
+    cases = j.cases.to_bounds
+    answers = j.answers.to_bounds
+    for i in range[len[cases]]
+        c = cases[i]
+        b = geo.around[0.0 + c.lat, 0.0 + c.lng, 0.0 + c.size]
+        t = _number[t, 'to bounds `i` south', b.south, _num[answers[i][0]]]
+        t = _number[t, 'to bounds `i` west', b.west, _num[answers[i][1]]]
+        t = _number[t, 'to bounds `i` north', b.north, _num[answers[i][2]]]
+        t = _number[t, 'to bounds `i` east', b.east, _num[answers[i][3]]]
+    t
+
+fn fits[j]
+    t = _tally[]
+    cases = j.cases.bounds_zoom
+    answers = j.answers.bounds_zoom
+    for i in range[len[cases]]
+        c = cases[i]
+        z = geo.bounds_zoom[_box[c.box], 0.0 + c.size[0], 0.0 + c.size[1], 0.0 + c.zoom, 0.0 + c.snap, 0.0 + c.min, 0.0 + c.max, c.inside eq true, 0.0 + c.padding[0], 0.0 + c.padding[1]]
+        t = _number[t, 'bounds zoom `i`', z, _num[answers[i]]]
+    cases = j.cases.fit
+    answers = j.answers.fit
+    for i in range[len[cases]]
+        c = cases[i]
+        o = c.options
+        left = 0.0
+        top = 0.0
+        right = 0.0
+        bottom = 0.0
+        if o.padding.ok
+            left = 0.0 + o.padding[0]
+            top = 0.0 + o.padding[1]
+            right = left
+            bottom = top
+        if o.paddingTopLeft.ok
+            left = 0.0 + o.paddingTopLeft[0]
+            top = 0.0 + o.paddingTopLeft[1]
+        if o.paddingBottomRight.ok
+            right = 0.0 + o.paddingBottomRight[0]
+            bottom = 0.0 + o.paddingBottomRight[1]
+        most = -1.0
+        if o.maxZoom.ok
+            most = 0.0 + o.maxZoom
+        v = geo.fit[_box[c.box], 0.0 + c.size[0], 0.0 + c.size[1], 0.0 + c.zoom, 0.0 + c.snap, 0.0, 18.0, left, top, right, bottom, most = most]
+        t = _number[t, 'fit `i` lat', v.lat, _num[answers[i][0]]]
+        t = _number[t, 'fit `i` lng', v.lng, _num[answers[i][1]]]
+        t = _number[t, 'fit `i` zoom', v.zoom, _num[answers[i][2]]]
+    t
+
+fn scales[j]
+    t = _tally[]
+    cases = j.cases.scale
+    answers = j.answers.scale
+    for i in range[len[cases]]
+        c = cases[i]
+        a = answers[i]
+        v = geo.seen[0.0 + c.center[0], 0.0 + c.center[1], 0.0 + c.zoom, 0.0 + c.size[0], 0.0 + c.size[1]]
+        s = geo.scale_of[v, 0.0 + c.width]
+        t = _number[t, 'scale `i` metres', s.most, _num[a[0]]]
+        t = _words[t, 'scale `i` metric', s.metric, '`a[1]`']
+        t = _exact[t, 'scale `i` metric width', s.metric_wide, _num[a[2]]]
+        t = _words[t, 'scale `i` imperial', s.imperial, '`a[3]`']
+        t = _exact[t, 'scale `i` imperial width', s.imperial_wide, _num[a[4]]]
+    t
+
+fn flights[j]
+    t = _tally[]
+    cases = j.cases.fly
+    answers = j.answers.fly
+    for i in range[len[cases]]
+        c = cases[i]
+        samples = answers[i]
+        v = geo.seen[0.0 + c.from[0], 0.0 + c.from[1], 0.0 + c.from_zoom, 0.0 + c.size[0], 0.0 + c.size[1]]
+        seconds = 0.0
+        if c.duration.ok
+            seconds = 0.0 + c.duration
+        f = camera.flight[v, 0.0 + c.to[0], 0.0 + c.to[1], 0.0 + c.to_zoom, seconds]
+        k = 0
+        done = false
+        while k lt len[samples] and not done
+            sample = samples[k]
+            spot = camera.flight_at[f, _num[sample[0]]]
+            t = _number[t, 'fly `i` at `sample[0]` lat', spot.lat, _num[sample[1]]]
+            t = _number[t, 'fly `i` at `sample[0]` lng', spot.lng, _num[sample[2]]]
+            t = _number[t, 'fly `i` at `sample[0]` zoom', spot.zoom, _num[sample[3]]]
+            done = spot.done
+            k = k + 1
+        t = _exact[t, 'fly `i` frames', 0.0 + k, 0.0 + len[samples]]
+    t
+
+fn zooms[j]
+    t = _tally[]
+    cases = j.cases.wheel
+    answers = j.answers.wheel
+    for i in range[len[cases]]
+        c = cases[i]
+        zoom = 0.0 + c.zoom
+        v = geo.seen[0.0 + c.center[0], 0.0 + c.center[1], zoom, 0.0 + c.size[0], 0.0 + c.size[1]]
+        step = camera.wheel_step[0.0 + c.delta, zoom, 0.0 + c.snap, 0.0 + c.min, 0.0 + c.max, 60.0]
+        lat = v.lat
+        lng = v.lng
+        z = zoom
+        if step ne 0.0
+            p = camera.zoom_around[v, 0.0 + c.at[0], 0.0 + c.at[1], zoom + step]
+            lat = p.lat
+            lng = p.lng
+            z = geo.limit_zoom[zoom + step, 0.0 + c.snap, 0.0 + c.min, 0.0 + c.max]
+        t = _number[t, 'wheel `i` lat', lat, _num[answers[i][0]]]
+        t = _number[t, 'wheel `i` lng', lng, _num[answers[i][1]]]
+        t = _number[t, 'wheel `i` zoom', z, _num[answers[i][2]]]
+    cases = j.cases.double
+    answers = j.answers.double
+    for i in range[len[cases]]
+        c = cases[i]
+        zoom = 0.0 + c.zoom
+        v = geo.seen[0.0 + c.center[0], 0.0 + c.center[1], zoom, 0.0 + c.size[0], 0.0 + c.size[1]]
+        to = zoom + 1.0
+        if c.shift eq true
+            to = zoom - 1.0
+        p = camera.zoom_around[v, 0.0 + c.at[0], 0.0 + c.at[1], to]
+        t = _number[t, 'double click `i` lat', p.lat, _num[answers[i][0]]]
+        t = _number[t, 'double click `i` lng', p.lng, _num[answers[i][1]]]
+        t = _exact[t, 'double click `i` zoom', geo.limit_zoom[to, 1.0, 0.0, inf], _num[answers[i][2]]]
+    cases = j.cases.inertia
+    answers = j.answers.inertia
+    for i in range[len[cases]]
+        c = cases[i]
+        xs = []
+        ys = []
+        for p in c.positions
+            xs = push[xs, 0.0 + p[0]]
+            ys = push[ys, 0.0 + p[1]]
+        times = []
+        for tm in c.times
+            times = push[times, 0.0 + tm]
+        thrown = camera.throw_of[xs, ys, times, 0.0 + c.end]
+        a = answers[i]
+        if a.ok
+            t = _exact[t, 'inertia `i` x', thrown.dx, _num[a[0]]]
+            t = _exact[t, 'inertia `i` y', thrown.dy, _num[a[1]]]
+            t = _number[t, 'inertia `i` seconds', thrown.seconds, _num[a[2]]]
+        else
+            t = _exact[t, 'inertia `i` (none)', thrown.seconds, 0.0]
+    t
+
+fn tiles[j]
+    t = _tally[]
+    cases = j.cases.tiles
+    answers = j.answers.tiles
+    for i in range[len[cases]]
+        c = cases[i]
+        layer = grid.layer['https://{s}.tiles.test/{z}/{x}/{y}.png', '']
+        layer.highest = 0.0 + c.max
+        if c.max_native.ok
+            layer.native_high = 0.0 + c.max_native
+        if c.subdomains.ok
+            layer.subdomains = '`c.subdomains`'
+        --- (a map with no zooms of its own goes no closer than its
+        --- layers: Leaflet's map zooms out to the layer's highest as the
+        --- layer is added)
+        zoom = min[0.0 + c.zoom, layer.highest]
+        v = geo.seen[0.0 + c.center[0], 0.0 + c.center[1], zoom, 0.0 + c.size[0], 0.0 + c.size[1]]
+        found = grid.tiles_for[layer, v.lat, v.lng, zoom, v.w, v.h, v.ox, v.oy]
+        mine = map['' = '']
+        for tile in found
+            mine[tile.key] = tile.url
+        t = _exact[t, 'tiles `i` count', 0.0 + len[found], 0.0 + len[answers[i]]]
+        for pair in answers[i]
+            key = '`pair[0]`'
+            got = 'none'
+            if key in mine
+                got = mine[key]
+            t = _words[t, 'tiles `i` `key`', got, '`pair[1]`']
+    t
+
+fn shapes[j]
+    t = _tally[]
+    cases = j.cases.circle
+    answers = j.answers.circle
+    for i in range[len[cases]]
+        c = cases[i]
+        r = geo.circle_radius[0.0 + c.lat, 0.0 + c.lng, 0.0 + c.radius, 0.0 + c.zoom]
+        t = _number[t, 'circle `i` radius', r.x, _num[answers[i][0]]]
+        t = _number[t, 'circle `i` radius up', r.y, _num[answers[i][1]]]
+    cases = j.cases.centers
+    answers = j.answers.centers
+    for i in range[len[cases]]
+        c = cases[i]
+        lats = []
+        lngs = []
+        for p in c.ring
+            lats = push[lats, 0.0 + p[0]]
+            lngs = push[lngs, 0.0 + p[1]]
+        m = geo.line_middle[lats, lngs]
+        if c['kind'] eq 'polygon'
+            m = geo.polygon_middle[lats, lngs]
+        t = _number[t, 'centre `i` lat', m.lat, _num[answers[i][0]]]
+        t = _number[t, 'centre `i` lng', m.lng, _num[answers[i][1]]]
+    cases = j.cases.simplify
+    answers = j.answers.simplify
+    for i in range[len[cases]]
+        c = cases[i]
+        xs = []
+        ys = []
+        for p in c.points
+            xs = push[xs, 0.0 + p[0]]
+            ys = push[ys, 0.0 + p[1]]
+        kept = geo.simplify[xs, ys, 0.0 + c.tolerance]
+        a = answers[i]
+        t = _exact[t, 'simplify `i` count', 0.0 + len[kept], 0.0 + len[a]]
+        if len[kept] eq len[a]
+            for k in range[len[kept]]
+                t = _exact[t, 'simplify `i` point `k` x', xs[kept[k]], _num[a[k][0]]]
+                t = _exact[t, 'simplify `i` point `k` y', ys[kept[k]], _num[a[k][1]]]
+    t
+
+--- every part's tally, the places it differs as one text
+fn _whole[parts]
+    whole = _tally[]
+    for p in parts
+        whole.held = whole.held + p.held
+        whole.exact = whole.exact + p.exact
+        whole.worst = max[whole.worst, p.worst]
+        for w in p.wrong
+            whole.wrong = push[whole.wrong, w]
+    whole
+
+test every_number_is_leaflets_within_its_last_bits[]
+    j = _answers[]
+    '`j.leaflet`' eq '1.9.4'
+    all_of = _whole[[projections[j], distances[j], fits[j], scales[j], flights[j], zooms[j], tiles[j], shapes[j]]]
+    all_of.held eq 3634
+    assert[len[all_of.wrong] eq 0, '`len[all_of.wrong]` of `all_of.held` differ:\n`join[all_of.wrong, \'\n\']`']
+    assert[all_of.exact gte 3380, 'only `all_of.exact` of `all_of.held` are the same float (the rest within `all_of.worst` of theirs)']
+    all_of.worst lt 0.0000000000001

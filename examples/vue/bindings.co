@@ -1,0 +1,55 @@
+--- Attribute Bindings: a title bound to the message (shown as a tip), a
+--- class bound to a truth (the words red while it holds) and a style
+--- bound to a colour (green or blue); a press on either line flips it.
+use lory
+use lory.gui
+use common
+
+struct Bindings [message, red, color]
+
+fn fresh[]
+    Bindings['Hello World!', true, 'green']
+
+fn ticked[s, c]
+    s
+
+fn controls[s, c, room]
+    titled = gui.tip[common.with_id[gui.text['Rest the pointer on this line: the title bound to it shows.'], 'attribute-bindings:title'], s.message]
+    tone = common.ink_ink[]
+    if s.red
+        tone = common.ink_red[]
+    hue = common.ink_green[]
+    if s.color eq 'blue'
+        hue = common.ink_blue[]
+    red = gui.item['attribute-bindings:red', [common.named[common.styled['', 'Red while its class is bound; press to unbind it.', 15.0, tone, 0, c], 'attribute-bindings:red:words']]]
+    colored = gui.item['attribute-bindings:color', [common.named[common.styled['', 'Its colour is a bound style; press to switch it.', 15.0, hue, 0, c], 'attribute-bindings:color:words']]]
+    gui.column[[titled, red, colored], gap = 14.0]
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if ev.id eq 'attribute-bindings:red' and ev.act eq 'press'
+            s.red = not s.red
+        if ev.id eq 'attribute-bindings:color' and ev.act eq 'press'
+            if s.color eq 'green'
+                s.color = 'blue'
+            else
+                s.color = 'green'
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['title'] = common.tip_by[tree, 'attribute-bindings:title']
+    --- (what the lines are drawn in, read from what is drawn)
+    out['red'] = common.yes[int[common.node_by[tree, 'attribute-bindings:red:words'].num] eq common.ink_red[]]
+    hue = int[common.node_by[tree, 'attribute-bindings:color:words'].num]
+    out['color'] = 'green'
+    if hue eq common.ink_blue[]
+        out['color'] = 'blue'
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

@@ -1,0 +1,1980 @@
+--- Lory's pickers (docs/components/pickers.md): a date in a field with a
+--- calendar under it; a range of dates, several dates, a week, a month, a
+--- quarter or a year (and ranges of them); a time from a list or typed; a
+--- date and a time; each one inline instead, without its field. They
+--- follow react-datepicker 9.1.0: its keys, the days it lets be chosen,
+--- the order a range is chosen in, its list of times.
+---
+--- The program holds what is chosen, a list of moments (none; one day;
+--- a range's first day and then its last; many days): a day is a moment
+--- at midnight in UTC (`calendar.day`), a time a moment in the picker's
+--- zone. Lory holds the rest, under the picker's id: the month shown, the
+--- day the keys move from, the words being typed, whether the calendar is
+--- open.
+---
+---     due = pickers.date_picker['due']
+---     tree = gui.column[[gui.label['Due'], pickers.control[due, chosen]]]
+---     shown = gui.show[c, tree]
+---     chosen = pickers.answered[due, chosen, shown]
+use memory
+use lory
+use gui
+use calendar
+
+--- ---- a picker ----
+
+--- a picker: its id (its field's, and the start of its parts' ids); what
+--- it chooses (`mode`: 'day', 'range', 'days', 'week', 'month',
+--- 'month_range', 'quarter', 'quarter_range', 'year', 'year_range',
+--- 'time', 'day_time'); whether it is drawn `inline` (its calendar alone,
+--- no field); the pattern its field writes and reads (`format`); its
+--- locale and the zone its clock and today are read in; the months its
+--- calendar shows, how many to a row, and whether with the weeks' numbers
+--- and always six weeks; which days may be chosen (`rules`); whether a
+--- range's second day before its first swaps them; the words of its
+--- button choosing today ('' none), and whether it has a button clearing
+--- it and one with a calendar's picture opening it; whether its field is
+--- only read, or the whole picker is off; its field's hint; whether a
+--- choice closes its calendar; and its times: the minutes between them,
+--- the first and last allowed (in seconds into the day, -1 none), those
+--- left out, those only allowed (where `only_times`), those added between
+--- the others, the function keeping them (`keep_time`), the list's words
+--- over it and how tall it is; and whether a control of the program's
+--- own is shown instead of the field (`owned`: `custom`), opening the
+--- calendar; and whether words typed are read only where they are what
+--- the pattern writes for what they read (`strict`)
+struct Picker [id, mode, inline, format, loc, zone, months, columns, numbers, six, rules, swap, today_words, clears, icon, read_only, off, hint, closes, interval, earliest_time, latest_time, times_off, times_only, only_times, times_added, keep_time, caption, list_tall, owned, strict]
+
+--- the program's own control a picker shows instead of its field, held
+--- by Lory under the picker's id (a picker holds no control of its own,
+--- so a program that only reckons with pickers, and draws none, makes
+--- none)
+struct Own [node]
+
+fn _every_time[t]
+    true
+
+fn _no_times[]
+    slice[[0], 0, 0]
+
+--- (the one place a Picker is made, its time keeper handed in as a
+--- parameter)
+fn _made[id, mode, format, keep_time]
+    Picker[id, mode, false, format, calendar.locale['en-US'], 'UTC', 1, 0, false, false, calendar.rules[], false, '', false, false, false, false, '', true, 30, -1, -1, _no_times[], _no_times[], false, _no_times[], keep_time, 'Time', 200.0, false, false]
+
+fn _picker[id, mode, format]
+    --- (Lory's own keeper is called by name once, so Crow knows what a
+    --- keeper of times is handed)
+    kept = _every_time[moment[0]]
+    p = _made[id, mode, format, _every_time]
+    p.closes = kept
+    p
+
+--- a picker of a day (MM/dd/yyyy), a range of days, several days, a week
+--- (written I/R: its ISO week and year), a month, a quarter, a year, and a
+--- range of each; a time (h:mm aa); a day and a time
+fn date_picker[id]
+    _picker[id, 'day', 'MM/dd/yyyy']
+
+fn range_picker[id]
+    _picker[id, 'range', 'MM/dd/yyyy']
+
+fn dates_picker[id]
+    _picker[id, 'days', 'MM/dd/yyyy']
+
+fn week_picker[id]
+    _picker[id, 'week', 'I/R']
+
+fn month_picker[id]
+    _picker[id, 'month', 'MM/yyyy']
+
+fn month_range_picker[id]
+    _picker[id, 'month_range', 'MM/yyyy']
+
+fn quarter_picker[id]
+    _picker[id, 'quarter', 'yyyy, QQQ']
+
+fn quarter_range_picker[id]
+    _picker[id, 'quarter_range', 'yyyy, QQQ']
+
+fn year_picker[id]
+    _picker[id, 'year', 'yyyy']
+
+fn year_range_picker[id]
+    _picker[id, 'year_range', 'yyyy']
+
+fn time_picker[id]
+    _picker[id, 'time', 'h:mm aa']
+
+fn date_time_picker[id]
+    _picker[id, 'day_time', 'MM/dd/yyyy h:mm aa']
+
+--- ---- what a picker is asked to be ----
+
+--- the picker drawn inline: its calendar (or list) alone, always shown
+fn inline[p]
+    p.inline = true
+    p
+
+--- the picker in a locale (`calendar.locale`'s names: en-US, en-GB, fr,
+--- de, es), its weeks beginning on the locale's day
+fn localized[p, name]
+    p.loc = calendar.locale[name]
+    p
+
+--- the picker's clock and today read in a zone (an IANA name, an offset
+--- or UTC)
+fn zoned[p, zone]
+    p.zone = zone
+    p
+
+--- the picker's calendar showing `n` months, `columns` to a row (0: all
+--- in one)
+fn showing[p, n, columns]
+    p.months = max[1, n]
+    p.columns = columns
+    p
+
+--- the picker's calendar with the weeks' numbers
+fn numbered[p]
+    p.numbers = true
+    p
+
+--- the picker with which days may be chosen (`calendar.rules`,
+--- `bounded`, `excluding`, `including`, `filtered`, `marking`,
+--- `observing`)
+fn ruled[p, rules]
+    p.rules = rules
+    p
+
+--- the picker with a button choosing today, one clearing it, and one with
+--- a calendar's picture opening it
+fn with_today[p, words]
+    p.today_words = words
+    p
+
+fn clearable[p]
+    p.clears = true
+    p
+
+fn with_icon[p]
+    p.icon = true
+    p
+
+--- the picker's field only read (nothing typed, the calendar not
+--- opened), or the whole picker off (dimmed, passed over)
+fn read_only[p]
+    p.read_only = true
+    p
+
+fn turned_off[p]
+    p.off = true
+    p
+
+--- the picker's field with a hint shown while it holds nothing
+fn hinted[p, words]
+    p.hint = words
+    p
+
+--- the picker's range swapped where its second day is before its first
+--- (react-datepicker's `swapRange`), its calendar always six weeks tall
+--- (`fixedHeight`), and its calendar kept open after a choice
+--- (`shouldCloseOnSelect` false)
+fn swapping[p]
+    p.swap = true
+    p
+
+fn six_weeks[p]
+    p.six = true
+    p
+
+fn kept_open[p]
+    p.closes = false
+    p
+
+--- the picker reading words typed only where the pattern writes them so
+--- for the moment they read (react-datepicker's `strictParsing`): held
+--- strictly, `3/5/2024` is no day of `MM/dd/yyyy`, and `03/05/24` is not
+--- the year 24
+fn strict[p]
+    p.strict = true
+    p
+
+--- the picker's times: `minutes` apart; from `earliest` to `latest`
+--- (seconds into the day); without these, only these, and these added
+--- (seconds into the day); and kept only where `keep` keeps them (`fn
+--- keep[t]`, handed the time as a moment in the picker's zone)
+fn timed[p, minutes]
+    p.interval = max[1, minutes]
+    p
+
+fn times_bounded[p, earliest, latest]
+    p.earliest_time = earliest
+    p.latest_time = latest
+    p
+
+fn times_excluding[p, times]
+    p.times_off = concat[p.times_off, times]
+    p
+
+fn times_including[p, times]
+    p.times_only = concat[p.times_only, times]
+    p.only_times = true
+    p
+
+fn times_adding[p, times]
+    p.times_added = concat[p.times_added, times]
+    p
+
+fn times_filtered[p, keep]
+    q = _made[p.id, p.mode, p.format, keep]
+    _copied[q, p]
+
+--- the picker showing a control of the program's own instead of its
+--- field (a button with the date on it, say): pressed, it opens and
+--- closes the calendar
+fn custom[p, own]
+    remember[_own_key[p], Own[own]]
+    p.owned = true
+    p
+
+fn _own_key[p]
+    'lory.pickers.own:`p.id`'
+
+--- every setting of `from` but its keeper written into `p`
+fn _copied[p, from]
+    p.inline = from.inline
+    p.loc = from.loc
+    p.zone = from.zone
+    p.months = from.months
+    p.columns = from.columns
+    p.numbers = from.numbers
+    p.six = from.six
+    p.rules = from.rules
+    p.swap = from.swap
+    p.today_words = from.today_words
+    p.clears = from.clears
+    p.icon = from.icon
+    p.read_only = from.read_only
+    p.off = from.off
+    p.hint = from.hint
+    p.closes = from.closes
+    p.interval = from.interval
+    p.earliest_time = from.earliest_time
+    p.latest_time = from.latest_time
+    p.times_off = from.times_off
+    p.times_only = from.times_only
+    p.only_times = from.only_times
+    p.times_added = from.times_added
+    p.caption = from.caption
+    p.list_tall = from.list_tall
+    p.owned = from.owned
+    p.strict = from.strict
+    p
+
+--- ---- what Lory holds for a picker ----
+
+--- the first day of the first month (or year) shown; the day the keys
+--- move from; the words typed into the field, and whether they are being
+--- typed; whether the focus last moved by a key (Enter in the field then
+--- chooses it); the time the list's keys move from (its place) and how
+--- far the list is scrolled (-1: to show the time chosen); whether it is
+--- begun, and whether the calendar was open
+struct Seen [shown, focus, typed, typing, navigated, time_at, scrolled, ready, open]
+
+fn _key[p]
+    'lory.pickers:`p.id`'
+
+fn _fresh_seen[]
+    Seen[moment[0], moment[0], '', false, false, -1, 0.0, false, false]
+
+--- what Lory holds for the picker, begun from what is chosen where it
+--- holds nothing yet
+fn _seen[p, chosen]
+    seen = recall[_key[p], _fresh_seen[]]
+    if not seen.ready
+        seen = _opened_at[p, chosen, seen]
+        seen.ready = true
+    seen
+
+--- the day the calendar opens on: the first chosen (in the zone), else
+--- today, kept within the days allowed
+fn _opening_day[p, chosen]
+    t = calendar.today[p.zone]
+    if len[chosen] gt 0
+        t = _day_in[p, chosen[0]]
+    if t lt p.rules.earliest
+        t = p.rules.earliest
+    if t gt p.rules.latest
+        t = p.rules.latest
+    t
+
+fn _opened_at[p, chosen, seen]
+    t = _opening_day[p, chosen]
+    seen.focus = _period_first[p, t]
+    seen.shown = _page_first[p, t]
+    seen.typing = false
+    seen.navigated = false
+    seen.time_at = -1
+    seen.scrolled = -1.0
+    seen
+
+--- ---- the periods a picker chooses ----
+
+--- whether the picker chooses times (moments in its zone) rather than
+--- days (moments at midnight in UTC)
+fn _clocked[p]
+    p.mode eq 'time' or p.mode eq 'day_time'
+
+--- the day a moment chosen is on: a time's, as its zone reads it
+fn _day_in[p, t]
+    if _clocked[p]
+        return calendar.day_of[calendar.in_zone[t, p.zone]]
+    calendar.day_of[t]
+
+--- what a picker's choice is made of: 'day', 'week', 'month', 'quarter',
+--- 'year' or 'time'
+fn _unit[p]
+    m = p.mode
+    if m eq 'month' or m eq 'month_range'
+        return 'month'
+    if m eq 'quarter' or m eq 'quarter_range'
+        return 'quarter'
+    if m eq 'year' or m eq 'year_range'
+        return 'year'
+    if m eq 'week'
+        return 'week'
+    if m eq 'time'
+        return 'time'
+    'day'
+
+fn _ranged[p]
+    p.mode eq 'range' or p.mode eq 'month_range' or p.mode eq 'quarter_range' or p.mode eq 'year_range'
+
+--- the first day of the period a day is in
+fn _period_first[p, t]
+    u = _unit[p]
+    if u eq 'month'
+        return calendar.start_of_month[t]
+    if u eq 'quarter'
+        return calendar.start_of_quarter[t]
+    if u eq 'year'
+        return calendar.start_of_year[t]
+    calendar.day_of[t]
+
+fn _period_last[p, t]
+    u = _unit[p]
+    if u eq 'month'
+        return calendar.end_of_month[t]
+    if u eq 'quarter'
+        return calendar.end_of_quarter[t]
+    if u eq 'year'
+        return calendar.end_of_year[t]
+    calendar.day_of[t]
+
+--- how many years a page of the year picker shows
+fn _years_paged[]
+    12
+
+--- the first and last years of the page a year is on, as react-datepicker
+--- pages them: the page ends on a multiple of twelve, 2017 to 2028 holding
+--- 2024
+fn years_page[y]
+    n = _years_paged[]
+    last = (y + n - 1) / n * n
+    if y lte 0
+        last = y / n * n
+    [last - n + 1, last]
+
+--- the first day of the page that shows a day: its month, its year (the
+--- months and quarters of a year), or its page of years
+fn _page_first[p, t]
+    u = _unit[p]
+    if u eq 'month' or u eq 'quarter'
+        return calendar.start_of_year[t]
+    if u eq 'year'
+        return calendar.day[years_page[t.year][0], 1, 1]
+    calendar.start_of_month[t]
+
+--- whether a month, a quarter or a year may not be chosen, as
+--- react-datepicker decides it: outside the bounds, holding a day left
+--- out, holding none of the days only allowed, or its first day not kept
+fn period_off[r, first, last]
+    if last lt r.earliest or first gt r.latest
+        return true
+    for t in r.excluded
+        if calendar.day_of[t] gte first and calendar.day_of[t] lte last
+            return true
+    if r.only_listed
+        held = false
+        for t in r.included
+            if calendar.day_of[t] gte first and calendar.day_of[t] lte last
+                held = true
+        if not held
+            return true
+    not r.keep[first]
+
+--- whether a picker's period beginning on a day may not be chosen (a
+--- week: while one of its days may be)
+fn _off[p, t]
+    u = _unit[p]
+    if u eq 'day' or u eq 'time'
+        return calendar.day_off[p.rules, t]
+    if u eq 'week'
+        first = calendar.start_of_week[t, p.loc.week_start]
+        return calendar.span_off[p.rules, first, calendar.add_days[first, 6]]
+    period_off[p.rules, _period_first[p, t], _period_last[p, t]]
+
+--- ---- the words in the field ----
+
+--- what the picker's field shows for what is chosen: the pattern's words
+--- for one, a range's two parted by ` - ` (the first alone followed by
+--- it), and of several days the first two parted by a comma, or the first
+--- and how many more (`03/05/2024 (+2)`), as react-datepicker writes them
+fn written[p, given]
+    chosen = calendar.plain_days[given]
+    n = len[chosen]
+    if n eq 0
+        return ''
+    if _ranged[p]
+        first = _one_written[p, chosen[0]]
+        if n eq 1
+            return '`first` - '
+        last = _one_written[p, chosen[n - 1]]
+        return '`first` - `last`'
+    if p.mode eq 'days'
+        first = _one_written[p, chosen[0]]
+        if n eq 1
+            return first
+        if n eq 2
+            second = _one_written[p, chosen[1]]
+            return '`first`, `second`'
+        more = n - 1
+        return '`first` (+`more`)'
+    _one_written[p, chosen[0]]
+
+fn _one_written[p, t]
+    if p.mode eq 'time' or p.mode eq 'day_time'
+        return calendar.format[calendar.in_zone[t, p.zone], p.format, p.loc]
+    calendar.format[t, p.format, p.loc]
+
+--- what words typed into the field read as: whether they fit, and what
+--- they choose
+struct Read [fits, chosen]
+
+fn _not_read[]
+    Read[false, calendar.no_days[]]
+
+--- what words typed into the field choose: nothing where they are
+--- empty; else the moment, or a range's two parted by ` - `, they write by
+--- the pattern, where each may be chosen (`fits` false where they write
+--- none); what the pattern leaves out is the reference's
+fn read_words[p, words, reference]
+    w = trim[words]
+    if w eq ''
+        return Read[true, calendar.no_days[]]
+    if p.mode eq 'days'
+        return _not_read[]
+    if _ranged[p]
+        parts = split[w, ' - ']
+        if len[parts] gt 2
+            return _not_read[]
+        out = calendar.no_days[]
+        for part in parts
+            got = _read_one[p, part, reference]
+            if len[got] eq 0
+                return _not_read[]
+            out = push[out, got[0]]
+        if len[out] eq 2 and out[1] lt out[0]
+            return _not_read[]
+        return Read[true, out]
+    got = _read_one[p, w, reference]
+    if len[got] eq 0
+        return _not_read[]
+    Read[true, got]
+
+--- the moment words write by the picker's pattern, as a list of one (none
+--- where they write none, or one that may not be chosen)
+fn _read_one[p, words, reference]
+    zone = 'UTC'
+    if _clocked[p]
+        zone = p.zone
+    t = calendar.parse[words, p.format, p.loc, reference, zone]
+    if not t.ok
+        return calendar.no_days[]
+    if p.strict and _one_written[p, t] ne trim[words]
+        return calendar.no_days[]
+    if _clocked[p]
+        if p.mode eq 'day_time' and calendar.day_off[p.rules, calendar.day_of[t]]
+            return calendar.no_days[]
+        if time_off[p, t]
+            return calendar.no_days[]
+        return [t]
+    d = _period_first[p, calendar.day_of[t]]
+    if _off[p, d]
+        return calendar.no_days[]
+    [d]
+
+--- ---- times ----
+
+--- the seconds into its day a moment's clock shows, in the picker's zone
+fn _clock[p, t]
+    calendar.seconds_into[calendar.in_zone[t, p.zone]]
+
+--- whether a time may not be chosen, as react-datepicker decides it:
+--- outside the first and last allowed (where both are given), left out,
+--- not among those only allowed, or not kept
+fn time_off[p, t]
+    s = _clock[p, t]
+    if p.earliest_time gte 0 and p.latest_time gte 0
+        --- (bounds given the wrong way round are taken the right way, as
+        --- date-fns's interval takes them)
+        low = min[p.earliest_time, p.latest_time]
+        high = max[p.earliest_time, p.latest_time]
+        if s lt low or s gt high
+            return true
+    if s in p.times_off
+        return true
+    if p.only_times and not (s in p.times_only)
+        return true
+    not p.keep_time[calendar.in_zone[t, p.zone]]
+
+--- the times a day's list holds, as react-datepicker lists them: every
+--- `interval` minutes from the day's start in the picker's zone, as many
+--- as the day's hours hold (23 or 25 on a day the clocks turn), with the
+--- times added put between the two they fall between
+fn times_of[p, d]
+    begins = calendar.day_start[d, p.zone]
+    hours = calendar.hours_in_day[d, p.zone]
+    step = p.interval * 60
+    n = hours * 60 / p.interval
+    added = sort[p.times_added]
+    out = calendar.no_days[]
+    i = 0
+    while i lt n
+        at = begins + i * step
+        out = push[out, at]
+        here = i * step
+        for s in added
+            if s gt here and s lt here + step
+                out = push[out, calendar.at_clock[d, s, p.zone]]
+        i = i + 1
+    out
+
+--- the place in a day's list of the last time not after `t`'s clock (the
+--- one the list's keys move from), or 0
+fn time_place[p, times, t]
+    s = _clock[p, t]
+    at = 0
+    i = 0
+    while i lt len[times]
+        if _clock[p, times[i]] lte s
+            at = i
+        i = i + 1
+    at
+
+--- the day a picker's list of times is for: the day chosen, else today
+fn _time_day[p, chosen]
+    if len[chosen] gt 0
+        return calendar.day_of[calendar.in_zone[chosen[0], p.zone]]
+    calendar.today[p.zone]
+
+--- a day with the clock of a moment (in the picker's zone)
+fn _with_clock[p, d, t]
+    calendar.at_clock[d, _clock[p, t], p.zone]
+
+--- ---- choosing ----
+
+--- what is chosen once a period beginning on `t` is chosen, and whether
+--- the choice ends there (the calendar then closes)
+struct Choice [chosen, ends]
+
+fn _chose[p, chosen, t]
+    d = calendar.day_of[t]
+    if _off[p, d]
+        return Choice[chosen, false]
+    if p.mode eq 'day_time'
+        at = calendar.at_clock[d, 0, p.zone]
+        if len[chosen] gt 0
+            at = _with_clock[p, d, chosen[0]]
+        if p.earliest_time gte 0
+            at = calendar.at_clock[d, p.earliest_time, p.zone]
+        return Choice[[at], false]
+    first = _period_first[p, d]
+    way = 'day'
+    if _ranged[p]
+        way = 'range'
+    if p.mode eq 'days'
+        way = 'days'
+    if p.mode eq 'week'
+        way = 'week'
+    now_chosen = calendar.chosen_by[chosen, first, way, p.swap, p.rules, p.loc.week_start]
+    Choice[now_chosen, calendar.choice_ends[chosen, first, way, p.swap]]
+
+--- what is chosen once a time is chosen from the list: that time, on the
+--- day chosen (or the list's day)
+fn _chose_time[p, chosen, t]
+    if time_off[p, t]
+        return Choice[chosen, false]
+    Choice[[t], true]
+
+--- ---- the keys over months, quarters and years ----
+
+fn _tile_step[p, t, key, back]
+    u = _unit[p]
+    if u eq 'month'
+        if key eq 'ArrowLeft'
+            return calendar.add_months[t, -1]
+        if key eq 'ArrowRight'
+            return calendar.add_months[t, 1]
+        if key eq 'ArrowUp'
+            return calendar.add_months[t, -3]
+        if key eq 'ArrowDown'
+            return calendar.add_months[t, 3]
+    if u eq 'quarter'
+        if key eq 'ArrowLeft'
+            return calendar.add_quarters[t, -1]
+        if key eq 'ArrowRight'
+            return calendar.add_quarters[t, 1]
+    if u eq 'year'
+        if key eq 'ArrowLeft'
+            return calendar.add_years[t, -1]
+        if key eq 'ArrowRight'
+            return calendar.add_years[t, 1]
+        if key eq 'ArrowUp' or key eq 'ArrowDown'
+            return calendar.add_years[t, _year_offset[t.year, key]]
+    t
+
+--- how far up or down a year moves on its page of three columns, as
+--- react-datepicker counts it (a page of twelve has no years left over,
+--- so three)
+fn _year_offset[y, key]
+    page = years_page[y]
+    n = _years_paged[]
+    across = 3
+    left = n % across
+    if key eq 'ArrowUp'
+        k = across
+        if y - k lt page[0]
+            if y gte page[0] and y lt page[0] + left
+                k = left
+            else
+                k = k + left
+        return 0 - k
+    k = across
+    if y + k gt page[1]
+        if y lte page[1] and y gt page[1] - left
+            k = left
+        else
+            k = k + left
+    k
+
+--- the period the focus moves to by a key among months, quarters or
+--- years, as react-datepicker moves it: months a month across and three
+--- up and down, stepping past those that may not be chosen (at most 40
+--- steps, turned back at the bounds); quarters and years one across (and
+--- years three up and down), not moving onto one that may not be chosen
+fn tile_moved[p, t, key]
+    if not (key in ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'])
+        return t
+    u = _unit[p]
+    if u ne 'month'
+        at = _tile_step[p, t, key, false]
+        if at eq t or _off[p, at]
+            return t
+        return at
+    k = key
+    at = _tile_step[p, t, k, false]
+    rounds = 0
+    while rounds lt 40
+        if at lt calendar.start_of_month[p.rules.earliest]
+            k = 'ArrowRight'
+            at = _tile_step[p, at, k, false]
+        if at gt p.rules.latest
+            k = 'ArrowLeft'
+            at = _tile_step[p, at, k, false]
+        if not _off[p, at]
+            return at
+        at = _tile_step[p, at, k, false]
+        rounds = rounds + 1
+    t
+
+--- ---- ids of a picker's parts ----
+
+fn _popup_id[p]
+    '`p.id`:popup'
+
+fn _days_id[p]
+    '`p.id`:days'
+
+fn _tiles_id[p]
+    '`p.id`:tiles'
+
+fn _times_id[p]
+    '`p.id`:times'
+
+fn _icon_id[p]
+    '`p.id`:icon'
+
+fn _clear_id[p]
+    '`p.id`:clear'
+
+fn _today_id[p]
+    '`p.id`:today'
+
+--- whether the picker's calendar is open (an inline one always is)
+fn is_open[p]
+    p.inline or gui.layer_open[_popup_id[p]]
+
+--- ---- the picker drawn ----
+
+--- the picker's control, for what is chosen: its field (or the program's
+--- own control), with its buttons, and its calendar or list in a layer
+--- under it while open; inline, the calendar or list alone
+fn control[p, given]
+    chosen = calendar.plain_days[given]
+    seen = _seen[p, chosen]
+    remember[_key[p], seen]
+    inside = _inside[p, chosen, seen]
+    if p.inline
+        if p.off
+            return gui.disabled[inside]
+        return inside
+    parts = []
+    if p.owned
+        own = recall[_own_key[p], Own[gui.space[0.0]]]
+        parts = push[parts, gui.opens[own.node, _popup_id[p]]]
+    else
+        words = written[p, chosen]
+        if seen.typing
+            words = seen.typed
+        f = gui.field[p.id, words, hint = p.hint]
+        if p.off
+            f = gui.disabled[f]
+        parts = push[parts, gui.sized[f, _field_wide[p]]]
+    if p.icon
+        parts = push[parts, _off_if[gui.drawn[_icon_id[p], 0.0, 34.0, 34.0, _icon_painted], p.off]]
+    if p.clears and len[chosen] gt 0 and not p.off and not p.read_only
+        parts = push[parts, gui.drawn[_clear_id[p], 0.0, 34.0, 34.0, _clear_painted]]
+    if not p.off and not p.read_only
+        parts = push[parts, gui.layer[_popup_id[p], [inside], at = p.id, side = 'bottom', align = 'start', held = true, pad = 10.0]]
+    gui.row[parts, gap = 4.0]
+
+fn _off_if[n, off]
+    if off
+        return gui.disabled[n]
+    n
+
+fn _field_wide[p]
+    if p.mode eq 'day_time'
+        return 210.0
+    if _ranged[p]
+        return 240.0
+    if p.mode eq 'days'
+        return 210.0
+    160.0
+
+--- what the calendar (or list) shows: the month's days, the months,
+--- quarters or years, the times, and the buttons under them
+fn _inside[p, chosen, seen]
+    u = _unit[p]
+    kids = []
+    if u eq 'time'
+        kids = push[kids, _times_view[p, chosen, seen]]
+    else if u eq 'day' or u eq 'week'
+        sh = _sheet[p, chosen, seen]
+        if p.mode eq 'day_time'
+            kids = push[kids, gui.row[[calendar.month_view[sh], _times_view[p, chosen, seen]], gap = 12.0, align = 'start']]
+        else
+            kids = push[kids, calendar.month_view[sh]]
+    else
+        kids = push[kids, _tiles_view[p, chosen, seen]]
+    buttons = []
+    if p.today_words ne ''
+        b = gui.button[_today_id[p], p.today_words]
+        if calendar.day_off[p.rules, calendar.today[p.zone]]
+            b = gui.disabled[b]
+        buttons = push[buttons, b]
+    if len[buttons] gt 0
+        kids = push[kids, gui.row[buttons, justify = 'center']]
+    gui.column[kids, gap = 8.0]
+
+--- the calendar's sheet for the picker, what is chosen and what Lory
+--- holds
+fn _sheet[p, chosen, seen]
+    days_chosen = chosen
+    if p.mode eq 'day_time'
+        days_chosen = calendar.no_days[]
+        for t in chosen
+            days_chosen = push[days_chosen, calendar.day_of[calendar.in_zone[t, p.zone]]]
+    sh = calendar.sheet[_days_id[p], days_chosen]
+    sh.shown = seen.shown
+    sh.months = p.months
+    sh.columns = p.columns
+    sh.loc = p.loc
+    sh.numbers = p.numbers
+    sh.six = p.six
+    sh.rules = p.rules
+    sh.swap = p.swap
+    sh.focus = seen.focus
+    sh.today = calendar.today[p.zone]
+    sh.mode = 'day'
+    if _ranged[p]
+        sh.mode = 'range'
+    if p.mode eq 'days'
+        sh.mode = 'days'
+    if p.mode eq 'week'
+        sh.mode = 'week'
+    sh
+
+--- ---- months, quarters and years as tiles ----
+
+--- a tile: the first day of its period, its words and place; whether it
+--- is chosen, a range's first or last or between them, may not be
+--- chosen, is the current one, has the focus
+struct Tile [first, words, x, y, w, h, picked, start, end, between, off, current, focus]
+
+--- all a page of tiles draws: its title, its tiles, its arrows and its
+--- size; a range begun and not ended (from `start`)
+struct Tiles [title, tiles, back_on, on_on, wide, tall, pending, start, swap]
+
+fn _no_tiles[]
+    slice[[Tile[moment[0], '', 0.0, 0.0, 0.0, 0.0, false, false, false, false, false, false, false]], 0, 0]
+
+fn _no_tiles_page[]
+    Tiles['', _no_tiles[], false, false, 0.0, 0.0, false, moment[0], false]
+
+--- the tiles of a page: how many, in how many columns, each how wide
+fn _tile_count[p]
+    if _unit[p] eq 'quarter'
+        return 4
+    12
+
+fn _tile_columns[p]
+    if _unit[p] eq 'quarter'
+        return 4
+    3
+
+fn _tile_w[p]
+    if _unit[p] eq 'quarter'
+        return 60.0
+    80.0
+
+fn _tile_h[]
+    40.0
+
+--- the width and height of a page of months, quarters or years, its
+--- title's row with it
+fn tiles_wide[p]
+    _tile_columns[p] * _tile_w[p]
+
+fn tiles_tall[p]
+    36.0 + (_tile_count[p] / _tile_columns[p]) * _tile_h[]
+
+--- the first day of each tile of the page beginning on `shown`
+fn _tile_firsts[p, shown]
+    out = calendar.no_days[]
+    u = _unit[p]
+    i = 0
+    while i lt _tile_count[p]
+        if u eq 'month'
+            out = push[out, calendar.add_months[shown, i]]
+        else if u eq 'quarter'
+            out = push[out, calendar.add_quarters[shown, i]]
+        else
+            out = push[out, calendar.add_years[shown, i]]
+        i = i + 1
+    out
+
+fn _tile_words[p, t]
+    u = _unit[p]
+    if u eq 'month'
+        return p.loc.months_short[t.month - 1]
+    if u eq 'quarter'
+        return calendar.format[t, 'QQQ', p.loc]
+    str[t.year]
+
+fn _page_title[p, shown]
+    if _unit[p] eq 'year'
+        last = calendar.add_years[shown, _years_paged[] - 1]
+        return '`shown.year` - `last.year`'
+    str[shown.year]
+
+--- where a tile is on the page, from its top left; [-1, -1, 0, 0] where
+--- the page does not show it
+fn tile_spot[p, shown, t]
+    firsts = _tile_firsts[p, shown]
+    i = 0
+    while i lt len[firsts]
+        if firsts[i] eq _period_first[p, t]
+            cols = _tile_columns[p]
+            return [(i % cols) * _tile_w[p], 36.0 + (i / cols) * _tile_h[], _tile_w[p], _tile_h[]]
+        i = i + 1
+    [-1.0, -1.0, 0.0, 0.0]
+
+fn _tiles_page[p, chosen, seen]
+    firsts = _tile_firsts[p, seen.shown]
+    cols = _tile_columns[p]
+    tw = _tile_w[p]
+    now_first = _period_first[p, calendar.today[p.zone]]
+    ranged = _ranged[p] and len[chosen] eq 2
+    tiles = _no_tiles[]
+    i = 0
+    while i lt len[firsts]
+        t = firsts[i]
+        picked = false
+        start = false
+        finish = false
+        between = false
+        if _ranged[p]
+            if len[chosen] gt 0
+                start = t eq _period_first[p, chosen[0]]
+                finish = ranged and t eq _period_first[p, chosen[1]]
+                between = ranged and t gt chosen[0] and t lt chosen[1]
+        else
+            for c in chosen
+                if _period_first[p, c] eq t
+                    picked = true
+        tiles = push[tiles, Tile[t, _tile_words[p, t], (i % cols) * tw, 36.0 + (i / cols) * _tile_h[], tw, _tile_h[], picked, start, finish, between, _off[p, t], t eq now_first, t eq seen.focus]]
+        i = i + 1
+    back = calendar.add_days[seen.shown, -1]
+    on = _next_page[p, seen.shown]
+    start_day = moment[0]
+    if len[chosen] gt 0
+        start_day = chosen[0]
+    Tiles[_page_title[p, seen.shown], tiles, back gte p.rules.earliest, on lte p.rules.latest, tiles_wide[p], tiles_tall[p], _ranged[p] and len[chosen] eq 1, start_day, p.swap]
+
+fn _next_page[p, shown]
+    if _unit[p] eq 'year'
+        return calendar.add_years[shown, _years_paged[]]
+    calendar.add_years[shown, 1]
+
+fn _tiles_view[p, chosen, seen]
+    remember['lory.pickers.tiles:`_tiles_id[p]`', _tiles_page[p, chosen, seen]]
+    gui.drawn[_tiles_id[p], 0.0, tiles_wide[p], tiles_tall[p], _tiles_painted]
+
+fn _inside_box[x, y, b]
+    x gte b[0] and y gte b[1] and x lt b[0] + b[2] and y lt b[1] + b[3]
+
+--- a control's box as `gui.show` answered it, or none ([-1, -1, 0, 0])
+fn _box_of[shown, id]
+    nowhere = [-1.0, -1.0, 0.0, 0.0]
+    if not (id in shown.boxes)
+        return nowhere
+    b = shown.boxes[id]
+    if not b.ok
+        return nowhere
+    b
+
+fn _tile_under[pg, x, y]
+    i = 0
+    while i lt len[pg.tiles]
+        k = pg.tiles[i]
+        if x gte k.x and y gte k.y and x lt k.x + k.w and y lt k.y + k.h
+            return i
+        i = i + 1
+    -1
+
+fn _tiles_painted[d]
+    pg = recall['lory.pickers.tiles:`d.id`', _no_tiles_page[]]
+    s = d.s
+    look = d.look
+    c = d.c
+    --- (where the pointer stands is read from the frame's input, which
+    --- can fail: a painter that decided on a failure would answer one, and
+    --- gui's node holds only a painter whose answer cannot fail, so a frame
+    --- whose input failed is drawn as it stood)
+    px = d.px / s
+    if not px.ok
+        return d
+    py = d.py / s
+    if not py.ok
+        return d
+    over = -1
+    if d.hover
+        over = _tile_under[pg, px, py]
+    reach = moment[0]
+    reaching = false
+    if pg.pending
+        if over gte 0
+            reach = pg.tiles[over].first
+            reaching = true
+        else if d.focused
+            for k in pg.tiles
+                if k.focus
+                    reach = k.first
+                    reaching = true
+    low = pg.start
+    high = reach
+    if reaching and reach lt pg.start and pg.swap
+        low = reach
+        high = pg.start
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + 18.0 * s, pg.title, 15.0 * s, look.ink]
+    back = look.ink
+    if not pg.back_on
+        back = lory.fade[look.muted, 0.4]
+    c = _chevron[c, d.x + 18.0 * s, d.y + 18.0 * s, 12.0 * s, -1.0, back, s]
+    ahead = look.ink
+    if not pg.on_on
+        ahead = lory.fade[look.muted, 0.4]
+    c = _chevron[c, d.x + d.w - 18.0 * s, d.y + 18.0 * s, 12.0 * s, 1.0, ahead, s]
+    i = 0
+    for k in pg.tiles
+        x = d.x + k.x * s
+        y = d.y + k.y * s
+        w = k.w * s
+        h = k.h * s
+        previewed = reaching and not k.off and k.first gte low and k.first lte high
+        if k.between or previewed
+            band = 0.22
+            if previewed and not k.between
+                band = 0.14
+            c = lory.rect[c, x, y + 4.0 * s, w, h - 8.0 * s, lory.fade[look.accent, band]]
+        chosen_one = k.picked or k.start or k.end
+        if i eq over and not k.off and not chosen_one
+            c = lory.round_rect[c, x + 4.0 * s, y + 4.0 * s, w - 8.0 * s, h - 8.0 * s, 6.0 * s, look.hover]
+        ink = look.ink
+        if chosen_one
+            c = lory.round_rect[c, x + 4.0 * s, y + 4.0 * s, w - 8.0 * s, h - 8.0 * s, 6.0 * s, look.accent]
+            ink = look.on_accent
+        if k.off
+            ink = lory.fade[look.muted, 0.45]
+        if k.current
+            c = lory.round_outline[c, x + 4.0 * s, y + 4.0 * s, w - 8.0 * s, h - 8.0 * s, 6.0 * s, 1.5 * s, look.accent]
+        if k.focus and d.focused
+            c = lory.round_outline[c, x + 2.0 * s, y + 2.0 * s, w - 4.0 * s, h - 4.0 * s, 7.0 * s, 2.0 * s, look.focus]
+        c = lory.text_centered[c, x + w / 2.0, y + h / 2.0, k.words, 14.0 * s, ink]
+        i = i + 1
+    d.c = c
+    if d.pressed
+        if py lt 36.0 and px lt 36.0
+            if pg.back_on
+                d = gui.tell[d, 'previous', '', 0.0]
+        else if py lt 36.0 and px gt d.w / s - 36.0
+            if pg.on_on
+                d = gui.tell[d, 'next', '', 0.0]
+        else
+            at = _tile_under[pg, px, py]
+            if at gte 0 and not pg.tiles[at].off
+                d = gui.tell[d, 'press', str[pg.tiles[at].first], 0.0]
+    d = _keys_told[d]
+    d
+
+--- the keys typed while a drawn part has the focus, told: `key` (`num`
+--- 1 with Shift) or `tab`
+fn _keys_told[d]
+    --- (the keys are read from the frame's input, which can fail: a
+    --- painter's answer cannot)
+    typed = calendar.keys_typed[d.c]
+    if not typed.ok
+        return d
+    if d.focused
+        for k in typed
+            shift = 0.0
+            name = k
+            if ends[k, '+'] and len[k] gt 1
+                shift = 1.0
+                name = slice[k, 0, len[k] - 1]
+            if name eq 'Tab'
+                d = gui.tell[d, 'tab', '', shift]
+            else
+                d = gui.tell[d, 'key', name, shift]
+    d
+
+--- the chevron of an arrow, pointing left (`way` -1) or right (1)
+fn _chevron[c, cx, cy, size, way, color, s]
+    c = lory.line[c, cx - way * size * 0.25, cy - size * 0.5, cx + way * size * 0.25, cy, 2.0 * s, color]
+    lory.line[c, cx + way * size * 0.25, cy, cx - way * size * 0.25, cy + size * 0.5, 2.0 * s, color]
+
+--- ---- the list of times ----
+
+--- a time as the list shows it: its moment and words, whether it may not
+--- be chosen, is chosen, has the focus, and was added
+struct Slot [at, words, off, picked, focus, added]
+
+--- all the list draws: its caption, its times, the height of one, how far
+--- it is scrolled, and its size
+struct Slots [caption, slots, item_h, scrolled, wide, tall]
+
+fn _no_slots[]
+    Slots['', slice[[Slot[moment[0], '', false, false, false, false]], 0, 0], 30.0, 0.0, 0.0, 0.0]
+
+fn _slot_h[]
+    30.0
+
+fn _times_wide[]
+    110.0
+
+--- the words the list writes a time in: the picker's own pattern for a
+--- time alone, else the locale's clock
+fn _time_words[p, t]
+    there = calendar.in_zone[t, p.zone]
+    if p.mode eq 'time'
+        return calendar.format[there, p.format, p.loc]
+    if p.loc.name eq 'en-US'
+        return calendar.format[there, 'h:mm aa', p.loc]
+    calendar.format[there, 'HH:mm', p.loc]
+
+fn _slots_of[p, chosen, seen]
+    d = _time_day[p, chosen]
+    times = times_of[p, d]
+    picked_at = -1
+    if len[chosen] gt 0
+        picked_at = _clock[p, chosen[0]]
+    focus = seen.time_at
+    if focus lt 0
+        focus = 0
+        if len[chosen] gt 0
+            focus = time_place[p, times, chosen[0]]
+    out = slice[[Slot[moment[0], '', false, false, false, false]], 0, 0]
+    step = p.interval * 60
+    i = 0
+    while i lt len[times]
+        t = times[i]
+        s = _clock[p, t]
+        out = push[out, Slot[t, _time_words[p, t], time_off[p, t], s eq picked_at, i eq focus, s % step ne 0]]
+        i = i + 1
+    tall = p.list_tall
+    scrolled = seen.scrolled
+    if scrolled lt 0.0
+        --- (opened with the time chosen, or the focus, in the middle)
+        scrolled = focus * _slot_h[] - (tall - 26.0) / 2.0 + _slot_h[] / 2.0
+    most = max[0.0, len[out] * _slot_h[] - (tall - 26.0)]
+    scrolled = max[0.0, min[most, scrolled]]
+    Slots[p.caption, out, _slot_h[], scrolled, _times_wide[], tall]
+
+fn _times_view[p, chosen, seen]
+    sl = _slots_of[p, chosen, seen]
+    remember['lory.pickers.times:`_times_id[p]`', sl]
+    gui.drawn[_times_id[p], 0.0, _times_wide[], p.list_tall, _times_painted]
+
+--- where the list shows a time, from its top left (scrolled as it is),
+--- or [-1, -1, 0, 0] where it holds none at that clock
+fn time_spot[p, chosen, t]
+    seen = recall[_key[p], _fresh_seen[]]
+    sl = _slots_of[p, chosen, seen]
+    s = _clock[p, t]
+    i = 0
+    while i lt len[sl.slots]
+        if _clock[p, sl.slots[i].at] eq s
+            return [0.0, 26.0 + i * sl.item_h - sl.scrolled, sl.wide, sl.item_h]
+        i = i + 1
+    [-1.0, -1.0, 0.0, 0.0]
+
+fn _times_painted[d]
+    sl = recall['lory.pickers.times:`d.id`', _no_slots[]]
+    s = d.s
+    look = d.look
+    c = d.c
+    --- (where the pointer stands is read from the frame's input, which
+    --- can fail: a painter that decided on a failure would answer one, and
+    --- gui's node holds only a painter whose answer cannot fail, so a frame
+    --- whose input failed is drawn as it stood)
+    px = d.px / s
+    if not px.ok
+        return d
+    py = d.py / s
+    if not py.ok
+        return d
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + 12.0 * s, sl.caption, 13.0 * s, look.muted]
+    top = d.y + 26.0 * s
+    --- (a rule under the caption, so a time scrolled half out of sight is
+    --- seen to pass under it)
+    c = lory.line[c, d.x + 4.0 * s, top - 0.5 * s, d.x + d.w - 4.0 * s, top - 0.5 * s, 1.0 * s, look.edge]
+    kept = lory.clipped[c]
+    c = lory.clip[c, d.x, top, d.w, d.h - 26.0 * s]
+    --- (the time under the pointer: pressed, or hovered where a pointer
+    --- stands; a touch's tap has none standing)
+    under = -1
+    if py gte 26.0 and px gte 0.0 and px lt d.w / s
+        under = floor[(py - 26.0 + sl.scrolled) / sl.item_h]
+    over = -1
+    if d.hover
+        over = under
+    i = 0
+    for k in sl.slots
+        y = top + (i * sl.item_h - sl.scrolled) * s
+        if y + sl.item_h * s gt top and y lt d.y + d.h
+            ink = look.ink
+            if k.picked
+                c = lory.round_rect[c, d.x + 4.0 * s, y + 1.0 * s, d.w - 8.0 * s, sl.item_h * s - 2.0 * s, 6.0 * s, look.accent]
+                ink = look.on_accent
+            else if i eq over and not k.off
+                c = lory.round_rect[c, d.x + 4.0 * s, y + 1.0 * s, d.w - 8.0 * s, sl.item_h * s - 2.0 * s, 6.0 * s, look.hover]
+            if k.off
+                ink = lory.fade[look.muted, 0.45]
+            if k.focus and d.focused
+                c = lory.round_outline[c, d.x + 3.0 * s, y, d.w - 6.0 * s, sl.item_h * s, 7.0 * s, 2.0 * s, look.focus]
+            c = lory.text_centered[c, d.x + d.w / 2.0, y + sl.item_h * s / 2.0, k.words, 13.0 * s, ink]
+        i = i + 1
+    c = lory.unclip[c, kept]
+    d.c = c
+    if d.pressed and under gte 0 and under lt len[sl.slots]
+        if not sl.slots[under].off
+            d = gui.tell[d, 'press', str[sl.slots[under].at], 0.0]
+    turns = calendar.wheel_turns[d.c]
+    if not turns.ok
+        return d
+    if d.hover
+        for dy in turns
+            d = gui.tell[d, 'scroll', '', dy]
+    d = _keys_told[d]
+    d
+
+--- ---- the buttons drawn ----
+
+--- a calendar's picture, and a cross, pressed (or Enter or space while
+--- it has the focus) telling `press`
+fn _icon_painted[d]
+    s = d.s
+    look = d.look
+    c = d.c
+    if d.hover
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, 6.0 * s, look.hover]
+    x = d.x + 9.0 * s
+    y = d.y + 10.0 * s
+    w = 16.0 * s
+    h = 15.0 * s
+    c = lory.round_outline[c, x, y, w, h, 2.5 * s, 1.5 * s, look.ink]
+    c = lory.rect[c, x, y, w, 4.0 * s, look.ink]
+    c = lory.rect[c, x + 3.5 * s, y - 3.0 * s, 1.8 * s, 4.0 * s, look.ink]
+    c = lory.rect[c, x + w - 5.3 * s, y - 3.0 * s, 1.8 * s, 4.0 * s, look.ink]
+    c = lory.rect[c, x + 4.0 * s, y + 7.5 * s, 2.5 * s, 2.5 * s, look.ink]
+    c = lory.rect[c, x + 9.5 * s, y + 7.5 * s, 2.5 * s, 2.5 * s, look.ink]
+    d.c = c
+    _pressed_told[d]
+
+fn _clear_painted[d]
+    s = d.s
+    look = d.look
+    c = d.c
+    if d.hover
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, 6.0 * s, look.hover]
+    cx = d.x + d.w / 2.0
+    cy = d.y + d.h / 2.0
+    r = 5.5 * s
+    c = lory.line[c, cx - r, cy - r, cx + r, cy + r, 1.8 * s, look.muted]
+    c = lory.line[c, cx - r, cy + r, cx + r, cy - r, 1.8 * s, look.muted]
+    d.c = c
+    _pressed_told[d]
+
+fn _pressed_told[d]
+    if d.pressed
+        d = gui.tell[d, 'press', '', 0.0]
+    if d.focused
+        for k in d.keys
+            if k eq 'Enter' or k eq ' '
+                d = gui.tell[d, 'press', '', 0.0]
+    d
+
+--- ---- what the reader did ----
+
+--- what is chosen once the reader's doing this frame is answered: the
+--- picker's events in `shown` (as `gui.show` answered it, its canvas's
+--- input with them) taken in order, and what Lory holds kept for the next
+--- frame. The field: a press opens the calendar (not where it is only
+--- read, or off), words typed are read by the pattern as they are typed
+--- and choose what they write, Enter opens the calendar, or, open, chooses
+--- the day the keys moved to (else closes it), and while it is open the
+--- up and down arrows and Page Up and Page Down move over its days. The
+--- calendar: a day pressed is chosen, the arrows turn its months, its keys
+--- move as react-datepicker's (`calendar.key_moved`), Enter and space
+--- choose, Escape closes it; a choice that ends (a day, a range ended)
+--- closes it and gives the focus back to the field. Tab from the field,
+--- or from the calendar where nothing follows it, closes it.
+fn answered[p, given, shown]
+    chosen = calendar.plain_days[given]
+    --- (what `gui.show` answered can fail, and so would all that is read
+    --- of it: it is decided here)
+    if not shown.ok
+        return chosen
+    seen = _seen[p, chosen]
+    --- (opened since the last frame by the program's own control, as
+    --- `gui.opens` opens it: begun at what is chosen)
+    if not p.inline and gui.layer_open[_popup_id[p]] and not seen.open
+        seen = _opened_at[p, chosen, seen]
+    t = Turn[chosen, seen, false, false, false]
+    if p.off
+        return chosen
+    told = false
+    for e in shown.events
+        if e.act eq 'key' or e.act eq 'tab'
+            if e.id eq _days_id[p] or e.id eq _tiles_id[p] or e.id eq _times_id[p]
+                told = true
+        if e.id eq _popup_id[p] and e.act eq 'dismiss'
+            t.dismissed = true
+    --- (a press on the field opens the calendar: a field has no `opens`)
+    if not p.inline and not p.read_only and not p.owned
+        b = _box_of[shown, p.id]
+        for at in calendar.presses_at[shown.canvas]
+            if _inside_box[at[0], at[1], b] and not gui.layer_open[_popup_id[p]]
+                t = _opened[p, t]
+    i = 0
+    while i lt len[shown.events]
+        t = _applied[p, t, shown.events[i]]
+        i = i + 1
+    --- (the field's keys while the calendar is open, where no part of it
+    --- told them: the field keeps the focus and the calendar follows)
+    if not told and not p.inline and gui.layer_open[_popup_id[p]]
+        for k in calendar.keys_typed[shown.canvas]
+            t = _field_key[p, t, k]
+    if t.closing
+        gui.close_layer[_popup_id[p]]
+        t.seen.typing = false
+        if t.refocus and not p.owned
+            gui.focus[p.id, written[p, t.chosen]]
+    t.seen.open = gui.layer_open[_popup_id[p]]
+    remember[_key[p], t.seen]
+    t.chosen
+
+--- a turn of `answered`: what is chosen, what Lory holds, whether the
+--- calendar closes this frame (giving the focus back to the field), and
+--- whether Lory closed it this frame (a press outside it, or Escape)
+struct Turn [chosen, seen, closing, refocus, dismissed]
+
+--- the calendar opened, its focus and month at what is chosen
+fn _opened[p, t]
+    gui.open_layer[_popup_id[p]]
+    t.seen = _opened_at[p, t.chosen, t.seen]
+    t.closing = false
+    t
+
+fn _closed[p, t, refocus]
+    t.closing = true
+    t.refocus = refocus
+    t
+
+fn _chosen_now[p, t, ch]
+    t.chosen = ch.chosen
+    t.seen.typing = false
+    if len[ch.chosen] gt 0
+        t.seen.focus = _period_first[p, _day_in[p, ch.chosen[len[ch.chosen] - 1]]]
+    t.seen.navigated = false
+    if ch.ends and p.closes and not p.inline
+        return _closed[p, t, true]
+    t
+
+--- the focus moved to a day (or a period), the months shown following it
+fn _moved_to[p, t, d]
+    u = _unit[p]
+    t.seen.focus = d
+    t.seen.navigated = true
+    if u eq 'day' or u eq 'week'
+        sh = calendar.sheet['', t.chosen]
+        sh.shown = t.seen.shown
+        sh.months = p.months
+        sh = calendar.focused_on[sh, d]
+        t.seen.shown = sh.shown
+    else
+        page = _page_first[p, d]
+        t.seen.shown = page
+    t
+
+fn _applied[p, t, e]
+    if e.id eq p.id
+        return _field_told[p, t, e]
+    if e.id eq _popup_id[p] and e.act eq 'dismiss'
+        return _closed[p, t, e.words eq 'escape']
+    if e.id eq _icon_id[p] and e.act eq 'press'
+        --- (a press on the icon while open closes it: Lory has, as a press
+        --- outside the field)
+        if gui.layer_open[_popup_id[p]]
+            return _closed[p, t, false]
+        if p.read_only or t.dismissed
+            return t
+        return _opened[p, t]
+    if e.id eq _clear_id[p] and e.act eq 'press'
+        t.chosen = calendar.no_days[]
+        t.seen.typing = false
+        t.seen.typed = ''
+        return t
+    if e.id eq _today_id[p] and e.act eq 'press'
+        d = calendar.today[p.zone]
+        t = _moved_to[p, t, _period_first[p, d]]
+        return _chosen_now[p, t, _chose[p, t.chosen, d]]
+    if e.id eq _days_id[p] or e.id eq _tiles_id[p]
+        return _calendar_told[p, t, e]
+    if e.id eq _times_id[p]
+        return _times_told[p, t, e]
+    t
+
+fn _field_told[p, t, e]
+    if e.act eq 'edit'
+        if p.read_only
+            gui.focus[p.id, written[p, t.chosen]]
+            return t
+        t.seen.typed = e.words
+        t.seen.typing = true
+        reference = calendar.today[p.zone]
+        if len[t.chosen] gt 0
+            reference = t.chosen[0]
+        got = read_words[p, e.words, reference]
+        if got.fits
+            t.chosen = got.chosen
+            if len[got.chosen] gt 0
+                t = _moved_to[p, t, _period_first[p, _day_in[p, got.chosen[0]]]]
+                t.seen.navigated = false
+        return t
+    if e.act eq 'submit'
+        if p.read_only
+            return t
+        if not gui.layer_open[_popup_id[p]]
+            return _opened[p, t]
+        if t.seen.navigated
+            return _focus_chosen[p, t]
+        return _closed[p, t, true]
+    t
+
+--- the day (or period, or time) the keys moved to, chosen
+fn _focus_chosen[p, t]
+    if _unit[p] eq 'time'
+        times = times_of[p, _time_day[p, t.chosen]]
+        at = t.seen.time_at
+        if at gte 0 and at lt len[times]
+            return _chosen_now[p, t, _chose_time[p, t.chosen, times[at]]]
+        return t
+    _chosen_now[p, t, _chose[p, t.chosen, t.seen.focus]]
+
+fn _calendar_told[p, t, e]
+    u = _unit[p]
+    if e.act eq 'press'
+        d = moment[e.words]
+        if not d.ok
+            return t
+        t = _moved_to[p, t, _period_first[p, d]]
+        t.seen.navigated = false
+        return _chosen_now[p, t, _chose[p, t.chosen, d]]
+    if e.act eq 'previous' or e.act eq 'next'
+        way = 1
+        if e.act eq 'previous'
+            way = -1
+        if u eq 'day' or u eq 'week'
+            sh = calendar.sheet['', t.chosen]
+            sh.shown = t.seen.shown
+            sh.months = p.months
+            sh.rules = p.rules
+            sh.focus = t.seen.focus
+            sh = calendar.turned[sh, way]
+            t.seen.shown = sh.shown
+            t.seen.focus = sh.focus
+        else if u eq 'year'
+            t.seen.shown = calendar.add_years[t.seen.shown, way * _years_paged[]]
+            t.seen.focus = calendar.add_years[t.seen.focus, way * _years_paged[]]
+        else
+            t.seen.shown = calendar.add_years[t.seen.shown, way]
+            t.seen.focus = calendar.add_years[t.seen.focus, way]
+        return t
+    if e.act eq 'tab'
+        if p.mode ne 'day_time' and p.today_words eq '' and not p.inline
+            return _closed[p, t, false]
+        return t
+    if e.act eq 'key'
+        return _key_on_calendar[p, t, e.words, e.num gt 0.5]
+    t
+
+fn _key_on_calendar[p, t, key, shift]
+    u = _unit[p]
+    if key eq 'Enter' or key eq ' '
+        return _focus_chosen[p, t]
+    if key eq 'Escape'
+        if p.inline
+            return t
+        return _closed[p, t, true]
+    if u eq 'day' or u eq 'week'
+        if calendar.moving_key[key]
+            d = calendar.key_moved[t.seen.focus, key, shift, p.rules, p.loc.week_start, u eq 'week']
+            return _moved_to[p, t, d]
+        return t
+    _moved_to[p, t, tile_moved[p, t.seen.focus, key]]
+
+fn _times_told[p, t, e]
+    times = times_of[p, _time_day[p, t.chosen]]
+    if e.act eq 'press'
+        at = moment[e.words]
+        if not at.ok
+            return t
+        t.seen.time_at = time_place[p, times, at]
+        return _chosen_now[p, t, _chose_time[p, t.chosen, _on_chosen_day[p, t.chosen, at]]]
+    if e.act eq 'scroll'
+        sl = _slots_of[p, t.chosen, t.seen]
+        t.seen.scrolled = sl.scrolled + e.num
+        return t
+    if e.act eq 'key'
+        return _time_key[p, t, times, e.words]
+    if e.act eq 'tab' and not p.inline and p.today_words eq ''
+        return _closed[p, t, false]
+    t
+
+--- a time chosen from the list, on the day chosen where one is (the
+--- list's day is that day already)
+fn _on_chosen_day[p, chosen, at]
+    at
+
+--- the list's keys: up and left a time back, down and right a time on
+--- (passing over none, as react-datepicker's list does), Enter and space
+--- choosing the one with the focus where it may be chosen, Escape closing
+fn _time_key[p, t, times, key]
+    at = t.seen.time_at
+    if at lt 0
+        at = 0
+        if len[t.chosen] gt 0
+            at = time_place[p, times, t.chosen[0]]
+    if key eq 'ArrowUp' or key eq 'ArrowLeft'
+        at = max[0, at - 1]
+    else if key eq 'ArrowDown' or key eq 'ArrowRight'
+        at = min[len[times] - 1, at + 1]
+    else if key eq 'Enter' or key eq ' '
+        t.seen.time_at = at
+        return _focus_chosen[p, t]
+    else if key eq 'Escape'
+        if p.inline
+            return t
+        return _closed[p, t, true]
+    else
+        return t
+    t.seen.time_at = at
+    t.seen.navigated = true
+    --- (the list scrolled to keep the focus in sight)
+    sl = _slots_of[p, t.chosen, t.seen]
+    room = sl.tall - 26.0
+    top = at * sl.item_h
+    scrolled = sl.scrolled
+    if top lt scrolled
+        scrolled = top
+    if top + sl.item_h gt scrolled + room
+        scrolled = top + sl.item_h - room
+    t.seen.scrolled = scrolled
+    t
+
+--- a key typed into the field while the calendar is open: up and down a
+--- week (a time in a time's picker, by its minutes: react-datepicker's
+--- time input), Page Up and Page Down a month (with Shift a year); Tab
+--- closes it
+fn _field_key[p, t, k]
+    shift = ends[k, '+'] and len[k] gt 1
+    key = k
+    if shift
+        key = slice[k, 0, len[k] - 1]
+    if key eq 'Tab'
+        return _closed[p, t, false]
+    u = _unit[p]
+    if u eq 'time'
+        if key eq 'ArrowUp' or key eq 'ArrowDown'
+            d = _time_day[p, t.chosen]
+            now_s = 0
+            if len[t.chosen] gt 0
+                now_s = _clock[p, t.chosen[0]]
+            step = p.interval * 60
+            if key eq 'ArrowUp'
+                now_s = max[0, now_s - step]
+            else
+                now_s = min[24 * 3600 - step, now_s + step]
+            t.chosen = [calendar.at_clock[d, now_s, p.zone]]
+            t.seen.time_at = -1
+            gui.focus[p.id, written[p, t.chosen]]
+        return t
+    if key in ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown']
+        if u eq 'day' or u eq 'week'
+            return _moved_to[p, t, calendar.key_moved[t.seen.focus, key, shift, p.rules, p.loc.week_start, u eq 'week']]
+        return _moved_to[p, t, tile_moved[p, t.seen.focus, key]]
+    t
+
+--- ---- tests ----
+
+--- a frame of a page 900 by 700 CSS pixels, and of a headset's left eye,
+--- holding the input given; a mouse's press and release at a place; keys
+--- typed; words typed
+fn _screen[given]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _headset[given]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _typed_keys[names, shift]
+    out = []
+    for k in names
+        out = push[out, '{"type": "key", "key": "`k`", "code": "`k`", "shift": `shift`}']
+    joined = join[out, ', ']
+    '[`joined`]'
+
+fn _typed_words[words]
+    '[{"type": "text", "text": "`words`"}]'
+
+--- the picker alone on the page, drawn holding what is chosen
+fn _shown[p, chosen, frame]
+    gui.show[lory.begin[frame], gui.column[[control[p, chosen]]]]
+
+--- where a day of the month shown is in the picker's calendar
+fn _day_at[p, chosen, first, t]
+    sh = calendar.sheet[_days_id[p], chosen]
+    sh.shown = first
+    sh.months = p.months
+    sh.numbers = p.numbers
+    calendar.day_spot[sh, t]
+
+fn _days_words[days]
+    out = []
+    for t in days
+        out = push[out, calendar.format[t, 'yyyy-MM-dd', calendar.locale['en-US']]]
+    join[out, ' ']
+
+test a_date_field_opens_on_a_press_and_a_day_pressed_is_chosen[]
+    gui.unfocus[]
+    p = date_picker['due']
+    chosen = [calendar.day[2024, 3, 5]]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    not is_open[p]
+    b = first.boxes['due']
+    opened = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, opened]
+    is_open[p]
+    again = _shown[p, chosen, _screen['[]']]
+    g = again.boxes['due:days']
+    spot = _day_at[p, chosen, calendar.day[2024, 3, 1], calendar.day[2024, 3, 20]]
+    picked = _shown[p, chosen, _screen[_press_at[g[0] + spot[0] + 10.0, g[1] + spot[1] + 10.0]]]
+    chosen = answered[p, chosen, picked]
+    _days_words[chosen] eq '2024-03-20'
+    not is_open[p]
+    written[p, chosen] eq '03/20/2024'
+
+test keys_in_the_field_move_over_the_days_and_enter_chooses[]
+    gui.unfocus[]
+    p = date_picker['keyed']
+    chosen = [calendar.day[2024, 3, 13]]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    b = first.boxes['keyed']
+    opened = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, opened]
+    is_open[p]
+    moved = _shown[p, chosen, _screen[_typed_keys[['ArrowDown', 'PageDown'], false]]]
+    chosen = answered[p, chosen, moved]
+    _days_words[chosen] eq '2024-03-13'
+    entered = _shown[p, chosen, _screen[_typed_keys[['Enter'], false]]]
+    chosen = answered[p, chosen, entered]
+    _days_words[chosen] eq '2024-04-20'
+    not is_open[p]
+
+test escape_closes_the_calendar_and_keeps_what_was_chosen[]
+    gui.unfocus[]
+    p = date_picker['kept']
+    chosen = [calendar.day[2024, 3, 13]]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    b = first.boxes['kept']
+    opened = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, opened]
+    is_open[p]
+    moved = _shown[p, chosen, _screen[_typed_keys[['ArrowDown'], false]]]
+    chosen = answered[p, chosen, moved]
+    closed = _shown[p, chosen, _screen[_typed_keys[['Escape'], false]]]
+    chosen = answered[p, chosen, closed]
+    not is_open[p]
+    _days_words[chosen] eq '2024-03-13'
+
+test a_range_is_chosen_first_day_then_last_and_closes_once_whole[]
+    gui.unfocus[]
+    p = range_picker['stay']
+    chosen = [calendar.day[2024, 3, 2], calendar.day[2024, 3, 4]]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    b = first.boxes['stay']
+    opened = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, opened]
+    again = _shown[p, chosen, _screen['[]']]
+    g = again.boxes['stay:days']
+    a = _day_at[p, chosen, calendar.day[2024, 3, 1], calendar.day[2024, 3, 10]]
+    begun = _shown[p, chosen, _screen[_press_at[g[0] + a[0] + 10.0, g[1] + a[1] + 10.0]]]
+    chosen = answered[p, chosen, begun]
+    _days_words[chosen] eq '2024-03-10'
+    is_open[p]
+    written[p, chosen] eq '03/10/2024 - '
+    e = _day_at[p, chosen, calendar.day[2024, 3, 1], calendar.day[2024, 3, 14]]
+    ended = _shown[p, chosen, _screen[_press_at[g[0] + e[0] + 10.0, g[1] + e[1] + 10.0]]]
+    chosen = answered[p, chosen, ended]
+    _days_words[chosen] eq '2024-03-10 2024-03-14'
+    not is_open[p]
+    written[p, chosen] eq '03/10/2024 - 03/14/2024'
+
+test words_typed_into_the_field_choose_the_day_they_write[]
+    gui.unfocus[]
+    p = date_picker['typed']
+    chosen = calendar.no_days[]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    b = first.boxes['typed']
+    focused = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, focused]
+    typed = _shown[p, chosen, _screen[_typed_words['03/20/2024']]]
+    chosen = answered[p, chosen, typed]
+    _days_words[chosen] eq '2024-03-20'
+    half = _shown[p, chosen, _screen[_typed_words['x']]]
+    chosen = answered[p, chosen, half]
+    --- (words that write no day leave what was chosen)
+    _days_words[chosen] eq '2024-03-20'
+
+fn _mornings[t]
+    calendar.seconds_into[t] lt 12 * 3600
+
+test the_time_list_holds_a_time_every_thirty_minutes_within_its_bounds[]
+    p = time_picker['at']
+    d = calendar.day[2024, 3, 5]
+    len[times_of[p, d]] eq 48
+    times_of[p, d][19] eq d + 9 * 3600 + 1800
+    len[times_of[timed[p, 15], d]] eq 96
+    bounded = times_bounded[p, 9 * 3600, 17 * 3600]
+    time_off[bounded, d + 8 * 3600 + 1800]
+    not time_off[bounded, d + 9 * 3600]
+    not time_off[bounded, d + 17 * 3600]
+    time_off[bounded, d + 17 * 3600 + 1800]
+    --- (an earliest time alone bounds nothing, as react-datepicker's)
+    not time_off[times_bounded[p, 9 * 3600, -1], d + 3600]
+    time_off[times_excluding[p, [12 * 3600]], d + 12 * 3600]
+    only = times_including[p, [9 * 3600, 10 * 3600]]
+    not time_off[only, d + 9 * 3600]
+    time_off[only, d + 9 * 3600 + 1800]
+    added = times_adding[p, [9 * 3600 + 600]]
+    len[times_of[added, d]] eq 49
+    times_of[added, d][19] eq d + 9 * 3600 + 600
+    time_off[times_filtered[p, _mornings], d + 13 * 3600]
+    not time_off[times_filtered[p, _mornings], d + 11 * 3600]
+    written[p, [d + 14 * 3600 + 1800]] eq '2:30 PM'
+
+test a_day_the_clocks_turn_lists_the_hours_it_holds[]
+    p = zoned[time_picker['ny'], 'America/New_York']
+    len[times_of[p, calendar.day[2024, 3, 10]]] eq 46
+    len[times_of[p, calendar.day[2024, 11, 3]]] eq 50
+    times_of[p, calendar.day[2024, 3, 10]][4] eq moment[2024, 3, 10, 7, 0, 0]
+    written[p, [moment[2024, 3, 10, 7, 0, 0]]] eq '3:00 AM'
+
+test months_quarters_and_years_are_moved_over_by_their_keys[]
+    m = month_picker['m']
+    tile_moved[m, calendar.day[2024, 5, 1], 'ArrowRight'] eq calendar.day[2024, 6, 1]
+    tile_moved[m, calendar.day[2024, 5, 1], 'ArrowDown'] eq calendar.day[2024, 8, 1]
+    tile_moved[m, calendar.day[2024, 5, 1], 'ArrowUp'] eq calendar.day[2024, 2, 1]
+    q = quarter_picker['q']
+    tile_moved[q, calendar.day[2024, 4, 1], 'ArrowRight'] eq calendar.day[2024, 7, 1]
+    y = year_picker['y']
+    tile_moved[y, calendar.day[2024, 1, 1], 'ArrowDown'] eq calendar.day[2027, 1, 1]
+    years_page[2024] eq [2017, 2028]
+    years_page[2028] eq [2017, 2028]
+    years_page[2029] eq [2029, 2040]
+    written[m, [calendar.day[2024, 5, 1]]] eq '05/2024'
+    written[q, [calendar.day[2024, 4, 1]]] eq '2024, Q2'
+    written[week_picker['w'], [calendar.day[2024, 3, 4]]] eq '10/2024'
+
+test a_fields_words_show_a_range_and_several_days[]
+    a = calendar.day[2024, 3, 10]
+    b = calendar.day[2024, 3, 14]
+    many = dates_picker['many']
+    written[many, [a, b]] eq '03/10/2024, 03/14/2024'
+    written[many, [a, b, calendar.day[2024, 3, 20]]] eq '03/10/2024 (+2)'
+    r = range_picker['r']
+    got = read_words[r, '03/10/2024 - 03/14/2024', calendar.day[2000, 1, 1]]
+    got.fits
+    _days_words[got.chosen] eq '2024-03-10 2024-03-14'
+    not read_words[r, '03/40/2024', calendar.day[2000, 1, 1]].fits
+    off = ruled[date_picker['off'], calendar.bounded[calendar.rules[], a, b]]
+    not read_words[off, '03/20/2024', calendar.day[2000, 1, 1]].fits
+
+test a_picker_in_a_headset_opens_and_chooses_as_on_a_page[]
+    gui.unfocus[]
+    p = date_picker['worn']
+    chosen = [calendar.day[2024, 3, 5]]
+    first = _shown[p, chosen, _headset[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    b = first.boxes['worn']
+    opened = _shown[p, chosen, _headset[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, opened]
+    is_open[p]
+    again = _shown[p, chosen, _headset['[]']]
+    g = again.boxes['worn:days']
+    spot = _day_at[p, chosen, calendar.day[2024, 3, 1], calendar.day[2024, 3, 22]]
+    picked = _shown[p, chosen, _headset[_press_at[g[0] + spot[0] + 10.0, g[1] + spot[1] + 10.0]]]
+    chosen = answered[p, chosen, picked]
+    _days_words[chosen] eq '2024-03-22'
+    not is_open[p]
+
+test the_icon_opens_the_calendar_the_cross_clears_and_a_field_only_read_stays_shut[]
+    gui.unfocus[]
+    p = clearable[with_icon[date_picker['dressed']]]
+    chosen = [calendar.day[2024, 3, 5]]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    i = first.boxes['dressed:icon']
+    opened = _shown[p, chosen, _screen[_press_at[i[0] + 8.0, i[1] + 8.0]]]
+    chosen = answered[p, chosen, opened]
+    is_open[p]
+    shut = _shown[p, chosen, _screen[_press_at[i[0] + 8.0, i[1] + 8.0]]]
+    chosen = answered[p, chosen, shut]
+    not is_open[p]
+    x = shut.boxes['dressed:clear']
+    cleared = _shown[p, chosen, _screen[_press_at[x[0] + 8.0, x[1] + 8.0]]]
+    chosen = answered[p, chosen, cleared]
+    len[chosen] eq 0
+    written[p, chosen] eq ''
+    --- (only read: a press on its field opens nothing)
+    q = read_only[date_picker['fixed']]
+    kept = [calendar.day[2024, 3, 5]]
+    still = _shown[q, kept, _screen[_press_at[899.0, 699.0]]]
+    kept = answered[q, kept, still]
+    f = still.boxes['fixed']
+    pressed = _shown[q, kept, _screen[_press_at[f[0] + 5.0, f[1] + 5.0]]]
+    kept = answered[q, kept, pressed]
+    not is_open[q]
+    _days_words[kept] eq '2024-03-05'
+
+test a_control_of_the_programs_own_opens_the_calendar_and_today_is_chosen_by_its_button[]
+    gui.unfocus[]
+    p = with_today[custom[date_picker['own'], gui.button['own-button', 'Pick a day']], 'Today']
+    chosen = [calendar.day[2024, 3, 5]]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    not ('own' in first.boxes)
+    b = first.boxes['own-button']
+    opened = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, opened]
+    is_open[p]
+    again = _shown[p, chosen, _screen['[]']]
+    t = again.boxes['own:today']
+    today_pressed = _shown[p, chosen, _screen[_press_at[t[0] + 5.0, t[1] + 5.0]]]
+    chosen = answered[p, chosen, today_pressed]
+    _days_words[chosen] eq _days_words[[calendar.today['UTC']]]
+    not is_open[p]
+
+test a_time_is_typed_into_its_field_and_stepped_by_the_arrows[]
+    gui.unfocus[]
+    p = time_picker['typed_time']
+    d = calendar.day[2024, 3, 5]
+    chosen = calendar.no_days[]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    b = first.boxes['typed_time']
+    focused = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, focused]
+    is_open[p]
+    typed = _shown[p, chosen, _screen[_typed_words['2:30 PM']]]
+    chosen = answered[p, chosen, typed]
+    written[p, chosen] eq '2:30 PM'
+    --- (up a step of the list's minutes, as react-datepicker's time input)
+    up = _shown[p, chosen, _screen[_typed_keys[['ArrowUp'], false]]]
+    chosen = answered[p, chosen, up]
+    written[p, chosen] eq '2:00 PM'
+
+--- a frame whose mouse stands at (x, y), not pressed
+fn _pointed[given, x, y]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [{"x": `x`, "y": `y`, "down": false}], "controllers": [], "said": []}']
+
+fn _wheel_at[x, y, dy]
+    '[{"type": "wheel", "device": "mouse", "x": `x`, "y": `y`, "dx": 0, "dy": `dy`}]'
+
+test a_range_of_months_is_chosen_from_their_tiles_first_then_last[]
+    gui.unfocus[]
+    p = month_range_picker['season']
+    jan = calendar.day[2024, 1, 1]
+    chosen = [jan, calendar.day[2024, 2, 1]]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    b = first.boxes['season']
+    opened = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, opened]
+    is_open[p]
+    again = _shown[p, chosen, _screen['[]']]
+    g = again.boxes['season:tiles']
+    --- (once whole, a press begins a new range: March, then June)
+    m = tile_spot[p, jan, calendar.day[2024, 3, 1]]
+    begun = _shown[p, chosen, _screen[_press_at[g[0] + m[0] + 10.0, g[1] + m[1] + 10.0]]]
+    chosen = answered[p, chosen, begun]
+    _days_words[chosen] eq '2024-03-01'
+    is_open[p]
+    n = tile_spot[p, jan, calendar.day[2024, 6, 1]]
+    ended = _shown[p, chosen, _screen[_press_at[g[0] + n[0] + 10.0, g[1] + n[1] + 10.0]]]
+    chosen = answered[p, chosen, ended]
+    written[p, chosen] eq '03/2024 - 06/2024'
+    not is_open[p]
+
+test a_calendar_is_kept_open_drawn_six_weeks_tall_and_passed_over_when_off[]
+    gui.unfocus[]
+    p = six_weeks[kept_open[date_picker['open']]]
+    chosen = [calendar.day[2026, 2, 10]]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = answered[p, chosen, first]
+    b = first.boxes['open']
+    opened = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = answered[p, chosen, opened]
+    again = _shown[p, chosen, _screen['[]']]
+    g = again.boxes['open:days']
+    --- (February 2026 begins on a Sunday and fills four weeks; six are drawn)
+    sh = calendar.sheet['', chosen]
+    sh.shown = calendar.day[2026, 2, 1]
+    sh.six = true
+    abs[g[3] - calendar.sheet_tall[sh]] lt 0.5
+    sh.six = false
+    calendar.sheet_tall[sh] lt g[3] - 60.0
+    spot = _day_at[p, chosen, calendar.day[2026, 2, 1], calendar.day[2026, 2, 18]]
+    picked = _shown[p, chosen, _screen[_press_at[g[0] + spot[0] + 10.0, g[1] + spot[1] + 10.0]]]
+    chosen = answered[p, chosen, picked]
+    _days_words[chosen] eq '2026-02-18'
+    is_open[p]
+    --- (off: a press on its field opens nothing, and a calendar inline
+    --- chooses nothing)
+    q = turned_off[date_picker['shut']]
+    kept = [calendar.day[2024, 3, 5]]
+    still = _shown[q, kept, _screen[_press_at[899.0, 699.0]]]
+    kept = answered[q, kept, still]
+    f = still.boxes['shut']
+    tried = _shown[q, kept, _screen[_press_at[f[0] + 5.0, f[1] + 5.0]]]
+    kept = answered[q, kept, tried]
+    not is_open[q]
+    r = turned_off[inline[date_picker['shown_off']]]
+    held_days = [calendar.day[2024, 3, 5]]
+    shown_once = _shown[r, held_days, _screen['[]']]
+    held_days = answered[r, held_days, shown_once]
+    box = shown_once.boxes['shown_off:days']
+    there = _day_at[r, held_days, calendar.day[2024, 3, 1], calendar.day[2024, 3, 20]]
+    tapped = _shown[r, held_days, _screen[_press_at[box[0] + there[0] + 10.0, box[1] + there[1] + 10.0]]]
+    held_days = answered[r, held_days, tapped]
+    _days_words[held_days] eq '2024-03-05'
+
+test a_time_list_scrolls_by_the_wheel_and_writes_its_times_by_the_pattern[]
+    gui.unfocus[]
+    p = inline[time_picker['clock']]
+    p.format = 'HH:mm'
+    d = calendar.day[2024, 3, 5]
+    chosen = [d + 9 * 3600]
+    first = _shown[p, chosen, _screen['[]']]
+    chosen = answered[p, chosen, first]
+    l = first.boxes['clock:times']
+    before = time_spot[p, chosen, d + 9 * 3600]
+    x = l[0] + 40.0
+    y = l[1] + 100.0
+    turned = _shown[p, chosen, _pointed[_wheel_at[x, y, 60.0], x, y]]
+    chosen = answered[p, chosen, turned]
+    again = _shown[p, chosen, _screen['[]']]
+    after = time_spot[p, chosen, d + 9 * 3600]
+    abs[before[1] - after[1] - 60.0] lt 0.5
+    written[p, chosen] eq '09:00'
+    t = time_spot[p, chosen, d + 11 * 3600]
+    t[1] gte 26.0 and t[1] + t[3] lte l[3]
+    pressed = _shown[p, chosen, _screen[_press_at[l[0] + t[0] + 10.0, l[1] + t[1] + 6.0]]]
+    chosen = answered[p, chosen, pressed]
+    written[p, chosen] eq '11:00'
+
+test a_day_chosen_in_a_date_and_time_picker_keeps_its_time[]
+    gui.unfocus[]
+    p = inline[date_time_picker['when']]
+    d = calendar.day[2024, 3, 5]
+    chosen = [d + 14 * 3600 + 1800]
+    first = _shown[p, chosen, _screen['[]']]
+    chosen = answered[p, chosen, first]
+    g = first.boxes['when:days']
+    spot = _day_at[p, chosen, calendar.day[2024, 3, 1], calendar.day[2024, 3, 20]]
+    picked = _shown[p, chosen, _screen[_press_at[g[0] + spot[0] + 10.0, g[1] + spot[1] + 10.0]]]
+    chosen = answered[p, chosen, picked]
+    written[p, chosen] eq '03/20/2024 2:30 PM'
+    --- (a locale brings its first weekday)
+    localized[p, 'en-GB'].loc.week_start eq 1

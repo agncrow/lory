@@ -1,0 +1,159 @@
+--- What lory.forms and lory.editors compute on fixed inputs, written out
+--- to diff the interpreter's run against the compiled program's
+--- (tests/modes.sh): masks, an autocomplete's filter, a number input's
+--- words, files' sizes, JavaScript's numbers, a form's rules and its
+--- words, a rating's and a slider's steps, a code's typing, a colour
+--- picker's codes, Markdown's trees, an image editor's points, and a
+--- sign-up form's controls laid out and answering a frame.
+use lory
+use lory.gui
+use lory.forms
+use lory.editors
+
+fn _digits[x]
+    fmt[x, decimals = 12]
+
+fn _all[words]
+    join[words, ' | ']
+
+--- masks: written, read back, whether valid and whole
+for mask in ['credit-card', 'date', 'phone', 'time', 'AA-##', 'NN:nn']
+    for text in ['', '5', '5551234', '555123456789', '12a3', 'ab12', '(555) 1']
+        log['mask `mask` “`text`” → “`forms.mask_text[text, mask]`” “`forms.unmask_text[text, mask]`” `forms.mask_valid[text, mask]` `forms.mask_complete[text, mask]`']
+
+--- an autocomplete's filter, as found and as ordered
+fruits = ['Apple', 'Banana', 'Apricot', 'Grape', 'Pineapple', 'grapefruit', 'Blackberry']
+for query in ['', 'ap', 'AP', 'grape', 'an', 'x', 'e']
+    found = forms.filtered[fruits, query]
+    ordered = forms.matching[fruits, query]
+    log['filter “`query`” `found` `_all[ordered]`']
+    for w in ordered
+        log['  ranges of “`query`” in `w`: `forms.match_ranges[w, query]`']
+
+--- a number input's words
+for x in [0.0, 1.5, -2.25, 1234567.891, 0.1, 0.0000001, 100.0, 2.5, 3.5, -0.0]
+    for places in [-1, 0, 2]
+        words = forms.number_text[x, places = places]
+        log['number `_digits[x]` to `places`: `words`']
+for words in ['12a', '-1.2.3', '1,234.5', '--5', '.5', '7.', '1e5', '']
+    for places in [-1, 0, 1]
+        kept = forms.number_kept[words, places = places]
+        log['kept “`words`” to `places`: “`kept`”']
+for one in [['5', '12', '2'], ['a', '12', '2'], ['.', '12', '2'], ['-', '12', '0'], ['3', '1.25', '4']]
+    at = int[one[2]]
+    if not at.ok
+        at = 0
+    t = forms.number_typed[one[0], one[1], at, at, places = 2]
+    log['typed “`one[0]`” into “`one[1]`”: `t.how` “`t.words`” `t.caret`']
+
+--- files' sizes, and JavaScript's numbers
+for bytes in [0, 999, 1000, 1024, 1536, 1048576, 1500000, 123456789, 9999999999]
+    kibi = forms.file_size[bytes, base = 1024]
+    log['size `bytes`: `forms.file_size[bytes]` / `kibi`']
+for words in ['0', ' 12 ', '1e3', '0x1f', '0b101', '0o17', 'Infinity', '-Infinity', 'abc', '', '.5', '5.']
+    v = forms.js_number[words]
+    log['Number(“`words`”) = `forms.js_text[v]`']
+for words in ['0', '100', '-40', '37.5', 'x', '1e2', '']
+    log['°C `words` → °F `forms.fahrenheit_of[words]`; °F `words` → °C `forms.celsius_of[words]`']
+
+--- a form's rules and the words shown under a field
+fields = map['f' = '', 'other' = 'secret']
+for rule in ['empty', 'email', 'url', 'integer[1..10]', 'decimal', 'minLength[3]', 'exactLength[4]', 'match[other]', 'checked', 'regExp[/^[a-z]+$/i]', 'contains[ab]', 'minCount[2]', 'creditCard']
+    for value in ['', 'Ab', 'a@b.co', 'http://x.co', '7', '-2.5', 'secret', 'a,b,c', '4111111111111111']
+        fields['f'] = value
+        log['rule `rule` “`value`”: `forms.passes[rule, value, fields]`']
+    says = forms.rule_says[rule, 'Name']
+    log['says `rule`: `says`']
+wants = [forms.want['name', 'Name', ['empty']], forms.want['email', 'Email', ['empty', 'email']], forms.want['age', 'Age', ['integer[18..120]'], optional = true]]
+for filled in [map['name' = '', 'email' = '', 'age' = ''], map['name' = 'Ada', 'email' = 'ada@', 'age' = '17'], map['name' = 'Ada', 'email' = 'ada@x.io', 'age' = '']]
+    errors = forms.errors_of[wants, filled]
+    for field in ['name', 'email', 'age']
+        log['error of `field`: “`errors[field]`”']
+
+--- a rating's, a slider's and cards' steps
+for at in [-3.0, 0.0, 13.0, 15.0, 27.0, 41.0, 200.0]
+    log['rating at `at`: `forms.rating_at[at, 5, 24.0, false]` `forms.rating_at[at, 5, 24.0, true]`']
+log['rating pressed: `forms.rating_pressed[3.0, 3.0, true]` `forms.rating_pressed[3.0, 3.0, false]` `forms.rating_pressed[3.0, 2.0, true]`']
+for key in ['ArrowRight', 'ArrowLeft', 'Home']
+    log['rating keyed `key`: `forms.rating_keyed[4.5, key, 5, true]` `forms.rating_keyed[0.0, key, 5, false]`']
+for key in ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End', 'PageUp', 'PageDown', 'x']
+    log['card from 0 and 3 by `key`: `forms.card_after_key[0, key, 4]` `forms.card_after_key[3, key, 4]`']
+for v in [-5.0, 0.0, 12.4, 12.5, 99.9, 120.0]
+    log['snapped `v`: `_digits[forms.snapped[v, 0.0, 100.0, 5.0]]` `_digits[forms.snapped[v, 0.0, 100.0, 0.1]]`']
+
+--- a code's typing, as Radix types it
+code = forms.code_of['']
+for step in ['1', '2', 'x', 'Backspace', 'Backspace', '987', 'Home', 'Delete', 'End', 'ArrowLeft', '5']
+    if len[step] gt 1 and not matches[step, '^[0-9]+$']
+        code = forms.code_keyed[code, step, false, 4]
+    else
+        code = forms.code_typed[code, step, 4]
+    log['code after “`step`”: “`forms.code_text[code]`” at `code.at`']
+for kind in ['numeric', 'alpha', 'alphanumeric', 'none']
+    kept = forms.code_kept['a1 b2-c3', kind = kind]
+    log['code kept as `kind`: “`kept`”']
+
+--- a combobox's list, a colour picker's codes, small controls
+combo = forms.combo_of['']
+combo.typed = true
+combo.query = 'ap'
+log['combobox lists `_all[forms.combo_choices[combo, fruits]]`']
+for hex in ['#3366cc', '#ff0000', '#808080', '#00000080', '#abc', 'nope']
+    p = forms.picker_of[hex]
+    log['picker `hex`: hue `_digits[p.hue]` sat `_digits[p.sat]` val `_digits[p.val]` alpha `_digits[p.alpha]` → `forms.picker_hex[p]`']
+for words in ['', 'abcdefgh', 'abcdefghi', 'abcdefghijk']
+    log['count of “`words`”: `forms.count_tone[words, 10]`']
+for state in ['idle', 'busy', 'done', 'failed']
+    log['badge `state` → `forms.badge_next[state]`']
+more = forms.ticked_after[['a', 'b'], 'c', true]
+fewer = forms.ticked_after[['a', 'b', 'c'], 'b', false]
+turned_round = forms.reversed['Hello, Vue']
+log['ticked `more` `fewer`; reversed `turned_round`']
+
+--- Markdown's trees
+for text in ['# Title', 'Title\n=====\n\nSub\n---', 'one line\nand another\n\nnew paragraph', 'hard  \nbreak and\\\nbackslash', '***both*** and **_mixed_**', 'snake_case_words and *a*b and 2*3*4', '\`code\` and \`\` co\`de \`\`', '\`\`\`js\nlet a = 1;\n\`\`\`\nafter', '    indented\n    code', '- a\n  - nested\n- b', '1. one\n\n   para in item\n2. two', '> outer\n>> inner', '---\n***', '[link](http://x.co) and [titled](/a "Title")', '\\*escaped\\*', '**bold [link](u) bold**', '']
+    shown = replace[text, '\n', '⏎']
+    log['markdown “`shown`” → `editors.tree_text[editors.markdown_blocks[text]]`']
+
+--- an image editor's points under turns and mirrors
+pic = editors.picture_of[-1, 200.0, 100.0]
+for turns in [0, 1, 2, 3]
+    for across in [false, true]
+        shot = pic.now
+        shot.turns = turns
+        shot.across = across
+        pic.now = shot
+        v = editors.view_of[pic, 10.0, 20.0, 400.0, 300.0]
+        a = editors.on_screen[v, 0.0, 0.0]
+        b = editors.on_screen[v, 150.0, 25.0]
+        back = editors.on_picture[v, b[0], b[1]]
+        log['picture turned `turns` across `across`: scale `_digits[v.scale]` (0, 0) → (`_digits[a[0]]`, `_digits[a[1]]`) (150, 25) → (`_digits[b[0]]`, `_digits[b[1]]`) → (`_digits[back[0]]`, `_digits[back[1]]`)']
+
+--- a sign-up form laid out and pressed: its boxes and what it told
+fn _signup[f, stars, code, low, high]
+    name = forms.labelled['name', 'Name', gui.field['name', f.fields['name']], fault = forms.error_of[f, 'name']]
+    rate = forms.rating['stars', stars]
+    otp = forms.otp['code', code, size = 4]
+    price = forms.range_slider['price', low, high, 0.0, 100.0]
+    agree = forms.switch['agree', 'I agree', f.fields['agree'] eq 'on']
+    gui.column[[name, rate, otp, price, agree, gui.button['submit', 'Sign up']]]
+
+frame = '{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [], "input": [], "pointers": [], "controllers": [], "said": []}'
+f = forms.form_of[map['name' = '', 'agree' = '']]
+signup_wants = [forms.want['name', 'Name', ['empty']], forms.want['agree', 'Terms', ['checked']]]
+first = gui.show[lory.begin[json[frame]], _signup[f, 2.0, forms.code_of['12'], 20.0, 80.0]]
+for id in ['name', 'stars', 'code:0', 'code:3', 'price:low', 'price:high', 'agree', 'submit']
+    b = first.boxes[id]
+    log['box `id`: `_digits[b[0]]` `_digits[b[1]]` `_digits[b[2]]` `_digits[b[3]]`']
+sb = first.boxes['submit']
+sx = sb[0] + sb[2] / 2.0
+sy = sb[1] + sb[3] / 2.0
+pressed = '{"t": 100, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [], "input": [{"type": "down", "device": "mouse", "id": 1, "x": `sx`, "y": `sy`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `sx`, "y": `sy`, "button": 0}], "pointers": [], "controllers": [], "said": []}'
+sent = gui.show[lory.begin[json[pressed]], _signup[f, 2.0, forms.code_of['12'], 20.0, 80.0]]
+for e in sent.events
+    log['told `e.id` `e.act` “`e.words`” `e.num`']
+f = forms.form_after[f, signup_wants, sent]
+name_says = forms.error_of[f, 'name']
+agree_says = forms.error_of[f, 'agree']
+log['form sent `f.sent` failed `f.failed`: name “`name_says`” agree “`agree_says`”']
+log['vertices `len[sent.canvas.verts]`']

@@ -1,0 +1,3987 @@
+--- Lory's data table engine: the row model a data grid stands on, as plain
+--- functions over rows of cells and column definitions, with nothing drawn.
+--- The drawing (headers, resizing, rows, cells) stands on it.
+---
+---     use lory.datatable as dt
+---
+---     columns = [dt.column['name', 'Name'], dt.column['age', 'Age']]
+---     rows = [dt.row['p1', map[name = dt.words['Ada'], age = dt.number[36]]]]
+---     t = dt.new[columns, rows]
+---     t = dt.sort_toggled[t, 'age', false]
+---     m = dt.models[t]
+---     … m.page.rows are the rows to draw, in order …
+---
+--- It does what TanStack Table's table-core (9.3.1) does and answers what
+--- it answers: sorting (one column or several, six sort functions, the
+--- toggle cycle), filtering (column filters, a global filter, fuzzy ranks
+--- as match-sorter-utils ranks them, sub-rows filtered from the root or from
+--- the leaves, faceted values and ranges), grouping with aggregation,
+--- expanding, pages, row selection, row pinning, and columns (visibility,
+--- order, pinning, sizes, resizing, header groups). Grid.js's search, its
+--- sort cycle and its pagination (the buttons and the words) are here too.
+---
+--- Every behaviour was written anew from the libraries' documentation and
+--- from running them: tests/datatable/reference.mjs runs TanStack Table,
+--- match-sorter-utils and Grid.js on fixed data and writes what they
+--- answered to reference.json, and tests/datatable/reference.co holds this
+--- module to it, value for value. No library's source, prose or data table
+--- is copied; the accent fold the fuzzy ranks use is written here from
+--- Unicode's letters.
+---
+--- A table is a record: its column definitions, its rows, its options and
+--- its state. A function that changes the state answers the table changed
+--- (`t = dt.sorted_by[t, [dt.Sort['age', true]]]`) and applies TanStack's
+--- automatic resets there and then (a new filter goes back to the first
+--- page), as a page that draws after each change sees them. `models[t]`
+--- computes the rows the state makes, once; the functions that answer
+--- about rows take them (`dt.page_count[t, m]`).
+---
+--- A cell is a Value, which says which JavaScript value TanStack would
+--- have held there (undefined, null, a number, text, a truth, a date or a
+--- list), because the libraries' answers turn on it: a missing age sorts
+--- after the others, a null one counts as 0 to a range, text that holds
+--- digits sorts as words and numbers. Two things differ, and say so where
+--- they act: a date is the same as any date of its instant (JavaScript
+--- compares two Date objects by identity), and a date's text is the one
+--- JavaScript writes in UTC (where JavaScript writes the machine's local
+--- time, so the reference is made in UTC).
+use bits
+
+--- What a cell holds: `is` names the kind ('missing', 'null', 'number',
+--- 'text', 'bool', 'date' or 'list'); a number, a truth (1 or 0) and a date
+--- (milliseconds since 1970) are held in `num`, text in `words` and a list's
+--- items in `items`.
+struct Value [is, num, words, items]
+
+--- A row: its id, where it stands among its siblings (`index`), how deep it
+--- is, the id of its parent ('' at the top), its cells by key and its
+--- sub-rows; a group row also names the column it groups by (`column`, ''
+--- for a row of data), the value it groups as text (`group`) and the ids of
+--- the rows of data it holds (`leaves`). `ranks` holds the fuzzy rank each
+--- column's filter gave the row.
+struct Row [id, index, depth, parent, cells, subs, column, group, leaves, ranks]
+
+--- A column definition. `key` is the cell a column reads ('' for a column
+--- that only draws, which cannot sort, filter or group); `columns` holds a
+--- group's children. The rest are TanStack's column options under plain
+--- names (see `column`).
+struct Column [id, header, key, columns, sort_with, first, absent, invert, sortable, multi, filter_with, filterable, searchable, aggregate_with, groupable, hideable, pinnable, size, smallest, largest, resizable]
+
+--- The table's options: TanStack's under plain names (see `options`).
+struct Options [sortable, multi, removable, multi_removable, most_sorted, first, manual_sorting, reset_sorting, filtering, column_filtering, searching, search_filter, from_leaves, filter_depth, manual_filtering, groupable, grouped_columns, manual_grouping, expandable, page_expanded, manual_expanding, reset_expanded, manual_pages, known_pages, known_rows, reset_pages, selectable, unselectable, multi_select, select_subs, closed, row_pinnable, unpinnable, keep_pinned, hideable, column_pinnable, resizable, resize_mode, resize_direction]
+
+--- One column of the sorting: its id, and whether it sorts descending.
+struct Sort [id, desc]
+
+--- One column filter: the column's id and the value it filters by.
+struct Filter [id, value]
+
+--- A column's size when a resize began.
+struct Sized [id, size]
+
+--- A resize under way: where the pointer began (`offset`), the header's
+--- size then, how far the pointer has moved (`moved`, in pixels) and that
+--- as a share of the size, the column being resized ('' when none is) and
+--- the sizes of the columns under the header when it began.
+struct Resizing [offset, size, moved, share, column, sizes]
+
+--- A table's state: what TanStack holds in its state slices. `expanded_all`
+--- is TanStack's `expanded: true`; `expanded`, `selected`, `visible` and
+--- `sizes` are maps by id; `start` and `end` are the columns pinned to each
+--- side, `top` and `bottom` the rows pinned there; `search` is the global
+--- filter's value (missing for none).
+struct State [sorting, filters, search, grouping, expanded_all, expanded, page_index, page_size, selected, visible, order, start, end, top, bottom, sizes, resizing]
+
+--- A table: its column definitions, its rows of data, its options, its
+--- state and the state it began with (what an automatic reset of the
+--- expanded rows goes back to).
+struct Table [columns, rows, options, state, initial]
+
+--- Rows as one of TanStack's row models holds them: the rows at the top
+--- (each with its sub-rows) and every row of the model in its order.
+struct Model [rows, flat]
+
+--- Every row model of a table, as its state makes them: the data's
+--- (`core`), the filtered, the grouped, the sorted, the expanded and the
+--- page's. (`held` finds a row of the grouped model by id, `found` one of
+--- the data's: positions in their `flat` lists.)
+struct Models [core, filtered, grouped, sorted, expanded, page, held, found]
+
+--- A fuzzy rank: how well a value matched (0 to 7, as match-sorter's
+--- rankings run) and whether that passes the threshold.
+struct Rank [rank, passed]
+
+--- One faceted value and how many rows hold it.
+struct Facet [value, count]
+
+--- A faceted range: whether any row held a number, the least and the greatest.
+struct Range [found, least, greatest]
+
+--- A header: its id, the id of the column it heads, how many columns and
+--- rows it spans, whether it only holds a place (and its place's id), its
+--- depth and index in its group, its size, where it starts and the ids of
+--- the headers under it.
+struct Header [id, column, columns, rows, placeholder, place, depth, index, size, offset, subs]
+
+--- A row of headers: its id, its depth and its headers.
+struct HeaderGroup [id, depth, headers]
+
+-------------------------------------------------------------------- values
+
+fn _no_values[]
+    one = [Value['missing', 0.0, '', []]]
+    slice[one, 0, 0]
+
+--- A cell with no value: JavaScript's undefined.
+fn missing[]
+    Value['missing', 0.0, '', _no_values[]]
+
+--- A cell holding null.
+fn nothing[]
+    Value['null', 0.0, '', _no_values[]]
+
+--- A cell holding a number.
+fn number[n]
+    Value['number', n + 0.0, '', _no_values[]]
+
+--- A cell holding text.
+fn words[t]
+    Value['text', 0.0, t, _no_values[]]
+
+--- A cell holding a truth.
+fn truth[b]
+    if b
+        return Value['bool', 1.0, '', _no_values[]]
+    Value['bool', 0.0, '', _no_values[]]
+
+--- A cell holding a date, given in milliseconds since 1970 (UTC).
+fn date[ms]
+    Value['date', ms + 0.0, '', _no_values[]]
+
+--- A cell holding a list of values.
+fn listed[vs]
+    Value['list', 0.0, '', vs]
+
+fn _nan[]
+    0.0 / 0.0
+
+fn _infinity[]
+    1.0 / 0.0
+
+fn _is_nan[x]
+    x ne x
+
+fn _is_digit[c]
+    c gte '0' and c lte '9'
+
+fn _blank[v]
+    v.is eq 'missing' or v.is eq 'null'
+
+--- The text JavaScript's String() gives a value: 'undefined', 'null', a
+--- number as JavaScript writes it, text as it is, 'true' or 'false', a list's
+--- items joined by commas (null and undefined as nothing), and a date as
+--- JavaScript writes it in UTC (where JavaScript writes its local time).
+fn shown[v]
+    if v.is eq 'missing'
+        return 'undefined'
+    if v.is eq 'null'
+        return 'null'
+    if v.is eq 'number'
+        return number_text[v.num]
+    if v.is eq 'text'
+        return v.words
+    if v.is eq 'bool'
+        if v.num ne 0.0
+            return 'true'
+        return 'false'
+    if v.is eq 'date'
+        return _date_text[v.num]
+    parts = for x in v.items
+        _list_part[x]
+    join[parts, ',']
+
+fn _list_part[x]
+    if _blank[x]
+        return ''
+    shown[x]
+
+fn _two[n]
+    if n lt 10
+        return '0`n`'
+    '`n`'
+
+fn _year_text[y]
+    digits = '`abs[y]`'
+    while len[digits] lt 4
+        digits = '0`digits`'
+    if y lt 0
+        return '-`digits`'
+    digits
+
+--- A date's text as JavaScript's String() writes it in UTC: its weekday,
+--- month, day, year, time and zone ('Wed Jun 01 2022 00:00:00 GMT+0000
+--- (Coordinated Universal Time)'), or 'Invalid Date'. The day is counted
+--- from 1970 by the proleptic Gregorian calendar.
+fn _date_text[ms]
+    if _is_nan[ms] or ms eq _infinity[] or ms eq 0.0 - _infinity[]
+        return 'Invalid Date'
+    whole = int[floor[ms]]
+    days = whole / 86400000
+    if whole % 86400000 ne 0 and whole lt 0
+        days = days - 1
+    seconds = (whole - days * 86400000) / 1000
+    z = days + 719468
+    era = z / 146097
+    if z % 146097 ne 0 and z lt 0
+        era = era - 1
+    of_era = z - era * 146097
+    year_of_era = (of_era - of_era / 1460 + of_era / 36524 - of_era / 146096) / 365
+    of_year = of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100)
+    shifted = (5 * of_year + 2) / 153
+    day = of_year - (153 * shifted + 2) / 5 + 1
+    month = shifted + 3
+    if shifted gte 10
+        month = shifted - 9
+    year = year_of_era + era * 400
+    if month lte 2
+        year = year + 1
+    weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][((days % 7) + 11) % 7]
+    named = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][month - 1]
+    clock = '`_two[seconds / 3600]`:`_two[(seconds % 3600) / 60]`:`_two[seconds % 60]`'
+    '`weekday` `named` `_two[day]` `_year_text[year]` `clock` GMT+0000 (Coordinated Universal Time)'
+
+--- A number as JavaScript writes it: the fewest digits that read back as
+--- it, positional from a millionth up to 10^21 and with an exponent beyond
+--- (`1e-7`, `1e+21`), 'NaN', 'Infinity' and '-Infinity'.
+fn number_text[x]
+    if _is_nan[x]
+        return 'NaN'
+    if x eq _infinity[]
+        return 'Infinity'
+    if x eq 0.0 - _infinity[]
+        return '-Infinity'
+    if x eq 0.0
+        return '0'
+    if x lt 0.0
+        rest = number_text[0.0 - x]
+        return '-`rest`'
+    parts = split[str[x], '.']
+    whole = parts[0]
+    decimals = ''
+    if len[parts] gt 1
+        decimals = parts[1]
+    digits = concat[whole, decimals]
+    i = 0
+    while i lt len[digits] and digits[i] eq '0'
+        i = i + 1
+    n = len[whole] - i
+    digits = slice[digits, i, len[digits]]
+    j = len[digits]
+    while j gt 0 and digits[j - 1] eq '0'
+        j = j - 1
+    digits = slice[digits, 0, j]
+    k = len[digits]
+    if k lte n and n lte 21
+        zeros = repeat['0', n - k]
+        return '`digits``zeros`'
+    if 0 lt n and n lte 21
+        head = slice[digits, 0, n]
+        after = slice[digits, n, k]
+        return '`head`.`after`'
+    if -6 lt n and n lte 0
+        zeros = repeat['0', 0 - n]
+        return '0.`zeros``digits`'
+    power = n - 1
+    mark = '+'
+    if power lt 0
+        mark = '-'
+    size = abs[power]
+    if k eq 1
+        return '`digits`e`mark``size`'
+    lead = digits[0]
+    rest = slice[digits, 1, k]
+    '`lead`.`rest`e`mark``size`'
+
+--- The length of the decimal number written at the start of text (a sign,
+--- digits with a point, an exponent, or Infinity), 0 when none is.
+fn _decimal_length[t]
+    n = len[t]
+    i = 0
+    if i lt n and (t[i] eq '+' or t[i] eq '-')
+        i = i + 1
+    if slice[t, i, i + 8] eq 'Infinity'
+        return i + 8
+    before = 0
+    while i lt n and _is_digit[t[i]]
+        i = i + 1
+        before = before + 1
+    after = 0
+    if i lt n and t[i] eq '.'
+        j = i + 1
+        while j lt n and _is_digit[t[j]]
+            j = j + 1
+            after = after + 1
+        if before gt 0 or after gt 0
+            i = j
+    if before eq 0 and after eq 0
+        return 0
+    if i lt n and (t[i] eq 'e' or t[i] eq 'E')
+        j = i + 1
+        if j lt n and (t[j] eq '+' or t[j] eq '-')
+            j = j + 1
+        k = j
+        while k lt n and _is_digit[t[k]]
+            k = k + 1
+        if k gt j
+            i = k
+    i
+
+fn _decimal_value[t]
+    if 'Infinity' in t
+        if starts[t, '-']
+            return 0.0 - _infinity[]
+        return _infinity[]
+    f = float[t]
+    if not f.ok
+        return _nan[]
+    0.0 + f
+
+fn _digit_value[c]
+    if _is_digit[c]
+        return code[c] - code['0']
+    lowered = lower[c]
+    if lowered gte 'a' and lowered lte 'z'
+        return code[lowered] - code['a'] + 10
+    -1
+
+fn _radix_value[t, radix]
+    if len[t] eq 0
+        return _nan[]
+    total = 0.0
+    for c in split[t, '']
+        d = _digit_value[c]
+        if d lt 0 or d gte radix
+            return _nan[]
+        total = total * radix + d
+    total
+
+--- The number JavaScript's Number() reads in text: blank text is 0, a
+--- decimal number (or Infinity) written whole is that number, 0x, 0o and
+--- 0b numbers are read in their bases, and anything else is NaN.
+fn text_number[t]
+    s = trim[t]
+    if s eq ''
+        return 0.0
+    head = lower[slice[s, 0, 2]]
+    if head eq '0x'
+        return _radix_value[slice[s, 2, len[s]], 16]
+    if head eq '0o'
+        return _radix_value[slice[s, 2, len[s]], 8]
+    if head eq '0b'
+        return _radix_value[slice[s, 2, len[s]], 2]
+    if _decimal_length[s] ne len[s]
+        return _nan[]
+    _decimal_value[s]
+
+--- The number JavaScript's Number() gives a value: undefined is NaN, null
+--- 0, a truth 1 or 0, a date its milliseconds, text as text_number reads it
+--- and a list as its text reads.
+fn js_number[v]
+    if v.is eq 'missing'
+        return _nan[]
+    if v.is eq 'null'
+        return 0.0
+    if v.is eq 'text'
+        return text_number[v.words]
+    if v.is eq 'list'
+        return text_number[shown[v]]
+    v.num
+
+--- The number JavaScript's parseFloat() reads at the start of a value's text.
+fn parsed_float[v]
+    if v.is eq 'number'
+        return v.num
+    s = trim[shown[v]]
+    n = _decimal_length[s]
+    if n eq 0
+        return _nan[]
+    _decimal_value[slice[s, 0, n]]
+
+--- Whether two values are the same as JavaScript's === finds them: of one
+--- kind and equal, NaN never; a list is never the same as another (two
+--- arrays are two objects), and a date is the same as a date of its instant.
+fn strictly_same[a, b]
+    if a.is ne b.is
+        return false
+    if _blank[a]
+        return true
+    if a.is eq 'text'
+        return a.words eq b.words
+    if a.is eq 'list'
+        return false
+    a.num eq b.num
+
+--- Whether two values are the same as a JavaScript Map, a Set or includes()
+--- finds them (SameValueZero): as strictly_same, except that NaN is NaN.
+fn same_value[a, b]
+    if a.is eq 'number' and b.is eq 'number' and _is_nan[a.num] and _is_nan[b.num]
+        return true
+    strictly_same[a, b]
+
+--- Whether two values are equal as JavaScript's == finds them: null and
+--- undefined equal each other only, a number equals text that reads as it,
+--- a truth counts as 1 or 0, and a list compares as its text.
+fn loosely_same[a, b]
+    if a.is eq b.is
+        return strictly_same[a, b]
+    if _blank[a] or _blank[b]
+        return _blank[a] and _blank[b]
+    if a.is eq 'bool'
+        return loosely_same[number[a.num], b]
+    if b.is eq 'bool'
+        return loosely_same[a, number[b.num]]
+    if a.is eq 'number' and b.is eq 'text'
+        return a.num eq text_number[b.words]
+    if a.is eq 'text' and b.is eq 'number'
+        return text_number[a.words] eq b.num
+    if a.is eq 'list' and (b.is eq 'number' or b.is eq 'text')
+        return loosely_same[words[shown[a]], b]
+    if b.is eq 'list' and (a.is eq 'number' or a.is eq 'text')
+        return loosely_same[a, words[shown[b]]]
+    false
+
+--- A value as JavaScript's < and > take it: a date as its milliseconds, a
+--- list as its text, anything else as it is.
+fn _primitive[v]
+    if v.is eq 'date'
+        return number[v.num]
+    if v.is eq 'list'
+        return words[shown[v]]
+    v
+
+--- Whether a is less than b as JavaScript's < finds it: text against text by
+--- character codes, anything else as numbers (NaN is less than nothing, and
+--- nothing is less than it).
+fn js_less[a, b]
+    pa = _primitive[a]
+    pb = _primitive[b]
+    if pa.is eq 'text' and pb.is eq 'text'
+        return pa.words lt pb.words
+    js_number[pa] lt js_number[pb]
+
+-------------------------------------------------------------------- sort functions
+
+--- The text TanStack's text sort functions read from a value: a finite
+--- number as JavaScript writes it, text as it is, and nothing else ('').
+fn _sort_text[v]
+    if v.is eq 'number'
+        if _is_nan[v.num] or v.num eq _infinity[] or v.num eq 0.0 - _infinity[]
+            return ''
+        return number_text[v.num]
+    if v.is eq 'text'
+        return v.words
+    ''
+
+fn _date_as_number[v]
+    if v.is eq 'date'
+        return number[v.num]
+    v
+
+--- How a sorts against b under one of TanStack's sort functions, below zero
+--- when a comes first: 'alphanumeric' (words and the numbers in them, any
+--- case), 'alphanumericCaseSensitive', 'text' (any case),
+--- 'textCaseSensitive', 'datetime' (a date by its instant, anything else as
+--- JavaScript's < and > take it) and 'basic' (JavaScript's === and >).
+fn sort_compare[name, a, b]
+    if name eq 'alphanumeric'
+        return alphanumeric_compare[lower[_sort_text[a]], lower[_sort_text[b]]]
+    if name eq 'alphanumericCaseSensitive'
+        return alphanumeric_compare[_sort_text[a], _sort_text[b]]
+    if name eq 'text'
+        return _text_compare[lower[_sort_text[a]], lower[_sort_text[b]]]
+    if name eq 'textCaseSensitive'
+        return _text_compare[_sort_text[a], _sort_text[b]]
+    if name eq 'datetime'
+        pa = _date_as_number[a]
+        pb = _date_as_number[b]
+        if js_less[pb, pa]
+            return 1
+        if js_less[pa, pb]
+            return -1
+        return 0
+    if strictly_same[a, b]
+        return 0
+    if js_less[b, a]
+        return 1
+    -1
+
+fn _text_compare[a, b]
+    if a eq b
+        return 0
+    if a gt b
+        return 1
+    -1
+
+fn _chunk_end[s, from, numeric]
+    i = from + 1
+    while i lt len[s] and _is_digit[s[i]] eq numeric
+        i = i + 1
+    i
+
+fn _chunks_left[s, from]
+    n = 0
+    i = from
+    while i lt len[s]
+        n = n + 1
+        i = _chunk_end[s, i, _is_digit[s[i]]]
+    n
+
+fn _number_chunk_compare[a, from_a, to_a, b, from_b, to_b]
+    i = from_a
+    while i lt to_a and a[i] eq '0'
+        i = i + 1
+    j = from_b
+    while j lt to_b and b[j] eq '0'
+        j = j + 1
+    if i eq to_a and j eq to_b
+        return 0
+    x = _decimal_value[slice[a, from_a, to_a]]
+    y = _decimal_value[slice[b, from_b, to_b]]
+    if x gt y
+        return 1
+    if y gt x
+        return -1
+    0
+
+--- How a sorts against b as TanStack's alphanumeric functions find it: in
+--- runs of digits and of other characters, words by character codes and
+--- then by length, a number after a word, numbers by value, and then the
+--- one with fewer runs left first.
+fn alphanumeric_compare[a, b]
+    i = 0
+    j = 0
+    while i lt len[a] and j lt len[b]
+        numeric_a = _is_digit[a[i]]
+        numeric_b = _is_digit[b[j]]
+        end_a = _chunk_end[a, i, numeric_a]
+        end_b = _chunk_end[b, j, numeric_b]
+        if numeric_a ne numeric_b
+            if numeric_a
+                return 1
+            return -1
+        if numeric_a
+            n = _number_chunk_compare[a, i, end_a, b, j, end_b]
+            if n ne 0
+                return n
+        else
+            w = _text_compare[slice[a, i, end_a], slice[b, j, end_b]]
+            if w ne 0
+                return w
+        i = end_a
+        j = end_b
+    _chunks_left[a, i] - _chunks_left[b, j]
+
+-------------------------------------------------------------------- filter functions
+
+fn _falsy[v]
+    _blank[v] or (v.is eq 'text' and v.words eq '')
+
+fn _has_length[v]
+    (v.is eq 'list' and len[v.items] gt 0) or (v.is eq 'text' and len[v.words] gt 0)
+
+--- The value a filter function compares with, as TanStack resolves it once
+--- per filter: the text functions read it as text (in lower case where case
+--- is ignored), a range reads its two ends as numbers or dates (an end that
+--- is null or reads as no number is open; ends the wrong way round are
+--- swapped), and the others take it as it is.
+fn resolved_filter[name, value]
+    if name in ['includesString', 'equalsString', 'startsWith', 'endsWith']
+        return words[lower[shown[value]]]
+    if name in ['includesStringSensitive', 'equalsStringSensitive']
+        return words[shown[value]]
+    if name eq 'inNumberRange'
+        return _number_range[value]
+    if name eq 'inDateRange'
+        return _date_range[value]
+    value
+
+fn _range_end[v, open]
+    if v.is eq 'null'
+        return open
+    x = parsed_float[v]
+    if _is_nan[x]
+        return open
+    x
+
+fn _end_of[value, i]
+    if value.is eq 'list' and len[value.items] gt i
+        return value.items[i]
+    if value.is eq 'text' and len[value.words] gt i
+        return words[value.words[i]]
+    missing[]
+
+fn _ordered_range[low, high]
+    if low gt high
+        return listed[[number[high], number[low]]]
+    listed[[number[low], number[high]]]
+
+fn _number_range[value]
+    low = _range_end[_end_of[value, 0], 0.0 - _infinity[]]
+    high = _range_end[_end_of[value, 1], _infinity[]]
+    _ordered_range[low, high]
+
+--- A value as a date's milliseconds, as TanStack's date range reads it: a
+--- date or a number as it is, a truth as 1 or 0, nothing (or blank text)
+--- as NaN, and text as an ISO moment (JavaScript reads more ways of writing
+--- a date).
+fn _timestamp[v]
+    if v.is eq 'date' or v.is eq 'number' or v.is eq 'bool'
+        return v.num
+    if v.is eq 'text' and v.words ne ''
+        t = moment[v.words]
+        if not t.ok
+            return _nan[]
+        return float[t] * 1000.0
+    _nan[]
+
+fn _date_range[value]
+    low = _timestamp[_end_of[value, 0]]
+    high = _timestamp[_end_of[value, 1]]
+    if _is_nan[low]
+        low = 0.0 - _infinity[]
+    if _is_nan[high]
+        high = _infinity[]
+    _ordered_range[low, high]
+
+fn _empty_cell[v]
+    if _blank[v]
+        return true
+    trim[shown[v]] eq ''
+
+fn _greater_than[data, filter]
+    a = 0.0
+    if not _blank[data]
+        a = js_number[data]
+    b = js_number[filter]
+    if not _is_nan[a] and not _is_nan[b]
+        return a gt b
+    left = ''
+    if not _blank[data]
+        left = shown[data]
+    trim[lower[left]] gt trim[lower[shown[filter]]]
+
+fn _at_least[data, filter]
+    strictly_same[data, filter] or _greater_than[data, filter]
+
+fn _open_end[v]
+    v.is eq 'missing' or (v.is eq 'text' and v.words eq '')
+
+fn _between[data, bounds, inclusive]
+    low = _end_of[bounds, 0]
+    has_low = not _open_end[low]
+    if has_low
+        if inclusive and not _at_least[data, low]
+            return false
+        if not inclusive and not _greater_than[data, low]
+            return false
+    high = _end_of[bounds, 1]
+    if _open_end[high]
+        return true
+    if has_low
+        x = js_number[low]
+        y = js_number[high]
+        if not _is_nan[x] and not _is_nan[y] and x gt y
+            return true
+    if inclusive
+        return not _greater_than[data, high]
+    not _at_least[data, high]
+
+fn _holds[list, v]
+    for x in list.items
+        if same_value[x, v]
+            return true
+    false
+
+--- A filter value's items, as the list functions walk them: a list's
+--- items, text's characters, and nothing for anything else.
+fn _filter_items[filter]
+    if filter.is eq 'list'
+        return filter.items
+    if filter.is eq 'text'
+        out = for c in split[filter.words, '']
+            words[c]
+        return out
+    _no_values[]
+
+--- Whether a value passes one of TanStack's filter functions, given the
+--- filter value as resolved_filter resolves it: 'includesString',
+--- 'includesStringSensitive', 'equalsString', 'equalsStringSensitive',
+--- 'startsWith', 'endsWith', 'equals', 'weakEquals', 'empty', 'notEmpty',
+--- 'greaterThan', 'greaterThanOrEqualTo', 'lessThan', 'lessThanOrEqualTo',
+--- 'between', 'betweenInclusive', 'inNumberRange', 'inDateRange', 'arrHas',
+--- 'arrIncludes', 'arrIncludesAll' and 'arrIncludesSome'. ('fuzzy' ranks,
+--- with rank_of.)
+fn filter_passes[name, data, filter]
+    if name in ['includesString', 'equalsString', 'startsWith', 'endsWith', 'includesStringSensitive', 'equalsStringSensitive']
+        if _blank[data]
+            return false
+        held = shown[data]
+        if name in ['includesString', 'equalsString', 'startsWith', 'endsWith']
+            held = lower[held]
+        if name in ['includesString', 'includesStringSensitive']
+            return filter.words in held
+        if name in ['equalsString', 'equalsStringSensitive']
+            return held eq filter.words
+        if name eq 'startsWith'
+            return starts[held, filter.words]
+        return ends[held, filter.words]
+    if name eq 'equals'
+        return strictly_same[data, filter]
+    if name eq 'weakEquals'
+        return loosely_same[data, filter]
+    if name eq 'empty'
+        return _empty_cell[data]
+    if name eq 'notEmpty'
+        return not _empty_cell[data]
+    if name eq 'greaterThan'
+        return _greater_than[data, filter]
+    if name eq 'greaterThanOrEqualTo'
+        return _at_least[data, filter]
+    if name eq 'lessThan'
+        return not _at_least[data, filter]
+    if name eq 'lessThanOrEqualTo'
+        return not _greater_than[data, filter]
+    if name eq 'between'
+        return _between[data, filter, false]
+    if name eq 'betweenInclusive'
+        return _between[data, filter, true]
+    if name eq 'inNumberRange'
+        if data.is ne 'number' or _is_nan[data.num]
+            return false
+        return data.num gte _end_of[filter, 0].num and data.num lte _end_of[filter, 1].num
+    if name eq 'inDateRange'
+        at = _timestamp[data]
+        return at gte _end_of[filter, 0].num and at lte _end_of[filter, 1].num
+    items = _filter_items[filter]
+    if name eq 'arrHas'
+        for x in items
+            if strictly_same[data, x]
+                return true
+        return false
+    if name eq 'arrIncludes'
+        if data.is eq 'text'
+            for x in items
+                if shown[x] in data.words
+                    return true
+            return false
+        if data.is ne 'list'
+            return false
+        for x in items
+            if _holds[data, x]
+                return true
+        return false
+    if data.is ne 'list'
+        return false
+    if name eq 'arrIncludesAll'
+        for x in items
+            if not _holds[data, x]
+                return false
+        return true
+    if name eq 'arrIncludesSome'
+        for x in items
+            if _holds[data, x]
+                return true
+        return false
+    false
+
+--- Whether setting a filter to this value takes the filter away, as
+--- TanStack's filter functions decide: undefined always does, null and ''
+--- do for every built-in function, anything with no items does for the
+--- list functions, a range with two empty ends does for the ranges, false
+--- does for 'empty' and 'notEmpty', and a function with no rule of its own
+--- ('fuzzy') takes away undefined and '' only.
+fn filter_removes[name, value]
+    if value.is eq 'missing'
+        return true
+    if name in ['arrHas', 'arrIncludes', 'arrIncludesAll', 'arrIncludesSome']
+        return _falsy[value] or not _has_length[value]
+    if name in ['between', 'betweenInclusive', 'inNumberRange', 'inDateRange']
+        if _falsy[value]
+            return true
+        return value.is eq 'list' and _falsy[_end_of[value, 0]] and _falsy[_end_of[value, 1]]
+    if name in ['empty', 'notEmpty']
+        return _falsy[value] or (value.is eq 'bool' and value.num eq 0.0)
+    if name in ['includesString', 'includesStringSensitive', 'equalsString', 'equalsStringSensitive', 'startsWith', 'endsWith', 'equals', 'weakEquals', 'greaterThan', 'greaterThanOrEqualTo', 'lessThan', 'lessThanOrEqualTo']
+        return _falsy[value]
+    value.is eq 'text' and value.words eq ''
+
+-------------------------------------------------------------------- fuzzy ranks
+
+--- A letter with its accent taken off (and Æ, Œ, Þ and their kind written
+--- out), as the fuzzy ranks compare letters: Latin-1's and Latin
+--- Extended-A's. Ł folds to a small l, as match-sorter's ranks fold it.
+fn _plain_letter[c]
+    if c lt 'À'
+        return c
+    if c in 'ÀÁÂÃÄÅĀĂĄ'
+        return 'A'
+    if c in 'àáâãäåāăą'
+        return 'a'
+    if c in 'ÇĆĈĊČ'
+        return 'C'
+    if c in 'çćĉċč'
+        return 'c'
+    if c in 'ÐĎĐ'
+        return 'D'
+    if c in 'ðďđ'
+        return 'd'
+    if c in 'ÈÉÊËĒĔĖĘĚ'
+        return 'E'
+    if c in 'èéêëēĕėęě'
+        return 'e'
+    if c in 'ĜĞĠĢ'
+        return 'G'
+    if c in 'ĝğġģ'
+        return 'g'
+    if c in 'ĤĦ'
+        return 'H'
+    if c in 'ĥħ'
+        return 'h'
+    if c in 'ÌÍÎÏĨĪĬĮİ'
+        return 'I'
+    if c in 'ìíîïĩīĭįı'
+        return 'i'
+    if c eq 'Ĵ'
+        return 'J'
+    if c eq 'ĵ'
+        return 'j'
+    if c eq 'Ķ'
+        return 'K'
+    if c eq 'ķ'
+        return 'k'
+    if c in 'ĹĻĽĿ'
+        return 'L'
+    if c eq 'Ł'
+        return 'l'
+    if c in 'ĺļľŀł'
+        return 'l'
+    if c in 'ÑŃŅŇ'
+        return 'N'
+    if c in 'ñńņňŉ'
+        return 'n'
+    if c in 'ÒÓÔÕÖØŌŎŐ'
+        return 'O'
+    if c in 'òóôõöøōŏő'
+        return 'o'
+    if c in 'ŔŖŘ'
+        return 'R'
+    if c in 'ŕŗř'
+        return 'r'
+    if c in 'ŚŜŞŠ'
+        return 'S'
+    if c in 'śŝşšſ'
+        return 's'
+    if c in 'ŢŤŦ'
+        return 'T'
+    if c in 'ţťŧ'
+        return 't'
+    if c in 'ÙÚÛÜŨŪŬŮŰŲ'
+        return 'U'
+    if c in 'ùúûüũūŭůűų'
+        return 'u'
+    if c eq 'Ŵ'
+        return 'W'
+    if c eq 'ŵ'
+        return 'w'
+    if c in 'ÝŶŸ'
+        return 'Y'
+    if c in 'ýÿŷ'
+        return 'y'
+    if c in 'ŹŻŽ'
+        return 'Z'
+    if c in 'źżž'
+        return 'z'
+    if c eq 'Æ'
+        return 'AE'
+    if c eq 'æ'
+        return 'ae'
+    if c eq 'Œ'
+        return 'OE'
+    if c eq 'œ'
+        return 'oe'
+    if c eq 'Þ'
+        return 'TH'
+    if c eq 'þ'
+        return 'th'
+    if c eq 'Ĳ'
+        return 'IJ'
+    if c eq 'ĳ'
+        return 'ij'
+    c
+
+--- Text with its letters' accents taken off.
+fn plain_letters[t]
+    parts = for c in split[t, '']
+        _plain_letter[c]
+    join[parts, '']
+
+fn _acronym[t]
+    pieces = split[replace[t, '-', ' '], ' ']
+    firsts = for piece in pieces
+        slice[piece, 0, 1]
+    join[firsts, '']
+
+fn _found_from[t, c, from]
+    j = from
+    while j lt len[t]
+        if t[j] eq c
+            return j + 1
+        j = j + 1
+    -1
+
+fn _closeness[t, q]
+    first = _found_from[t, q[0], 0]
+    if first lt 0
+        return 0.0
+    at = first
+    k = 1
+    while k lt len[q]
+        at = _found_from[t, q[k], at]
+        if at lt 0
+            return 0.0
+        k = k + 1
+    1.0 + 1.0 / (at - first)
+
+--- How well text matches a query, as match-sorter ranks it: 7 the same
+--- text, 6 the same in any case, 5 starting with it, 4 a word starting with
+--- it, 3 holding it, 2 its words' initials holding it, between 1 and 2 its
+--- letters in order (closer letters rank higher), 0 no match. A query
+--- longer than the text never matches, one letter matches only as a part,
+--- and accents are taken off both first.
+fn match_rank[item, query]
+    t = plain_letters[item]
+    q = plain_letters[query]
+    if len[q] gt len[t]
+        return 0.0
+    if t eq q
+        return 7.0
+    t = lower[t]
+    q = lower[q]
+    if t eq q
+        return 6.0
+    if starts[t, q]
+        return 5.0
+    spaced = ' `q`'
+    if spaced in t
+        return 4.0
+    if q in t
+        return 3.0
+    if len[q] eq 1
+        return 0.0
+    if q in _acronym[t]
+        return 2.0
+    _closeness[t, q]
+
+--- A value's fuzzy rank against a query, as match-sorter's rankItem gives
+--- it: the rank of the value's text, and whether it reaches the threshold
+--- (1, letters in order, unless told).
+fn rank_of[v, query, threshold = 1.0]
+    r = match_rank[shown[v], shown[query]]
+    Rank[r, r gte threshold]
+
+--- How two fuzzy ranks sort, the better first (match-sorter's compareItems).
+fn rank_compare[a, b]
+    if a eq b
+        return 0
+    if a gt b
+        return -1
+    1
+
+-------------------------------------------------------------------- columns
+
+fn _no_columns[]
+    one = [Column['', '', '', [], 'auto', 'auto', 'greater', false, true, 'auto', 'auto', true, 'auto', 'auto', true, true, true, 150.0, 20.0, 9007199254740991.0, true]]
+    slice[one, 0, 0]
+
+fn _no_words[]
+    slice[[''], 0, 0]
+
+fn _no_flags[]
+    m = map['' = true]
+    del[m, '']
+
+fn _no_sizes[]
+    m = map['' = 0.0]
+    del[m, '']
+
+--- A column that reads the cell under `key`, which is its id too. Its
+--- options are TanStack's column options under plain names: `header`, its
+--- words; `sort_with`, its sort function ('auto' chooses one from the first
+--- rows' values, or one of sort_compare's names, or 'rank' for the fuzzy
+--- rank its filter gave and then 'alphanumeric'); `first`, the direction
+--- its first press sorts it ('auto': ascending for text, descending for
+--- anything else; 'asc' or 'desc'); `absent`, where rows missing its value
+--- sort ('greater': after the others ascending, as if larger; 'smaller';
+--- 'first' and 'last' whichever the direction; 'compared': by the sort
+--- function like any value); `invert`, whether its directions are turned
+--- round (a ranking, where 1 is best); `multi`, whether it may join a sort
+--- of several columns ('auto' as the table says, 'yes' or 'no'); `filter_with`,
+--- its filter function ('auto' chooses one from the first value, or one of
+--- filter_passes's names, or 'fuzzy'); `searchable`, whether the global
+--- filter reads it ('auto': when the first value it holds is text or a
+--- number; 'yes' or 'no'); `aggregate_with`, how a group row sums it up ('auto':
+--- a sum of numbers, the extent of dates; 'none', or one of aggregated's
+--- names); `size`, `smallest` and `largest`, its width in pixels and its
+--- bounds; and whether it may be sorted, filtered, grouped, hidden, pinned
+--- and resized.
+fn column[key, header = '', sort_with = 'auto', first = 'auto', absent = 'greater', invert = false, sortable = true, multi = 'auto', filter_with = 'auto', filterable = true, searchable = 'auto', aggregate_with = 'auto', groupable = true, hideable = true, pinnable = true, size = 150.0, smallest = 20.0, largest = 9007199254740991.0, resizable = true]
+    Column[key, header, key, _no_columns[], sort_with, first, absent, invert, sortable, multi, filter_with, filterable, searchable, aggregate_with, groupable, hideable, pinnable, size + 0.0, smallest + 0.0, largest + 0.0, resizable]
+
+--- A column that reads no cell, for what a row draws beside its data (a
+--- checkbox, a button): it cannot sort, filter, search or group, and a
+--- group row sums nothing up in it.
+fn display_column[id, header = '', hideable = true, pinnable = true, size = 150.0, smallest = 20.0, largest = 9007199254740991.0, resizable = true]
+    Column[id, header, '', _no_columns[], 'auto', 'auto', 'greater', false, true, 'auto', 'auto', true, 'auto', 'none', true, hideable, pinnable, size + 0.0, smallest + 0.0, largest + 0.0, resizable]
+
+--- A column over columns: a header that spans its children's.
+fn column_group[id, header, columns, hideable = true, pinnable = true, size = 150.0, smallest = 20.0, largest = 9007199254740991.0, resizable = true]
+    Column[id, header, '', columns, 'auto', 'auto', 'greater', false, true, 'auto', 'auto', true, 'auto', 'none', true, hideable, pinnable, size + 0.0, smallest + 0.0, largest + 0.0, resizable]
+
+fn _nameless[]
+    Column['', '', '', _no_columns[], 'auto', 'auto', 'greater', false, false, 'no', 'auto', false, 'no', 'none', false, false, false, 150.0, 20.0, 9007199254740991.0, false]
+
+fn _flat_of[columns]
+    out = _no_columns[]
+    for c in columns
+        out = push[out, c]
+        if len[c.columns] gt 0
+            out = concat[out, _flat_of[c.columns]]
+    out
+
+fn _leaves_of[columns]
+    out = _no_columns[]
+    for c in columns
+        if len[c.columns] gt 0
+            out = concat[out, _leaves_of[c.columns]]
+        else
+            out = push[out, c]
+    out
+
+fn _column_index[columns, id]
+    i = 0
+    while i lt len[columns]
+        if columns[i].id eq id
+            return i
+        i = i + 1
+    -1
+
+fn _word_index[ws, w]
+    i = 0
+    while i lt len[ws]
+        if ws[i] eq w
+            return i
+        i = i + 1
+    -1
+
+fn _without[ws, gone]
+    out = _no_words[]
+    for w in ws
+        if not (w in gone)
+            out = push[out, w]
+    out
+
+--- Columns in the order the table's state puts them: the ids the column
+--- order names first (an id that is no column is passed over), then the
+--- rest as they came; and then the grouped columns moved to the front in
+--- the grouping's order ('reorder'), taken out ('remove'), or left where
+--- they stand ('keep').
+fn _ordered[t, columns]
+    out = columns
+    order = t.state.order
+    if len[order] gt 0
+        taken = _no_columns[]
+        rest = columns
+        i = 0
+        while i lt len[order]
+            k = _column_index[rest, order[i]]
+            if k gte 0
+                taken = push[taken, rest[k]]
+                rest = concat[slice[rest, 0, k], slice[rest, k + 1, len[rest]]]
+            i = i + 1
+        out = concat[taken, rest]
+    grouping = t.state.grouping
+    mode = t.options.grouped_columns
+    if len[grouping] eq 0 or mode eq 'keep'
+        return out
+    rest = _no_columns[]
+    for c in out
+        if not (c.id in grouping)
+            rest = push[rest, c]
+    if mode eq 'remove'
+        return rest
+    front = _no_columns[]
+    for id in grouping
+        k = _column_index[out, id]
+        if k gte 0
+            front = push[front, out[k]]
+    concat[front, rest]
+
+--- The table with its columns in this order: the ids it names first (an id
+--- that is no column is passed over), then the rest as they were defined.
+fn order_set[t, ids]
+    t.state.order = ids
+    t
+
+--- The table's leaf columns in their order (the column order's, then the
+--- grouping's), shown or not.
+fn leaf_columns[t]
+    _ordered[t, _leaves_of[t.columns]]
+
+--- Every column, groups and leaves, as defined: each group before its children.
+fn flat_columns[t]
+    _flat_of[t.columns]
+
+--- The column of an id, a group's too; a column with no id when the table has none.
+fn column_of[t, id]
+    flat = _flat_of[t.columns]
+    k = _column_index[flat, id]
+    if k lt 0
+        return _nameless[]
+    flat[k]
+
+--- Whether the table has a column of this id.
+fn has_column[t, id]
+    _column_index[_flat_of[t.columns], id] gte 0
+
+--- A column's leaves in their order: a leaf's are itself.
+fn _column_leaves[t, c]
+    if len[c.columns] eq 0
+        return [c]
+    _ordered[t, _leaves_of[c.columns]]
+
+-------------------------------------------------------------------- visibility
+
+fn _shows[t, c]
+    if len[c.columns] eq 0
+        if c.id in t.state.visible
+            return t.state.visible[c.id]
+        return true
+    for d in c.columns
+        if _shows[t, d]
+            return true
+    false
+
+--- Whether a column shows: a leaf unless the state hides it, a group while
+--- any of its children shows.
+fn is_visible[t, id]
+    _shows[t, column_of[t, id]]
+
+--- The leaf columns that show, in the columns' order (not the pinning's).
+fn visible_columns[t]
+    out = _no_columns[]
+    for c in leaf_columns[t]
+        if _shows[t, c]
+            out = push[out, c]
+    out
+
+--- Every column that shows, groups and leaves, as defined.
+fn visible_flat_columns[t]
+    out = _no_columns[]
+    for c in _flat_of[t.columns]
+        if _shows[t, c]
+            out = push[out, c]
+    out
+
+fn _hideable[t, c]
+    c.hideable and t.options.hideable
+
+--- Whether a column may be hidden: it says so and the table does.
+fn can_hide[t, id]
+    _hideable[t, column_of[t, id]]
+
+--- The table with a column shown or hidden; for a group, each of its leaves
+--- that may hide. A column that may not hide is left as it is.
+fn visibility_set[t, id, visible]
+    c = column_of[t, id]
+    if not _hideable[t, c]
+        return t
+    seen = t.state.visible
+    for leaf in _column_leaves[t, c]
+        if _hideable[t, leaf]
+            seen = set[seen, leaf.id, visible]
+    t.state.visible = seen
+    t
+
+--- The table with a column hidden if it showed and shown if it was hidden.
+fn visibility_toggled[t, id]
+    visibility_set[t, id, not is_visible[t, id]]
+
+--- The table with every leaf column shown, or every one hidden that may hide.
+fn all_visibility_set[t, visible]
+    seen = _no_flags[]
+    for c in leaf_columns[t]
+        seen = set[seen, c.id, visible or not _hideable[t, c]]
+    t.state.visible = seen
+    t
+
+--- The table with every column shown unless all showed, then hidden.
+fn all_visibility_toggled[t]
+    all_visibility_set[t, not all_visible[t]]
+
+--- Whether every leaf column shows.
+fn all_visible[t]
+    for c in leaf_columns[t]
+        if not _shows[t, c]
+            return false
+    true
+
+--- Whether any leaf column shows.
+fn some_visible[t]
+    for c in leaf_columns[t]
+        if _shows[t, c]
+            return true
+    false
+
+-------------------------------------------------------------------- column pinning
+
+--- The table with a column pinned to a side ('start' or 'end'), or freed
+--- (''): a group's leaves go together, after what that side held.
+fn column_pinned[t, id, side]
+    ids = _no_words[]
+    for leaf in _column_leaves[t, column_of[t, id]]
+        if leaf.id ne ''
+            ids = push[ids, leaf.id]
+    leading = _without[t.state.start, ids]
+    trailing = _without[t.state.end, ids]
+    if side eq 'start'
+        leading = concat[leading, ids]
+    if side eq 'end'
+        trailing = concat[trailing, ids]
+    t.state.start = leading
+    t.state.end = trailing
+    t
+
+--- Whether a column may be pinned: one of its leaves may, and the table lets columns pin.
+fn can_pin_column[t, id]
+    for leaf in _column_leaves[t, column_of[t, id]]
+        if leaf.pinnable and t.options.column_pinnable
+            return true
+    false
+
+--- The side a column is pinned to: 'start' when one of its leaves is
+--- pinned there, else 'end' when one is pinned there, else ''.
+fn column_pin_of[t, id]
+    leaves = _column_leaves[t, column_of[t, id]]
+    for leaf in leaves
+        if leaf.id in t.state.start
+            return 'start'
+    for leaf in leaves
+        if leaf.id in t.state.end
+            return 'end'
+    ''
+
+--- Where a pinned column stands among its side's ids: 0 for a column not
+--- pinned, -1 for a group (whose own id is never pinned, only its leaves').
+fn pinned_column_index[t, id]
+    side = column_pin_of[t, id]
+    if side eq ''
+        return 0
+    if side eq 'start'
+        return _word_index[t.state.start, id]
+    _word_index[t.state.end, id]
+
+--- Whether any column is pinned: to a side ('start' or 'end'), or to either ('').
+fn some_columns_pinned[t, side = '']
+    if side eq 'start'
+        return len[t.state.start] gt 0
+    if side eq 'end'
+        return len[t.state.end] gt 0
+    len[t.state.start] gt 0 or len[t.state.end] gt 0
+
+fn _by_ids[columns, ids]
+    out = _no_columns[]
+    for id in ids
+        k = _column_index[columns, id]
+        if k gte 0
+            out = push[out, columns[k]]
+    out
+
+--- The leaf columns that show in a part of the table: 'start' and 'end'
+--- hold the columns pinned there in the order they were pinned, 'center'
+--- the rest in the columns' order, and 'all' every one that shows, in the
+--- columns' order.
+fn side_columns[t, side]
+    leaves = leaf_columns[t]
+    out = _no_columns[]
+    if side eq 'start' or side eq 'end'
+        ids = t.state.start
+        if side eq 'end'
+            ids = t.state.end
+        for c in _by_ids[leaves, ids]
+            if _shows[t, c]
+                out = push[out, c]
+        return out
+    pinned = concat[t.state.start, t.state.end]
+    for c in leaves
+        if _shows[t, c] and (side eq 'all' or not (c.id in pinned))
+            out = push[out, c]
+    out
+
+--- The leaf columns that show in the order a table draws them: the start's
+--- pinned columns, the center's, then the end's.
+fn drawn_columns[t]
+    concat[side_columns[t, 'start'], side_columns[t, 'center'], side_columns[t, 'end']]
+
+-------------------------------------------------------------------- column sizes
+
+fn _size_of[t, c]
+    size = c.size
+    if c.id in t.state.sizes
+        size = t.state.sizes[c.id]
+    min[max[c.smallest, size], c.largest]
+
+--- A column's width in pixels: its size in the state, or its own, kept
+--- within its smallest and largest.
+fn column_size[t, id]
+    _size_of[t, column_of[t, id]]
+
+--- How far into a part of the table ('all', 'start', 'center' or 'end') a
+--- column begins: the widths of the columns before it, 0 for a column not
+--- there.
+fn column_start[t, id, side = 'all']
+    at = 0.0
+    for c in side_columns[t, side]
+        if c.id eq id
+            return at
+        at = at + _size_of[t, c]
+    0.0
+
+--- The widths of the columns after a column in a part of the table, 0 for
+--- a column not there.
+fn column_after[t, id, side = 'all']
+    columns = side_columns[t, side]
+    after = 0.0
+    i = len[columns] - 1
+    while i gte 0
+        if columns[i].id eq id
+            return after
+        after = after + _size_of[t, columns[i]]
+        i = i - 1
+    0.0
+
+--- Where a column stands among the columns that show in a part of the
+--- table, -1 when it is not there.
+fn column_index[t, id, side = 'all']
+    _column_index[side_columns[t, side], id]
+
+--- Whether a column is the first that shows in a part of the table.
+fn is_first_column[t, id, side = 'all']
+    columns = side_columns[t, side]
+    len[columns] gt 0 and columns[0].id eq id
+
+--- Whether a column is the last that shows in a part of the table.
+fn is_last_column[t, id, side = 'all']
+    columns = side_columns[t, side]
+    len[columns] gt 0 and columns[len[columns] - 1].id eq id
+
+--- The width of every column that shows: the top row of headers' widths, together.
+fn total_size[t]
+    groups = header_groups[t, 'all']
+    total = 0.0
+    if len[groups] eq 0
+        return total
+    for h in groups[0].headers
+        total = total + h.size
+    total
+
+--- The width of the columns that show in one part of the table ('start',
+--- 'center' or 'end').
+fn side_size[t, side]
+    total = 0.0
+    for c in side_columns[t, side]
+        total = total + _size_of[t, c]
+    total
+
+--- The table with a column's width set (its bounds still hold it).
+fn column_size_set[t, id, size]
+    t.state.sizes = set[t.state.sizes, id, size + 0.0]
+    t
+
+--- The table with a column's width back to its own.
+fn column_size_reset[t, id]
+    if id in t.state.sizes
+        t.state.sizes = del[t.state.sizes, id]
+    t
+
+--- Whether a column may be resized: it says so and the table does.
+fn can_resize[t, id]
+    c = column_of[t, id]
+    c.resizable and t.options.resizable
+
+--- Whether a resize is under way on this column.
+fn is_resizing[t, id]
+    t.state.resizing.column ne '' and t.state.resizing.column eq id
+
+fn _depth_in[columns, id, depth]
+    for c in columns
+        if c.id eq id
+            return depth
+        if len[c.columns] gt 0
+            d = _depth_in[c.columns, id, depth + 1]
+            if d gte 0
+                return d
+    -1
+
+fn _parent_in[columns, id, parent]
+    for c in columns
+        if c.id eq id
+            return parent
+        if len[c.columns] gt 0
+            p = _parent_in[c.columns, id, c.id]
+            if p ne '-'
+                return p
+    '-'
+
+--- How deep a column stands among the groups: 0 at the top.
+fn column_depth[t, id]
+    _depth_in[t.columns, id, 0]
+
+--- The id of the group a column stands in, '' at the top.
+fn column_parent[t, id]
+    p = _parent_in[t.columns, id, '']
+    if p eq '-'
+        return ''
+    p
+
+-------------------------------------------------------------------- header groups
+
+fn _no_headers[]
+    one = [Header['', '', 0, 0, false, '', 0, 0, 0.0, 0.0, _no_words[]]]
+    slice[one, 0, 0]
+
+fn _no_groups[]
+    one = [HeaderGroup['', 0, _no_headers[]]]
+    slice[one, 0, 0]
+
+fn _no_heads[]
+    m = map['' = Header['', '', 0, 0, false, '', 0, 0, 0.0, 0.0, _no_words[]]]
+    del[m, '']
+
+fn _header_depth[t, columns, depth]
+    deepest = depth
+    for c in columns
+        if len[c.columns] gt 0 and _shows[t, c]
+            deepest = max[deepest, _header_depth[t, c.columns, depth + 1]]
+    deepest
+
+fn _depths_into[m, columns, depth]
+    out = m
+    for c in columns
+        out = set[out, c.id, depth]
+        if len[c.columns] gt 0
+            out = _depths_into[out, c.columns, depth + 1]
+    out
+
+fn _parents_into[m, columns, parent]
+    out = m
+    for c in columns
+        out = set[out, c.id, parent]
+        if len[c.columns] gt 0
+            out = _parents_into[out, c.columns, c.id]
+    out
+
+fn _joined_id[id, part]
+    if part eq ''
+        return id
+    if id eq ''
+        return part
+    '`id`_`part`'
+
+fn _header_id[family, depth, owner, child]
+    id = family
+    if depth ne 0
+        id = _joined_id[id, str[depth]]
+    id = _joined_id[id, owner]
+    _joined_id[id, child]
+
+fn _group_id[family, depth]
+    if family eq ''
+        return str[depth]
+    '`family`_`depth`'
+
+fn _spanned[heads, ids]
+    out = heads
+    for id in ids
+        h = out[id]
+        if len[h.subs] gt 0
+            out = _spanned[out, h.subs]
+            span = 0
+            for s in h.subs
+                span = span + out[s].columns
+            h.columns = span
+        else
+            h.columns = 1
+        h.rows = 1
+        if h.placeholder and len[h.subs] eq 1 and out[h.subs[0]].column eq h.column
+            spans = 1
+            chain = h.subs[0]
+            while chain ne ''
+                c = out[chain]
+                c.rows = 0
+                out = set[out, chain, c]
+                spans = spans + 1
+                chain = ''
+                if len[c.subs] eq 1 and out[c.subs[0]].column eq h.column
+                    chain = c.subs[0]
+            h.rows = spans
+        out = set[out, id, h]
+    out
+
+fn _header_size[t, heads, id]
+    h = heads[id]
+    if len[h.subs] eq 0
+        return _size_of[t, column_of[t, h.column]]
+    total = 0.0
+    for s in h.subs
+        total = total + _header_size[t, heads, s]
+    total
+
+--- The rows of headers over a part of the table ('all', 'start', 'center'
+--- or 'end'), the top row first, as TanStack's getHeaderGroups lays them
+--- out: every row of headers reaches down to the deepest group that shows;
+--- a header over a group spans its leaves' columns; where a column has no
+--- group above it, a placeholder header of that column stands in for one,
+--- and the topmost of a column's placeholders spans the rows down to its
+--- own header, the ones under it spanning none. Each header has its id
+--- (its depth, its column and the id of the header under it, joined), its
+--- width and where it starts in its row.
+fn header_groups[t, side]
+    leaves = drawn_columns[t]
+    family = ''
+    if side ne 'all'
+        leaves = side_columns[t, side]
+        family = side
+    deepest = _header_depth[t, t.columns, 1]
+    depths = _depths_into[map['' = 0], t.columns, 0]
+    parents = _parents_into[map['' = ''], t.columns, '']
+    level = _no_headers[]
+    i = 0
+    while i lt len[leaves]
+        level = push[level, Header[leaves[i].id, leaves[i].id, 0, 0, false, '', deepest, i, 0.0, 0.0, _no_words[]]]
+        i = i + 1
+    built = _no_groups[]
+    depth = deepest - 1
+    going = true
+    while going
+        pending = _no_headers[]
+        for h in level
+            above = h.column
+            placeholder = true
+            if depths[h.column] eq depth and parents[h.column] ne ''
+                above = parents[h.column]
+                placeholder = false
+            last = len[pending] - 1
+            if last gte 0 and pending[last].column eq above
+                held = pending[last]
+                held.subs = push[held.subs, h.id]
+                pending[last] = held
+            else
+                place = ''
+                if placeholder
+                    count = 0
+                    for p in pending
+                        if p.column eq above
+                            count = count + 1
+                    place = str[count]
+                subs = push[_no_words[], h.id]
+                pending = push[pending, Header[_header_id[family, depth, above, h.id], above, 0, 0, placeholder, place, depth, len[pending], 0.0, 0.0, subs]]
+        built = push[built, HeaderGroup[_group_id[family, depth], depth, level]]
+        if depth gt 0
+            level = pending
+            depth = depth - 1
+        else
+            going = false
+    heads = _no_heads[]
+    for g in built
+        for h in g.headers
+            heads = set[heads, h.id, h]
+    top = _no_words[]
+    if len[built] gt 0
+        for h in built[len[built] - 1].headers
+            top = push[top, h.id]
+    heads = _spanned[heads, top]
+    out = _no_groups[]
+    k = len[built] - 1
+    while k gte 0
+        g = built[k]
+        level = _no_headers[]
+        at = 0.0
+        for h in g.headers
+            done = heads[h.id]
+            done.size = _header_size[t, heads, h.id]
+            done.offset = at
+            at = at + done.size
+            level = push[level, done]
+        out = push[out, HeaderGroup[g.id, g.depth, level]]
+        k = k - 1
+    out
+
+--- Every header of the table's rows of headers, the top row's first.
+fn flat_headers[t]
+    out = _no_headers[]
+    for g in header_groups[t, 'all']
+        out = concat[out, g.headers]
+    out
+
+-------------------------------------------------------------------- resizing
+
+fn _no_sized[]
+    one = [Sized['', 0.0]]
+    slice[one, 0, 0]
+
+--- No resize under way.
+fn _still[]
+    Resizing[0.0, 0.0, 0.0, 0.0, '', _no_sized[]]
+
+fn _under[heads, id]
+    out = _no_headers[]
+    for s in heads[id].subs
+        out = concat[out, _under[heads, s]]
+    push[out, heads[id]]
+
+--- The table with a resize begun on a header (its id, as header_groups
+--- gives it) by a pointer at `x`, when its column may resize: the widths
+--- of the columns under the header (and of its own) are kept as they stand,
+--- each to grow by the same share as the header.
+fn resize_started[t, header_id, x]
+    heads = _no_heads[]
+    for h in flat_headers[t]
+        heads = set[heads, h.id, h]
+    if not (header_id in heads)
+        return t
+    h = heads[header_id]
+    if not can_resize[t, h.column]
+        return t
+    sizes = _no_sized[]
+    for under in _under[heads, header_id]
+        sizes = push[sizes, Sized[under.column, column_size[t, under.column]]]
+    t.state.resizing = Resizing[x + 0.0, h.size, 0.0, 0.0, h.column, sizes]
+    t
+
+fn _resized[t, x, ended]
+    r = t.state.resizing
+    if r.column eq ''
+        return t
+    turn = 1.0
+    if t.options.resize_direction eq 'rtl'
+        turn = -1.0
+    moved = (x - r.offset) * turn
+    share = 0.0
+    if r.size gt 0.0
+        share = moved / r.size
+    share = max[share, -0.999999]
+    r.moved = moved
+    r.share = share
+    t.state.resizing = r
+    if t.options.resize_mode eq 'change' or ended
+        sizes = t.state.sizes
+        for s in r.sizes
+            size = moved / len[r.sizes]
+            if s.size gt 0.0
+                size = s.size + s.size * share
+            sizes = set[sizes, s.id, round[max[size, 0.0] * 100.0] / 100.0]
+        t.state.sizes = sizes
+    t
+
+--- The table with the pointer of a resize moved to `x`: the share it moved
+--- is kept, and the widths change as it moves when the table resizes on
+--- change (`resize_mode` 'change'), not only at the end ('end').
+fn resize_moved[t, x]
+    _resized[t, x + 0.0, false]
+
+--- The table with a resize ended at `x`: the widths take the share moved.
+fn resize_ended[t, x]
+    if t.state.resizing.column eq ''
+        return t
+    t = _resized[t, x + 0.0, true]
+    t.state.resizing = _still[]
+    t
+
+-------------------------------------------------------------------- rows
+
+fn _no_cells[]
+    m = map['' = missing[]]
+    del[m, '']
+
+fn _no_ranks[]
+    m = map['' = 0.0]
+    del[m, '']
+
+fn _no_rows[]
+    one = [Row['', 0, 0, '', _no_cells[], [], '', '', _no_words[], _no_ranks[]]]
+    slice[one, 0, 0]
+
+--- A row of data: its id and its cells by key.
+fn row[id, cells]
+    Row[id, 0, 0, '', cells, _no_rows[], '', '', _no_words[], _no_ranks[]]
+
+--- A row of data with rows under it (a tree's), each a row of its own.
+fn tree_row[id, cells, subs]
+    Row[id, 0, 0, '', cells, subs, '', '', _no_words[], _no_ranks[]]
+
+fn _unfound[]
+    Row['', -1, 0, '', _no_cells[], _no_rows[], '', '', _no_words[], _no_ranks[]]
+
+--- What a row holds in a column: its cell under the column's key, missing
+--- when it has none (and always for a column that reads no cell).
+fn value_of[r, c]
+    if c.key eq '' or not (c.key in r.cells)
+        return missing[]
+    r.cells[c.key]
+
+--- Whether a row stands for a group of rows.
+fn is_group[r]
+    r.column ne ''
+
+fn _flattened[rows]
+    out = _no_rows[]
+    for r in rows
+        out = push[out, r]
+        if len[r.subs] gt 0
+            out = concat[out, _flattened[r.subs]]
+    out
+
+fn _positions[flat]
+    m = map['' = 0]
+    m = del[m, '']
+    i = 0
+    while i lt len[flat]
+        m = set[m, flat[i].id, i]
+        i = i + 1
+    m
+
+fn _cored[rows, depth, parent]
+    out = _no_rows[]
+    i = 0
+    while i lt len[rows]
+        r = rows[i]
+        r.index = i
+        r.depth = depth
+        r.parent = parent
+        r.subs = _cored[r.subs, depth + 1, r.id]
+        out = push[out, r]
+        i = i + 1
+    out
+
+--- The data's rows as TanStack's core row model holds them: each knows its
+--- place among its siblings, its depth and its parent.
+fn core_model[t]
+    rows = _cored[t.rows, 0, '']
+    Model[rows, _flattened[rows]]
+
+-------------------------------------------------------------------- filtering rows
+
+--- What the filters made of each row of data: the ids of the filters that
+--- judge (each column filter's, and '__global__' for the global filter),
+--- each row's verdicts by filter id, and the fuzzy ranks its columns got.
+struct Fates [ids, flags, ranks]
+
+fn _search_on[s]
+    not _falsy[s.search]
+
+fn _filters_on[s]
+    len[s.filters] gt 0 or _search_on[s]
+
+fn _filter_names[]
+    ['includesString', 'includesStringSensitive', 'equalsString', 'equalsStringSensitive', 'startsWith', 'endsWith', 'equals', 'weakEquals', 'empty', 'notEmpty', 'greaterThan', 'greaterThanOrEqualTo', 'lessThan', 'lessThanOrEqualTo', 'between', 'betweenInclusive', 'inNumberRange', 'inDateRange', 'arrHas', 'arrIncludes', 'arrIncludesAll', 'arrIncludesSome', 'fuzzy']
+
+--- The filter function a column filters with, '' for none: its own, or
+--- for 'auto' one chosen by the first value the data's rows hold in it
+--- (text 'includesString', a number 'inNumberRange', a truth 'equals', a
+--- list 'arrIncludes', a date 'inDateRange', and otherwise 'weakEquals').
+fn _filter_name[c, core]
+    if c.filter_with ne 'auto'
+        if c.filter_with in _filter_names[]
+            return c.filter_with
+        return ''
+    for r in core.flat
+        v = value_of[r, c]
+        if not _blank[v]
+            if v.is eq 'text'
+                return 'includesString'
+            if v.is eq 'number'
+                return 'inNumberRange'
+            if v.is eq 'bool'
+                return 'equals'
+            if v.is eq 'list'
+                return 'arrIncludes'
+            return 'inDateRange'
+    'weakEquals'
+
+--- The filter function the global filter searches with, '' for none.
+fn _search_name[t]
+    name = t.options.search_filter
+    if name eq 'auto'
+        return 'includesString'
+    if name in _filter_names[]
+        return name
+    ''
+
+--- Whether the global filter reads a column: the column and the table let
+--- it, the column reads a cell, and (unless the column says 'yes') the
+--- first value the data's rows hold in it is text or a number.
+fn _searchable[t, c, core]
+    if c.searchable eq 'no' or not t.options.searching or not t.options.filtering or c.key eq ''
+        return false
+    if c.searchable eq 'yes'
+        return true
+    for r in core.flat
+        v = value_of[r, c]
+        if not _blank[v]
+            return v.is eq 'text' or v.is eq 'number'
+    false
+
+--- The leaf columns the global filter reads, in their order.
+fn search_columns[t, core]
+    out = _no_columns[]
+    for c in leaf_columns[t]
+        if _searchable[t, c, core]
+            out = push[out, c]
+    out
+
+fn _judging[name, v, resolved]
+    if name eq 'fuzzy'
+        return rank_of[v, resolved].passed
+    filter_passes[name, v, resolved]
+
+--- What the table's filters make of each row of data.
+fn fates_of[t, core]
+    s = t.state
+    ids = _no_words[]
+    names = _no_words[]
+    judged = _no_columns[]
+    wanted = _no_values[]
+    for f in s.filters
+        ids = push[ids, f.id]
+        c = column_of[t, f.id]
+        if c.id ne ''
+            name = _filter_name[c, core]
+            if name ne ''
+                names = push[names, name]
+                judged = push[judged, c]
+                if name eq 'fuzzy'
+                    wanted = push[wanted, f.value]
+                else
+                    wanted = push[wanted, resolved_filter[name, f.value]]
+    searching = _no_columns[]
+    search_by = ''
+    sought = missing[]
+    if _search_on[s]
+        search_by = _search_name[t]
+        if search_by ne ''
+            searching = search_columns[t, core]
+        if len[searching] gt 0
+            ids = push[ids, '__global__']
+            sought = s.search
+            if search_by ne 'fuzzy'
+                sought = resolved_filter[search_by, s.search]
+    flags = map['' = _no_flags[]]
+    flags = del[flags, '']
+    ranks = map['' = _no_ranks[]]
+    ranks = del[ranks, '']
+    for r in core.flat
+        verdicts = _no_flags[]
+        got = _no_ranks[]
+        j = 0
+        while j lt len[judged]
+            v = value_of[r, judged[j]]
+            if names[j] eq 'fuzzy'
+                rk = rank_of[v, wanted[j]]
+                got = set[got, judged[j].id, rk.rank]
+                verdicts = set[verdicts, judged[j].id, rk.passed]
+            else
+                verdicts = set[verdicts, judged[j].id, filter_passes[names[j], v, wanted[j]]]
+            j = j + 1
+        if len[searching] gt 0
+            found = false
+            k = 0
+            while k lt len[searching] and not found
+                v = value_of[r, searching[k]]
+                if search_by eq 'fuzzy'
+                    rk = rank_of[v, sought]
+                    got = set[got, searching[k].id, rk.rank]
+                    found = rk.passed
+                else
+                    found = filter_passes[search_by, v, sought]
+                k = k + 1
+            verdicts = set[verdicts, '__global__', found]
+        flags = set[flags, r.id, verdicts]
+        ranks = set[ranks, r.id, got]
+    Fates[ids, flags, ranks]
+
+fn _passes[fates, id, ids]
+    verdicts = fates.flags[id]
+    for f in ids
+        if f in verdicts and not verdicts[f]
+            return false
+    true
+
+fn _ranked[rows, fates]
+    out = _no_rows[]
+    for r in rows
+        if r.id in fates.ranks
+            r.ranks = fates.ranks[r.id]
+        if len[r.subs] gt 0
+            r.subs = _ranked[r.subs, fates]
+        out = push[out, r]
+    out
+
+fn _from_root[rows, fates, ids, depth, most]
+    out = _no_rows[]
+    for r in rows
+        if _passes[fates, r.id, ids]
+            if len[r.subs] gt 0 and depth lt most
+                r.subs = _from_root[r.subs, fates, ids, depth + 1, most]
+            out = push[out, r]
+    out
+
+fn _from_leaves[rows, fates, ids, depth, most]
+    out = _no_rows[]
+    for r in rows
+        if len[r.subs] gt 0 and depth lt most
+            r.subs = _from_leaves[r.subs, fates, ids, depth + 1, most]
+            if len[r.subs] gt 0 or _passes[fates, r.id, ids]
+                out = push[out, r]
+        else
+            if _passes[fates, r.id, ids]
+                out = push[out, r]
+    out
+
+--- Rows filtered as the table filters: from the root down (a row that
+--- fails takes its sub-rows with it, and a row that passes keeps those of
+--- them that pass), or from the leaves up (a row stays while it passes or
+--- any row under it stays), down to the table's filter depth; below it a
+--- row's sub-rows stay whole.
+fn _filtered_rows[t, rows, fates, ids]
+    kept = _from_root[rows, fates, ids, 0, t.options.filter_depth]
+    if t.options.from_leaves
+        kept = _from_leaves[rows, fates, ids, 0, t.options.filter_depth]
+    kept = _ranked[kept, fates]
+    Model[kept, _flattened[kept]]
+
+--- The rows the table's filters keep, as TanStack's filtered row model
+--- holds them: each row that a fuzzy filter ranked carries its ranks.
+fn filtered_model[t, core]
+    if t.options.manual_filtering or len[core.rows] eq 0 or not _filters_on[t.state]
+        return core
+    fates = fates_of[t, core]
+    _filtered_rows[t, core.rows, fates, fates.ids]
+
+-------------------------------------------------------------------- faceting
+
+--- The rows a column's facets count: the data's rows that pass every
+--- filter but the column's own (`id` '__global__' for the global filter's
+--- facets: every column filter, and not the global one).
+fn faceted_rows[t, core, id]
+    s = t.state
+    if len[core.rows] eq 0 or not _filters_on[s]
+        return core
+    ids = _no_words[]
+    for f in s.filters
+        if f.id ne id
+            ids = push[ids, f.id]
+    if _search_on[s] and id ne '__global__'
+        ids = push[ids, '__global__']
+    if len[ids] eq 0
+        return core
+    _filtered_rows[t, core.rows, fates_of[t, core], ids]
+
+fn _facet_columns[t, core, id]
+    if id eq '__global__'
+        return search_columns[t, core]
+    [column_of[t, id]]
+
+fn _no_facets[]
+    one = [Facet[missing[], 0]]
+    slice[one, 0, 0]
+
+--- The values a column holds over its faceted rows, each once in the order
+--- first met and with how many rows hold it (values the same as JavaScript's
+--- Map finds them: a list is never the same as another).
+fn faceted_values[t, core, id]
+    columns = _facet_columns[t, core, id]
+    out = _no_facets[]
+    for r in faceted_rows[t, core, id].flat
+        for c in columns
+            v = value_of[r, c]
+            k = 0
+            found = false
+            while k lt len[out] and not found
+                if same_value[out[k].value, v]
+                    found = true
+                else
+                    k = k + 1
+            if found
+                f = out[k]
+                f.count = f.count + 1
+                out[k] = f
+            else
+                out = push[out, Facet[v, 1]]
+    out
+
+--- The least and greatest numbers a column holds over its faceted rows,
+--- each value read as JavaScript's Number() reads it (null as 0, a truth as
+--- 1 or 0, a date as its milliseconds; NaN passed over).
+fn faceted_range[t, core, id]
+    columns = _facet_columns[t, core, id]
+    least = _infinity[]
+    greatest = 0.0 - _infinity[]
+    found = false
+    for r in faceted_rows[t, core, id].flat
+        for c in columns
+            x = js_number[value_of[r, c]]
+            if not _is_nan[x]
+                found = true
+                if x lt least
+                    least = x
+                if x gt greatest
+                    greatest = x
+    Range[found, least, greatest]
+
+-------------------------------------------------------------------- grouping and aggregation
+
+fn _range_kind[v]
+    if v.is eq 'number'
+        return 'number'
+    if v.is eq 'date' and not _is_nan[v.num]
+        return 'date'
+    ''
+
+--- What an aggregation function makes of values (each row's in a column):
+--- 'sum' (numbers, anything else as 0), 'min', 'max' and 'extent' (of
+--- numbers or of dates, whichever comes first; the extent is a list of
+--- two), 'mean' (of what reads as a number, nothing passed over),
+--- 'median' (of numbers), 'unique' (each value once, a list),
+--- 'uniqueCount', 'count' (of rows), 'first' and 'last'. Missing for a
+--- name it does not know, and for a mean or median of nothing.
+fn aggregated[name, vs]
+    if name eq 'sum'
+        total = 0.0
+        for v in vs
+            if v.is eq 'number'
+                total = total + v.num
+        return number[total]
+    if name eq 'min' or name eq 'max' or name eq 'extent'
+        kind_of = ''
+        low = missing[]
+        high = missing[]
+        for v in vs
+            k = _range_kind[v]
+            if k ne '' and (kind_of eq '' or k eq kind_of)
+                if kind_of eq ''
+                    kind_of = k
+                    low = v
+                    high = v
+                else
+                    if v.num - low.num lt 0.0
+                        low = v
+                    if v.num - high.num gt 0.0
+                        high = v
+        if name eq 'min'
+            return low
+        if name eq 'max'
+            return high
+        return listed[[low, high]]
+    if name eq 'mean'
+        count = 0
+        total = 0.0
+        for v in vs
+            if not _blank[v]
+                x = js_number[v]
+                if not _is_nan[x]
+                    count = count + 1
+                    total = total + x
+        if count eq 0
+            return missing[]
+        return number[total / count]
+    if name eq 'median'
+        held = []
+        for v in vs
+            if v.is eq 'number'
+                held = push[held, v.num]
+        if len[held] eq 0
+            return missing[]
+        held = sort[held]
+        mid = len[held] / 2
+        if len[held] % 2 eq 1
+            return number[held[mid]]
+        return number[(held[mid - 1] + held[mid]) / 2.0]
+    if name eq 'unique' or name eq 'uniqueCount'
+        seen = _no_values[]
+        for v in vs
+            if not _holds[listed[seen], v]
+                seen = push[seen, v]
+        if name eq 'unique'
+            return listed[seen]
+        return number[len[seen]]
+    if name eq 'count'
+        return number[len[vs]]
+    if name eq 'first'
+        if len[vs] eq 0
+            return missing[]
+        return vs[0]
+    if name eq 'last'
+        if len[vs] eq 0
+            return missing[]
+        return vs[len[vs] - 1]
+    missing[]
+
+--- Whether an aggregation function sums up a group from its sub-groups'
+--- answers rather than from its rows.
+fn _merges[name]
+    name in ['sum', 'min', 'max', 'extent', 'count', 'first', 'last']
+
+fn _merged[name, vs]
+    if name eq 'sum' or name eq 'count'
+        total = 0.0
+        for v in vs
+            if v.is eq 'number'
+                total = total + v.num
+        return number[total]
+    if name eq 'min' or name eq 'max'
+        kind_of = ''
+        best = missing[]
+        for v in vs
+            k = _range_kind[v]
+            if k ne ''
+                if kind_of eq ''
+                    kind_of = k
+                if k eq kind_of
+                    if best.is eq 'missing'
+                        best = v
+                    else
+                        if name eq 'min' and v.num - best.num lt 0.0
+                            best = v
+                        if name eq 'max' and v.num - best.num gt 0.0
+                            best = v
+        return best
+    if name eq 'extent'
+        kind_of = ''
+        low = missing[]
+        high = missing[]
+        for e in vs
+            if e.is eq 'list' and len[e.items] eq 2
+                least = e.items[0]
+                most = e.items[1]
+                k = _range_kind[least]
+                if k ne '' and most.is ne 'missing'
+                    if kind_of eq ''
+                        kind_of = k
+                    if k eq kind_of
+                        if low.is eq 'missing'
+                            low = least
+                            high = most
+                        else
+                            if least.num - low.num lt 0.0
+                                low = least
+                            if high.is eq 'missing' or most.num - high.num gt 0.0
+                                high = most
+        return listed[[low, high]]
+    if name eq 'first'
+        if len[vs] eq 0
+            return missing[]
+        return vs[0]
+    if len[vs] eq 0
+        return missing[]
+    vs[len[vs] - 1]
+
+--- The aggregation function a column sums a group up with, '' for none:
+--- its own, or for 'auto' a sum when the data's first row holds a number
+--- there and the extent when it holds a date.
+fn aggregate_name[c, core]
+    name = c.aggregate_with
+    if name eq 'auto'
+        if len[core.flat] eq 0
+            return ''
+        k = _range_kind[value_of[core.flat[0], c]]
+        if k eq 'number'
+            return 'sum'
+        if k eq 'date'
+            return 'extent'
+        return ''
+    if name in ['sum', 'min', 'max', 'extent', 'mean', 'median', 'unique', 'uniqueCount', 'count', 'first', 'last']
+        return name
+    ''
+
+--- The grouping's ids that name columns.
+fn _grouping_of[t]
+    out = _no_words[]
+    for id in t.state.grouping
+        if has_column[t, id]
+            out = push[out, id]
+    out
+
+fn _deepened[rows, depth]
+    out = _no_rows[]
+    for r in rows
+        r.depth = depth
+        if len[r.subs] gt 0
+            r.subs = _deepened[r.subs, depth + 1]
+        out = push[out, r]
+    out
+
+fn _leaf_rows[rows]
+    out = _no_rows[]
+    for r in rows
+        if len[r.subs] gt 0
+            out = concat[out, _leaf_rows[r.subs]]
+        else
+            out = push[out, r]
+    out
+
+fn _grouped_up[t, core, rows, depth, parent, grouping, leaves, names]
+    if depth gte len[grouping]
+        return _deepened[rows, depth]
+    by = column_of[t, grouping[depth]]
+    keys_seen = _no_words[]
+    for r in rows
+        key = shown[value_of[r, by]]
+        if not (key in keys_seen)
+            keys_seen = push[keys_seen, key]
+    out = _no_rows[]
+    gi = 0
+    while gi lt len[keys_seen]
+        key = keys_seen[gi]
+        members = _no_rows[]
+        for r in rows
+            if shown[value_of[r, by]] eq key
+                members = push[members, r]
+        id = '`by.id`:`key`'
+        if parent ne ''
+            id = '`parent`>`id`'
+        subs = _grouped_up[t, core, members, depth + 1, id, grouping, leaves, names]
+        held = _no_rows[]
+        for s in subs
+            s.parent = id
+            held = push[held, s]
+        subs = held
+        deep = false
+        for m in members
+            if len[m.subs] gt 0
+                deep = true
+        under = members
+        if deep
+            under = _leaf_rows[members]
+        leaf_ids = _no_words[]
+        for u in under
+            leaf_ids = push[leaf_ids, u.id]
+        merging = len[subs] gt 0
+        for s in subs
+            if s.column eq ''
+                merging = false
+        cells = _no_cells[]
+        j = 0
+        while j lt len[leaves]
+            c = leaves[j]
+            place = _word_index[grouping, c.id]
+            if place gte 0 and place lte depth
+                v = value_of[members[0], c]
+                if v.is eq 'null'
+                    v = missing[]
+                cells = set[cells, c.key, v]
+            else
+                name = names[j]
+                if name ne ''
+                    if merging and _merges[name] and _not_grouped_by[subs, c.id]
+                        answers = _no_values[]
+                        for s in subs
+                            answers = push[answers, value_of[s, c]]
+                        cells = set[cells, c.key, _merged[name, answers]]
+                    else
+                        vs = _no_values[]
+                        for m in members
+                            vs = push[vs, value_of[m, c]]
+                        cells = set[cells, c.key, aggregated[name, vs]]
+            j = j + 1
+        out = push[out, Row[id, gi, depth, parent, cells, subs, by.id, key, leaf_ids, _no_ranks[]]]
+        gi = gi + 1
+    out
+
+fn _not_grouped_by[subs, id]
+    for s in subs
+        if s.column eq id
+            return false
+    true
+
+--- The rows the grouping makes, as TanStack's grouped row model holds them:
+--- a group row for each value of the first grouping column (in the order
+--- first met) holding its rows' groups by the next column, down to the rows
+--- themselves; its id is the column and value (`status:single`, under its
+--- parent's: `status:single>active:true`), and its cells are its first
+--- row's value in the columns it groups by and the columns' aggregates in
+--- the rest.
+fn grouped_model[t, core, filtered]
+    if t.options.manual_grouping or len[filtered.rows] eq 0 or len[t.state.grouping] eq 0
+        return filtered
+    grouping = _grouping_of[t]
+    leaves = _leaves_of[t.columns]
+    names = _no_words[]
+    for c in leaves
+        names = push[names, aggregate_name[c, core]]
+    rows = _grouped_up[t, core, filtered.rows, 0, '', grouping, leaves, names]
+    Model[rows, _flattened[rows]]
+
+--- What a column's footer sums up: its aggregation over the filtered rows at the top.
+fn footer_value[t, m, id]
+    c = column_of[t, id]
+    name = aggregate_name[c, m.core]
+    if name eq ''
+        return missing[]
+    vs = _no_values[]
+    for r in m.filtered.rows
+        vs = push[vs, value_of[r, c]]
+    aggregated[name, vs]
+
+-------------------------------------------------------------------- sorting rows
+
+--- One column of a sort as the sorted row model resolves it.
+struct Sorter [column, desc, absent, invert, by]
+
+fn _no_sorters[]
+    one = [Sorter[_nameless[], false, 'greater', false, 'basic']]
+    slice[one, 0, 0]
+
+fn _sort_names[]
+    ['alphanumeric', 'alphanumericCaseSensitive', 'text', 'textCaseSensitive', 'datetime', 'basic', 'rank']
+
+--- The sort function a column sorts with: its own ('basic' for a name not
+--- known), or for 'auto' one chosen by the first ten filtered rows' values:
+--- 'datetime' for a date, 'alphanumeric' for text with a digit in it,
+--- 'text' for other text, and 'basic' otherwise.
+fn sort_name[c, filtered]
+    if c.sort_with ne 'auto'
+        if c.sort_with in _sort_names[]
+            return c.sort_with
+        return 'basic'
+    worded = false
+    i = 0
+    while i lt len[filtered.flat] and i lt 10
+        v = value_of[filtered.flat[i], c]
+        if v.is eq 'date'
+            return 'datetime'
+        if v.is eq 'text'
+            worded = true
+            for ch in split[v.words, '']
+                if _is_digit[ch]
+                    return 'alphanumeric'
+        i = i + 1
+    if worded
+        return 'text'
+    'basic'
+
+fn _sorters[t, filtered]
+    out = _no_sorters[]
+    for s in t.state.sorting
+        c = column_of[t, s.id]
+        if c.id ne '' and _can_sort[t, c]
+            out = push[out, Sorter[c, s.desc, c.absent, c.invert, sort_name[c, filtered]]]
+    out
+
+fn _by_rank[a, b, c]
+    if c.id in a.ranks
+        other = 0.0
+        if c.id in b.ranks
+            other = b.ranks[c.id]
+        n = rank_compare[a.ranks[c.id], other]
+        if n ne 0
+            return n
+    sort_compare['alphanumeric', value_of[a, c], value_of[b, c]]
+
+fn _rows_compare[sorters, a, b]
+    i = 0
+    while i lt len[sorters]
+        s = sorters[i]
+        n = 0
+        skip = false
+        if s.absent ne 'compared'
+            gone_a = value_of[a, s.column].is eq 'missing'
+            gone_b = value_of[b, s.column].is eq 'missing'
+            if gone_a and gone_b
+                skip = true
+            else if gone_a or gone_b
+                if s.absent eq 'first'
+                    if gone_a
+                        return -1
+                    return 1
+                if s.absent eq 'last'
+                    if gone_a
+                        return 1
+                    return -1
+                n = 1
+                if s.absent eq 'smaller'
+                    n = -1
+                if gone_b
+                    n = 0 - n
+        if not skip
+            if n eq 0
+                if s.by eq 'rank'
+                    n = _by_rank[a, b, s.column]
+                else
+                    n = sort_compare[s.by, value_of[a, s.column], value_of[b, s.column]]
+            if n ne 0
+                if s.desc
+                    n = 0 - n
+                if s.invert
+                    n = 0 - n
+                return n
+        i = i + 1
+    a.index - b.index
+
+fn _merge_sorted[sorters, rows]
+    if len[rows] lte 1
+        return rows
+    half = len[rows] / 2
+    left = _merge_sorted[sorters, slice[rows, 0, half]]
+    right = _merge_sorted[sorters, slice[rows, half, len[rows]]]
+    out = _no_rows[]
+    i = 0
+    j = 0
+    while i lt len[left] and j lt len[right]
+        if _rows_compare[sorters, right[j], left[i]] lt 0
+            out = push[out, right[j]]
+            j = j + 1
+        else
+            out = push[out, left[i]]
+            i = i + 1
+    while i lt len[left]
+        out = push[out, left[i]]
+        i = i + 1
+    while j lt len[right]
+        out = push[out, right[j]]
+        j = j + 1
+    out
+
+fn _sorted_rows[sorters, rows]
+    out = _no_rows[]
+    for r in _merge_sorted[sorters, rows]
+        if len[r.subs] gt 0
+            r.subs = _sorted_rows[sorters, r.subs]
+        out = push[out, r]
+    out
+
+--- The rows sorted as the table's sorting says, as TanStack's sorted row
+--- model holds them: by each sorting column in turn (rows missing a value
+--- placed as the column says), then in their own order; every row's
+--- sub-rows sorted the same way.
+fn sorted_model[t, filtered, grouped]
+    if t.options.manual_sorting or len[grouped.rows] eq 0
+        return grouped
+    sorters = _sorters[t, filtered]
+    if len[sorters] eq 0
+        return grouped
+    rows = _sorted_rows[sorters, grouped.rows]
+    Model[rows, _flattened[rows]]
+
+-------------------------------------------------------------------- expanding and pages
+
+fn _is_open[t, id]
+    t.state.expanded_all or (id in t.state.expanded and t.state.expanded[id])
+
+fn _opened[t, rows]
+    out = _no_rows[]
+    for r in rows
+        out = push[out, r]
+        if len[r.subs] gt 0 and _is_open[t, r.id]
+            out = concat[out, _opened[t, r.subs]]
+    out
+
+fn _any_expanded[s]
+    s.expanded_all or len[keys[s.expanded]] gt 0
+
+--- The rows with the expanded ones' sub-rows listed after them, as
+--- TanStack's expanded row model holds them (only when expanded rows are
+--- paged with the rest, or the pages are the program's own).
+fn expanded_model[t, sorted]
+    if t.options.manual_expanding or len[sorted.rows] eq 0 or not _any_expanded[t.state]
+        return sorted
+    if not t.options.page_expanded and not t.options.manual_pages
+        return sorted
+    Model[_opened[t, sorted.rows], sorted.flat]
+
+fn _page_flat[rows]
+    out = _no_rows[]
+    seen = _no_flags[]
+    for r in _flattened[rows]
+        if not (r.id in seen)
+            seen = set[seen, r.id, true]
+            out = push[out, r]
+    out
+
+--- The page's rows, as TanStack's paginated row model holds them: the
+--- page's share of the rows (with the expanded rows' sub-rows opened inside
+--- the page when expanded rows are not paged with the rest), and every row
+--- on the page and under it once.
+fn page_model[t, pre]
+    if t.options.manual_pages or len[pre.rows] eq 0
+        return pre
+    size = t.state.page_size
+    head = max[0, min[size * t.state.page_index, len[pre.rows]]]
+    foot = max[head, min[head + size, len[pre.rows]]]
+    rows = slice[pre.rows, head, foot]
+    if not t.options.page_expanded
+        rows = _opened[t, rows]
+    Model[rows, _page_flat[rows]]
+
+--- Every row model the table's state makes, each from the one before.
+fn models[t]
+    core = core_model[t]
+    filtered = filtered_model[t, core]
+    grouped = grouped_model[t, core, filtered]
+    sorted = sorted_model[t, filtered, grouped]
+    opened = expanded_model[t, sorted]
+    page = page_model[t, opened]
+    Models[core, filtered, grouped, sorted, opened, page, _positions[grouped.flat], _positions[core.flat]]
+
+--- The row of an id as the table finds one for a change: the grouped rows'
+--- (a group's too) or else the data's; a row with no id when there is none.
+fn row_of[m, id]
+    if id in m.held
+        return m.grouped.flat[m.held[id]]
+    if id in m.found
+        return m.core.flat[m.found[id]]
+    _unfound[]
+
+--- The data's row of an id, its sub-rows whole; a row with no id when there is none.
+fn data_row_of[m, id]
+    if id in m.found
+        return m.core.flat[m.found[id]]
+    _unfound[]
+
+-------------------------------------------------------------------- the table
+
+fn _no_sorts[]
+    one = [Sort['', false]]
+    slice[one, 0, 0]
+
+fn _no_filters[]
+    one = [Filter['', missing[]]]
+    slice[one, 0, 0]
+
+--- A table's options, TanStack's under plain names, each with its default:
+--- `sortable` (enableSorting), `multi` (enableMultiSort: 'auto' lets every
+--- column that reads a cell join a sort of several, 'yes', 'no'),
+--- `removable` (enableSortingRemoval), `multi_removable`
+--- (enableMultiRemove), `most_sorted` (maxMultiSortColCount, -1 for no
+--- limit), `first` (sortDescFirst: 'auto', 'asc' or 'desc'),
+--- `reset_sorting` (autoResetSorting: whether new data takes the sorting
+--- back to the state the table began with), `filtering` (enableFilters),
+--- `column_filtering` (enableColumnFilters), `searching`
+--- (enableGlobalFilter), `search_filter` (globalFilterFn), `from_leaves`
+--- (filterFromLeafRows), `filter_depth` (maxLeafRowFilterDepth),
+--- `groupable` (enableGrouping), `grouped_columns` (groupedColumnMode:
+--- 'reorder', 'remove' or 'keep'), `expandable` (enableExpanding),
+--- `page_expanded` (paginateExpandedRows), `reset_expanded`
+--- (autoResetExpanded: 'auto', 'yes', 'no'), `known_pages` (pageCount: -2
+--- counts the rows, -1 is unknown), `known_rows` (rowCount, -1 counts the
+--- rows), `reset_pages` (autoResetPageIndex: 'auto', 'yes', 'no'),
+--- `selectable` (enableRowSelection), `multi_select`
+--- (enableMultiRowSelection), `select_subs` (enableSubRowSelection),
+--- `row_pinnable` (enableRowPinning), `keep_pinned` (keepPinnedRows),
+--- `hideable` (enableHiding), `column_pinnable` (enableColumnPinning),
+--- `resizable` (enableColumnResizing), `resize_mode` (columnResizeMode:
+--- 'end' or 'change') and `resize_direction` ('ltr' or 'rtl'); and the
+--- manual flags, by which the program does a step itself (`manual_sorting`,
+--- `manual_filtering`, `manual_grouping`, `manual_expanding`,
+--- `manual_pages`). Three lists name rows by id where TanStack takes a
+--- function of the row: `unselectable` (rows that cannot be selected),
+--- `closed` (rows whose sub-rows are not selected with them) and
+--- `unpinnable` (rows that cannot be pinned); set them on the record.
+fn options[sortable = true, multi = 'auto', removable = true, multi_removable = true, most_sorted = -1, first = 'auto', manual_sorting = false, reset_sorting = false, filtering = true, column_filtering = true, searching = true, search_filter = 'auto', from_leaves = false, filter_depth = 100, manual_filtering = false, groupable = true, grouped_columns = 'reorder', manual_grouping = false, expandable = true, page_expanded = true, manual_expanding = false, reset_expanded = 'auto', manual_pages = false, known_pages = -2, known_rows = -1, reset_pages = 'auto', selectable = true, multi_select = true, select_subs = true, row_pinnable = true, keep_pinned = true, hideable = true, column_pinnable = true, resizable = true, resize_mode = 'end', resize_direction = 'ltr']
+    Options[sortable, multi, removable, multi_removable, most_sorted, first, manual_sorting, reset_sorting, filtering, column_filtering, searching, search_filter, from_leaves, filter_depth, manual_filtering, groupable, grouped_columns, manual_grouping, expandable, page_expanded, manual_expanding, reset_expanded, manual_pages, known_pages, known_rows, reset_pages, selectable, _no_words[], multi_select, select_subs, _no_words[], row_pinnable, _no_words[], keep_pinned, hideable, column_pinnable, resizable, resize_mode, resize_direction]
+
+--- An empty state: nothing sorted, filtered, grouped, expanded, selected,
+--- hidden, ordered, pinned or sized, on the first page of ten rows.
+fn empty_state[]
+    State[_no_sorts[], _no_filters[], missing[], _no_words[], false, _no_flags[], 0, 10, _no_flags[], _no_flags[], _no_words[], _no_words[], _no_words[], _no_words[], _no_words[], _no_sizes[], _still[]]
+
+--- A table of these columns and rows, with the default options and an empty state.
+fn new[columns, rows]
+    Table[columns, rows, options[], empty_state[], empty_state[]]
+
+--- A table with these options and this state to begin with (the state an
+--- automatic reset of the expanded rows goes back to).
+fn made[columns, rows, o, s]
+    Table[columns, rows, o, s, s]
+
+--- The table with new rows of data: the expanded rows go back to the state
+--- the table began with, the page to the first, and the sorting too when
+--- the table resets it.
+fn rows_set[t, rows]
+    t.rows = rows
+    t = _expanded_reset[t]
+    t = _page_reset[t]
+    if t.options.reset_sorting
+        t.state.sorting = t.initial.sorting
+    t
+
+--- The table with new column definitions.
+fn columns_set[t, columns]
+    t.columns = columns
+    t
+
+fn _expanded_reset[t]
+    r = t.options.reset_expanded
+    if r eq 'yes' or (r eq 'auto' and not t.options.manual_expanding)
+        t.state.expanded_all = t.initial.expanded_all
+        t.state.expanded = t.initial.expanded
+    t
+
+fn _page_reset[t]
+    r = t.options.reset_pages
+    if (r eq 'yes' or (r eq 'auto' and not t.options.manual_pages)) and t.state.page_index ne 0
+        return page_set[t, 0]
+    t
+
+-------------------------------------------------------------------- sorting
+
+fn _can_sort[t, c]
+    c.sortable and t.options.sortable and c.key ne ''
+
+--- Whether a column may sort: it says so, the table does, and it reads a cell.
+fn can_sort[t, id]
+    _can_sort[t, column_of[t, id]]
+
+fn _can_multi_sort[t, c]
+    if c.multi ne 'auto'
+        return c.multi eq 'yes'
+    if t.options.multi ne 'auto'
+        return t.options.multi eq 'yes'
+    c.key ne ''
+
+--- Whether a column may join a sort of several columns.
+fn can_multi_sort[t, id]
+    _can_multi_sort[t, column_of[t, id]]
+
+--- How a column is sorted: 'asc', 'desc' or '' (not at all).
+fn sort_of[t, id]
+    for s in t.state.sorting
+        if s.id eq id
+            if s.desc
+                return 'desc'
+            return 'asc'
+    ''
+
+--- Where a column stands in the sorting, -1 when it does not.
+fn sort_index[t, id]
+    i = 0
+    while i lt len[t.state.sorting]
+        if t.state.sorting[i].id eq id
+            return i
+        i = i + 1
+    -1
+
+fn _auto_sort[c, filtered]
+    i = 0
+    while i lt len[filtered.flat] and i lt 10
+        v = value_of[filtered.flat[i], c]
+        if not _blank[v]
+            if v.is eq 'text'
+                return 'asc'
+            return 'desc'
+        i = i + 1
+    'desc'
+
+--- The direction a column's values ask for: ascending for text, descending
+--- for anything else, as the first of the first ten filtered rows that holds
+--- a value (not missing or null) says; descending when none does.
+fn auto_sort[t, m, id]
+    _auto_sort[column_of[t, id], m.filtered]
+
+fn _first_sort[t, c, filtered]
+    if c.first ne 'auto'
+        return c.first
+    if t.options.first ne 'auto'
+        return t.options.first
+    _auto_sort[c, filtered]
+
+--- The direction a column sorts in first: its own, the table's, or the one its values ask for.
+fn first_sort[t, m, id]
+    _first_sort[t, column_of[t, id], m.filtered]
+
+fn _next_sort[t, c, filtered, multi]
+    first = _first_sort[t, c, filtered]
+    current = sort_of[t, c.id]
+    if current eq ''
+        return first
+    if current ne first and t.options.removable and (not multi or t.options.multi_removable)
+        return ''
+    if current eq 'desc'
+        return 'asc'
+    'desc'
+
+--- The direction a press would sort a column in next ('' to stop sorting
+--- by it): unsorted it takes its first direction; in its first direction it
+--- turns round; in the other it stops, unless the table keeps sorting (or,
+--- in a sort of several, multi_removable says no), when it turns round.
+fn next_sort[t, m, id, multi]
+    _next_sort[t, column_of[t, id], m.filtered, multi]
+
+--- The sort function a column sorts with, as sort_name chooses it.
+fn sort_function[t, m, id]
+    sort_name[column_of[t, id], m.filtered]
+
+--- The table sorted by these columns in turn, its sorting replaced; the
+--- page goes back to the first.
+fn sorted_by[t, sorting]
+    t.state.sorting = sorting
+    if t.options.manual_sorting
+        return t
+    _page_reset[t]
+
+--- The table after a press on a column's sort, as TanStack's sorting
+--- toggle answers it (`multi` when the press asks for a sort of several, a
+--- shift-press): a column that cannot sort is left as it is; alone, the
+--- column replaces the sorting or turns round; in a sort of several it is
+--- added at the end (the oldest dropped past most_sorted) or turns round;
+--- and a column whose next direction is none leaves the sorting.
+fn sort_toggled[t, id, multi]
+    c = column_of[t, id]
+    if not _can_sort[t, c]
+        return t
+    many = multi and _can_multi_sort[t, c]
+    filtered = filtered_model[t, core_model[t]]
+    next = _next_sort[t, c, filtered, many]
+    old = t.state.sorting
+    at = sort_index[t, id]
+    several = len[old] gt 0 and many
+    desc = next eq 'desc'
+    out = _no_sorts[]
+    if at lt 0
+        if several
+            out = push[old, Sort[id, desc]]
+            most = t.options.most_sorted
+            if most gte 0 and len[out] gt most
+                out = slice[out, len[out] - most, len[out]]
+        else
+            out = push[out, Sort[id, desc]]
+    else if next eq ''
+        if several
+            for s in old
+                if s.id ne id
+                    out = push[out, s]
+    else if several
+        for s in old
+            if s.id eq id
+                out = push[out, Sort[id, desc]]
+            else
+                out = push[out, s]
+    else
+        out = push[out, Sort[id, desc]]
+    sorted_by[t, out]
+
+-------------------------------------------------------------------- filtering
+
+--- Whether a column may be filtered: it says so, the table lets columns
+--- filter, and it reads a cell. (A filter set on one that may not still
+--- filters.)
+fn can_filter[t, id]
+    c = column_of[t, id]
+    c.filterable and t.options.column_filtering and t.options.filtering and c.key ne ''
+
+--- Whether the global filter reads a column.
+fn can_search[t, m, id]
+    _searchable[t, column_of[t, id], m.core]
+
+--- The filter function a column filters with ('' for none).
+fn filter_function[t, m, id]
+    _filter_name[column_of[t, id], m.core]
+
+--- The value a column is filtered by, missing when it is not.
+fn filter_value[t, id]
+    for f in t.state.filters
+        if f.id eq id
+            return f.value
+    missing[]
+
+--- Whether a column is filtered.
+fn is_filtered[t, id]
+    for f in t.state.filters
+        if f.id eq id
+            return true
+    false
+
+fn _filters_changed[t, filters, search]
+    before = _filters_on[t.state]
+    t.state.filters = filters
+    t.state.search = search
+    if t.options.manual_filtering
+        return t
+    if len[t.rows] gt 0 and (before or _filters_on[t.state]) and not t.options.manual_grouping
+        t = _expanded_reset[t]
+    _page_reset[t]
+
+--- The table filtered by these column filters, its filters replaced: a
+--- filter on a leaf column whose value takes it away (filter_removes says)
+--- is dropped. The page goes back to the first, and the expanded rows to
+--- the state the table began with.
+fn filters_set[t, filters]
+    core = core_model[t]
+    leaves = leaf_columns[t]
+    kept = _no_filters[]
+    for f in filters
+        k = _column_index[leaves, f.id]
+        gone = false
+        if k gte 0
+            gone = filter_removes[_filter_name[leaves[k], core], f.value]
+        if not gone
+            kept = push[kept, f]
+    _filters_changed[t, kept, t.state.search]
+
+--- The table with one column's filter set to a value, or taken away when
+--- the value takes it away; the other filters keep theirs.
+fn filter_set[t, id, value]
+    gone = filter_removes[_filter_name[column_of[t, id], core_model[t]], value]
+    out = _no_filters[]
+    found = false
+    for f in t.state.filters
+        if f.id eq id
+            found = true
+            if not gone
+                out = push[out, Filter[id, value]]
+        else
+            out = push[out, f]
+    if not found and not gone
+        out = push[out, Filter[id, value]]
+    filters_set[t, out]
+
+--- The table searched by a global filter value (missing, null or '' for
+--- none); as a filter's change, the page goes back to the first and the
+--- expanded rows to the state the table began with.
+fn search_set[t, value]
+    old = t.state.search
+    if old.is ne 'list' and strictly_same[old, value]
+        return t
+    _filters_changed[t, t.state.filters, value]
+
+-------------------------------------------------------------------- grouping
+
+--- Whether a column may group: it says so, the table does, and it reads a cell.
+fn can_group[t, id]
+    c = column_of[t, id]
+    c.groupable and t.options.groupable and c.key ne ''
+
+--- Whether the table is grouped by a column.
+fn is_grouped[t, id]
+    id in t.state.grouping
+
+--- Where a column stands in the grouping, -1 when it does not.
+fn grouped_index[t, id]
+    _word_index[t.state.grouping, id]
+
+--- The table grouped by these columns in turn, its grouping replaced: the
+--- page goes back to the first, and the expanded rows to the state the
+--- table began with.
+fn grouping_set[t, ids]
+    t.state.grouping = ids
+    if t.options.manual_grouping
+        return t
+    t = _expanded_reset[t]
+    _page_reset[t]
+
+--- The table with a column added to the end of the grouping, or taken out of it.
+fn grouping_toggled[t, id]
+    if id in t.state.grouping
+        return grouping_set[t, _without[t.state.grouping, [id]]]
+    grouping_set[t, push[t.state.grouping, id]]
+
+--- Whether a row's cell in a column holds its group's value: the row groups by that column.
+fn cell_grouped[t, r, id]
+    is_grouped[t, id] and r.column eq id
+
+--- Whether a row's cell in a grouped column holds no value of its own (the
+--- group above it shows it).
+fn cell_placeholder[t, r, id]
+    is_grouped[t, id] and r.column ne id
+
+--- Whether a row's cell holds an aggregate: the row is a group's, by another
+--- column, and this column is not grouped and has an aggregation function.
+fn cell_aggregated[t, m, r, id]
+    r.column ne '' and r.column ne id and not is_grouped[t, id] and aggregate_name[column_of[t, id], m.core] ne ''
+
+-------------------------------------------------------------------- expanding
+
+--- Whether a row may expand: the table lets rows expand and it has rows under it.
+fn can_expand[t, r]
+    t.options.expandable and len[r.subs] gt 0
+
+--- Whether a row is expanded.
+fn is_expanded[t, id]
+    _is_open[t, id]
+
+--- Whether every row above a row is expanded (a row at the top: yes).
+fn parents_expanded[t, m, id]
+    parent = row_of[m, id].parent
+    while parent ne ''
+        if not _is_open[t, parent]
+            return false
+        parent = row_of[m, parent].parent
+    true
+
+--- Whether the state expands every row, or every row that can expand on the page is expanded.
+fn all_expanded[t, m]
+    if t.state.expanded_all
+        return true
+    if len[keys[t.state.expanded]] eq 0
+        return false
+    openable = false
+    for r in m.page.flat
+        if can_expand[t, r]
+            openable = true
+            if not _is_open[t, r.id]
+                return false
+    openable
+
+--- Whether any row is expanded.
+fn some_expanded[t]
+    if t.state.expanded_all
+        return true
+    for id in keys[t.state.expanded]
+        if t.state.expanded[id]
+            return true
+    false
+
+--- Whether any row the pages hold can expand.
+fn can_some_expand[t, m]
+    for r in m.expanded.flat
+        if can_expand[t, r]
+            return true
+    false
+
+--- How deep the expanded rows reach, counted in the parts of their ids
+--- (TanStack's rule: `t3.0` is 2): the expanded rows', or when every row is
+--- expanded, every row's that can expand.
+fn expanded_depth[t, m]
+    most = 0
+    if t.state.expanded_all
+        for r in m.grouped.flat
+            if can_expand[t, r]
+                most = max[most, len[split[r.id, '.']]]
+        return most
+    for id in keys[t.state.expanded]
+        most = max[most, len[split[id, '.']]]
+    most
+
+--- The table with its expanded state set: every row (`all`), or the rows
+--- whose ids `opened` holds true.
+fn expansion_set[t, all_open, opened]
+    t.state.expanded_all = all_open
+    t.state.expanded = opened
+    t
+
+--- The table with a row expanded or collapsed (`open`): a row expands only
+--- when it can; when every row was expanded, each that can stays expanded
+--- but this one.
+fn row_expansion_set[t, id, open]
+    was_open = _is_open[t, id]
+    if open eq was_open
+        return t
+    m = models[t]
+    if open and not can_expand[t, row_of[m, id]]
+        return t
+    opened = _no_flags[]
+    if t.state.expanded_all
+        for r in m.grouped.flat
+            if can_expand[t, r]
+                opened = set[opened, r.id, true]
+    else
+        for k in keys[t.state.expanded]
+            if t.state.expanded[k]
+                opened = set[opened, k, true]
+    if open
+        opened = set[opened, id, true]
+    else if id in opened
+        opened = del[opened, id]
+    expansion_set[t, false, opened]
+
+--- The table with a row expanded if it was collapsed and collapsed if it was expanded.
+fn row_expansion_toggled[t, id]
+    row_expansion_set[t, id, not _is_open[t, id]]
+
+--- The table with every row expanded (when any can) or none.
+fn all_expansion_set[t, open]
+    if open
+        if t.state.expanded_all
+            return t
+        if not can_some_expand[t, models[t]]
+            return t
+        return expansion_set[t, true, _no_flags[]]
+    if not t.state.expanded_all and len[keys[t.state.expanded]] eq 0
+        return t
+    expansion_set[t, false, _no_flags[]]
+
+--- The table with every row expanded unless all were, then none.
+fn all_expansion_toggled[t]
+    all_expansion_set[t, not all_expanded[t, models[t]]]
+
+-------------------------------------------------------------------- pages
+
+--- How many rows the pages share: the table's row count, or the rows to page.
+fn row_count[t, m]
+    if t.options.known_rows gte 0
+        return t.options.known_rows
+    len[m.expanded.rows]
+
+--- How many pages there are: the table's page count (-1 when it is not
+--- known), or the rows to page over the page size, rounded up.
+fn page_count[t, m]
+    if t.options.known_pages ne -2
+        return t.options.known_pages
+    rows = row_count[t, m]
+    size = t.state.page_size
+    (rows + size - 1) / size
+
+--- Whether there is a page before this one.
+fn can_previous[t]
+    t.state.page_index gt 0
+
+--- Whether there is a page after this one (always, when the count is not known).
+fn can_next[t, m]
+    count = page_count[t, m]
+    if count eq -1
+        return true
+    if count eq 0
+        return false
+    t.state.page_index lt count - 1
+
+--- Whether there is a last page to go to after this one.
+fn can_last[t, m]
+    count = page_count[t, m]
+    count gt 0 and t.state.page_index lt count - 1
+
+--- The pages' indexes, 0 up to the page count (none when it is not known).
+fn page_numbers[t, m]
+    out = []
+    i = 0
+    count = page_count[t, m]
+    while i lt count
+        out = push[out, i]
+        i = i + 1
+    out
+
+--- The table on a page, kept from 0 up to the last page the table's page
+--- count allows (any, when it counts its rows or the count is not known).
+fn page_set[t, index]
+    most = 9007199254740991
+    if t.options.known_pages gte 0
+        most = t.options.known_pages - 1
+    t.state.page_index = max[0, min[index, most]]
+    t
+
+--- The table with pages of a new size (1 at least): the page is the one
+--- that holds the row the old page began with.
+fn page_size_set[t, size]
+    fresh = max[1, size]
+    t.state.page_index = (t.state.page_size * t.state.page_index) / fresh
+    t.state.page_size = fresh
+    t
+
+--- The table on the next page.
+fn next_page[t]
+    page_set[t, t.state.page_index + 1]
+
+--- The table on the page before.
+fn previous_page[t]
+    page_set[t, t.state.page_index - 1]
+
+--- The table on the first page.
+fn first_page[t]
+    page_set[t, 0]
+
+--- The table on the last page, when the page count is known and not 0.
+fn last_page[t]
+    count = page_count[t, models[t]]
+    if count lte 0
+        return t
+    page_set[t, count - 1]
+
+-------------------------------------------------------------------- selection
+
+--- Whether a row may be selected: the table lets rows select and does not name it unselectable.
+fn can_select[t, id]
+    t.options.selectable and not (id in t.options.unselectable)
+
+--- Whether selecting a row leaves the others selected.
+fn can_multi_select[t]
+    t.options.multi_select
+
+--- Whether selecting a row selects the rows under it.
+fn can_select_subs[t, id]
+    t.options.select_subs and not (id in t.options.closed)
+
+--- Whether a row is selected.
+fn is_selected[t, id]
+    id in t.state.selected and t.state.selected[id]
+
+fn _subs_selected[t, r]
+    if len[r.subs] eq 0
+        return ''
+    some = false
+    every = true
+    selectable = false
+    i = 0
+    while i lt len[r.subs] and not (some and not every)
+        s = r.subs[i]
+        if can_select[t, s.id]
+            selectable = true
+            if is_selected[t, s.id]
+                some = true
+            else
+                every = false
+        if len[s.subs] gt 0
+            under = _subs_selected[t, s]
+            if under eq 'all'
+                some = true
+                selectable = true
+            else if under eq 'some'
+                some = true
+                every = false
+                selectable = true
+            else
+                every = false
+        i = i + 1
+    if not selectable
+        return ''
+    if every
+        return 'all'
+    if some
+        return 'some'
+    ''
+
+--- How a row's sub-rows are selected: 'all', 'some' or '' (none, or none can be).
+fn subs_selected[t, r]
+    _subs_selected[t, r]
+
+fn _selected_into[t, m, chosen, id, value, children, respect]
+    out = chosen
+    if value
+        if not can_multi_select[t]
+            out = _no_flags[]
+        if can_select[t, id]
+            out = set[out, id, true]
+    else if not respect or can_select[t, id]
+        if id in out
+            out = del[out, id]
+    r = row_of[m, id]
+    if children and len[r.subs] gt 0 and can_select_subs[t, id]
+        for s in r.subs
+            out = _selected_into[t, m, out, s.id, value, children, respect]
+    out
+
+fn _selectable_in_all[t, m, id]
+    if not can_select[t, id]
+        return false
+    if t.options.select_subs and len[t.options.closed] eq 0
+        return true
+    parent = row_of[m, id].parent
+    while parent ne ''
+        if not can_select_subs[t, parent]
+            return false
+        parent = row_of[m, parent].parent
+    true
+
+--- The table with its selection set to these rows.
+fn selection_set[t, ids]
+    chosen = _no_flags[]
+    for id in ids
+        chosen = set[chosen, id, true]
+    t.state.selected = chosen
+    t
+
+--- The table with a row selected or not (`value`), and the rows under it
+--- with it when it selects several; selecting one where only one may be
+--- selected lets the others go.
+fn row_selection_set[t, id, value]
+    m = models[t]
+    t.state.selected = _selected_into[t, m, t.state.selected, id, value, can_multi_select[t], false]
+    t
+
+--- The table with a row selected if it was not, and let go if it was.
+fn row_selection_toggled[t, id]
+    row_selection_set[t, id, not is_selected[t, id]]
+
+--- The table with every filtered row selected that a select-all reaches
+--- (it may be selected, and no row above it keeps its sub-rows out), or
+--- every one let go that may be.
+fn all_selection_set[t, value]
+    m = models[t]
+    chosen = t.state.selected
+    for r in m.filtered.flat
+        if value
+            if _selectable_in_all[t, m, r.id]
+                chosen = set[chosen, r.id, true]
+        else if can_select[t, r.id] and r.id in chosen
+            chosen = del[chosen, r.id]
+    t.state.selected = chosen
+    t
+
+--- The table with every row selected unless all were, then none.
+fn all_selection_toggled[t]
+    all_selection_set[t, not all_selected[t, models[t]]]
+
+--- The table with the page's rows selected or not, with the rows under them.
+fn page_selection_set[t, value]
+    m = models[t]
+    chosen = t.state.selected
+    for r in m.page.rows
+        chosen = _selected_into[t, m, chosen, r.id, value, true, true]
+    t.state.selected = chosen
+    t
+
+--- The table with the page's rows selected unless all were, then let go.
+fn page_selection_toggled[t]
+    page_selection_set[t, not all_page_selected[t, models[t]]]
+
+--- Whether every filtered row that a select-all reaches is selected (and some row is).
+fn all_selected[t, m]
+    if len[m.filtered.flat] eq 0 or len[keys[t.state.selected]] eq 0
+        return false
+    for r in m.filtered.flat
+        if not is_selected[t, r.id] and _selectable_in_all[t, m, r.id]
+            return false
+    true
+
+--- Whether any row is selected.
+fn some_selected[t]
+    len[keys[t.state.selected]] gt 0
+
+--- Whether every row of the page (and under it) that a select-all reaches
+--- is selected, and one such is.
+fn all_page_selected[t, m]
+    seen = false
+    for r in m.page.flat
+        if not is_selected[t, r.id]
+            if _selectable_in_all[t, m, r.id]
+                return false
+        else if _selectable_in_all[t, m, r.id]
+            seen = true
+    seen
+
+--- Whether any row of the page that may be selected is, or has rows under it selected.
+fn some_page_selected[t, m]
+    for r in m.page.flat
+        if can_select[t, r.id]
+            if is_selected[t, r.id] or _subs_selected[t, r] eq 'some'
+                return true
+    false
+
+fn _chosen_tree[t, rows]
+    out = _no_rows[]
+    for r in rows
+        if is_selected[t, r.id]
+            if len[r.subs] gt 0
+                r.subs = _chosen_tree[t, r.subs]
+            out = push[out, r]
+    out
+
+fn _chosen_flat[t, rows]
+    out = _no_rows[]
+    for r in rows
+        if is_selected[t, r.id]
+            out = push[out, r]
+        if len[r.subs] gt 0
+            out = concat[out, _chosen_flat[t, r.subs]]
+    out
+
+--- The selected rows of a row model: `rows` the selected rows at the top
+--- with the selected rows under them, `flat` every selected row in order.
+fn selected_of[t, model]
+    if len[keys[t.state.selected]] eq 0
+        return Model[_no_rows[], _no_rows[]]
+    Model[_chosen_tree[t, model.rows], _chosen_flat[t, model.rows]]
+
+--- The selected rows of the data.
+fn selected_rows[t, m]
+    selected_of[t, m.core]
+
+--- The selected rows the filters keep.
+fn filtered_selected_rows[t, m]
+    selected_of[t, m.filtered]
+
+--- The selected rows as grouped and sorted.
+fn grouped_selected_rows[t, m]
+    selected_of[t, m.sorted]
+
+-------------------------------------------------------------------- row pinning
+
+--- Whether a row may be pinned: the table lets rows pin and does not name it unpinnable.
+fn can_pin_row[t, id]
+    t.options.row_pinnable and not (id in t.options.unpinnable)
+
+--- The side a row is pinned to: 'top', 'bottom' or ''.
+fn row_pin_of[t, id]
+    if id in t.state.top
+        return 'top'
+    if id in t.state.bottom
+        return 'bottom'
+    ''
+
+fn _leaves_under[r]
+    out = _no_words[]
+    for s in r.subs
+        out = push[out, s.id]
+        if len[s.subs] gt 0
+            out = concat[out, _leaves_under[s]]
+    out
+
+fn _parents_above[m, id]
+    out = _no_words[]
+    parent = row_of[m, id].parent
+    while parent ne ''
+        out = concat[[parent], out]
+        parent = row_of[m, parent].parent
+    out
+
+--- The table with a row pinned to the top or the bottom ('top', 'bottom'),
+--- or freed (''): with every row under it when `leaves`, and with the rows
+--- above it when `parents`, after what that side held.
+fn row_pinned[t, id, side, leaves, parents]
+    m = models[t]
+    ids = _no_words[]
+    if parents
+        ids = _parents_above[m, id]
+    ids = push[ids, id]
+    if leaves
+        for under in _leaves_under[row_of[m, id]]
+            if not (under in ids)
+                ids = push[ids, under]
+    up = _without[t.state.top, ids]
+    down = _without[t.state.bottom, ids]
+    if side eq 'top'
+        up = concat[up, ids]
+    if side eq 'bottom'
+        down = concat[down, ids]
+    t.state.top = up
+    t.state.bottom = down
+    t
+
+fn _pinned_rows[t, m, side]
+    ids = t.state.top
+    if side eq 'bottom'
+        ids = t.state.bottom
+    out = _no_rows[]
+    for id in ids
+        if t.options.keep_pinned
+            r = row_of[m, id]
+            if r.id ne '' and parents_expanded[t, m, id]
+                out = push[out, r]
+        else
+            for r in m.page.rows
+                if r.id eq id
+                    out = push[out, r]
+    out
+
+--- The rows pinned to the top, in the order they were pinned: each wherever
+--- it stands when the table keeps pinned rows (and its parents are
+--- expanded), else only those on the page.
+fn top_rows[t, m]
+    _pinned_rows[t, m, 'top']
+
+--- The rows pinned to the bottom, as top_rows has them.
+fn bottom_rows[t, m]
+    _pinned_rows[t, m, 'bottom']
+
+--- The page's rows that are not pinned.
+fn center_rows[t, m]
+    out = _no_rows[]
+    for r in m.page.rows
+        if not (r.id in t.state.top) and not (r.id in t.state.bottom)
+            out = push[out, r]
+    out
+
+--- Where a pinned row stands among the rows shown on its side, -1 when it is
+--- not pinned or not shown.
+fn pinned_row_index[t, m, id]
+    side = row_pin_of[t, id]
+    if side eq ''
+        return -1
+    i = 0
+    for r in _pinned_rows[t, m, side]
+        if r.id eq id
+            return i
+        i = i + 1
+    -1
+
+--- Whether any row is pinned: to a side ('top' or 'bottom'), or to either ('').
+fn some_rows_pinned[t, side = '']
+    if side eq 'top'
+        return len[t.state.top] gt 0
+    if side eq 'bottom'
+        return len[t.state.bottom] gt 0
+    len[t.state.top] gt 0 or len[t.state.bottom] gt 0
+
+-------------------------------------------------------------------- Grid.js
+
+--- One column of a Grid.js sort: the column's index and its direction (1
+--- ascending, -1 descending).
+struct GridSort [index, direction]
+
+--- A grid as Grid.js keeps one: its rows (each a list of cells), the
+--- search keyword, the sort (the columns in the order pressed), the page
+--- shown (from 0), the rows to a page and how many page buttons it shows
+--- between the gaps.
+struct Grid [rows, keyword, sorts, page, limit, count]
+
+--- A page button of a grid: its words, whether it is turned off, whether it
+--- is the page shown, whether it only marks a gap ('...'), its title, and
+--- the page it goes to (-1 for none).
+struct GridButton [label, disabled, current, spread, title, goes]
+
+--- A grid's words, Grid.js's language: the search field's placeholder, the
+--- sort buttons' titles, the page buttons' words and titles (`{page}` and
+--- `{pages}` stand for numbers), the summary's words, and what an empty or
+--- failed grid says.
+struct Language [placeholder, sort_ascending, sort_descending, previous, following, navigate, page_title, first_page, showing, of_words, to_words, results, loading, none_found, failed]
+
+--- Grid.js's own words (its en_US language). Its first page button's
+--- title is the key it looks up, which en_US does not hold.
+fn grid_language[]
+    Language['Type a keyword...', 'Sort column ascending', 'Sort column descending', 'Previous', 'Next', 'Page {page} of {pages}', 'Page {page}', 'pagination.firstPage', 'Showing', 'of', 'to', 'results', 'Loading...', 'No matching records found', 'An error happened while fetching the data']
+
+fn _no_grid_sorts[]
+    one = [GridSort[0, 1]]
+    slice[one, 0, 0]
+
+--- A grid of these rows on its first page: `limit` rows to a page and
+--- `count` page buttons, as Grid.js's pagination has them unless told.
+fn grid[rows, limit = 10, count = 3]
+    Grid[rows, '', _no_grid_sorts[], 0, limit, count]
+
+fn _canonical_letter[c]
+    big = upper[c]
+    if len[big] ne 1
+        return c
+    if code[c] gte 128 and code[big] lt 128
+        return c
+    big
+
+--- Text as a JavaScript regular expression that ignores case compares it:
+--- each letter in upper case, unless that takes more letters than one or
+--- turns a letter beyond ASCII into one within it.
+fn _canonical[t]
+    parts = for c in split[t, '']
+        _canonical_letter[c]
+    join[parts, '']
+
+fn _grid_text[v]
+    if _blank[v]
+        if v.is eq 'missing'
+            return 'undefined'
+        return ''
+    shown[v]
+
+--- Whether a row of cells holds a search keyword, as Grid.js's search finds
+--- it: in any cell, the keyword's text (trimmed) anywhere in the cell's,
+--- whatever the case; an empty keyword holds every row.
+fn grid_matches[cells, keyword]
+    if keyword eq ''
+        return true
+    sought = _canonical[trim[keyword]]
+    for v in cells
+        if sought in _canonical[_grid_text[v]]
+            return true
+    false
+
+fn _grid_compare[a, b]
+    if js_less[b, a]
+        return 1
+    if js_less[a, b]
+        return -1
+    0
+
+fn _grid_rows_compare[g, a, b]
+    for s in g.sorts
+        n = _grid_compare[g.rows[a][s.index], g.rows[b][s.index]] * s.direction
+        if n ne 0
+            return n
+    0
+
+fn _grid_merge[g, order]
+    if len[order] lte 1
+        return order
+    half = len[order] / 2
+    left = _grid_merge[g, slice[order, 0, half]]
+    right = _grid_merge[g, slice[order, half, len[order]]]
+    out = []
+    i = 0
+    j = 0
+    while i lt len[left] and j lt len[right]
+        if _grid_rows_compare[g, right[j], left[i]] lt 0
+            out = push[out, right[j]]
+            j = j + 1
+        else
+            out = push[out, left[i]]
+            i = i + 1
+    while i lt len[left]
+        out = push[out, left[i]]
+        i = i + 1
+    while j lt len[right]
+        out = push[out, right[j]]
+        j = j + 1
+    out
+
+--- The rows a grid's search keeps, by their places in its rows, sorted as
+--- its sort says (by each sorting column in turn, as JavaScript's < and >
+--- compare the cells; ties keep their order).
+fn grid_order[g]
+    kept = []
+    i = 0
+    while i lt len[g.rows]
+        if grid_matches[g.rows[i], g.keyword]
+            kept = push[kept, i]
+        i = i + 1
+    if len[g.sorts] eq 0
+        return kept
+    _grid_merge[g, kept]
+
+--- How many rows a grid's search keeps.
+fn grid_total[g]
+    len[grid_order[g]]
+
+--- How many pages a grid's kept rows fill.
+fn grid_pages[g]
+    (grid_total[g] + g.limit - 1) / g.limit
+
+--- The rows on a grid's page, by their places in its rows.
+fn grid_shown[g]
+    order = grid_order[g]
+    head = min[g.page * g.limit, len[order]]
+    slice[order, head, min[head + g.limit, len[order]]]
+
+--- The grid searched for a keyword; a search goes back to the first page.
+fn grid_searched[g, keyword]
+    g.keyword = keyword
+    g.page = 0
+    g
+
+--- The grid after a press on a column's sort button, as Grid.js answers it
+--- (`multi` for a shift-press): an unsorted column sorts ascending, a sorted
+--- one turns round; alone, the column replaces the sort (or turns round in
+--- it when it is the only one); in a sort of several it is added at the
+--- end, turns round when ascending, and leaves when descending. A sort goes
+--- back to the first page.
+fn grid_sort_pressed[g, index, multi]
+    at = -1
+    i = 0
+    while i lt len[g.sorts]
+        if g.sorts[i].index eq index
+            at = i
+        i = i + 1
+    direction = 1
+    if at gte 0 and g.sorts[at].direction eq 1
+        direction = -1
+    out = _no_grid_sorts[]
+    if at lt 0
+        if multi
+            out = g.sorts
+        out = push[out, GridSort[index, direction]]
+    else if not multi
+        out = push[out, GridSort[index, direction]]
+    else if g.sorts[at].direction eq -1
+        j = 0
+        while j lt len[g.sorts]
+            if j ne at
+                out = push[out, g.sorts[j]]
+            j = j + 1
+    else
+        out = g.sorts
+        out[at] = GridSort[index, direction]
+    g.sorts = out
+    g.page = 0
+    g
+
+--- The grid on a page, when the page is one of its pages and not the one shown.
+fn grid_page_pressed[g, page]
+    if page lt 0 or page gte grid_pages[g] or page eq g.page
+        return g
+    g.page = page
+    g
+
+--- The grid on its next page, when there is one.
+fn grid_next[g]
+    grid_page_pressed[g, g.page + 1]
+
+--- The grid on the page before, when there is one.
+fn grid_previous[g]
+    grid_page_pressed[g, g.page - 1]
+
+--- How a grid sorts a column: 'asc', 'desc' or 'neutral'.
+fn grid_sort_state[g, index]
+    for s in g.sorts
+        if s.index eq index
+            if s.direction eq 1
+                return 'asc'
+            return 'desc'
+    'neutral'
+
+--- A column's sort button's title: what a press would do (descending once
+--- it sorts ascending, else ascending).
+fn grid_sort_title[g, lang, index]
+    if grid_sort_state[g, index] eq 'asc'
+        return lang.sort_descending
+    lang.sort_ascending
+
+fn _paged_title[lang, page]
+    replace[lang.page_title, '{page}', str[page]]
+
+--- A grid's page buttons as Grid.js lays them out: Previous; a run of
+--- `count` page buttons around the page shown (as near the middle as the
+--- pages allow), with the first page and a gap before it when the run does
+--- not reach the first, and a gap and the last page after it when it does
+--- not reach the last; then Next.
+fn grid_buttons[g, lang]
+    pages = grid_pages[g]
+    page = g.page
+    out = [GridButton[lang.previous, page eq 0, false, false, lang.previous, page - 1]]
+    if g.count gt 0
+        most = min[pages, g.count]
+        pivot = min[page, most / 2]
+        if page + most / 2 gte pages
+            pivot = most - (pages - page)
+        if pages gt most and page - pivot gt 0
+            out = push[out, GridButton['1', false, false, false, lang.first_page, 0]]
+            out = push[out, GridButton['...', false, false, true, '', -1]]
+        k = 0
+        while k lt most
+            i = page + (k - pivot)
+            out = push[out, GridButton[str[i + 1], false, i eq page, false, _paged_title[lang, i + 1], i]]
+            k = k + 1
+        if pages gt most and pages gt page + pivot + 1
+            out = push[out, GridButton['...', false, false, true, '', -1]]
+            out = push[out, GridButton[str[pages], false, false, false, _paged_title[lang, pages], pages - 1]]
+    push[out, GridButton[lang.following, pages eq page + 1 or pages eq 0, false, false, lang.following, page + 1]]
+
+--- A grid's summary: "Showing 1 to 10 of 57 results", or '' when its
+--- search keeps no rows.
+fn grid_summary[g, lang]
+    total = grid_total[g]
+    if total eq 0
+        return ''
+    low = g.page * g.limit + 1
+    high = min[(g.page + 1) * g.limit, total]
+    showing = lang.showing
+    to_words = lang.to_words
+    of_words = lang.of_words
+    results = lang.results
+    '`showing` `low` `to_words` `high` `of_words` `total` `results`'
+
+--- A grid's summary's title: "Page 1 of 6".
+fn grid_summary_title[g, lang]
+    out = replace[lang.navigate, '{page}', str[g.page + 1]]
+    replace[out, '{pages}', str[grid_pages[g]]]
+
+--- The text a grid's cell shows.
+fn grid_cell_text[v]
+    if _blank[v]
+        return ''
+    shown[v]
+
+-------------------------------------------------------------------- tests
+
+fn _tested_columns[]
+    [column['name', 'Name'], column['age', 'Age'], column['team', 'Team']]
+
+fn _tested_rows[]
+    [row['r0', map[name = words['Ada'], age = number[36], team = words['red']]], row['r1', map[name = words['bob'], age = number[17], team = words['blue']]], row['r2', map[name = words['Cy'], age = missing[], team = words['red']]], row['r3', map[name = words['dee'], age = number[52], team = words['blue']]], row['r4', map[name = words['Eve'], age = number[17], team = words['red']]]]
+
+fn _tested[]
+    new[_tested_columns[], _tested_rows[]]
+
+fn _page_ids[t]
+    out = _no_words[]
+    for r in models[t].page.rows
+        out = push[out, r.id]
+    out
+
+fn _tree[]
+    leaf = row['a.0.0', map[name = words['zed'], age = number[1], team = words['red']]]
+    middle = tree_row['a.0', map[name = words['yan'], age = number[2], team = words['blue']], [leaf]]
+    other = row['a.1', map[name = words['xia'], age = number[3], team = words['red']]]
+    top = tree_row['a', map[name = words['wes'], age = number[4], team = words['blue']], [middle, other]]
+    lone = row['b', map[name = words['vic'], age = number[5], team = words['red']]]
+    new[_tested_columns[], [top, lone]]
+
+test numbers_show_as_javascript_writes_them[]
+    number_text[0.1 + 0.2] eq '0.30000000000000004'
+    number_text[float['1e21']] eq '1e+21'
+    number_text[0.00000015] eq '1.5e-7'
+    number_text[-0.5] eq '-0.5'
+    number_text[123.0] eq '123'
+    shown[listed[[number[1], nothing[], words['a']]]] eq '1,,a'
+
+test dates_show_as_javascript_writes_them_in_utc[]
+    shown[date[1654041600000.0]] eq 'Wed Jun 01 2022 00:00:00 GMT+0000 (Coordinated Universal Time)'
+    shown[date[-1.0]] eq 'Wed Dec 31 1969 23:59:59 GMT+0000 (Coordinated Universal Time)'
+    shown[date[0.0 / 0.0]] eq 'Invalid Date'
+
+test alphanumeric_sorting_reads_runs_of_digits_as_numbers[]
+    sort_compare['alphanumeric', words['a2'], words['a10']] eq -1
+    sort_compare['text', words['a2'], words['a10']] eq 1
+    sort_compare['alphanumeric', words['B'], words['a']] eq 1
+    sort_compare['alphanumericCaseSensitive', words['B'], words['a']] eq -1
+
+test a_text_column_sorts_up_then_down_then_not_at_all[]
+    t = _tested[]
+    t = sort_toggled[t, 'name', false]
+    _page_ids[t] eq ['r0', 'r1', 'r2', 'r3', 'r4']
+    t = sort_toggled[t, 'name', false]
+    _page_ids[t] eq ['r4', 'r3', 'r2', 'r1', 'r0']
+    t = sort_toggled[t, 'name', false]
+    len[t.state.sorting] eq 0
+
+test a_number_column_sorts_down_first_and_counts_a_missing_value_greatest[]
+    t = _tested[]
+    m = models[t]
+    first_sort[t, m, 'age'] eq 'desc'
+    t = sort_toggled[t, 'age', false]
+    sort_of[t, 'age'] eq 'desc'
+    _page_ids[t] eq ['r2', 'r3', 'r0', 'r1', 'r4']
+    t = sort_toggled[t, 'age', false]
+    _page_ids[t] eq ['r1', 'r4', 'r0', 'r3', 'r2']
+
+test a_shift_press_adds_a_column_to_the_sort[]
+    t = _tested[]
+    t = sort_toggled[t, 'team', false]
+    t = sort_toggled[t, 'age', true]
+    len[t.state.sorting] eq 2
+    sort_index[t, 'age'] eq 1
+    _page_ids[t] eq ['r3', 'r1', 'r2', 'r0', 'r4']
+    t = sort_toggled[t, 'name', false]
+    len[t.state.sorting] eq 1
+
+test the_sort_keeps_at_most_the_columns_it_may[]
+    o = options[most_sorted = 2]
+    t = made[_tested_columns[], _tested_rows[], o, empty_state[]]
+    t = sort_toggled[t, 'name', true]
+    t = sort_toggled[t, 'age', true]
+    t = sort_toggled[t, 'team', true]
+    len[t.state.sorting] eq 2
+    t.state.sorting[0].id eq 'age'
+
+test a_text_filter_keeps_the_rows_that_hold_it_in_any_case[]
+    t = filter_set[_tested[], 'name', words['E']]
+    _page_ids[t] eq ['r3', 'r4']
+    t = filter_set[t, 'name', words['']]
+    len[t.state.filters] eq 0
+
+test a_number_range_takes_its_ends_in_either_order[]
+    t = filter_set[_tested[], 'age', listed[[number[40], number[17]]]]
+    _page_ids[t] eq ['r0', 'r1', 'r4']
+    t = filter_set[t, 'age', listed[[nothing[], number[20]]]]
+    _page_ids[t] eq ['r1', 'r4']
+
+test the_search_reads_every_column_of_text_or_numbers[]
+    t = search_set[_tested[], words['52']]
+    _page_ids[t] eq ['r3']
+    t = search_set[t, words['BLU']]
+    _page_ids[t] eq ['r1', 'r3']
+
+test fuzzy_ranks_run_from_an_exact_match_down_to_letters_in_order[]
+    rank_of[words['Kalo'], words['Kalo']].rank eq 7.0
+    rank_of[words['kalo'], words['KALO']].rank eq 6.0
+    rank_of[words['Kalo Ven'], words['ka']].rank eq 5.0
+    rank_of[words['Kalo Ven'], words['ven']].rank eq 4.0
+    rank_of[words['Kalo Ven'], words['lo']].rank eq 3.0
+    rank_of[words['Kalo Ven'], words['kv']].rank eq 2.0
+    r = rank_of[words['Kalo Ven'], words['kav']]
+    r.rank gt 1.0 and r.rank lt 2.0 and r.passed
+    not rank_of[words['Kalo Ven'], words['xyz']].passed
+    plain_letters['crème brûlée'] eq 'creme brulee'
+
+test sub_rows_are_filtered_from_the_root_or_from_the_leaves[]
+    t = filter_set[expansion_set[_tree[], true, _no_flags[]], 'name', words['z']]
+    len[models[t].filtered.rows] eq 0
+    t.options.from_leaves = true
+    m = models[t]
+    ids = _no_words[]
+    for r in m.filtered.flat
+        ids = push[ids, r.id]
+    ids eq ['a', 'a.0', 'a.0.0']
+
+test grouping_sums_each_group_up[]
+    t = grouping_set[_tested[], ['team']]
+    m = models[t]
+    len[m.page.rows] eq 2
+    g = m.page.rows[0]
+    g.id eq 'team:red'
+    g.leaves eq ['r0', 'r2', 'r4']
+    value_of[g, column_of[t, 'age']].num eq 53.0
+    aggregated['mean', [number[36], missing[], number[17]]].num eq 26.5
+    aggregated['median', [number[3], number[1], number[2], number[10]]].num eq 2.5
+    shown[aggregated['extent', [number[3], number[1], number[2]]]] eq '1,3'
+    footer_value[t, m, 'age'].num eq 122.0
+
+test groups_within_groups_name_the_path_to_them[]
+    t = grouping_set[_tested[], ['team', 'age']]
+    t = all_expansion_set[t, true]
+    m = models[t]
+    ids = _no_words[]
+    for r in m.page.flat
+        if is_group[r]
+            ids = push[ids, r.id]
+    'team:red>age:17' in ids
+    row_of[m, 'team:red>age:17'].depth eq 1
+    row_of[m, 'r4'].depth eq 2
+
+test pages_count_the_rows_and_a_known_count_bounds_the_index[]
+    t = page_size_set[_tested[], 2]
+    m = models[t]
+    page_count[t, m] eq 3
+    not can_previous[t] and can_next[t, m]
+    t = page_set[t, 2]
+    _page_ids[t] eq ['r4']
+    can_previous[t] and not can_next[t, models[t]]
+    t = page_size_set[t, 3]
+    t.state.page_index eq 1
+    page_set[t, -3].state.page_index eq 0
+    page_set[t, 9].state.page_index eq 9
+    t.options.known_pages = 4
+    page_set[t, 9].state.page_index eq 3
+
+test a_change_of_filter_sort_or_grouping_goes_back_to_the_first_page[]
+    t = page_set[page_size_set[_tested[], 2], 1]
+    filter_set[t, 'team', words['red']].state.page_index eq 0
+    sorted_by[t, [Sort['age', false]]].state.page_index eq 0
+    grouping_set[t, ['team']].state.page_index eq 0
+    t.options.reset_pages = 'no'
+    filter_set[t, 'team', words['red']].state.page_index eq 1
+
+test expanding_a_row_shows_the_rows_under_it[]
+    t = _tree[]
+    _page_ids[t] eq ['a', 'b']
+    t = row_expansion_toggled[t, 'a']
+    _page_ids[t] eq ['a', 'a.0', 'a.1', 'b']
+    m = models[t]
+    can_expand[t, row_of[m, 'a.0']] and not can_expand[t, row_of[m, 'b']]
+    some_expanded[t] and not all_expanded[t, m]
+    not parents_expanded[t, m, 'a.0.0']
+    t = all_expansion_set[t, true]
+    len[_page_ids[t]] eq 5
+
+test selecting_a_row_selects_the_rows_under_it[]
+    t = row_selection_toggled[_tree[], 'a.0']
+    is_selected[t, 'a.0'] and is_selected[t, 'a.0.0']
+    m = models[t]
+    subs_selected[t, row_of[m, 'a']] eq 'some'
+    subs_selected[t, row_of[m, 'a.0']] eq 'all'
+    some_selected[t] and not all_selected[t, m]
+    t = all_selection_set[t, true]
+    all_selected[t, models[t]]
+    t.options.multi_select = false
+    t = row_selection_set[t, 'b', true]
+    keys[t.state.selected] eq ['b']
+
+test select_all_passes_over_rows_that_may_not_be_selected[]
+    t = _tested[]
+    t.options.unselectable = ['r2']
+    t = all_selection_set[t, true]
+    not is_selected[t, 'r2']
+    all_selected[t, models[t]]
+    t = page_selection_set[page_size_set[t, 2], false]
+    keys[t.state.selected] eq ['r3', 'r4']
+
+test pinned_rows_leave_the_center_for_their_side[]
+    t = row_pinned[_tested[], 'r3', 'top', false, false]
+    t = row_pinned[t, 'r0', 'bottom', false, false]
+    m = models[t]
+    top_rows[t, m][0].id eq 'r3' and bottom_rows[t, m][0].id eq 'r0'
+    ids = _no_words[]
+    for r in center_rows[t, m]
+        ids = push[ids, r.id]
+    ids eq ['r1', 'r2', 'r4']
+    t = row_pinned[t, 'r3', '', false, false]
+    not some_rows_pinned[t, 'top'] and some_rows_pinned[t]
+
+test hidden_columns_leave_the_visible_ones_in_order[]
+    t = visibility_toggled[_tested[], 'age']
+    ids = _no_words[]
+    for c in visible_columns[t]
+        ids = push[ids, c.id]
+    ids eq ['name', 'team']
+    some_visible[t] and not all_visible[t]
+    t = order_set[all_visibility_set[t, true], ['team']]
+    ids = _no_words[]
+    for c in visible_columns[t]
+        ids = push[ids, c.id]
+    ids eq ['team', 'name', 'age']
+
+test pinned_columns_are_drawn_at_their_sides[]
+    t = column_pinned[_tested[], 'team', 'start']
+    t = column_pinned[t, 'name', 'end']
+    ids = _no_words[]
+    for c in drawn_columns[t]
+        ids = push[ids, c.id]
+    ids eq ['team', 'age', 'name']
+    column_start[t, 'age', 'center'] eq 0.0
+    column_after[t, 'team', 'start'] eq 0.0
+    side_size[t, 'end'] eq 150.0
+
+test a_group_header_spans_its_columns_and_a_lone_one_reaches_down[]
+    cols = [column_group['who', 'Who', [column['name', 'Name'], column['age', 'Age']]], column['team', 'Team']]
+    t = new[cols, _tested_rows[]]
+    groups = header_groups[t, 'all']
+    len[groups] eq 2
+    top = groups[0].headers
+    top[0].id eq '1_who_name' and top[0].columns eq 2
+    top[1].placeholder and top[1].rows eq 2
+    groups[1].headers[2].rows eq 0
+    total_size[t] eq 450.0
+
+test sizes_keep_within_their_bounds_and_a_resize_shares_the_change[]
+    t = column_size_set[_tested[], 'name', 5.0]
+    column_size[t, 'name'] eq 20.0
+    t = column_size_reset[t, 'name']
+    t = resize_started[t, 'age', 100.0]
+    t = resize_moved[t, 130.0]
+    column_size[t, 'age'] eq 150.0
+    t = resize_ended[t, 160.0]
+    column_size[t, 'age'] eq 210.0
+    not is_resizing[t, 'age']
+
+test facets_count_each_value_the_other_filters_leave[]
+    t = filter_set[_tested[], 'age', listed[[number[17], number[17]]]]
+    core = core_model[t]
+    teams = faceted_values[t, core, 'team']
+    len[teams] eq 2 and teams[0].value.words eq 'blue' and teams[0].count eq 1
+    ages = faceted_range[t, core, 'age']
+    ages.found and ages.least eq 17.0 and ages.greatest eq 52.0
+
+test a_grid_search_ignores_case_and_the_spaces_around_it[]
+    rows = [[words['Ada'], number[36]], [words['bob'], number[17]], [words['Cy B'], number[52]]]
+    g = grid_searched[grid[rows], ' B ']
+    grid_order[g] eq [1, 2]
+    grid_matches[[number[52]], '5']
+
+test a_grid_sort_press_turns_round_and_a_shift_press_adds[]
+    rows = [[words['b'], number[2]], [words['a'], number[2]], [words['c'], number[1]]]
+    g = grid_sort_pressed[grid[rows], 0, false]
+    grid_order[g] eq [1, 0, 2]
+    g = grid_sort_pressed[g, 0, false]
+    grid_order[g] eq [2, 0, 1]
+    g = grid_sort_pressed[grid[rows], 1, false]
+    g = grid_sort_pressed[g, 0, true]
+    grid_order[g] eq [2, 1, 0]
+    grid_sort_state[g, 1] eq 'asc' and grid_sort_title[g, grid_language[], 1] eq 'Sort column descending'
+
+test a_grid_pages_with_buttons_around_its_page_and_a_summary[]
+    rows = for i in range[57]
+        [number[i]]
+    g = grid_page_pressed[grid[rows], 3]
+    lang = grid_language[]
+    words_shown = for b in grid_buttons[g, lang]
+        b.label
+    words_shown eq ['Previous', '1', '...', '3', '4', '5', '...', '6', 'Next']
+    grid_summary[g, lang] eq 'Showing 31 to 40 of 57 results'
+    grid_summary_title[g, lang] eq 'Page 4 of 6'
+    empty = grid_searched[g, 'none such']
+    grid_summary[empty, lang] eq ''
+    len[grid_buttons[empty, lang]] eq 2

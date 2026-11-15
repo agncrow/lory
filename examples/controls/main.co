@@ -72,7 +72,8 @@ test typing_into_the_field_edits_it[]
     c = lory.begin[screen['[]']]
     first = gui.show[c, form_of[fresh[]]]
     b = first.boxes['name']
-    x = b[0] + 5.0
+    --- (pressed past its words: the caret stands at their end)
+    x = b[0] + b[2] - 5.0
     y = b[1] + 5.0
     c = lory.begin[screen['[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "text", "text": "!"}]']]
     second = gui.show[c, form_of[fresh[]]]
@@ -93,7 +94,8 @@ test a_field_in_a_headset_is_typed_into_by_its_drawn_keyboard[]
     c = lory.begin[headset[_press_at[1.0, 1.0]]]
     first = gui.show[c, form_of[fresh[]]]
     b = first.boxes['name']
-    c = lory.begin[headset[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    --- (pressed past its words: the caret stands at their end)
+    c = lory.begin[headset[_press_at[b[0] + b[2] - 5.0, b[1] + 5.0]]]
     focused = gui.show[c, form_of[fresh[]]]
     --- (the keyboard is drawn: its keys' faces are asked of the atlas)
     len[focused.canvas.verts] gt len[first.canvas.verts]

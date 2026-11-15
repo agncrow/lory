@@ -1,0 +1,772 @@
+--- What Kite's charts are made of (`kite.charts` is their face): a chart,
+--- its datasets and its axes, its legend, titles and tooltip, as records a
+--- program fills in or `charts.of` reads from a Chart.js configuration;
+--- and the small rules every part of a chart shares — how a number is
+--- written on an axis, how a CSS colour is read, how wide a text is.
+---
+--- Kite reimplements, in Crow, the behaviour of Chart.js (Copyright the
+--- Chart.js contributors, MIT licence, https://www.chartjs.org): its
+--- charts, scales, layout, legend, tooltip, interactions, animations and
+--- decimation, held to the numbers and pixels it lays. No Chart.js source
+--- is included; its layout rules and formulas were read from version 4.5.1
+--- and written anew, and its numbers are taken from running it
+--- (tests/charts/reference.py).
+use math
+use lory
+
+--- a dataset: what it draws (`kind`: bar, line, scatter, bubble, pie,
+--- doughnut, polarArea, radar; '' is the chart's own kind) and its name;
+--- its values (`ys`, nan where there is none), and where they stand on an
+--- axis of numbers or times (`xs`; none: by place among the labels); a
+--- bubble's radii (`rs`); a floating bar's starts (`starts`, the bar from
+--- its start to its value); the axes it is drawn against ('' for the
+--- first of their kind), its stack ('' for none) and its drawing order;
+--- whether it is hidden; its colours, one for all or one per value
+--- (`fills`, `edges`, and as the pointer is over them `hover_fills`,
+--- `hover_edges`; none: Kite's own); its edge's width; a line's curve
+--- (`tension`, or `monotone`), its steps ('' none, 'before', 'after',
+--- 'middle'), what it is filled to ('' none, 'origin', 'start', 'end',
+--- 'stack', or a dataset: '-1', '+1', '2'), the gap it is drawn across
+--- (`span_gaps`: 0 none, inf every gap, else at most that many of its
+--- axis's units) and whether it is drawn (`show_line`); its points'
+--- shape, radius, radius under the pointer, the reach a pointer finds them
+--- from and their edge's width; a bar's share of its slot and the slot's
+--- of its category, its own thickness (nan: fitted, -1: 'flex') and most,
+--- its least length, whether it shares its category with others
+--- (`grouped`), whether a missing value leaves its room (`skip_null`), the
+--- value it stands on (nan: naught), its corners' radii (top left, top
+--- right, bottom left, bottom right; `corners_set` where they were given
+--- one by one, which rounds a stacked bar's inner ends too) and the edge
+--- its border leaves out (`skipped`: start, end, middle, bottom, left,
+--- top, right, none, all); an arc's offsets from the centre (one for all
+--- or one per value), its offset under the pointer, the room between arcs
+--- and a doughnut ring's weight
+struct Set [form, label, ys, xs, rs, starts, x_axis, y_axis, stack, order, hidden, fills, edges, hover_fills, hover_edges, edge_width, tension, monotone, stepped, fill, span_gaps, show_line, point_style, point_radius, hover_radius, hit_radius, point_edge_width, bar_percentage, category_percentage, bar_thickness, max_bar_thickness, min_bar_length, grouped, skip_null, base, corners, corners_set, skipped, offsets, hover_offset, spacing, weight]
+
+--- an axis: its id (`x`, `y`, `r`, or any), its kind (linear,
+--- logarithmic, category, time, timeseries, radialLinear), which way it
+--- runs (`axis`: x, y or r), its side (left, right, top, bottom,
+--- chartArea) and whether it is shown; the range asked for (`min`, `max`;
+--- nan: the data's), the range hoped for (`soft_min`, `soft_max`),
+--- whether naught is kept in it, the room added beyond the data (`grace`,
+--- a share of the range where `grace_share`), whether the range ends on a
+--- tick (`bounds`: ticks or data), whether the ends are half a slot in
+--- (`offset`), whether it runs backwards, how its datasets are stacked
+--- (`stacked`: '' as Chart.js leaves it, true, false, single); a stack of
+--- axes it shares a side with, its weight in that stack, and its weight
+--- among the boxes of its side; a category axis's own labels; a tick's
+--- step (nan: chosen), how many ticks (nan: chosen), the most ticks
+--- (nan: 11), the decimals a step keeps (nan: any) and whether the range's
+--- ends are ticks; whether ticks are labelled, the room between a label
+--- and its tick, a label's size and boldness, its least and most turn
+--- (degrees), whether labels that would meet are skipped and the room
+--- kept between them, whether labels stand inside the area (`mirror`) and
+--- whether major ticks are kept first; where a time axis takes its ticks
+--- from (`source`: auto, data, labels); the grid (shown, offset half a
+--- slot, drawn across the area, its tick marks and their length, its
+--- width, round about a radial axis), the axis line (shown, width); the
+--- axis title (shown, its words, size, boldness, room above and below);
+--- of a time axis the unit (`unit`: '' chosen; its step is `step`), the
+--- unit times are rounded down to, the least unit chosen, the formats by unit and
+--- a tooltip's format; of a radial axis the angle it starts at, its point
+--- labels (shown, size, room, centred between spokes) and spokes, and
+--- whether its tick labels stand on a backdrop and the backdrop's room;
+--- and its colours: grid, tick labels, line, title
+struct Axis [id, form, axis, position, display, min, max, soft_min, soft_max, from_zero, grace, grace_share, bounds, offset, reverse, stacked, stack, stack_weight, weight, labels, step, count, most, precision, include_bounds, ticks_shown, tick_padding, tick_size, tick_bold, min_rotation, max_rotation, auto_skip, skip_padding, mirror, major, source, grid_shown, grid_offset, grid_on_area, grid_ticks, tick_length, grid_width, circular, border_shown, border_width, title_shown, title, title_size, title_bold, title_top, title_bottom, unit, round, min_unit, formats, tip_format, start_angle, point_labels_shown, point_label_size, point_label_padding, angle_lines, center_point_labels, backdrop, backdrop_padding, grid_ink, tick_ink, border_ink, title_ink]
+
+--- a legend: whether it is shown, its side and how it is aligned along
+--- it (start, center, end), whether its items are reversed; an item's
+--- box (`box_width`, `box_height`; nan: the text's size), the room
+--- between items, the text's size, whether items show their point's
+--- shape (and how wide, nan: the text's size), its greatest width and
+--- height (nan: any), whether it spans the chart (`full_size`), its weight
+--- among the boxes of its side, and its title (shown, words) and colour
+struct Legend [shown, position, align, reverse, box_width, box_height, padding, size, point_style, point_style_width, max_width, max_height, full_size, weight, title_shown, title, ink]
+
+--- a chart's title or subtitle: whether it is shown, its lines, its side
+--- and alignment, its text's size and boldness, the room above and below
+--- it, whether it spans the chart, its weight among the boxes of its side,
+--- and its colour
+struct Heading [shown, lines, position, align, size, bold, padding_top, padding_bottom, full_size, weight, ink]
+
+--- a tooltip: whether it is shown; which elements it tells of (`mode`,
+--- `intersect`, `axis`: '' as the chart's interaction), where it stands
+--- (`position`: average, nearest); its room inside, its caret's size and
+--- gap, its corners' radius; its title's, body's and footer's text sizes,
+--- the room under the title and between lines; whether each line shows
+--- its element's colour, in a box how big and how far from the text; the
+--- side it is pinned to ('' chosen) and its colours
+struct Tip [shown, mode, intersect, axis, position, padding, caret_size, caret_padding, corner, title_size, body_size, footer_size, title_spacing, title_margin, body_spacing, display_colors, box_width, box_height, box_padding, x_align, y_align, fill, ink]
+
+--- a chart: its id (where what it holds between frames is kept), its
+--- kind, its labels, datasets and axes; which axis its datasets are laid
+--- along (`index_axis`: x or y); its legend, title, subtitle and tooltip;
+--- how a pointer finds elements (`mode`: index, dataset, point, nearest,
+--- x, y; `intersect`; `axis`: x, y, xy, r); the room around it (left, top,
+--- right, bottom) and whether its points' overflow is added to it; a
+--- doughnut's hole (`cutout`, a share of its radius where `cutout_share`),
+--- where it starts and how far round it goes (degrees) and its radius (a
+--- share of the room); its animation (seconds of motion: milliseconds,
+--- its easing, whether arcs turn out and grow on load); its decimation
+--- (on, lttb or min-max, how many samples (nan: the width), from how many
+--- points on (nan: four times the width)); the values hidden by the legend
+--- of a pie, a doughnut or a polar area (their places); the size of its
+--- text and its colours (text, grid lines); and whether it has been laid
+--- before (Chart.js counts a line's width in the room about its area only
+--- from its second layout on, its line not yet styled at its first)
+struct Chart [id, form, labels, sets, axes, index_axis, legend, title, subtitle, tip, mode, intersect, axis, padding, auto_padding, cutout, cutout_share, rotation, circumference, radius_share, animated, duration, easing, animate_rotate, animate_scale, decimate, algorithm, samples, threshold, hidden_points, size, ink, grid_ink, laid_before]
+
+--- ---- making them ----
+
+--- a dataset of `kind` named `label` holding `ys`, as Chart.js would make
+--- it for that kind of chart
+fn dataset[kind, label, ys]
+    point_radius = 3.0
+    edge_width = 3.0
+    if kind eq 'bar'
+        edge_width = 0.0
+    if kind eq 'pie' or kind eq 'doughnut' or kind eq 'polarArea'
+        edge_width = 2.0
+    fill = ''
+    if kind eq 'radar'
+        fill = 'start'
+    show_line = kind ne 'scatter'
+    Set[kind, label, ys, no_numbers[], no_numbers[], no_numbers[], '', '', '', 0.0, false, no_colors[], no_colors[], no_colors[], no_colors[], edge_width, 0.0, false, '', fill, 0.0, show_line, 'circle', point_radius, 4.0, 1.0, 1.0, 0.9, 0.8, nan, inf, 0.0, true, false, nan, [0.0, 0.0, 0.0, 0.0], false, 'start', no_numbers[], 0.0, 0.0, 1.0]
+
+--- an axis of `kind` with that id, running `axis` (x, y or r), on its
+--- side, as Chart.js would make it
+fn axis_of[id, kind, axis, position]
+    Axis[id, kind, axis, position, true, nan, nan, nan, nan, false, 0.0, false, _bounds_of[kind], false, false, '', '', 1.0, 0.0, slice[[''], 0, 0], nan, nan, nan, nan, true, true, 3.0, 12.0, false, 0.0, 50.0, true, 3.0, false, kind eq 'logarithmic', 'auto', true, false, true, true, 8.0, 1.0, false, true, 1.0, false, '', 12.0, false, 4.0, 4.0, '', '', 'millisecond', _time_formats[], '', 0.0, true, 10.0, 5.0, true, false, kind eq 'radialLinear', 2.0, lory.rgba[0, 0, 0, 0.1], lory.hex['#666666'], lory.rgba[0, 0, 0, 0.1], lory.hex['#666666']]
+
+fn _bounds_of[kind]
+    if kind eq 'time' or kind eq 'timeseries'
+        return 'data'
+    'ticks'
+
+--- a legend as Chart.js shows one: above the chart, centred
+fn legend_of[]
+    Legend[true, 'top', 'center', false, 40.0, nan, 10.0, 12.0, false, nan, nan, nan, true, 1000.0, false, '', lory.hex['#666666']]
+
+--- a title (`bold`) or subtitle not shown, of no words
+fn heading_of[bold]
+    padding = 0.0
+    weight = 1500.0
+    if bold
+        padding = 10.0
+        weight = 2000.0
+    Heading[false, slice[[''], 0, 0], 'top', 'center', 12.0, bold, padding, padding, true, weight, lory.hex['#666666']]
+
+--- a tooltip as Chart.js shows one
+fn tip_of[]
+    Tip[true, '', '', '', 'average', 6.0, 5.0, 2.0, 6.0, 12.0, 12.0, 12.0, 2.0, 6.0, 2.0, true, nan, nan, 0.0, '', '', lory.rgba[0, 0, 0, 0.8], lory.white[]]
+
+--- a chart of `kind` with that id and labels, of no datasets yet: its
+--- axes are Chart.js's for that kind (`charts.with_set` adds a dataset,
+--- `charts.with_axis` sets an axis)
+fn chart_of[id, kind, labels]
+    mode = 'nearest'
+    if kind eq 'scatter'
+        mode = 'point'
+    cutout = 0.0
+    if kind eq 'doughnut'
+        cutout = 0.5
+    rotate = kind eq 'pie' or kind eq 'doughnut' or kind eq 'polarArea'
+    grows = kind eq 'polarArea'
+    Chart[id, kind, labels, slice[[dataset['bar', '', no_numbers[]]], 0, 0], default_axes[kind, 'x'], 'x', legend_of[], heading_of[true], heading_of[false], tip_of[], mode, true, '', [0.0, 0.0, 0.0, 0.0], true, cutout, true, 0.0, 360.0, 1.0, true, 1000.0, 'easeOutQuart', rotate, grows, false, 'min-max', nan, nan, no_numbers[], 12.0, lory.hex['#666666'], lory.rgba[0, 0, 0, 0.1], false]
+
+--- the axes Chart.js gives a chart of `kind` laid along `index_axis`
+fn default_axes[kind, index_axis]
+    if kind eq 'pie' or kind eq 'doughnut'
+        return slice[[axis_of['x', 'linear', 'x', 'bottom']], 0, 0]
+    if kind eq 'polarArea' or kind eq 'radar'
+        r = axis_of['r', 'radialLinear', 'r', 'chartArea']
+        if kind eq 'polarArea'
+            r.from_zero = true
+            r.circular = true
+            r.angle_lines = false
+            r.point_labels_shown = false
+        return [r]
+    if kind eq 'scatter' or kind eq 'bubble'
+        return [axis_of['x', 'linear', 'x', 'bottom'], axis_of['y', 'linear', 'y', 'left']]
+    along = axis_of[index_axis, 'category', index_axis, side_of[index_axis]]
+    other = other_axis[index_axis]
+    value = axis_of[other, 'linear', other, side_of[other]]
+    if kind eq 'bar'
+        along.offset = true
+        along.grid_offset = true
+        value.from_zero = true
+    [along, value]
+
+fn other_axis[a]
+    if a eq 'x'
+        return 'y'
+    'x'
+
+--- the side an axis running `a` stands on unless it says
+fn side_of[a]
+    if a eq 'x'
+        return 'bottom'
+    if a eq 'r'
+        return 'chartArea'
+    'left'
+
+--- the formats a time axis writes each unit's ticks in (date-fns
+--- tokens), as Chart.js's date-fns adapter gives them
+fn _time_formats[]
+    map['datetime' = 'MMM d, yyyy, h:mm:ss aaaa', 'millisecond' = 'h:mm:ss.SSS aaaa', 'second' = 'h:mm:ss aaaa', 'minute' = 'h:mm aaaa', 'hour' = 'ha', 'day' = 'MMM d', 'week' = 'PP', 'month' = 'MMM yyyy', 'quarter' = 'qqq - yyyy', 'year' = 'yyyy']
+
+--- an empty list of numbers, and of colours: what a list starts from
+fn no_numbers[]
+    out = []
+    for i in range[0]
+        out = push[out, 0.0]
+    out
+
+fn no_colors[]
+    slice[[lory.white[]], 0, 0]
+
+--- ---- reading a chart's parts ----
+
+--- the dataset's kind, or the chart's where it names none
+fn form_of[ch, s]
+    if s.form eq ''
+        return ch.form
+    s.form
+
+--- the axis of that id: its place among the chart's axes, -1 for none
+fn axis_at[ch, id]
+    i = 0
+    while i lt len[ch.axes]
+        if ch.axes[i].id eq id
+            return i
+        i = i + 1
+    -1
+
+--- the id of the axis a dataset is drawn against along `a` (x, y or r):
+--- the one it names, or the first of the chart's that runs that way
+fn axis_id_of[ch, s, a]
+    named = s.y_axis
+    if a eq 'x'
+        named = s.x_axis
+    if a eq 'r'
+        named = ''
+    if named ne ''
+        return named
+    i = 0
+    while i lt len[ch.axes]
+        if ch.axes[i].axis eq a
+            return ch.axes[i].id
+        i = i + 1
+    a
+
+--- whether a chart is drawn round a centre (pie, doughnut, polar area,
+--- radar)
+fn round_kind[kind]
+    kind eq 'pie' or kind eq 'doughnut' or kind eq 'polarArea' or kind eq 'radar'
+
+--- whether a chart's arcs are its values (pie, doughnut, polar area):
+--- its legend is of values, not datasets
+fn arcs_kind[kind]
+    kind eq 'pie' or kind eq 'doughnut' or kind eq 'polarArea'
+
+--- whether the legend of a pie, a doughnut or a polar area has hidden
+--- the `i`th value
+fn point_hidden[ch, i]
+    for h in ch.hidden_points
+        if int[h] eq i
+            return true
+    false
+
+--- the datasets' places in the order they are drawn and found: by their
+--- `order`, then by place; those hidden left out where `visible`
+fn sorted_sets[ch, visible]
+    out = []
+    for i in range[0]
+        out = push[out, 0]
+    taken = []
+    for i in range[0]
+        taken = push[taken, false]
+    for i in range[len[ch.sets]]
+        taken = push[taken, false]
+    n = len[ch.sets]
+    k = 0
+    while k lt n
+        best = -1
+        j = 0
+        while j lt n
+            if not taken[j]
+                if best lt 0
+                    best = j
+                else
+                    if ch.sets[j].order lt ch.sets[best].order
+                        best = j
+            j = j + 1
+        taken[best] = true
+        if not (visible and ch.sets[best].hidden)
+            out = push[out, best]
+        k = k + 1
+    out
+
+--- ---- numbers ----
+
+--- a number rounded as JavaScript's Math.round rounds it: to the nearer
+--- whole number, a half up
+fn js_round[x]
+    if x ne x
+        return x
+    f = 0.0 + floor[x]
+    if x - f gte 0.5
+        return f + 1.0
+    f
+
+--- whether a number is a number and finite
+fn finite[x]
+    x eq x and x lt inf and x gt 0.0 - inf
+
+--- the number kept between `lo` and `hi`
+fn limited[x, lo, hi]
+    max[lo, min[hi, x]]
+
+--- `a` modulo `b`, never negative
+fn modulo[a, b]
+    if b eq 0.0
+        return 0.0
+    a - (0.0 + floor[a / b]) * b
+
+--- an angle brought into 0 to 2π as JavaScript brings it, a remainder
+--- taken twice (`(a % 2π + 2π) % 2π`), so that an angle in a chart lands
+--- on the very number Chart.js's does
+fn normal_angle[a]
+    tau = pi * 2.0
+    _remainder[_remainder[a, tau] + tau, tau]
+
+--- the remainder of `a` after taking out whole `b`s, its sign `a`'s, as
+--- JavaScript's `%` answers it: exactly (each step takes away the most a
+--- power of two times `b` can, which floating point does without loss)
+fn _remainder[a, b]
+    if not finite[a] or b eq 0.0
+        return nan
+    r = abs[a]
+    while r gte b
+        m = b
+        while m * 2.0 lte r
+            m = m * 2.0
+        r = r - m
+    if a lt 0.0
+        return 0.0 - r
+    r
+
+--- degrees as radians, and radians as degrees, as Chart.js turns them
+fn radians[degrees_of]
+    degrees_of * (pi / 180.0)
+
+fn degrees[radians_of]
+    radians_of * (180.0 / pi)
+
+--- ten to the power `k`, as the browser's Math.pow answers it: exactly,
+--- but for ten thousandths and hundred thousandths, which it answers a
+--- hair under (the next number down)
+fn pow10[k]
+    if k eq -4
+        return 0.00009999999999999999
+    if k eq -5
+        return 0.000009999999999999999
+    10.0 ^ k
+
+--- whether the angle falls between `start` and `end` going round
+--- forwards (Chart.js's rule: an angle on either end is between them, and
+--- where `full` an arc of no length is the whole circle)
+fn angle_between[angle, start, end, whole]
+    a = normal_angle[angle]
+    s = normal_angle[start]
+    e2 = normal_angle[end]
+    to_start = normal_angle[s - a]
+    to_end = normal_angle[e2 - a]
+    from_start = normal_angle[a - s]
+    from_end = normal_angle[a - e2]
+    a eq s or a eq e2 or (whole and s eq e2) or (to_start gt to_end and from_start lt from_end)
+
+--- whether `v` is between `a` and `b`, either way round, within a
+--- millionth
+fn between[v, a, b]
+    v gte min[a, b] - 0.000001 and v lte max[a, b] + 0.000001
+
+--- the sign of a number: -1, 0 or 1
+fn sign_of[x]
+    if x gt 0.0
+        return 1.0
+    if x lt 0.0
+        return -1.0
+    0.0
+
+--- the number kept in the range a canvas's pixels are held to
+fn pixel_range[x]
+    limited[x, -32768.0, 32767.0]
+
+--- ten to the power of the number's order: the 10 of 47, the 0.01 of
+--- 0.035
+fn order_of[x]
+    10.0 ^ floor[log10[x]]
+
+--- the decimals a number is written with, as few as show it whole
+fn decimals_of[x]
+    if not finite[x]
+        return 0
+    e1 = 1.0
+    p = 0
+    while js_round[x * e1] / e1 ne x and p lt 20
+        e1 = e1 * 10.0
+        p = p + 1
+    p
+
+--- ---- writing numbers ----
+
+--- the number as en-US writes it with exactly `places` decimals, its
+--- thousands parted by commas: what Chart.js's axes and tooltips write
+--- (Intl.NumberFormat)
+fn written[x, places]
+    if x ne x
+        return 'NaN'
+    if abs[x] eq inf
+        if x lt 0.0
+            return '-∞'
+        return '∞'
+    scaled = abs[x] * 10.0 ^ places
+    n = round[scaled]
+    if scaled - floor[scaled] eq 0.5
+        n = floor[scaled] + 1
+    digits = str[n]
+    while len[digits] lte places
+        digits = '0`digits`'
+    whole = slice[digits, 0, len[digits] - places]
+    part = slice[digits, len[digits] - places, len[digits]]
+    grouped = _grouped[whole]
+    minus = ''
+    if x lt 0.0 and n ne 0
+        minus = '-'
+    if places gt 0
+        return '`minus``grouped`.`part`'
+    '`minus``grouped`'
+
+fn _grouped[digits]
+    n = len[digits]
+    if n lte 3
+        return digits
+    out = ''
+    i = 0
+    while i lt n
+        if i gt 0 and (n - i) % 3 eq 0
+            out = '`out`,'
+        d = slice[digits, i, i + 1]
+        out = '`out``d`'
+        i = i + 1
+    out
+
+--- the number as en-US writes it by default: at most three decimals,
+--- trailing naughts dropped
+fn written_plain[x]
+    if x ne x
+        return 'NaN'
+    text = written[x, 3]
+    if '.' not in text
+        return text
+    while ends_with[text, '0']
+        text = slice[text, 0, len[text] - 1]
+    if ends_with[text, '.']
+        text = slice[text, 0, len[text] - 1]
+    if text eq '-0'
+        return '0'
+    text
+
+--- the number in scientific notation with `places` decimals, as en-US
+--- writes it ("1.5E-5")
+fn written_scientific[x, places]
+    if x eq 0.0
+        naught = written[0.0, places]
+        return '`naught`E0'
+    exponent = floor[log10[abs[x]]]
+    mantissa = x / 10.0 ^ exponent
+    if abs[js_round[mantissa * 10.0 ^ places] / 10.0 ^ places] gte 10.0
+        exponent = exponent + 1
+        mantissa = x / 10.0 ^ exponent
+    '`written[mantissa, places]`E`exponent`'
+
+fn ends_with[text, end]
+    n = len[text]
+    m = len[end]
+    n gte m and slice[text, n - m, n] eq end
+
+--- ---- colours ----
+
+--- a CSS colour read: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb(…)`,
+--- `rgba(…)`, `transparent` and a few names; what it cannot read is a
+--- grey
+fn css[text]
+    t = lower[trim[text]]
+    if t eq 'transparent'
+        return lory.rgba[0, 0, 0, 0.0]
+    if starts[t, '#']
+        h = slice[t, 1, len[t]]
+        if len[h] eq 3 or len[h] eq 4
+            long = ''
+            i = 0
+            while i lt len[h]
+                ch = slice[h, i, i + 1]
+                long = '`long``ch``ch`'
+                i = i + 1
+            h = long
+        return lory.hex[h]
+    if starts[t, 'rgb']
+        open_at = _index_of[t, '(']
+        close_at = _index_of[t, ')']
+        if open_at lt 0 or close_at lt open_at
+            return _grey[]
+        inner = slice[t, open_at + 1, close_at]
+        inner = replace[inner, '/', ',']
+        parts = split[inner, ',']
+        if len[parts] lt 3
+            parts = split[inner, ' ']
+        nums = []
+        for i in range[0]
+            nums = push[nums, 0.0]
+        k = 0
+        while k lt len[parts]
+            q = trim[parts[k]]
+            if q ne ''
+                nums = push[nums, _css_number[q]]
+            k = k + 1
+        if len[nums] lt 3
+            return _grey[]
+        a = 1.0
+        if len[nums] gte 4
+            a = nums[3]
+        return lory.rgba[nums[0], nums[1], nums[2], a]
+    if t eq 'white'
+        return lory.white[]
+    if t eq 'black'
+        return lory.black[]
+    if t eq 'red'
+        return lory.rgb[255, 0, 0]
+    if t eq 'green'
+        return lory.rgb[0, 128, 0]
+    if t eq 'blue'
+        return lory.rgb[0, 0, 255]
+    _grey[]
+
+fn _grey[]
+    lory.rgba[0, 0, 0, 0.1]
+
+fn _css_number[q]
+    if ends_with[q, '%']
+        n = float[slice[q, 0, len[q] - 1]]
+        if not n.ok
+            return 0.0
+        return 0.0 + n * 2.55
+    n = float[q]
+    if not n.ok
+        return 0.0
+    0.0 + n
+
+fn _index_of[t, ch]
+    i = 0
+    n = len[t]
+    while i lt n
+        if slice[t, i, i + 1] eq ch
+            return i
+        i = i + 1
+    -1
+
+--- Kite's colours for datasets that name none: a line's and a bar's
+--- edges (their fills are these at half strength)
+fn palette[]
+    [lory.hex['#3b7dd8'], lory.hex['#e0525e'], lory.hex['#ef9a2d'], lory.hex['#2fae9e'], lory.hex['#8a63d2'], lory.hex['#6aa84f'], lory.hex['#8d96a7']]
+
+--- the `i`th of Kite's colours, round again past the seventh
+fn palette_at[i]
+    p = palette[]
+    p[i % len[p]]
+
+--- a colour at half its strength: a dataset's fill where it names none
+fn fade_of[c]
+    lory.Color[c.r, c.g, c.b, c.a * 0.5]
+
+--- white, an arc's edge where it names none
+fn white[]
+    lory.white[]
+
+--- the colour the `j`th value of the dataset at `d` is filled with: its
+--- own, else Kite's (in a pie, a doughnut or a polar area each value's
+--- own; otherwise the dataset's, at half strength)
+fn fill_at[ch, d, j]
+    s = ch.sets[d]
+    if arcs_kind[form_of[ch, s]]
+        return color_at[s.fills, j, palette_at[j]]
+    color_at[s.fills, j, fade_of[palette_at[d]]]
+
+--- the colour the `j`th value of the dataset at `d` is edged with (a
+--- line's colour): its own, else Kite's (white about an arc)
+fn edge_at[ch, d, j]
+    s = ch.sets[d]
+    if arcs_kind[form_of[ch, s]]
+        return color_at[s.edges, j, white[]]
+    color_at[s.edges, j, palette_at[d]]
+
+--- the colour of the `i`th of a list of colours, round again past its
+--- end; `fallback` where it holds none
+fn color_at[colors, i, fallback]
+    n = len[colors]
+    if n eq 0
+        return fallback
+    colors[i % n]
+
+--- a colour as Chart.js darkens one under the pointer: half again as
+--- saturated, then a tenth darker (each in HSL, back to whole bytes
+--- between)
+fn hover_color[c]
+    once = _hsl_moved[[byte_of[c.r], byte_of[c.g], byte_of[c.b]], 1, 0.5]
+    twice = _hsl_moved[once, 2, -0.1]
+    lory.Color[twice[0] / 255.0, twice[1] / 255.0, twice[2] / 255.0, c.a]
+
+--- a colour's part (0 to 1) as the whole byte it is written in
+fn byte_of[v]
+    limited[0.0 + floor[v * 255.0 + 0.5], 0.0, 255.0]
+
+--- the colour (red, green, blue bytes) with its hue, saturation or
+--- lightness (`part` 0, 1, 2) moved by `ratio` of itself
+fn _hsl_moved[rgb, part, ratio]
+    r = rgb[0] / 255.0
+    g = rgb[1] / 255.0
+    b = rgb[2] / 255.0
+    hi = max[r, max[g, b]]
+    lo = min[r, min[g, b]]
+    l = (hi + lo) / 2.0
+    s = 0.0
+    h = 0.0
+    if hi ne lo
+        d = hi - lo
+        if l gt 0.5
+            s = d / (2.0 - hi - lo)
+        else
+            s = d / (hi + lo)
+        if r eq hi
+            h = (g - b) / d
+            if g lt b
+                h = h + 6.0
+        else
+            if g eq hi
+                h = (b - r) / d + 2.0
+            else
+                h = (r - g) / d + 4.0
+        h = 0.0 + floor[h * 60.0 + 0.5]
+    hsl = [h, s, l]
+    top = 1.0
+    if part eq 0
+        top = 360.0
+    v = hsl[part]
+    hsl[part] = max[0.0, min[v + v * ratio, top]]
+    a = hsl[1] * min[hsl[2], 1.0 - hsl[2]]
+    [_hsl_part[0.0, hsl[0], hsl[2], a], _hsl_part[8.0, hsl[0], hsl[2], a], _hsl_part[4.0, hsl[0], hsl[2], a]]
+
+fn _hsl_part[n, h, l, a]
+    k = modulo[n + h / 30.0, 12.0]
+    v = l - a * max[min[k - 3.0, min[9.0 - k, 1.0]], -1.0]
+    byte_of[v]
+
+--- ---- text ----
+
+--- what a chart measures its words with: Lory's atlas of glyphs (a
+--- canvas's `held`) and widths a browser measured (keyed `b12|text` or
+--- `12|text`; the reference's, or none)
+struct Pen [held, widths]
+
+--- a pen for the canvas's atlas, with the widths given
+fn pen_of[c, widths]
+    Pen[c.held, widths]
+
+--- a pen of no atlas and no widths: words measured as Lory measures them
+--- before its atlas is made
+fn plain_pen[]
+    widths = map['' = 0.0]
+    Pen[lory.Held[false, false, '', map['?' = [0.0, 0.0, 0.0, 0.0, 0.0]], 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, -1.0, []], widths]
+
+--- how wide the text is at `size` pixels (`bold`): as the pen's widths
+--- hold it, or else as Lory's atlas draws it (bold a little wider)
+fn wide[pen, size, bold, words]
+    key = _width_key[size, bold, words]
+    if key in pen.widths
+        return pen.widths[key]
+    w = _drawn_width[pen.held, words, size]
+    if bold
+        return w * 1.06
+    w
+
+fn _drawn_width[held, words, size]
+    if held.size eq 0.0
+        return len[words] * size * 0.55
+    scale = size / held.size
+    w = 0.0
+    chars = split[words, '']
+    i = 0
+    while i lt len[chars]
+        ch = chars[i]
+        g = held.glyphs['?']
+        if ch in held.glyphs
+            g = held.glyphs[ch]
+        w = w + g[4] * scale
+        i = i + 1
+    w
+
+fn _width_key[size, bold, words]
+    s = str[size]
+    if bold
+        return 'b`s`|`words`'
+    '`s`|`words`'
+
+--- the height of a line of text of that size, as Chart.js counts it
+fn line_of[size]
+    size * 1.2
+
+--- ---- tests ----
+
+test numbers_are_written_as_en_us_writes_them[]
+    written[1234.5, 1] eq '1,234.5'
+    written[0.0, 0] eq '0'
+    written[-20.0, 0] eq '-20'
+    written[0.19, 3] eq '0.190'
+    written[1234567.0, 0] eq '1,234,567'
+    written[2.5, 0] eq '3'
+    written_plain[1234.5678] eq '1,234.568'
+    written_plain[12.0] eq '12'
+    written_plain[0.5] eq '0.5'
+    written_scientific[0.000015, 1] eq '1.5E-5'
+    decimals_of[0.25] eq 2
+    decimals_of[100.0] eq 0
+    js_round[-2.5] eq -2.0
+    js_round[2.5] eq 3.0
+
+test colours_are_read_as_css_writes_them[]
+    css['#ff0000'].r eq 1.0
+    css['#f00'].g eq 0.0
+    css['rgba(54, 162, 235, 0.5)'].a eq 0.5
+    css['rgb(255, 99, 132)'].b eq 132.0 / 255.0
+    css['transparent'].a eq 0.0
+    hover_color[lory.rgb[54, 162, 235]].r eq 5.0 / 255.0
+    hover_color[lory.rgb[54, 162, 235]].g eq 155.0 / 255.0
+    hover_color[lory.hex['#ffcd56']].b eq 52.0 / 255.0
+    hover_color[lory.hex['#c9cbcf']].r eq 178.0 / 255.0
+
+test angles_are_between_as_chart_js_finds_them[]
+    normal_angle[0.1] eq 0.09999999999999964
+    normal_angle[0.0 - pi / 2.0] eq 4.71238898038469
+    normal_angle[pi * 5.0] eq 3.141592653589793
+    normal_angle[7.5] eq 1.2168146928204138
+    normal_angle[-7.5] eq 5.0663706143591725
+    normal_angle[100.25] eq 6.0022203923062065
+    pow10[-5] lt 0.00001
+    pow10[3] eq 1000.0
+    angle_between[0.5, 0.0, 1.0, false]
+    not angle_between[1.5, 0.0, 1.0, false]
+    angle_between[6.0, 5.0, 0.5, false]
+    angle_between[2.0, 1.0, 1.0, true]
+    between[5.0, 10.0, 0.0]
+    not between[11.0, 10.0, 0.0]

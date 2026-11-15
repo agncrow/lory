@@ -1,0 +1,1200 @@
+--- Lit's playground, @lit-labs/motion, drawn by Lory: a circle sliding,
+--- Lit's letters coming and going, a list shuffled and laid out again, a
+--- grid's areas moved, a carousel, a list's card growing into its detail
+--- (a hero), and todos moving between two lists.
+---
+--- @lit-labs/motion's `animate()` measures an element before and after an
+--- update and plays the difference back (FLIP: the element drawn where it
+--- was, its transform let go over the animation), plays keyframes as an
+--- element comes (`in`) and, put back for the time, as it goes (`out`),
+--- and links an element going to one coming (`id`, `inId`). This part does
+--- the same with each example's boxes: when an example's state changes,
+--- `relaid` compares the boxes before and after and starts what the
+--- library would start, with its timing (333 ms, CSS's ease-in-out, or
+--- what the example asks), its fills, delays, keyframe offsets and its
+--- callbacks (`onComplete`, the controller's when all are done). The
+--- easing is `lory.motion`'s CSS cubic bézier.
+---
+--- What is held to Lit's page (tests/lit): which animations start, when,
+--- for how long, with what fill and easing; at each sampled time, each
+--- element's opacity and how much of the transform it started from is
+--- left; and, where the layout uses no font, the boxes themselves.
+
+use math
+use memory
+use lory
+use lory.gui
+use lory.icons
+use lory.motion
+use shared
+
+--- how an element of an example moves, comes and goes: its delay and
+--- duration (ms), fill and easing, the keyframes it comes and goes with
+--- (`fade`, `fadeIn`, `fadeInSlow`, `fadeOut`, `flyBelow`; '' none), the
+--- name it leaves behind for another to come from (`own`, the library's
+--- `id`) and the name it comes from (`from`, `inId`), whether its moves
+--- are springy (the hero's `onFrames`), whether it skips its first
+--- render (`skipInitial`), and whether its end calls the example back
+struct Plan [delay, duration, fill, ease, comes, goes, own, from, springy, skips, calls]
+
+--- a set of keyframes: their offsets, the opacity at each and how much of
+--- the transform is left at each (`_missing` where one says nothing), and
+--- whether the transform is a fly (moved down its own height and scaled
+--- to nothing about its middle)
+struct Keyframes [offsets, opacities, moves, fly]
+
+--- the boxes an example lays its elements in: the ids in drawing order,
+--- and each one's box
+struct Layout [ids, boxes]
+
+--- what an element shows at a time: its opacity, how much of the
+--- transform it started from is left (`left`), and whether it is moved at
+--- all
+struct Seen [id, opacity, left, moving]
+
+--- what the stage draws: each element's id, box, ground, opacity, words,
+--- their size and colour, and its corners' radius
+struct Picture [ids, xs, ys, ws, hs, grounds, alphas, words, sizes, inks, radii]
+
+fn _missing[]
+    -9.0
+
+--- the plan of an element as `animate()`'s defaults have it: 333 ms of
+--- CSS's ease-in-out, no fill, no delay, no keyframes in or out
+fn _default_plan[]
+    Plan[0.0, 333.0, 'none', 'ease-in-out', '', '', '', '', false, false, false]
+
+--- numbers written `a,b,c`
+fn _numbers_of[words]
+    out = shared.no_numbers[]
+    for piece in split[words, ',']
+        out = push[out, _number_or[trim[piece], 0.0]]
+    out
+
+--- the number words write, or `otherwise` where they write none
+fn _number_or[words, otherwise]
+    n = float[words]
+    if not n.ok
+        return otherwise
+    0.0 + n
+
+--- the keyframes a name stands for, as an element comes (`coming`: the
+--- name's frames and an empty one after) or goes (the name's frames alone,
+--- the last at offset 1)
+fn _keyframes[name, coming]
+    m = _missing[]
+    if coming
+        if name eq 'fadeIn'
+            return Keyframes[_numbers_of['0,0.5,1'], _numbers_of['0,1,`m`'], _numbers_of['`m`,`m`,`m`'], false]
+        if name eq 'fadeInSlow'
+            return Keyframes[_numbers_of['0,0.75,0.875,1'], _numbers_of['0,0.25,1,`m`'], _numbers_of['`m`,`m`,`m`,`m`'], false]
+        if name eq 'flyBelow'
+            return Keyframes[_numbers_of['0,1'], _numbers_of['0,`m`'], _numbers_of['1,`m`'], true]
+        return Keyframes[_numbers_of['0,1'], _numbers_of['0,`m`'], _numbers_of['`m`,`m`'], false]
+    if name eq 'flyBelow'
+        return Keyframes[_numbers_of['1'], _numbers_of['0'], _numbers_of['1'], true]
+    Keyframes[_numbers_of['1'], _numbers_of['0'], _numbers_of['`m`'], false]
+
+--- the springy curve the hero's moves follow (a damped spring of the
+--- example's own, sampled 27 times): 0 where it starts, past 1 and back
+fn springy[]
+    out = shared.no_numbers[]
+    k = 0
+    while k lt 27
+        x = k / 26.0
+        v = 1.0 - exp[-6.0 * x] * cos[8.0 * x]
+        out = push[out, floor[v * 10000.0 + 0.5] / 10000.0]
+        k = k + 1
+    out
+
+--- a move's keyframes: from where it was (all its transform) to where it
+--- is (none), and in between the springy curve's steps where it springs;
+--- `first_opacity` is the opacity it starts at (`_missing`: its own)
+fn _moving_frames[springs, first_opacity]
+    m = _missing[]
+    if not springs
+        return Keyframes[_numbers_of['0,1'], _numbers_of['`first_opacity`,`m`'], _numbers_of['1,`m`'], false]
+    curve = springy[]
+    n = len[curve] + 1
+    offsets = shared.no_numbers[]
+    opacities = shared.no_numbers[]
+    moves = shared.no_numbers[]
+    offsets = push[offsets, 0.0]
+    opacities = push[opacities, first_opacity]
+    moves = push[moves, 1.0]
+    k = 0
+    while k lt len[curve]
+        offsets = push[offsets, (k + 1.0) / n]
+        opacities = push[opacities, m]
+        moves = push[moves, 1.0 - curve[k]]
+        k = k + 1
+    offsets = push[offsets, 1.0]
+    opacities = push[opacities, m]
+    moves = push[moves, m]
+    Keyframes[offsets, opacities, moves, false]
+
+--- ---- an animation's clock ----
+
+--- the time an animation has run on its own clock (which stands while it
+--- is paused)
+fn _own_time[a, t]
+    if a.paused
+        return a.ran
+    a.ran + (t - a.since)
+
+--- when an animation ends, in the example's time (far off while paused)
+fn end_of[a]
+    if a.paused
+        return 1000000000000.0
+    a.since + a.delay + a.duration - a.ran
+
+--- whether an animation is running at `t`: begun and not yet ended
+--- (paused counts: it is still the controller's)
+fn _running[a, t]
+    a.start lte t and not a.ended and (a.paused or t lt end_of[a])
+
+--- the eased progress an animation shows at `t`, or -1 where it shows
+--- nothing (not begun, or before its delay or past its end with no fill
+--- that way)
+fn _progress[a, t]
+    if t lt a.start
+        return -1.0
+    own = _own_time[a, t]
+    if own lt a.delay
+        if a.fill eq 'backwards' or a.fill eq 'both'
+            return 0.0
+        return -1.0
+    if own gte a.delay + a.duration
+        if a.fill eq 'forwards' or a.fill eq 'both'
+            return 1.0
+        return -1.0
+    motion.ease_at[a.ease, (own - a.delay) / a.duration]
+
+--- a property's value at progress `p` of keyframes: those that say
+--- nothing of it are passed over, and the element's own value (`own`)
+--- stands at 0 or 1 where no keyframe there names one
+fn _keyed[offsets, held, p, own]
+    xs = shared.no_numbers[]
+    vs = shared.no_numbers[]
+    i = 0
+    while i lt len[held]
+        if held[i] ne _missing[]
+            xs = push[xs, offsets[i]]
+            vs = push[vs, held[i]]
+        i = i + 1
+    if len[xs] eq 0
+        return own
+    if xs[0] gt 0.0
+        xs = _front[xs, 0.0]
+        vs = _front[vs, own]
+    if xs[len[xs] - 1] lt 1.0
+        xs = push[xs, 1.0]
+        vs = push[vs, own]
+    if p lte xs[0]
+        return vs[0]
+    k = 0
+    while k lt len[xs] - 2 and p gt xs[k + 1]
+        k = k + 1
+    span = xs[k + 1] - xs[k]
+    if span lte 0.0
+        return vs[k + 1]
+    vs[k] + (vs[k + 1] - vs[k]) * (p - xs[k]) / span
+
+fn _front[xs, x]
+    out = shared.no_numbers[]
+    out = push[out, x]
+    for v in xs
+        out = push[out, v]
+    out
+
+--- whether keyframes move the element at all
+fn _moves[frames_moves]
+    found = false
+    for v in frames_moves
+        if v ne _missing[]
+            found = true
+    found
+
+--- what element `id` shows at `t`: the newest animation of it begun by
+--- then decides
+fn seen_of[s, id, t]
+    anims = s.anims
+    born = shared.number_of[s, 'born-`id`']
+    newest = -1
+    i = 0
+    while i lt len[anims]
+        if anims[i].id eq id and anims[i].start lte t and not _before_born[anims[i], born]
+            newest = i
+        i = i + 1
+    if newest lt 0
+        return Seen[id, 1.0, 0.0, false]
+    a = anims[newest]
+    p = _progress[a, t]
+    if p lt 0.0
+        return Seen[id, 1.0, 0.0, false]
+    opacity = _keyed[a.offsets, a.opacities, p, 1.0]
+    if not _moves[a.moves]
+        return Seen[id, opacity, 0.0, false]
+    Seen[id, opacity, _keyed[a.offsets, a.moves, p, 0.0], true]
+
+--- whether an animation was over before its element was laid anew (at
+--- `born`): it was another element's of that id, one that went, and
+--- what it left (an opacity held at its end) is not this one's
+fn _before_born[a, born]
+    a.start lt born and end_of[a] lte born
+
+--- the ids an example shows at `t`, in order of their names: those laid
+--- out, and those put back while they go
+fn shown_ids[s, t]
+    ids = shared.no_words[]
+    for id in keys[s.boxes]
+        if id ne '' and not starts[id, '~']
+            ids = push[ids, id]
+    anims = s.anims
+    i = 0
+    while i lt len[anims]
+        a = anims[i]
+        if a.role eq 'out' and a.start lte t and t lt end_of[a] and not (a.id in ids)
+            ids = push[ids, a.id]
+        i = i + 1
+    if s.name eq 'motion-hero'
+        ids = _hero_inside_going[s, ids, t]
+    sort[ids]
+
+--- what each element shows at `t`, in order of their names
+fn seen_all[s, t]
+    out = [Seen['', 1.0, 0.0, false]]
+    for id in shown_ids[s, t]
+        out = push[out, seen_of[s, id, t]]
+    slice[out, 1, len[out]]
+
+--- ---- starting what the library starts ----
+
+--- the example after its state moved from `old` to `s` at `t`: each
+--- element laid in both moves from its old box to its new one (unless
+--- it is running already, or did not move), each new one comes (from a
+--- linked one that went, or with its keyframes in), and each gone one goes
+--- with its keyframes out a frame later (the library puts it back after
+--- an animation frame), leaving its box for one that comes from it.
+--- `first` is the example's first render, which elements that skip it
+--- (`skipInitial`) do not animate.
+fn relaid[old, s, t, first]
+    before = old.boxes
+    after = _laid[s]
+    boxes = map['' = shared.Box[0.0, 0.0, 0.0, 0.0]]
+    named = sort[keys[before]]
+    j = 0
+    while j lt len[named]
+        id = named[j]
+        if starts[id, '~']
+            boxes[id] = before[id]
+        j = j + 1
+    j = 0
+    while j lt len[named]
+        id = named[j]
+        if id ne '' and not starts[id, '~'] and not (id in after.boxes)
+            plan = _plan[old, id]
+            if plan.own ne ''
+                boxes['~`plan.own`'] = before[id]
+            if plan.goes ne ''
+                s = _started[s, id, 'out', t + 16.0, plan, _keyframes[plan.goes, false], before[id]]
+        j = j + 1
+    i = 0
+    while i lt len[after.ids]
+        id = after.ids[i]
+        to = after.boxes[id]
+        plan = _plan[s, id]
+        if not (id in before)
+            s = shared.set_number[s, 'born-`id`', t]
+        if id in before
+            if _changed[before[id], to] and not _running_of[s, id, t]
+                s = _started[s, id, 'flip', t, plan, _moving_frames[plan.springy, _missing[]], before[id]]
+        else if not (first and plan.skips)
+            linked = '~`plan.from`'
+            if plan.from ne '' and linked in boxes and boxes[linked].w gte 0.0
+                opening = _missing[]
+                if plan.comes ne ''
+                    opening = _keyframes[plan.comes, true].opacities[0]
+                s = _started[s, id, 'flip', t, plan, _moving_frames[plan.springy, opening], boxes[linked]]
+                boxes[linked] = shared.Box[0.0, 0.0, -1.0, -1.0]
+            else if plan.comes ne ''
+                s = _started[s, id, 'in', t, plan, _keyframes[plan.comes, true], to]
+        boxes[id] = to
+        i = i + 1
+    s.boxes = boxes
+    s
+
+--- whether a box moved or changed its size
+fn _changed[a, b]
+    abs[a.x - b.x] gt 0.01 or abs[a.y - b.y] gt 0.01 or abs[a.w - b.w] gt 0.01 or abs[a.h - b.h] gt 0.01
+
+fn _running_of[s, id, t]
+    anims = s.anims
+    found = false
+    for a in anims
+        if a.id eq id and _running[a, t]
+            found = true
+    found
+
+--- the example with an animation started
+fn _started[s, id, role, at, plan, frames, origin]
+    s.anims = push[s.anims, shared.Anim[id, role, at, plan.delay, plan.duration, plan.ease, plan.fill, frames.offsets, frames.opacities, frames.moves, frames.fly, 0.0, at, false, false, origin, plan.calls]]
+    s
+
+--- the animations an example started, each as the tests compare them:
+--- `id role start delay duration easing fill`
+fn started_of[s]
+    out = shared.no_words[]
+    for a in s.anims
+        out = push[out, '`a.id` `a.role` `_rounded[a.start]` `_rounded[a.delay]` `_rounded[a.duration]` `a.ease` `a.fill`']
+    out
+
+fn _rounded[x]
+    floor[x * 100.0 + 0.5] / 100.0
+
+--- ---- the clock going on: ends, callbacks, what waits ----
+
+--- the example at `t`: every animation that ended by then seen to and
+--- every wait that came, in the order they came (an end calling the
+--- example back, the controller's call when nothing more runs)
+fn ticked[s, t]
+    going = true
+    while going
+        at = t + 1.0
+        which = -1
+        anims = s.anims
+        i = 0
+        while i lt len[anims]
+            a = anims[i]
+            if not a.ended and not a.paused and end_of[a] lte t and end_of[a] lt at
+                at = end_of[a]
+                which = i
+            i = i + 1
+        timer = -1
+        timers = s.timers
+        k = 0
+        while k lt len[timers]
+            if timers[k].at lte t and timers[k].at lt at
+                at = timers[k].at
+                timer = k
+            k = k + 1
+        if timer gte 0
+            s = _waited[s, timer, at]
+        else if which gte 0
+            s = _ended[s, which, at]
+        else
+            going = false
+    s
+
+--- an animation ended at `at`: its callback, and the controller's when
+--- none of the example's still runs
+fn _ended[s, which, at]
+    a = s.anims[which]
+    a.ended = true
+    s.anims[which] = a
+    if a.calls
+        s = shared.wait_for[s, at + 16.0, 'relayout', '']
+    anims = s.anims
+    still = false
+    for b in anims
+        if _running[b, at]
+            still = true
+    if not still and s.name eq 'motion-logo'
+        s = _letters_turned[s, at]
+    s
+
+--- a wait come at `at`: it is done and taken off
+fn _waited[s, timer, at]
+    what = s.timers[timer].what
+    left = shared.no_timers[]
+    k = 0
+    while k lt len[s.timers]
+        if k ne timer
+            left = push[left, s.timers[k]]
+        k = k + 1
+    s.timers = left
+    if what eq 'relayout' and s.name eq 'motion-list'
+        return _list_shuffled[s, at]
+    s
+
+--- every running animation paused, or played again where none plays
+--- (the controller's `togglePlay`)
+fn toggled[s, t]
+    anims = s.anims
+    playing = false
+    for a in anims
+        if _running[a, t] and not a.paused
+            playing = true
+    out = shared.no_anims[]
+    i = 0
+    while i lt len[anims]
+        a = anims[i]
+        if _running[a, t]
+            if playing and not a.paused
+                a.ran = _own_time[a, t]
+                a.paused = true
+            else if not playing and a.paused
+                a.since = t
+                a.paused = false
+        out = push[out, a]
+        i = i + 1
+    s.anims = out
+    s
+
+--- whether any of an example's animations is running at `t` (the
+--- controller's `isAnimating`)
+fn animating[s, t]
+    anims = s.anims
+    found = false
+    for a in anims
+        if _running[a, t]
+            found = true
+    found
+
+--- ---- each example's boxes and plans ----
+
+fn _laid[s]
+    if s.name eq 'motion-circle'
+        return _circle_laid[s]
+    if s.name eq 'motion-logo'
+        return _logo_laid[s]
+    if s.name eq 'motion-list'
+        return _list_laid[s]
+    if s.name eq 'motion-grid'
+        return _grid_laid[s]
+    if s.name eq 'motion-carousel'
+        return _carousel_laid[s]
+    if s.name eq 'motion-hero'
+        return _hero_laid[s]
+    _todos_laid[s]
+
+fn _plan[s, id]
+    if s.name eq 'motion-logo'
+        return _logo_plan[s, id]
+    if s.name eq 'motion-list'
+        return _list_plan[s, id]
+    if s.name eq 'motion-grid'
+        return _grid_plan[id]
+    if s.name eq 'motion-hero'
+        return _hero_plan[s, id]
+    if s.name eq 'motion-todos'
+        return _todos_plan[id]
+    _default_plan[]
+
+fn _no_laid[]
+    Layout[shared.no_words[], map['' = shared.Box[0.0, 0.0, 0.0, 0.0]]]
+
+fn _laid_with[l, id, x, y, w, h]
+    l.ids = push[l.ids, id]
+    l.boxes[id] = shared.Box[x, y, w, h]
+    l
+
+--- the number at the end of an id (`card-3` is 3)
+fn _index_of[id]
+    parts = split[id, '-']
+    n = int[parts[len[parts] - 1]]
+    if not n.ok
+        return 0
+    0 + n
+
+--- ---- Sliding Circle ----
+
+--- a circle a quarter of the page across, at the left or slid to the
+--- right (the page is 800 wide, the example 784 inside its margin)
+fn _circle_laid[s]
+    x = 0.0
+    if shared.flag_of[s, 'slid']
+        x = 584.0
+    _laid_with[_no_laid[], 'circle', x, 0.0, 200.0, 200.0]
+
+--- ---- Lit Logo Animation ----
+
+--- Lit's three letters, each a third of the page, or none
+fn _logo_laid[s]
+    l = _no_laid[]
+    if shared.flag_of[s, 'gone']
+        return l
+    i = 0
+    while i lt 3
+        l = _laid_with[l, 'letter-`i`', i * 800.0 / 3.0, 162.0, 800.0 / 3.0, 276.0]
+        i = i + 1
+    l
+
+--- a letter fades in and flies below, each a second long and each later
+--- than the one before by the second over 7.5 (the controller's options:
+--- the letters held at their first frame until they begin)
+fn _logo_plan[s, id]
+    Plan[_index_of[id] * 1000.0 / 7.5, 1000.0, 'backwards', 'ease-in-out', 'fade', 'flyBelow', '', '', false, false, false]
+
+--- the letters turned (gone or back), when the controller's animations
+--- are all done
+fn _letters_turned[s, at]
+    old = s
+    s = shared.set_flag[s, 'gone', not shared.flag_of[s, 'gone']]
+    relaid[old, s, at, false]
+
+--- ---- List Item Animation ----
+
+--- the five words in the order shown, or none
+fn _list_items[s]
+    if 'items' in s.lists
+        return s.lists['items']
+    ['One', 'Two', 'Three', 'Four', 'Five']
+
+--- the words as a column of boxes in the page's middle, or as a row
+fn _list_laid[s]
+    items = _list_items[s]
+    l = _no_laid[]
+    n = len[items]
+    row = shared.flag_of[s, 'row']
+    i = 0
+    while i lt n
+        if row
+            l = _laid_with[l, 'item-`items[i]`', 400.0 - n * 78.0 + i * 156.0 + 8.0, 270.8, 140.0, 58.4]
+        else
+            l = _laid_with[l, 'item-`items[i]`', 330.0, 300.0 - n * 37.2 + i * 74.4 + 8.0, 140.0, 58.4]
+        i = i + 1
+    l
+
+--- an entry fades in and flies below over 500 ms, each later by its share
+--- of the 500; the last one's end calls the example back
+fn _list_plan[s, id]
+    items = _list_items[s]
+    n = len[items]
+    at = 0
+    i = 0
+    while i lt n
+        if 'item-`items[i]`' eq id
+            at = i
+        i = i + 1
+    Plan[at * 500.0 / max[1, n], 500.0, 'both', 'ease-in-out', 'fadeIn', 'flyBelow', '', '', false, false, at eq n - 1]
+
+--- the next layout, a frame after the last entry's end: every fifth
+--- empties the list, the others turn it (column or row) and shuffle it
+fn _list_shuffled[s, at]
+    old = s
+    count = shared.number_of[s, 'count'] + 1.0
+    s = shared.set_number[s, 'count', count]
+    if floor[count] % 5 eq 0
+        s = shared.set_list[s, 'items', shared.no_words[]]
+        return relaid[old, s, at, false]
+    s = shared.set_flag[s, 'row', not shared.flag_of[s, 'row']]
+    s = _shuffled[s]
+    relaid[old, s, at, false]
+
+--- the five words in a new order: the next order the example was given
+--- (a test hands it the orders Lit's page drew), else drawn from its
+--- chances
+fn _shuffled[s]
+    words = ['One', 'Two', 'Three', 'Four', 'Five']
+    given = shared.list_of[s, 'orders']
+    next = int[shared.number_of[s, 'order']]
+    if next lt len[given]
+        s = shared.set_number[s, 'order', next + 1.0]
+        return shared.set_list[s, 'items', split[given[next], ',']]
+    i = len[words] - 1
+    while i gt 0
+        drawn = shared.chance[s]
+        s = drawn.s
+        j = floor[drawn.value * (i + 1.0)]
+        held = words[i]
+        words[i] = words[j]
+        words[j] = held
+        i = i - 1
+    shared.set_list[s, 'items', words]
+
+--- ---- Grid Layout Transitions ----
+
+--- the grid's areas in each of its four layouts: per item, its first
+--- column and row and how many of each it spans, over 6 columns and 7
+--- rows (layouts 0 and 2) or 6 (1 and 3)
+fn _areas[layout]
+    if layout eq 1
+        return ['0,0,2,3', '0,3,2,3', '2,0,4,2', '2,2,4,2', '2,4,4,2']
+    if layout eq 2
+        return ['1,0,4,1', '0,0,1,7', '1,1,4,5', '5,0,1,7', '1,6,4,1']
+    if layout eq 3
+        return ['0,0,4,3', '0,3,4,3', '4,0,2,2', '4,2,2,2', '4,4,2,2']
+    ['0,0,6,1', '0,1,1,5', '1,1,4,5', '5,1,1,5', '0,6,6,1']
+
+fn _grid_laid[s]
+    layout = int[shared.number_of[s, 'layout']]
+    rows = 7.0
+    if layout eq 1 or layout eq 3
+        rows = 6.0
+    across = 800.0 / 6.0
+    down = 600.0 / rows
+    l = _no_laid[]
+    areas = _areas[layout]
+    i = 0
+    while i lt 5
+        a = _numbers_of[areas[i]]
+        l = _laid_with[l, 'cell-`i`', a[0] * across, a[1] * down, a[2] * across, a[3] * down]
+        i = i + 1
+    l
+
+--- each cell moves over a second, each a tenth of a second after the one
+--- before, held at its ends
+fn _grid_plan[id]
+    Plan[_index_of[id] * 100.0, 1000.0, 'both', 'ease-in-out', '', '', '', '', false, false, false]
+
+--- ---- Carousel Transitions ----
+
+--- a card's place in the row: the chosen one in the middle (3 of 7)
+fn _carousel_order[i, chosen]
+    (7 + 3 + i - chosen) % 7
+
+--- seven cards 418 wide, 8 apart, in a row centred in a box 480 wide
+--- (the page 800 by 600): the middle one shows
+fn _carousel_laid[s]
+    chosen = int[shared.number_of[s, 'chosen']]
+    l = _no_laid[]
+    i = 0
+    while i lt 7
+        order = _carousel_order[i, chosen]
+        l = _laid_with[l, 'card-`i`', -1087.0 + order * 426.0, 91.0, 418.0, 418.0]
+        i = i + 1
+    l
+
+--- ---- List/Detail Hero Transition ----
+
+fn _hero_items[]
+    ['Cats', 'Dogs', 'Hippos', 'Elephants', 'Mosquitoes', 'Snakes', 'Frogs', 'Alligators', 'Cows']
+
+fn _hero_summaries[]
+    ['Cats are the very best pets.', 'Dogs have a lot of energy.', 'Hippos are very fat and mean.', 'Elephants are really huge.', 'Mosquitoes bite you.', 'Snakes are pretty scary.', 'Frogs are amphibious.', 'Alligators sneak up on you.', 'Cows make good hamburgers.']
+
+--- the detail shown (-1: the list of cards)
+fn _hero_detail[s]
+    if shared.flag_of[s, 'detailed']
+        return int[shared.number_of[s, 'detail']]
+    -1
+
+--- nine cards three to a row, each with its ground, icon, divider and
+--- header; or the chosen one's detail over the whole page, with its icon,
+--- header and words
+fn _hero_laid[s]
+    l = _no_laid[]
+    d = _hero_detail[s]
+    if d gte 0
+        l = _laid_with[l, 'detail', 8.0, 8.0, 784.0, 584.0]
+        l = _laid_with[l, 'detail-icon', 32.0, 32.0, 48.0, 55.0]
+        l = _laid_with[l, 'detail-header', 88.0, 32.0, 218.0, 40.0]
+        return _laid_with[l, 'detail-content', 32.0, 95.0, 736.0, 400.0]
+    w = (800.0 - 48.0) / 3.0
+    i = 0
+    while i lt 9
+        x = 8.0 + (i % 3) * (w + 16.0)
+        y = 8.0 + (i / 3) * 276.0
+        l = _laid_with[l, 'card-`i`', x, y, w, 260.0]
+        l = _laid_with[l, 'card-`i`-bg', x, y, w, 260.0]
+        l = _laid_with[l, 'card-`i`-icon', x + w / 2.0 - 72.0, y + 24.0, 144.0, 166.0]
+        l = _laid_with[l, 'card-`i`-divider', x + 16.0, y + 194.0, w - 32.0, 2.0]
+        l = _laid_with[l, 'card-`i`-header', x + 16.0, y + 196.0, 218.0, 48.0]
+        i = i + 1
+    l
+
+--- the controller's options (750 ms, held at both ends, springy moves)
+--- and each element's own: a card fades out as it goes and comes from its
+--- detail; its ground and divider fade in slowly when the cards come
+--- back; its icon and header come from the detail's
+fn _hero_plan[s, id]
+    p = Plan[0.0, 750.0, 'both', 'ease-in-out', '', '', '', '', true, false, false]
+    d = '`_hero_detail[s]`'
+    if id eq 'detail'
+        p.own = '`d`:detail'
+        p.from = '`d`:card'
+        return p
+    if id eq 'detail-icon'
+        p.own = '`d`:detail-icon'
+        p.from = '`d`:card-icon'
+        return p
+    if id eq 'detail-header'
+        p.own = '`d`:detail-header'
+        p.from = '`d`:card-header'
+        return p
+    if id eq 'detail-content'
+        p.comes = 'fadeInSlow'
+        return p
+    parts = split[id, '-']
+    i = parts[1]
+    if len[parts] eq 2
+        p.goes = 'fadeOut'
+        p.own = '`i`:card'
+        p.from = '`i`:detail'
+        return p
+    part = parts[2]
+    p.skips = true
+    if part eq 'bg' or part eq 'divider'
+        p.comes = 'fadeInSlow'
+        return p
+    p.own = '`i`:card-`part`'
+    p.from = '`i`:detail-`part`'
+    p
+
+--- a card put back while it fades out keeps what is inside it
+fn _hero_inside_going[s, ids, t]
+    out = ids
+    anims = s.anims
+    parts = ['bg', 'icon', 'divider', 'header']
+    i = 0
+    while i lt len[anims]
+        a = anims[i]
+        if a.role eq 'out' and a.start lte t and t lt end_of[a]
+            k = 0
+            while k lt len[parts]
+                inside = '`a.id`-`parts[k]`'
+                if not (inside in out)
+                    out = push[out, inside]
+                k = k + 1
+        i = i + 1
+    out
+
+--- ---- Todos List Transitions ----
+
+--- the todos as the example has them: their ids in order, each one's
+--- words and whether it is done
+fn _todo_ids[s]
+    if 'todos' in s.lists
+        return s.lists['todos']
+    ['1', '2', '3', '4', '5', '6', '7']
+
+fn todo_words[s, id]
+    first = ['Go running.', 'Strength training', 'Walk with friends.', 'Feed the cats.', 'Shop for dinner.', 'Order clothes.', 'BBQ!']
+    n = _index_of[id]
+    otherwise = ''
+    if n gte 1 and n lte 7
+        otherwise = first[n - 1]
+    shared.words_of[s, 'todo-`id`', otherwise]
+
+fn todo_done[s, id]
+    if 'done-`id`' in s.nums
+        return shared.flag_of[s, 'done-`id`']
+    id eq '2' or id eq '4'
+
+--- two lists side by side, the todos still to do and those done, each a
+--- row 42 high under its heading
+fn _todos_laid[s]
+    l = _no_laid[]
+    ids = _todo_ids[s]
+    left = 0
+    right = 0
+    i = 0
+    while i lt len[ids]
+        id = ids[i]
+        if todo_done[s, id]
+            l = _laid_with[l, 'todo-`id`-right', 292.0, 160.0 + right * 42.0, 276.0, 34.0]
+            right = right + 1
+        else
+            l = _laid_with[l, 'todo-`id`-left', 0.0, 160.0 + left * 42.0, 276.0, 34.0]
+            left = left + 1
+        i = i + 1
+    l
+
+--- a todo flies below as it comes, fades out as it goes, and moving to
+--- the other list comes from where it was in this one (500 ms, held at
+--- both ends, not on the first render)
+fn _todos_plan[id]
+    parts = split[id, '-']
+    side = parts[2]
+    other = 'left'
+    if side eq 'left'
+        other = 'right'
+    Plan[0.0, 500.0, 'both', 'ease-in-out', 'flyBelow', 'fadeOut', '`parts[1]`:`side`', '`parts[1]`:`other`', false, true, false]
+
+--- ---- the examples drawn ----
+
+--- the example as it opens: its first render (what comes with keyframes
+--- in comes; what skips its first render does not)
+fn opened[s]
+    relaid[s, s, 0.0, true]
+
+--- a box as an element is drawn at `t`: moved back toward the box it came
+--- from by what is left of its move, or flown down and shrunk about its
+--- middle by what is left of its fly
+fn drawn_box[s, id, t]
+    box = shared.Box[0.0, 0.0, 0.0, 0.0]
+    if id in s.boxes
+        box = s.boxes[id]
+    anims = s.anims
+    newest = -1
+    i = 0
+    while i lt len[anims]
+        if anims[i].id eq id and anims[i].start lte t
+            newest = i
+        i = i + 1
+    if newest lt 0
+        return box
+    a = anims[newest]
+    if a.role eq 'out'
+        box = a.origin
+    seen = seen_of[s, id, t]
+    if not seen.moving
+        return box
+    k = seen.left
+    if a.fly
+        w = box.w * (1.0 - k)
+        h = box.h * (1.0 - k)
+        return shared.Box[box.x + (box.w - w) / 2.0, box.y + (box.h - h) / 2.0 + box.h * k, w, h]
+    o = a.origin
+    shared.Box[box.x + (o.x - box.x) * k, box.y + (o.y - box.y) * k, box.w + (o.w - box.w) * k, box.h + (o.h - box.h) * k]
+
+--- what an element looks like on the stage: its ground, its corners, its
+--- words, their size and colour, and an edge's colour ('' none)
+struct Appearance [ground, radius, words, size, ink, edge]
+
+fn _look_of[s, id]
+    if s.name eq 'motion-circle'
+        return Appearance['#4682b4', 100.0, '', 15.0, '#ffffff', '']
+    if s.name eq 'motion-logo'
+        letters = ['L', 'I', 'T']
+        return Appearance['', 0.0, letters[_index_of[id]], 240.0, '#092179', '']
+    if s.name eq 'motion-list'
+        return Appearance['#ef5350', 8.0, split[id, '-'][1], 16.0, '#040424', '#b61827']
+    if s.name eq 'motion-grid'
+        grounds = ['#002171', '#5472d3', '#e1e2e1', '#7f0000', '#560027']
+        return Appearance[grounds[_index_of[id]], 0.0, '', 15.0, '#ffffff', '']
+    if s.name eq 'motion-carousel'
+        i = _index_of[id]
+        return Appearance[_hsl_hex[360.0 * i / 7.0, 20.0 + floor[60.0 * i / 7.0], 30.0 + floor[30.0 * i / 7.0]], 8.0, '`i`', 160.0, '#ffffff', '#002071']
+    _hero_look[s, id]
+
+fn _hero_look[s, id]
+    items = _hero_items[]
+    summaries = _hero_summaries[]
+    if starts[id, 'detail']
+        d = max[0, _hero_detail[s]]
+        if id eq 'detail'
+            return Appearance['#819ca9', 8.0, '', 15.0, '#000000', '#29434e']
+        if id eq 'detail-icon'
+            return Appearance['', 0.0, 'pets', 32.0, '#29434e', '']
+        if id eq 'detail-header'
+            return Appearance['', 0.0, '`items[d]` `summaries[d]`', 15.0, '#000000', '']
+        return Appearance['', 0.0, 'Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium.', 17.6, '#000000', '']
+    parts = split[id, '-']
+    i = _index_of['x-`parts[1]`']
+    if len[parts] eq 2
+        return Appearance['#546e7a', 8.0, '', 15.0, '#ffffff', '']
+    part = parts[2]
+    if part eq 'bg'
+        return Appearance['', 8.0, '', 15.0, '#ffffff', '#29434e']
+    if part eq 'icon'
+        return Appearance['', 0.0, 'pets', 48.0, '#29434e', '']
+    if part eq 'divider'
+        return Appearance['#29434e', 0.0, '', 15.0, '#ffffff', '']
+    Appearance['', 0.0, '`items[i]` `summaries[i]`', 14.0, '#ffffff', '']
+
+--- a colour's hex code from its hue (degrees), saturation and lightness
+--- (percent), as CSS's `hsl()` turns them
+fn _hsl_hex[h, sat, light]
+    s = sat / 100.0
+    l = light / 100.0
+    c = (1.0 - abs[2.0 * l - 1.0]) * s
+    hp = h / 60.0
+    x = c * (1.0 - abs[hp - 2.0 * floor[hp / 2.0] - 1.0])
+    r = 0.0
+    g = 0.0
+    b = 0.0
+    if hp lt 1.0
+        r = c
+        g = x
+    else if hp lt 2.0
+        r = x
+        g = c
+    else if hp lt 3.0
+        g = c
+        b = x
+    else if hp lt 4.0
+        g = x
+        b = c
+    else if hp lt 5.0
+        r = x
+        b = c
+    else
+        r = c
+        b = x
+    m = l - c / 2.0
+    _hex_of[(r + m) * 255.0, (g + m) * 255.0, (b + m) * 255.0]
+
+fn _hex_of[r, g, b]
+    '#`_byte[r]``_byte[g]``_byte[b]`'
+
+fn _byte[v]
+    n = max[0, min[255, floor[v + 0.5]]]
+    digits = split['0123456789abcdef', '']
+    '`digits[n / 16]``digits[n % 16]`'
+
+--- the stage's size, in its own CSS pixels
+fn _stage_size[s]
+    if s.name eq 'motion-circle'
+        return shared.Box[0.0, 0.0, 784.0, 200.0]
+    shared.Box[0.0, 0.0, 800.0, 600.0]
+
+--- what the stage shows at `t`, in drawing order
+fn _picture[s, t]
+    p = Picture[shared.no_words[], shared.no_numbers[], shared.no_numbers[], shared.no_numbers[], shared.no_numbers[], shared.no_words[], shared.no_numbers[], shared.no_words[], shared.no_numbers[], shared.no_words[], shared.no_numbers[]]
+    shown = shown_ids[s, t]
+    laid = _laid[s]
+    order = laid.ids
+    for id in shown
+        if not (id in order)
+            order = push[order, id]
+    if s.name eq 'motion-hero' and _hero_detail[s] gte 0
+        order = _detail_last[order]
+    i = 0
+    while i lt len[order]
+        id = order[i]
+        if id in shown
+            b = drawn_box[s, id, t]
+            look = _look_of[s, id]
+            p.ids = push[p.ids, id]
+            p.xs = push[p.xs, b.x]
+            p.ys = push[p.ys, b.y]
+            p.ws = push[p.ws, b.w]
+            p.hs = push[p.hs, b.h]
+            p.grounds = push[p.grounds, look.ground]
+            p.alphas = push[p.alphas, seen_of[s, id, t].opacity]
+            p.words = push[p.words, look.words]
+            p.sizes = push[p.sizes, look.size * max[0.05, b.h / max[1.0, _rest_height[s, id]]]]
+            p.inks = push[p.inks, '`look.ink`|`look.edge`']
+            p.radii = push[p.radii, look.radius]
+        i = i + 1
+    p
+
+--- the detail's own drawn over the cards that fade out under it
+fn _detail_last[order]
+    out = shared.no_words[]
+    for id in order
+        if not starts[id, 'detail']
+            out = push[out, id]
+    for id in order
+        if starts[id, 'detail']
+            out = push[out, id]
+    out
+
+fn _rest_height[s, id]
+    if id in s.boxes
+        return s.boxes[id].h
+    anims = s.anims
+    h = 1.0
+    for a in anims
+        if a.id eq id
+            h = a.origin.h
+    h
+
+--- the stage: the example's elements drawn where they are at `t`, a press
+--- telling the element pressed (its id in `words`)
+fn stage[s, t, words]
+    p = _picture[s, t]
+    remember['lory_lit/stage', p]
+    size = _stage_size[s]
+    shown = shared.no_words[]
+    for w in p.words
+        if w ne ''
+            shown = push[shown, w]
+    if words ne ''
+        shown = push[shown, words]
+    gui.drawn['stage', 0.0, 0.0, 600.0 * size.h / size.w, _stage_painted, 0.0, 1.0, 'name=stage;wide=`size.w`|`join[shown, \' \']`']
+
+fn _stage_painted[d]
+    p = recall['lory_lit/stage', Picture[shared.no_words[], shared.no_numbers[], shared.no_numbers[], shared.no_numbers[], shared.no_numbers[], shared.no_words[], shared.no_numbers[], shared.no_words[], shared.no_numbers[], shared.no_words[], shared.no_numbers[]]]
+    l = shared.looks_of[split[d.words, '|'][0]]
+    k = d.w / shared.look_number[l, 'wide', 800.0]
+    c = d.c
+    box = lory.clipped[c]
+    c = lory.clip[c, d.x, d.y, d.w, d.h]
+    c = lory.rect[c, d.x, d.y, d.w, d.h, lory.hex['#f8fafc']]
+    i = 0
+    while i lt len[p.ids]
+        x = d.x + p.xs[i] * k
+        y = d.y + p.ys[i] * k
+        w = p.ws[i] * k
+        h = p.hs[i] * k
+        alpha = p.alphas[i]
+        inks = split[p.inks[i], '|']
+        if p.grounds[i] ne ''
+            c = lory.round_rect[c, x, y, w, h, min[p.radii[i] * k, min[w, h] / 2.0], shared.tinted[p.grounds[i], alpha]]
+        if inks[1] ne ''
+            edge = shared.tinted[inks[1], alpha]
+            line = max[1.0, 2.0 * k]
+            c = lory.rect[c, x, y, w, line, edge]
+            c = lory.rect[c, x, y + h - line, w, line, edge]
+            c = lory.rect[c, x, y, line, h, edge]
+            c = lory.rect[c, x + w - line, y, line, h, edge]
+        if p.words[i] ne ''
+            size = p.sizes[i] * k
+            c = lory.text_centered[c, x + w / 2.0, y + h / 2.0, p.words[i], size, shared.tinted[inks[0], alpha]]
+        i = i + 1
+    c = lory.unclip[c, box]
+    d.c = c
+    if d.pressed
+        px = d.px / k
+        py = d.py / k
+        hit = ''
+        j = 0
+        while j lt len[p.ids]
+            if px gte p.xs[j] and px lte p.xs[j] + p.ws[j] and py gte p.ys[j] and py lte p.ys[j] + p.hs[j]
+                hit = p.ids[j]
+            j = j + 1
+        return gui.tell[d, 'press', hit, 0.0]
+    d
+
+fn _painters_known[]
+    d = _stage_painted[shared.blank_drawn[]]
+    _remove_painted[d]
+
+--- ---- each example's view and answers ----
+
+--- Sliding Circle: Slide turns where the circle is, and it moves there
+fn motion_circle_view[s, t]
+    rows = [gui.button['slide', 'Slide']]
+    rows = push[rows, stage[s, t, '']]
+    gui.column[rows]
+
+--- Lit Logo Animation: its letters come and go by themselves; a press
+--- pauses or plays them while they move, and turns them when they stand
+fn motion_logo_view[s, t]
+    stage[s, t, '']
+
+--- List Item Animation: the list turns and shuffles by itself
+fn motion_list_view[s, t]
+    stage[s, t, '']
+
+--- Grid Layout Transitions: a press moves the cells to the next layout
+fn motion_grid_view[s, t]
+    stage[s, t, 'click']
+
+--- Carousel Transitions: a press on a card left of the middle shows the
+--- one before, on the middle or right of it the one after
+fn motion_carousel_view[s, t]
+    stage[s, t, '']
+
+--- List/Detail Hero Transition: a card pressed grows into its detail; the
+--- detail pressed goes back into its card; a press while they move
+--- pauses or plays them
+fn motion_hero_view[s, t]
+    stage[s, t, '']
+
+--- Todos List Transitions: a todo ticked moves to the other list, one
+--- removed fades out (the rest move up), one added flies in below
+fn motion_todos_view[s, t]
+    left = [shared.titled[3, 'Todos', '', '']]
+    right = [shared.titled[3, 'Completed', '', '']]
+    laid = _laid[s]
+    shown = shown_ids[s, t]
+    for id in laid.ids
+        if ends[id, '-left']
+            left = push[left, _todo_drawn[s, id, t]]
+        else
+            right = push[right, _todo_drawn[s, id, t]]
+    for id in shown
+        if not (id in laid.ids)
+            if ends[id, '-left']
+                left = push[left, _todo_drawn[s, id, t]]
+            else
+                right = push[right, _todo_drawn[s, id, t]]
+    form = gui.row[[gui.sized[gui.field['todo-text', shared.words_of[s, 'typed', ''], hint = 'Enter a todo...'], 400.0], gui.button['todo-add', 'Add Todo']]]
+    gui.column[[form, gui.row[[gui.sized[gui.column[left, gap = 8.0], 280.0], gui.sized[gui.column[right, gap = 8.0], 280.0]], gap = 16.0]]]
+
+--- a todo drawn where it is at `t`: moved from where it was, faded, and
+--- flown in or out
+fn _todo_drawn[s, id, t]
+    parts = split[id, '-']
+    n = parts[1]
+    done = parts[2] eq 'right'
+    row = gui.row[[gui.checkbox['todo-`n`-check', '`n`. `todo_words[s, n]`', done], _remove_button[n]]]
+    seen = seen_of[s, id, t]
+    rest = shared.Box[0.0, 0.0, 0.0, 0.0]
+    if id in s.boxes
+        rest = s.boxes[id]
+    now_at = drawn_box[s, id, t]
+    if seen.moving and now_at.w gt 0.0 and rest.w gt 0.0
+        row = gui.scaled[row, now_at.w / rest.w]
+    if now_at.w gt 0.0 and rest.w gt 0.0
+        row = gui.moved[row, now_at.x - rest.x, now_at.y - rest.y]
+    gui.faded[row, seen.opacity]
+
+--- the button that removes a todo: a circle with a bar across it
+--- (Lory's icon `minus-circled`), its words the name Material's icon font
+--- draws that icon by, which is what Lit's page holds in its button
+fn _remove_button[n]
+    gui.drawn['todo-`n`-remove', 0.0, 20.0, 20.0, _remove_painted, 0.0, 1.0, 'icon=minus-circled|remove_circle_outline']
+
+fn _remove_painted[d]
+    size = min[d.w, d.h]
+    d.c = icons.draw[d.c, 'minus-circled', d.x + (d.w - size) / 2.0, d.y + (d.h - size) / 2.0, size, d.look.ink]
+    if d.pressed
+        return gui.tell[d, 'press', '', 0.0]
+    d
+
+--- the example after an event of its reader's at `t`
+fn motion_answered[s, ev, t]
+    old = s
+    if s.name eq 'motion-circle'
+        if ev.id eq 'slide' and ev.act eq 'press'
+            s = shared.set_flag[s, 'slid', not shared.flag_of[s, 'slid']]
+            return relaid[old, s, t, false]
+        return s
+    if s.name eq 'motion-todos'
+        return _todos_answered[s, ev, t]
+    if ev.id ne 'stage' or ev.act ne 'press'
+        return s
+    if s.name eq 'motion-logo'
+        if animating[s, t]
+            return toggled[s, t]
+        return _letters_turned[s, t]
+    if s.name eq 'motion-grid'
+        s = shared.set_number[s, 'layout', 0.0 + ((int[shared.number_of[s, 'layout']] + 1) % 4)]
+        return relaid[old, s, t, false]
+    if s.name eq 'motion-carousel' and starts[ev.words, 'card-']
+        chosen = int[shared.number_of[s, 'chosen']]
+        step = 1
+        if _carousel_order[_index_of[ev.words], chosen] lt 3
+            step = -1
+        s = shared.set_number[s, 'chosen', 0.0 + ((chosen + step + 7) % 7)]
+        return relaid[old, s, t, false]
+    if s.name eq 'motion-hero' and ev.words ne ''
+        if animating[s, t]
+            return toggled[s, t]
+        if starts[ev.words, 'card-']
+            s = shared.set_flag[s, 'detailed', true]
+            s = shared.set_number[s, 'detail', 0.0 + _index_of['x-`split[ev.words, \'-\'][1]`']]
+            return relaid[old, s, t, false]
+        if starts[ev.words, 'detail']
+            s = shared.set_flag[s, 'detailed', false]
+            return relaid[old, s, t, false]
+    s
+
+fn _todos_answered[s, ev, t]
+    old = s
+    if ev.id eq 'todo-text' and ev.act eq 'edit'
+        return shared.set_words[s, 'typed', ev.words]
+    if ev.id eq 'todo-add' and ev.act eq 'press'
+        typed = shared.words_of[s, 'typed', '']
+        if typed eq ''
+            return s
+        ids = _todo_ids[s]
+        next = _index_of['x-`ids[len[ids] - 1]`'] + 1
+        s = shared.set_list[s, 'todos', push[ids, '`next`']]
+        s = shared.set_words[s, 'todo-`next`', typed]
+        s = shared.set_flag[s, 'done-`next`', false]
+        s = shared.set_words[s, 'typed', '']
+        return relaid[old, s, t, false]
+    parts = split[ev.id, '-']
+    if len[parts] ne 3 or parts[0] ne 'todo'
+        return s
+    if parts[2] eq 'check' and ev.act eq 'toggle'
+        s = shared.set_flag[s, 'done-`parts[1]`', ev.num gt 0.5]
+        return relaid[old, s, t, false]
+    if parts[2] eq 'remove' and ev.act eq 'press'
+        kept = shared.no_words[]
+        for id in _todo_ids[s]
+            if id ne parts[1]
+                kept = push[kept, id]
+        s = shared.set_list[s, 'todos', kept]
+        return relaid[old, s, t, false]
+    s
+
+--- the part's trees shown on a canvas
+fn shown_on[c, s, t]
+    gui.show[c, motion_todos_view[s, t]]

@@ -1,0 +1,201 @@
+--- What lory.space reckons and draws, written out, to diff the
+--- interpreter's run against the compiled program's: lenses, a look,
+--- matrices composed, taken apart, multiplied and undone, quaternions and
+--- angles, rays from a camera and what they meet, a raycaster's hits on a
+--- box, a sphere, lines and points, bounds, a frustum and what it holds, a
+--- line's measures, and the page's calls that hold and draw forms —
+--- indexed triangles, lines, points, colours a vertex, dashes, a surface
+--- pushed under its edges and one blended. Every number is written to 17
+--- places. From the repository's root: `bash tests/modes.sh crow
+--- tests/modes/space.co`.
+use lory
+use lory.space
+use lory.geometry
+use lory.gui
+use lory.controls
+use lory.flip
+
+--- a number to 17 places
+fn _digits[x]
+    fmt[x, decimals = 17]
+
+--- numbers written to 17 places, one after another
+fn _all[xs]
+    words = []
+    for x in xs
+        words = push[words, _digits[x]]
+    join[words, ' ']
+
+--- a hit as words
+fn _hit_words[h]
+    '`_digits[h.distance]` at `_all[h.point]` on `h.index` `h.face` facing `_all[h.facing]` off `_digits[h.off_ray]`'
+
+fn _still[]
+    json['{"t": 0, "width": 800, "height": 600, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 800, "height": 600, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+log['lens: `_all[space.lens[50.0, 1.5, 0.1, 100.0]]`']
+log['lens zoomed: `_all[space.lens[75.0, 0.75, 0.5, 40.0, 2.0]]`']
+log['straight lens: `_all[space.lens_straight[-4.0, 4.0, 3.0, -3.0, 0.1, 100.0, 1.5]]`']
+log['aimed: `_all[space.aimed[[3.0, 2.0, 4.0], [0.0, 0.5, 0.0], [0.0, 1.0, 0.0]]]`']
+log['aimed straight down: `_all[space.aimed[[0.0, 10.0, 0.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]]`']
+q = space.quaternion_of_angles[[0.3, -0.7, 1.1], 'YXZ']
+log['quaternion of angles: `_all[q]`']
+log['quaternion of an axis: `_all[space.quaternion_of_axis[[0.6, 0.8, 0.0], 2.5]]`']
+m = space.compose[[1.0, -2.0, 0.5], q, [2.0, 0.5, 3.0]]
+log['composed: `_all[m]`']
+p = space.decompose[m]
+log['taken apart: `_all[p.position]` turned `_all[p.quaternion]` scaled `_all[p.scale]`']
+log['determinant: `_digits[space.determinant[m]]`, largest scale `_digits[space.largest_scale[m]]`']
+log['undone: `_all[space.inverse[m]]`']
+log['times: `_all[space.times[m, space.inverse[m]]]`']
+back = space.angles_of_quaternion[q, 'YXZ']
+other = space.angles_of_matrix[space.turn_matrix[q], 'ZYX']
+log['angles back: `_all[back]` and `_all[other]`']
+log['quaternions multiplied: `_all[space.quaternion_times[q, space.quaternion_of_axis[[0.0, 1.0, 0.0], 0.5]]]`']
+log['slerp: `_all[space.turn_between[q, [0.0, 0.0, 0.0, 1.0], 0.3]]` and near: `_all[space.turn_between[q, q, 0.5]]`']
+log['a point through: `_all[space.point_through[m, [0.5, -1.0, 2.0]]]`, a way: `_all[space.way_through[m, [0.5, -1.0, 2.0]]]`']
+cam = space.camera_at[space.lens[50.0, 1.5, 0.1, 100.0], [3.0, 2.0, 6.0], [0.0, 0.5, 0.0], [0.0, 1.0, 0.0]]
+log['camera: world `_all[cam.world]` view `_all[cam.viewing]`']
+r = space.ray_from[cam, 0.25, -0.1]
+log['ray from the camera: `_all[r.from]` going `_all[r.way]`']
+flat = space.camera_at[space.lens_straight[-4.0, 4.0, 3.0, -3.0, 0.1, 100.0], [0.0, 6.0, 6.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+straight = space.ray_from[flat, -0.5, 0.5]
+log['ray from a straight camera: `_all[straight.from]` going `_all[straight.way]`']
+b = space.meets_box[r, [-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]]
+log['meets a box: `b.met` at `_all[b.at]`']
+s = space.meets_sphere[r, [0.0, 0.5, 0.0], 1.0]
+log['meets a sphere: `s.met` at `_all[s.at]`']
+t = space.meets_triangle[r, [-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0], false]
+log['meets a triangle: `t.met` at `_all[t.at]`']
+n = space.nearest_to_segment[r, [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+log['nearest a segment: `_digits[n.apart]` on the ray `_all[n.on_ray]` on the segment `_all[n.on_segment]`']
+log['apart from a point: `_digits[space.apart_from_ray[r, [1.0, 2.0, -3.0]]]` nearest `_all[space.nearest_on_ray[r, [1.0, 2.0, -3.0]]]`']
+knot = geometry.torus_knot[1.0, 0.4, 32, 6, 2.0, 3.0]
+form = geometry.space_form[knot]
+at_knot = space.Ray[[0.55, 0.5, 5.0], [0.0, 0.0, -1.0], true]
+for h in space.hits[at_knot, form, space.compose[[0.0, 0.5, 0.0], q, [0.6, 0.6, 0.6]], 'double']
+    log['knot hit: `_hit_words[h]`']
+inside = space.Ray[[0.1, 0.2, 0.0], [0.6, 0.8, 0.0], true]
+for h in space.hits[inside, geometry.space_form[geometry.sphere[1.0, 8, 6]], lory.identity[], 'back', 1.0, 0.5, 20.0]
+    log['sphere hit from within: `_hit_words[h]`']
+zigzag = [-1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.5, 0.5, -0.5, -1.0]
+for kind in ['segments', 'polyline', 'closed', 'dots']
+    f = space.dots[zigzag]
+    if kind eq 'segments'
+        f = space.segments[zigzag]
+    if kind eq 'polyline'
+        f = space.polyline[zigzag]
+    if kind eq 'closed'
+        f = space.closed_line[zigzag]
+    for h in space.hits[at_knot, f, space.compose[[0.0, 0.5, 0.0], q, [1.0, 1.0, 1.0]], 'front', 0.6]
+        log['`kind` hit: `_hit_words[h]`']
+    log['`kind` measured: `_all[space.measures[space.measured[f]]]`']
+log['bounds: `_all[space.box_of[knot.positions]]` sphere `_all[space.sphere_of[knot.positions]]`']
+log['bounds placed: `_all[space.box_through[space.box_of[knot.positions], m]]` sphere `_all[space.sphere_through[space.sphere_of[knot.positions], m]]`']
+planes = space.frustum_of[space.seen_through[cam]]
+log['frustum: `_all[planes]`']
+log['in sight: `space.holds_sphere[planes, [0.0, 0.0, 0.0], 1.0]` `space.holds_sphere[planes, [40.0, 0.0, 0.0], 1.0]` `space.holds_box[planes, [-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]]` `space.holds_box[planes, [30.0, 30.0, 30.0], [31.0, 31.0, 31.0]]` `space.in_sight[cam, form, lory.identity[]]`']
+
+--- (the page's calls: forms held and drawn in the scene)
+c = lory.begin[_still[]]
+c = space.mesh_form[c, 'knot', form]
+c = space.mesh_form[c, 'knot edges', geometry.space_segments[geometry.edges[knot, 20.0]]]
+c = space.mesh_form[c, 'zigzag', space.colored[space.measured[space.polyline[zigzag]], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]]]
+c = space.mesh_form[c, 'stars', space.colored[space.dots[zigzag], [1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]]]
+c = space.scene[c, space.orbit[c, 'modes', [0.0, 0.0, 0.0], 6.0], space.daylight[]]
+c = space.draw[c, 'knot', lory.identity[], space.pushed_back[space.plain[lory.hex['#4dabf7']]]]
+c = space.draw[c, 'knot edges', lory.identity[], space.shown[lory.white[]]]
+c = space.draw[c, 'zigzag', lory.identity[], space.dashed[space.shown[lory.white[]], 0.2, 0.1, 1.0]]
+c = space.draw[c, 'stars', lory.identity[], space.shrinks[space.spots[lory.white[], 8.0]]]
+c = space.draw[c, 'knot', lory.translation[2.0, 0.0, 0.0], space.blended[space.shown[lory.Color[1.0, 0.5, 0.0, 0.5]]]]
+log['asked: `len[c.asks]` calls']
+for call in c.asks
+    words = join[call, ' ']
+    if len[words] gt 160
+        log['  `slice[words, 0, 160]`…']
+    else
+        log['  `words`']
+log['drawn: `len[c.deep]` calls']
+for call in c.deep
+    words = join[call, ' ']
+    log['  `words`']
+
+--- (three's looks: colours in linear light, lamps, their shadows' cameras,
+--- helpers' forms, and the calls a scene of them makes)
+orange = lory.hex['#ff8844']
+dim = lory.hex['#0a0b0c']
+log['linear: `_all[space.linear_of[orange]]` `_all[space.linear_of[dim]]`']
+sun = space.casting[space.directional[lory.white[], 2.5, [5.0, 10.0, 5.0], [0.0, 0.0, 0.0]], 8.0, 0.5, 30.0, -0.001]
+log['lamp camera: `_all[space.lamp_camera[sun].world]` `_all[space.lamp_camera[sun].projection]`']
+log['shadow matrix: `_all[space.shadow_matrix[sun]]`']
+cone = space.casting[space.spotlight[lory.white[], 150.0, [0.0, 10.0, 0.0], [-5.0, 0.0, 0.0], 0.5, 0.2, 30.0, 2.0], 1.0, 0.5, 40.0, 0.0]
+log['spot shadow matrix: `_all[space.shadow_matrix[cone]]`']
+grid = space.grid_form[10.0, 10, lory.hex['#444444'], lory.hex['#888888']]
+log['grid: `_all[grid.shape.at]` coloured `_all[grid.colors]`']
+log['axes: `_all[space.axes_form[3.0].colors]` box lines: `space.box_lines_form[].indices` at `_all[space.box_lines_at[[-1.0, 0.0, -1.0], [1.0, 2.0, 1.0]]]`']
+moved = geometry.translated[geometry.cone[0.5, 1.0, 5, 1], 0.0, -0.5, 0.0]
+log['arrow head: `_all[moved.positions]`']
+d = lory.begin[_still[]]
+d = space.texture[d, 'checker', 2, 2, [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255], false, true]
+d = space.mesh_form[d, 'knot', form]
+d = space.mesh_copies[d, 'copies', form, [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 2.0, 0.0, 0.0, 1.0], [0.5, 0.25, 1.0]]
+d = space.mesh_form[d, 'grid', grid]
+d = space.view_box[d, [0.0, 0.0, 320.0, 240.0], lory.hex['#202830']]
+cam_a = space.camera_at[space.lens[45.0, space.proportion[d], 0.1, 100.0], [0.0, 4.0, 16.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+d = space.through[d, cam_a, space.daylight[]]
+d = space.lamps[d, [space.ambient[lory.white[], 0.4], space.hemisphere[lory.white[], lory.hex['#444444'], 1.0], sun, space.bulb[lory.white[], 150.0, [0.0, 10.0, 0.0], 0.0, 2.0], cone]]
+d = space.fog[d, lory.hex['#add8e6'], 1.0, 20.0]
+d = space.cut[d, [-1.0, 0.0, 0.0, 0.5]]
+d = space.draw[d, 'knot', lory.identity[], space.two_sided[space.glossy[lory.hex['#4488cc'], lory.hex['#222222'], 60.0]]]
+d = space.uncut[d]
+d = space.draw[d, 'knot', lory.translation[1.0, 0.0, 0.0], space.faceted[space.matte[lory.hex['#88cc44']]]]
+d = space.draw[d, 'knot', lory.translation[-1.0, 0.0, 0.0], space.standard[lory.hex['#ff8844'], 1.0, 0.3]]
+d = space.draw[d, 'knot', lory.translation[0.0, 1.0, 0.0], space.repeated[space.with_texture[space.basic[lory.white[]], 'checker'], 20.0, 20.0]]
+d = space.draw[d, 'copies', lory.identity[], space.matte[lory.white[]]]
+d = space.move_copies[d, 'copies', [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 2.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -2.0, 0.0, 0.0, 1.0], [0.5, 0.25, 1.0, 1.0, 1.0, 1.0]]
+d = space.draw[d, 'copies', lory.identity[], space.blended[space.matte[lory.Color[1.0, 1.0, 1.0, 0.5]]]]
+d = space.draw[d, 'grid', lory.identity[], space.basic[lory.white[]]]
+d = space.haze[d, lory.hex['#add8e6'], 0.12]
+d = space.view_box[d, [320.0, 0.0, 320.0, 240.0], lory.hex['#302820']]
+cam_b = space.camera_at[space.lens_straight[-6.0, 6.0, 4.5, -4.5, 0.1, 100.0], [0.0, 4.0, 16.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+d = space.through[d, cam_b, space.daylight[]]
+d = space.draw[d, 'knot', lory.identity[], space.dotted[space.shrinks[space.basic[lory.white[]]], 0.1]]
+d = space.draw[d, 'knot', lory.identity[], space.facing_colors[]]
+log['three asked: `len[d.asks]` calls, early `len[d.early]`']
+for call in d.asks
+    words = join[call, ' ']
+    if len[words] gt 160
+        log['  `slice[words, 0, 160]`…']
+    else
+        log['  `words`']
+for call in d.early
+    words = join[call, ' ']
+    log['  early `words`']
+log['three drawn: `len[d.deep]` calls']
+for call in d.deep
+    words = join[call, ' ']
+    if len[words] gt 400
+        log['  `slice[words, 0, 400]`…']
+    else
+        log['  `words`']
+
+--- (the controls' steps, and a flipping shape's faces)
+flight = controls.flight_steered[controls.Flight[[0.0, 1.0, 12.0], [0.0, 0.0, 0.0, 1.0], false, 0.0, 0.0, 0.0, 0.0], [0.3, -0.2, -1.0], [0.4, 0.7, -0.2], 0.25]
+log['flown: `_all[flight.at]` turned `_all[flight.turn]`']
+ball_turned = controls.rolled[controls.Ball[[0.0, 4.0, 16.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0], true, 0.0, 0.0], 37.0, -12.0, 2.0]
+log['rolled: `_all[ball_turned.offset]` up `_all[ball_turned.up]`']
+two_places = push[push[[], [0.0, 0.0, 0.0]], [3.0, 0.0, 0.0]]
+box_form = space.triangles[space.box[1.0, 1.0, 1.0]]
+took_one = controls.taken[controls.Dragged[two_places, -1, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]], space.Ray[[0.1, 0.2, 10.0], [0.0, 0.0, -1.0], true], box_form, [0.0, 0.0, 1.0]]
+dragged_to = controls.moved_to[took_one, space.Ray[[0.0, 0.0, 9.0], [0.2, 0.1, -1.0], true]]
+log['dragged: `took_one.held` at `_all[took_one.point]` to `_all[dragged_to.places[0]]`']
+quad = [100.0, 50.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 300.0, 250.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+log['turned face: `_all[flip.turned_verts[quad, 0, 200.0, 150.0, 0.7, false, 150.0, 1600.0]]`']
+log['turned across: `_all[flip.turned_verts[quad, 0, 200.0, 150.0, -0.4, true, 100.0, 1600.0]]`']
+flip_sides = [gui.panel[[gui.heading['One']]], gui.panel[[gui.heading['Two']]]]
+asked = flip.flip['modes', 'left']
+shape_then = flip.shape[lory.begin[_still[]], 'modes', flip_sides, 40.0, 40.0, 300.0, 180.0, gui.dark[]]
+mid_frame = json['{"t": 350, "width": 800, "height": 600, "ratio": 1, "xr": false, "views": [], "input": [], "pointers": [], "controllers": [], "said": []}']
+shape_mid = flip.shape[lory.begin[mid_frame], 'modes', flip_sides, 40.0, 40.0, 300.0, 180.0, gui.dark[]]
+first_numbers = slice[shape_mid.canvas.verts, 0, 16]
+log['shape: `asked` `shape_then.changing` `shape_mid.shown` to `shape_mid.to`, `len[shape_mid.canvas.verts]` numbers, the first `_all[first_numbers]`']

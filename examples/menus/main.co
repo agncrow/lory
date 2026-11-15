@@ -1,0 +1,188 @@
+--- Lory's menus, overlays and disclosure (`use lory.menus`,
+--- `lory.overlays`, `lory.disclosure`), drawn by Lory: a notes editor's
+--- menubar (File, Edit, View) whose items open a dialog, an alert dialog
+--- and a sheet; a context menu on the page's notes; a command palette on
+--- Control-K or Command-K (or View's item); toasts for what was done; a
+--- hover card on the author's name and a tooltip on a button; an
+--- accordion of questions, and a tree of files with checkboxes (a double
+--- press on a file makes it a folder). The program's state is a record
+--- kept in process memory between frames. In a headset the page stands on
+--- a panel and the ray presses as the pointer does.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.menus
+use lory.overlays
+use lory.disclosure
+
+--- what the program holds between frames: the palette open and what is
+--- typed in it, the dialogs and the sheet open, the folds open, the
+--- notices shown, how many were made, the files made into folders, the
+--- wrapping of lines and the zoom chosen
+struct App [palette, query, editing, deleting, sheet, folds, notices, made, folders, wrap, zoom]
+
+fn fresh[]
+    App[false, '', false, false, false, ['what'], [overlays.notice['hello', 'Welcome', words = 'Right-press the notes, or type Ctrl+K.']], 1, slice[[''], 0, 0], true, 'normal']
+
+--- the menubar's menus: File, Edit and View
+fn pulls[a]
+    notes = [menus.item['new', 'New note', shortcut = 'Ctrl+N'], menus.item['rename', 'Rename…'], menus.separator[], menus.submenu['share', 'Share', [menus.item['mail', 'Mail'], menus.item['link', 'Copy link']]], menus.separator[], menus.item['delete', 'Delete note…'], menus.item['quit', 'Quit', off = true]]
+    edit = [menus.item['undo', 'Undo', shortcut = 'Ctrl+Z'], menus.item['redo', 'Redo', shortcut = 'Ctrl+Shift+Z'], menus.separator[], menus.check['wrap', 'Wrap lines', a.wrap]]
+    looks = [menus.item['palette', 'Command palette', shortcut = 'Ctrl+K'], menus.item['details', 'Details…'], menus.separator[], menus.label['Zoom'], menus.option['zoom', 'small', 'Small', a.zoom eq 'small'], menus.option['zoom', 'normal', 'Normal', a.zoom eq 'normal'], menus.option['zoom', 'large', 'Large', a.zoom eq 'large']]
+    [menus.bar_menu['file', 'File', notes], menus.bar_menu['edit', 'Edit', edit], menus.bar_menu['view', 'View', looks]]
+
+--- the context menu on the notes
+fn context_entries[]
+    [menus.item['copy', 'Copy', shortcut = 'Ctrl+C'], menus.item['paste', 'Paste', shortcut = 'Ctrl+V'], menus.separator[], menus.item['rename', 'Rename…'], menus.item['delete', 'Delete note…']]
+
+--- what the palette finds
+fn commands[]
+    [menus.command['new', 'New note', family = 'Notes', shortcut = 'Ctrl+N'], menus.command['rename', 'Rename note', family = 'Notes'], menus.command['delete', 'Delete note', keywords = 'remove trash', family = 'Notes'], menus.command['details', 'Show details', keywords = 'sheet info', family = 'View'], menus.command['wrap', 'Toggle line wrapping', keywords = 'wrap', family = 'View'], menus.command['small', 'Zoom: small', family = 'View'], menus.command['large', 'Zoom: large', family = 'View'], menus.command['hello', 'Say hello', keywords = 'toast greet']]
+
+--- the accordion's questions
+fn questions[]
+    [disclosure.fold['what', 'What is this?', [gui.text['A page of Lory’s menus, overlays and disclosure, each answering the keys and the pointer as the library it follows does.']]], disclosure.fold['keys', 'Which keys work?', [gui.text['The arrows move along menus, the bar, the palette, these questions and the tree; Enter and space choose; Escape closes; F8 goes to the newest toast.']]], disclosure.fold['where', 'Where are the numbers from?', [gui.text['Radix’s primitives, cmdk, Vuetify and Semantic UI: tests/menus/reference.json holds them.']]]]
+
+--- the tree of files: each file the reader made a folder is one
+fn files[a]
+    [twig['notes', 'notes', [twig['ideas', 'ideas.md', [], a], twig['plans', 'plans.md', [], a], twig['old', 'old', [twig['2025', '2025.md', [], a]], a]], a], twig['photos', 'photos', [twig['sea', 'sea.jpg', [], a], twig['hill', 'hill.jpg', [], a]], a], twig['readme', 'README.md', [], a]]
+
+fn twig[id, words, kids, a]
+    if len[kids] gt 0 or id in a.folders
+        return disclosure.branch[id, words, kids]
+    disclosure.leaf[id, words]
+
+--- a notice made with a fresh id
+fn noticed[a, title, words]
+    a.made = a.made + 1
+    a.notices = push[a.notices, overlays.notice['n`a.made`', title, words = words, act = 'Undo']]
+    a
+
+--- the page: the menubar, the notes (a context menu on them) with the
+--- author's hover card and a tooltip, the questions and the tree side by
+--- side, and the overlays the record opens
+fn page[c, a]
+    bar = menus.menubar[c, 'bar', pulls[a]]
+    author = overlays.hover_card[c, 'author', '@ada', [gui.heading['Ada'], gui.text['Writes the notes. Joined in 2024.']], 'bottom', 'start']
+    bold = overlays.tooltip[c, gui.button['pin', 'Pin'], 'Keep this note on top']
+    notes = menus.context[c, 'notes', [gui.panel[[gui.heading['Ideas'], gui.row[[gui.text['by'], author, bold]], gui.text['Right-press here (or hold a touch) for the note’s menu.'], gui.space[60.0]]]], context_entries[]]
+    left = gui.column[[gui.heading['Questions'], disclosure.accordion[c, 'faq', questions[], a.folds, collapsible = true]]]
+    right = gui.column[[gui.heading['Files'], disclosure.tree[c, 'files', files[a], checks = true]]]
+    kids = [bar, notes, gui.row[[gui.sized[left, 420.0], gui.sized[right, 360.0]], gap = 24.0], overlays.toasts[c, 'shelf', a.notices]]
+    kids = push[kids, overlays.dialog[c, 'rename', 'Rename note', [gui.field['title', 'Ideas'], gui.row[[gui.button['save', 'Save']], justify = 'end']], a.editing, words = 'Give the note a new title.']]
+    kids = push[kids, overlays.alert_dialog[c, 'sure', 'Delete this note?', 'It goes for good, and cannot be brought back.', 'Delete', a.deleting, danger = true]]
+    kids = push[kids, overlays.sheet[c, 'details', [gui.text['Made on 2 March, 412 words.'], gui.text['Shared with no one.']], a.sheet, title = 'Details']]
+    if a.palette
+        kids = push[kids, menus.palette[c, 'pal', commands[], a.query]]
+    gui.column[kids, pad = 16.0]
+
+--- what a chosen item or command does to the record
+fn done[a, what]
+    if what eq 'new'
+        a = noticed[a, 'Note made', 'A new note is open.']
+    if what eq 'rename'
+        a.editing = true
+    if what eq 'delete'
+        a.deleting = true
+    if what eq 'details'
+        a.sheet = true
+    if what eq 'palette'
+        a.palette = true
+        a.query = ''
+    if what eq 'wrap'
+        a.wrap = not a.wrap
+    if what eq 'small' or what eq 'large'
+        a.zoom = what
+    if what eq 'hello' or what eq 'copy' or what eq 'paste' or what eq 'mail' or what eq 'link' or what eq 'undo' or what eq 'redo'
+        a = noticed[a, 'Done', 'You chose “`what`”.']
+    a
+
+--- the record after one of the page's events
+fn applied[a, e]
+    if e.act eq 'choose' and (e.id eq 'file' or e.id eq 'edit' or e.id eq 'view' or e.id eq 'notes')
+        a = done[a, e.words]
+    if e.act eq 'choose' and e.id eq 'pal'
+        a.palette = false
+        a = done[a, e.words]
+    if e.act eq 'dismiss' and e.id eq 'pal'
+        a.palette = false
+    if e.act eq 'check' and e.words eq 'wrap'
+        a.wrap = e.num gt 0.5
+    if e.act eq 'option' and starts[e.words, 'zoom']
+        a.zoom = slice[e.words, 5, len[e.words]]
+    if e.id eq 'save' and e.act eq 'press'
+        a.editing = false
+        a = noticed[a, 'Renamed', 'The note has its new title.']
+    if e.id eq 'rename' and e.act eq 'dismiss'
+        a.editing = false
+    if e.id eq 'sure' and e.act eq 'choose'
+        a.deleting = false
+        a = noticed[a, 'Deleted', 'The note is gone.']
+    if e.id eq 'sure' and e.act eq 'dismiss'
+        a.deleting = false
+    if e.id eq 'details' and e.act eq 'dismiss'
+        a.sheet = false
+    if e.id eq 'files' and e.act eq 'fold'
+        a.folders = push[a.folders, e.words]
+        a = noticed[a, 'Folder made', '“`e.words`” is a folder now.']
+    if e.id eq 'files' and e.act eq 'choose'
+        a = noticed[a, 'Opened', '“`e.words`” is open.']
+    if e.act eq 'dismiss'
+        kept = slice[[overlays.notice['', '']], 0, 0]
+        for n in a.notices
+            if n.id ne e.id
+                kept = push[kept, n]
+        a.notices = kept
+    a
+
+--- one frame: the record recalled, Control-K opening the palette, the
+--- page shown and what the reader did applied
+fn framed[frame]
+    a = recall['menus example', fresh[]]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    if menus.palette_key[c]
+        a.palette = not a.palette
+        a.query = ''
+    shown = gui.show[c, page[c, a]]
+    a.folds = disclosure.folds_open[shown, 'faq', a.folds]
+    a.query = menus.typed_query[shown, 'pal', a.query]
+    for e in shown.events
+        a = applied[a, e]
+    remember['menus example', a]
+    shown
+
+fn draw[frame]
+    shown = framed[frame]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+--- ---- tests ----
+
+fn screen[t, given]
+    json['{"t": `t`, "width": 1200, "height": 800, "ratio": 1, "xr": false, "views": [], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn pressed[b]
+    x = b[0] + 10.0
+    y = b[1] + 10.0
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+--- the page draws, Control-K opens the palette and Escape closes it, and
+--- a press on a file chooses it, its toast shown
+test the_page_draws_and_the_palette_opens_on_control_k[]
+    remember['menus example', fresh[]]
+    first = framed[screen[0.0, '[]']]
+    lory.end[first.canvas] gt 0
+    'bar' in first.boxes
+    'files' in first.boxes
+    framed[screen[16.0, '[{"type": "key", "key": "k", "code": "KeyK", "ctrl": true}]']]
+    recall['menus example', fresh[]].palette
+    framed[screen[32.0, '[]']]
+    framed[screen[48.0, '[{"type": "key", "key": "Escape", "code": "Escape"}]']]
+    not recall['menus example', fresh[]].palette
+    b = first.boxes['files']
+    framed[screen[64.0, pressed[[b[0] + 60.0, b[1] + 2.0 + 28.0 * 2.0, 0.0, 0.0]]]]
+    last = recall['menus example', fresh[]].notices
+    last[len[last] - 1].title eq 'Opened'

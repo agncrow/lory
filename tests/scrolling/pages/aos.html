@@ -1,0 +1,267 @@
+<!doctype html>
+<!-- AOS run on a fixed page, for tests/scrolling/reference.py. The page is
+     given `?v=aos` (AOS 2.3.4) or `?v=aos3` (AOS 3.0.0-beta.6) and `run`
+     (which init settings), and writes what AOS did as JSON into #out. -->
+<html><head><meta charset="utf-8">
+<script>
+const params = new URLSearchParams(location.search);
+const version = params.get('v');
+const run = params.get('run') || 'defaults';
+document.write('<link rel="stylesheet" href="lib/' + version + '/dist/aos.css">');
+</script>
+<style>
+body { margin: 0; font: 12px sans-serif; }
+#box { position: relative; height: 6000px; }
+#box > div { position: absolute; left: 20px; width: 240px; }
+#out { position: fixed; top: 0; right: 0; width: 10px; height: 10px; overflow: hidden; margin: 0; }
+</style></head><body>
+<div id="box"></div>
+<pre id="out">pending</pre>
+<script>
+document.write('<script src="lib/' + version + '/dist/aos.js"><\/script>');
+</script>
+<script>
+// The placements, AOS's own nine, and the offsets an element may name
+// (none: the init's offset applies, unless it names a placement).
+const placements = [null, 'top-bottom', 'center-bottom', 'bottom-bottom', 'top-center', 'center-center',
+  'bottom-center', 'top-top', 'center-top', 'bottom-top'];
+const offsets = [null, '0', '80', '-40'];
+const heights = [100, 150, 75];
+const cases = [];
+let place = 900;
+let i = 0;
+for (const placement of placements) {
+  for (const offset of offsets) {
+    cases.push({id: 'e' + i, top: place, height: heights[i % 3], placement, offset});
+    place += 97;
+    i++;
+  }
+}
+// an element whose trigger is another's place (data-aos-anchor)
+cases.push({id: 'anchored', top: 300, height: 50, placement: null, offset: null, anchor: '#e7'});
+cases.push({id: 'anchored2', top: 5500, height: 50, placement: 'center-center', offset: '30', anchor: '#e20'});
+// once and mirror named on the element
+cases.push({id: 'once_true', top: 1600, height: 120, placement: null, offset: null, once: 'true'});
+cases.push({id: 'once_false', top: 1700, height: 120, placement: null, offset: null, once: 'false'});
+if (version === 'aos3') {
+  cases.push({id: 'mirror_true', top: 2500, height: 200, placement: null, offset: null, mirror: 'true'});
+  cases.push({id: 'mirror_offset', top: 2900, height: 300, placement: 'center-bottom', offset: '50', mirror: 'true'});
+  cases.push({id: 'mirror_false', top: 3300, height: 200, placement: null, offset: null, mirror: 'false'});
+}
+const box = document.getElementById('box');
+for (const k of cases) {
+  const el = document.createElement('div');
+  el.id = k.id;
+  el.setAttribute('data-aos', 'fade-up');
+  el.style.top = k.top + 'px';
+  el.style.height = k.height + 'px';
+  if (k.placement) el.setAttribute('data-aos-anchor-placement', k.placement);
+  if (k.offset !== null) el.setAttribute('data-aos-offset', k.offset);
+  if (k.anchor) el.setAttribute('data-aos-anchor', k.anchor);
+  if (k.once) el.setAttribute('data-aos-once', k.once);
+  if (k.mirror) el.setAttribute('data-aos-mirror', k.mirror);
+  box.appendChild(el);
+}
+
+// the init's settings for this run
+const settings = {
+  defaults: {},
+  moved: {offset: 60, anchorPlacement: 'bottom-center'},
+  once: {once: true},
+  mirror: {mirror: true},
+  timing: {duration: 425, delay: 75, easing: 'ease-in-back'},
+}[run];
+settings.throttleDelay = 0;
+settings.debounceDelay = 0;
+settings.disableMutationObserver = true;
+
+const out = {version, run, settings, window_height: window.innerHeight, cases: []};
+
+function animated(el) { return el.classList.contains('aos-animate'); }
+
+function sweep(from, to, step) {
+  const els = cases.map(k => document.getElementById(k.id));
+  const was = els.map(animated);
+  const changes = cases.map(() => []);
+  for (let y = from; step > 0 ? y <= to : y >= to; y += step) {
+    window.scrollTo(0, y);
+    window.dispatchEvent(new Event('scroll'));
+    els.forEach((el, j) => {
+      const now = animated(el);
+      if (now !== was[j]) { changes[j].push([window.pageYOffset, now ? 1 : 0]); was[j] = now; }
+    });
+  }
+  return changes;
+}
+
+function timing(el) {
+  const s = getComputedStyle(el);
+  return {duration: s.transitionDuration, delay: s.transitionDelay, easing: s.transitionTimingFunction,
+          property: s.transitionProperty};
+}
+
+function matrix(el) {
+  const t = el.computedStyleMap().get('transform');
+  if (!t || t.toString() === 'none') return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  // (exact from the typed value; a percentage needs the box, so the
+  // computed matrix, which the box resolves, is read instead)
+  try { return Array.from(t.toMatrix().toFloat64Array()); }
+  catch (e) { return Array.from(new DOMMatrix(getComputedStyle(el).transform).toFloat64Array()); }
+}
+
+function looks(el) {
+  const s = getComputedStyle(el);
+  return {opacity: Number(el.computedStyleMap().get('opacity').value), visibility: s.visibility, matrix: matrix(el)};
+}
+
+window.addEventListener('load', () => {
+  const made = AOS.init(settings);
+  setTimeout(() => {
+    window.scrollTo(0, 0);
+    AOS.refresh();
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    out.max_scroll = max;
+    // where AOS put each element's trigger
+    const positions = {};
+    for (const el of (made || [])) {
+      if (el.position !== undefined) positions[el.node.id] = el.position;
+    }
+    const down = sweep(0, max, 1);
+    const up = sweep(max, 0, -1);
+    const again = sweep(0, max, 1);
+    cases.forEach((k, j) => {
+      const el = document.getElementById(k.id);
+      out.cases.push({...k, offset_top: el.offsetTop, offset_height: el.offsetHeight,
+                      position: positions[k.id] === undefined ? null : positions[k.id],
+                      down: down[j], up: up[j], again: again[j]});
+    });
+
+    // the transition each element is given by AOS's stylesheet: its
+    // duration, delay and easing, hidden and shown
+    const timed = [];
+    const durations = [null, '50', '425', '3000', '3050', '0', '1250'];
+    const delays = [null, '0', '300', '125', '3000', '3050'];
+    const easings = [null, 'linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out', 'ease-in-back', 'ease-out-back',
+      'ease-in-out-back', 'ease-in-sine', 'ease-out-sine', 'ease-in-out-sine', 'ease-in-quad', 'ease-out-quad',
+      'ease-in-out-quad', 'ease-in-cubic', 'ease-out-cubic', 'ease-in-out-cubic', 'ease-in-quart', 'ease-out-quart',
+      'ease-in-out-quart', 'bogus'];
+    const probe = document.createElement('div');
+    probe.style.top = '0px';
+    probe.style.height = '10px';
+    box.appendChild(probe);
+    const measure = (attr, values) => {
+      for (const v of values) {
+        probe.setAttribute('data-aos', 'fade-up');
+        for (const a of ['data-aos-duration', 'data-aos-delay', 'data-aos-easing']) probe.removeAttribute(a);
+        if (v !== null) probe.setAttribute(attr, v);
+        probe.classList.remove('aos-animate');
+        const hidden = timing(probe);
+        probe.classList.add('aos-animate');
+        const shown = timing(probe);
+        probe.classList.remove('aos-animate');
+        timed.push({attr, value: v, hidden, shown});
+      }
+    };
+    measure('data-aos-duration', durations);
+    measure('data-aos-delay', delays);
+    measure('data-aos-easing', easings);
+    out.timing = timed;
+    out.body = {duration: document.body.getAttribute('data-aos-duration'), delay: document.body.getAttribute('data-aos-delay'),
+                easing: document.body.getAttribute('data-aos-easing')};
+
+    if (run === 'defaults') {
+      // each easing's curve as the browser draws it: the timing function
+      // AOS's stylesheet gives, sampled by an animation held at 41 times
+      const curves = [];
+      for (const name of easings.slice(1, 21)) {
+        probe.setAttribute('data-aos-easing', name);
+        const fn = getComputedStyle(probe).transitionTimingFunction;
+        const a = probe.animate([{opacity: 0}, {opacity: 1}], {duration: 1000, easing: fn, fill: 'both'});
+        a.pause();
+        const ys = [];
+        for (let k = 0; k <= 40; k++) { a.currentTime = k * 25; ys.push(a.effect.getComputedTiming().progress); }
+        a.cancel();
+        curves.push({name, css: fn, at: ys});
+      }
+      out.curves = curves;
+
+      // every animation's look hidden, shown, and on its way (the
+      // transition held at a quarter, a half and three quarters, eased
+      // linearly so the look is AOS's alone)
+      const names = ['fade', 'fade-up', 'fade-down', 'fade-left', 'fade-right', 'fade-up-right', 'fade-up-left',
+        'fade-down-right', 'fade-down-left', 'flip-up', 'flip-down', 'flip-left', 'flip-right', 'slide-up',
+        'slide-down', 'slide-left', 'slide-right', 'zoom-in', 'zoom-in-up', 'zoom-in-down', 'zoom-in-left',
+        'zoom-in-right', 'zoom-out', 'zoom-out-up', 'zoom-out-down', 'zoom-out-left', 'zoom-out-right', 'fade-zoom-in'];
+      const looked = [];
+      const shape = document.createElement('div');
+      shape.style.top = '10px';
+      shape.style.width = '240px';
+      shape.style.height = '120px';
+      box.appendChild(shape);
+      for (const name of names) {
+        shape.setAttribute('data-aos', name);
+        shape.style.transition = 'none';
+        shape.classList.remove('aos-animate');
+        const hidden = looks(shape);
+        shape.classList.add('aos-animate');
+        const shown = looks(shape);
+        shape.classList.remove('aos-animate');
+        void getComputedStyle(shape).opacity;
+        shape.style.transition = '';
+        shape.style.transitionDuration = '1000ms';
+        shape.style.transitionDelay = '0s';
+        shape.style.transitionTimingFunction = 'linear';
+        void getComputedStyle(shape).opacity;
+        shape.classList.add('aos-animate');
+        void getComputedStyle(shape).opacity;
+        const running = shape.getAnimations();
+        running.forEach(a => a.pause());
+        const between = [];
+        for (const t of [250, 500, 750]) {
+          running.forEach(a => { a.currentTime = t; });
+          between.push({t, ...looks(shape)});
+        }
+        running.forEach(a => a.cancel());
+        shape.style.transition = 'none';
+        shape.classList.remove('aos-animate');
+        looked.push({name, hidden, shown, between, transitioned: running.map(a => a.transitionProperty)});
+      }
+      out.looks = looked;
+
+      // a transition turned back halfway: the element shown, its
+      // transition held at 300 of 1000 ms, then hidden; the browser
+      // shortens the way back (CSS Transitions' reversing shortening)
+      const back = document.createElement('div');
+      back.style.top = '20px';
+      back.style.height = '50px';
+      back.setAttribute('data-aos', 'fade-up');
+      back.setAttribute('data-aos-easing', 'ease-out-quad');
+      back.setAttribute('data-aos-duration', '1000');
+      back.setAttribute('data-aos-delay', '200');
+      box.appendChild(back);
+      void getComputedStyle(back).opacity;
+      back.classList.add('aos-animate');
+      void getComputedStyle(back).opacity;
+      const going = back.getAnimations();
+      going.forEach(a => { a.pause(); a.currentTime = 500; });
+      const midway = looks(back);
+      const going_timing = going.map(a => ({property: a.transitionProperty, ...a.effect.getTiming(), easing: a.effect.getTiming().easing}));
+      back.classList.remove('aos-animate');
+      void getComputedStyle(back).opacity;
+      const returning = back.getAnimations();
+      const ret = returning.map(a => {
+        const tm = a.effect.getTiming();
+        a.pause();
+        const samples = [];
+        for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+          a.currentTime = (tm.delay + tm.duration) * f;
+          samples.push({t: (tm.delay + tm.duration) * f, opacity: Number(back.computedStyleMap().get('opacity').value), matrix: matrix(back)});
+        }
+        return {property: a.transitionProperty, duration: tm.duration, delay: tm.delay, easing: tm.easing, samples};
+      });
+      out.reversed = {held_at: 500, midway, going: going_timing, returning: ret};
+    }
+    document.getElementById('out').textContent = JSON.stringify(out);
+  }, 300);
+});
+</script></body></html>

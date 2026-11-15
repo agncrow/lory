@@ -1,0 +1,294 @@
+--- Lory's pickers held to react-datepicker 9.1.0, as its source (read in
+--- its published `dist/index.js`) decides: the keys over a month's days,
+--- the days a key steps past, the bounds, the keys over months, quarters
+--- and years, the order a range is chosen in, several days chosen, and its
+--- list of times. Each truth is one case worked by its rules; where Lory
+--- departs from them on purpose, the truth says so. Run from the
+--- repository's root: `crow test tests/pickers/datepicker.co`.
+use lory
+use lory.gui
+use lory.calendar
+use lory.pickers
+
+fn rdp_day[y, m, n]
+    calendar.day[y, m, n]
+
+--- a key from a day, in a month whose weeks begin on Sunday, any day
+--- allowed but those the rules leave out
+fn rdp_moved[t, key, shift, r]
+    calendar.key_moved[t, key, shift, r, 0, false]
+
+fn _words[days]
+    out = []
+    for t in days
+        out = push[out, calendar.format[t, 'yyyy-MM-dd', calendar.locale['en-US']]]
+    join[out, ' ']
+
+test the_arrows_move_a_day_across_and_a_week_up_and_down[]
+    r = calendar.rules[]
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowRight', false, r] eq rdp_day[2024, 3, 14]
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowLeft', false, r] eq rdp_day[2024, 3, 12]
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowDown', false, r] eq rdp_day[2024, 3, 20]
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowUp', false, r] eq rdp_day[2024, 3, 6]
+    --- (across the ends of months and years)
+    rdp_moved[rdp_day[2024, 3, 1], 'ArrowLeft', false, r] eq rdp_day[2024, 2, 29]
+    rdp_moved[rdp_day[2023, 12, 31], 'ArrowRight', false, r] eq rdp_day[2024, 1, 1]
+    rdp_moved[rdp_day[2024, 1, 3], 'ArrowUp', false, r] eq rdp_day[2023, 12, 27]
+    rdp_moved[rdp_day[2024, 12, 28], 'ArrowDown', false, r] eq rdp_day[2025, 1, 4]
+    --- (Shift changes no arrow)
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowRight', true, r] eq rdp_day[2024, 3, 14]
+    --- (a week picker's left and right arrows move a week: showWeekPicker)
+    calendar.key_moved[rdp_day[2024, 3, 13], 'ArrowRight', false, r, 0, true] eq rdp_day[2024, 3, 20]
+    calendar.key_moved[rdp_day[2024, 3, 13], 'ArrowLeft', false, r, 0, true] eq rdp_day[2024, 3, 6]
+
+test page_keys_move_a_month_and_with_shift_a_year_keeping_to_the_month[]
+    r = calendar.rules[]
+    rdp_moved[rdp_day[2024, 3, 13], 'PageDown', false, r] eq rdp_day[2024, 4, 13]
+    rdp_moved[rdp_day[2024, 3, 13], 'PageUp', false, r] eq rdp_day[2024, 2, 13]
+    rdp_moved[rdp_day[2024, 3, 13], 'PageDown', true, r] eq rdp_day[2025, 3, 13]
+    rdp_moved[rdp_day[2024, 3, 13], 'PageUp', true, r] eq rdp_day[2023, 3, 13]
+    --- (date-fns's addMonths: a day the month lacks is its last)
+    rdp_moved[rdp_day[2024, 1, 31], 'PageDown', false, r] eq rdp_day[2024, 2, 29]
+    rdp_moved[rdp_day[2024, 3, 31], 'PageUp', false, r] eq rdp_day[2024, 2, 29]
+    rdp_moved[rdp_day[2024, 2, 29], 'PageDown', true, r] eq rdp_day[2025, 2, 28]
+    rdp_moved[rdp_day[2024, 12, 15], 'PageDown', false, r] eq rdp_day[2025, 1, 15]
+
+test home_goes_to_the_weeks_first_day_and_end_to_its_last[]
+    r = calendar.rules[]
+    rdp_moved[rdp_day[2024, 3, 13], 'Home', false, r] eq rdp_day[2024, 3, 10]
+    rdp_moved[rdp_day[2024, 3, 13], 'End', false, r] eq rdp_day[2024, 3, 16]
+    rdp_moved[rdp_day[2024, 3, 10], 'Home', false, r] eq rdp_day[2024, 3, 10]
+    calendar.key_moved[rdp_day[2024, 3, 13], 'Home', false, r, 1, false] eq rdp_day[2024, 3, 11]
+    --- (react-datepicker's End is the week's Saturday whatever day it
+    --- begins on, where its documents say the week's last day: Lory does
+    --- as they say)
+    calendar.key_moved[rdp_day[2024, 3, 13], 'End', false, r, 1, false] eq rdp_day[2024, 3, 17]
+
+test days_that_may_not_be_chosen_are_stepped_past_in_the_keys_way[]
+    r = calendar.rules[]
+    two = calendar.excluding[r, [rdp_day[2024, 3, 14], rdp_day[2024, 3, 15]]]
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowRight', false, two] eq rdp_day[2024, 3, 16]
+    rdp_moved[rdp_day[2024, 3, 16], 'ArrowLeft', false, two] eq rdp_day[2024, 3, 13]
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowDown', false, calendar.excluding[r, [rdp_day[2024, 3, 20]]]] eq rdp_day[2024, 3, 27]
+    --- (Page Up and Home onto a day left out go on to later days, Page
+    --- Down and End back to earlier ones)
+    rdp_moved[rdp_day[2024, 3, 13], 'PageUp', false, calendar.excluding[r, [rdp_day[2024, 2, 13]]]] eq rdp_day[2024, 2, 14]
+    rdp_moved[rdp_day[2024, 3, 13], 'PageDown', false, calendar.excluding[r, [rdp_day[2024, 4, 13]]]] eq rdp_day[2024, 4, 12]
+    rdp_moved[rdp_day[2024, 3, 13], 'Home', false, calendar.excluding[r, [rdp_day[2024, 3, 10]]]] eq rdp_day[2024, 3, 11]
+    rdp_moved[rdp_day[2024, 3, 13], 'End', false, calendar.excluding[r, [rdp_day[2024, 3, 16]]]] eq rdp_day[2024, 3, 15]
+    --- (a filter: the weekend passed over)
+    rdp_moved[rdp_day[2024, 3, 15], 'ArrowRight', false, calendar.filtered[r, rdp_weekdays]] eq rdp_day[2024, 3, 18]
+    --- (days only included: the next of them)
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowRight', false, calendar.including[r, [rdp_day[2024, 3, 13], rdp_day[2024, 3, 19]]]] eq rdp_day[2024, 3, 19]
+
+fn rdp_weekdays[t]
+    calendar.weekday[t] ne 0 and calendar.weekday[t] ne 6
+
+test the_bounds_turn_the_focus_to_the_nearest_day_allowed[]
+    r = calendar.bounded[calendar.rules[], rdp_day[2024, 3, 5], rdp_day[2024, 3, 31]]
+    rdp_moved[rdp_day[2024, 3, 8], 'ArrowUp', false, r] eq rdp_day[2024, 3, 5]
+    rdp_moved[rdp_day[2024, 3, 28], 'ArrowDown', false, r] eq rdp_day[2024, 3, 31]
+    rdp_moved[rdp_day[2024, 3, 20], 'PageDown', false, r] eq rdp_day[2024, 3, 31]
+    rdp_moved[rdp_day[2024, 3, 20], 'PageUp', false, r] eq rdp_day[2024, 3, 5]
+    --- (the first day allowed left out too: on from it, past it)
+    both = calendar.excluding[r, [rdp_day[2024, 3, 5]]]
+    rdp_moved[rdp_day[2024, 3, 8], 'ArrowUp', false, both] eq rdp_day[2024, 3, 6]
+    rdp_moved[rdp_day[2024, 3, 31], 'ArrowRight', false, calendar.excluding[r, [rdp_day[2024, 3, 31]]]] eq rdp_day[2024, 3, 30]
+
+fn rdp_never[t]
+    false
+
+test after_forty_steps_the_focus_stays_where_it_was[]
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowRight', false, calendar.filtered[calendar.rules[], rdp_never]] eq rdp_day[2024, 3, 13]
+    rdp_moved[rdp_day[2024, 3, 13], 'PageDown', false, calendar.filtered[calendar.rules[], rdp_never]] eq rdp_day[2024, 3, 13]
+    --- (39 days left out are stepped past; 40 are not)
+    many = calendar.excluding_spans[calendar.rules[], [calendar.Span[rdp_day[2024, 3, 14], rdp_day[2024, 4, 21]]]]
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowRight', false, many] eq rdp_day[2024, 4, 22]
+    more = calendar.excluding_spans[calendar.rules[], [calendar.Span[rdp_day[2024, 3, 14], rdp_day[2024, 4, 22]]]]
+    rdp_moved[rdp_day[2024, 3, 13], 'ArrowRight', false, more] eq rdp_day[2024, 3, 13]
+
+test months_move_one_across_and_three_up_and_down_past_those_left_out[]
+    m = pickers.month_picker['m']
+    pickers.tile_moved[m, rdp_day[2024, 5, 1], 'ArrowRight'] eq rdp_day[2024, 6, 1]
+    pickers.tile_moved[m, rdp_day[2024, 5, 1], 'ArrowLeft'] eq rdp_day[2024, 4, 1]
+    pickers.tile_moved[m, rdp_day[2024, 5, 1], 'ArrowDown'] eq rdp_day[2024, 8, 1]
+    pickers.tile_moved[m, rdp_day[2024, 2, 1], 'ArrowUp'] eq rdp_day[2023, 11, 1]
+    pickers.tile_moved[m, rdp_day[2024, 11, 1], 'ArrowDown'] eq rdp_day[2025, 2, 1]
+    left_out = pickers.ruled[m, calendar.excluding[calendar.rules[], [rdp_day[2024, 6, 12]]]]
+    pickers.tile_moved[left_out, rdp_day[2024, 5, 1], 'ArrowRight'] eq rdp_day[2024, 7, 1]
+    --- (a span of days left out closes no month: react-datepicker's months
+    --- read excludeDates, not excludeDateIntervals)
+    spans = pickers.ruled[m, calendar.excluding_spans[calendar.rules[], [calendar.Span[rdp_day[2024, 6, 1], rdp_day[2024, 6, 30]]]]]
+    pickers.tile_moved[spans, rdp_day[2024, 5, 1], 'ArrowRight'] eq rdp_day[2024, 6, 1]
+    bounded = pickers.ruled[m, calendar.bounded[calendar.rules[], rdp_day[2024, 3, 15], rdp_day[2024, 10, 31]]]
+    pickers.tile_moved[bounded, rdp_day[2024, 3, 1], 'ArrowLeft'] eq rdp_day[2024, 3, 1]
+    pickers.tile_moved[bounded, rdp_day[2024, 9, 1], 'ArrowDown'] eq rdp_day[2024, 10, 1]
+    pickers.tile_moved[bounded, rdp_day[2024, 4, 1], 'ArrowLeft'] eq rdp_day[2024, 3, 1]
+
+test quarters_and_years_do_not_move_onto_one_left_out[]
+    q = pickers.quarter_picker['q']
+    pickers.tile_moved[q, rdp_day[2024, 4, 1], 'ArrowRight'] eq rdp_day[2024, 7, 1]
+    pickers.tile_moved[q, rdp_day[2024, 1, 1], 'ArrowLeft'] eq rdp_day[2023, 10, 1]
+    pickers.tile_moved[q, rdp_day[2024, 4, 1], 'ArrowDown'] eq rdp_day[2024, 4, 1]
+    late = pickers.ruled[q, calendar.bounded[calendar.rules[], rdp_day[2024, 1, 1], rdp_day[2024, 6, 30]]]
+    pickers.tile_moved[late, rdp_day[2024, 4, 1], 'ArrowRight'] eq rdp_day[2024, 4, 1]
+    y = pickers.year_picker['y']
+    pickers.tile_moved[y, rdp_day[2024, 1, 1], 'ArrowRight'] eq rdp_day[2025, 1, 1]
+    pickers.tile_moved[y, rdp_day[2024, 1, 1], 'ArrowUp'] eq rdp_day[2021, 1, 1]
+    pickers.tile_moved[y, rdp_day[2018, 1, 1], 'ArrowUp'] eq rdp_day[2015, 1, 1]
+    capped = pickers.ruled[y, calendar.bounded[calendar.rules[], rdp_day[2020, 1, 1], rdp_day[2025, 12, 31]]]
+    pickers.tile_moved[capped, rdp_day[2024, 1, 1], 'ArrowDown'] eq rdp_day[2024, 1, 1]
+    --- (a page of twelve years ends on a multiple of twelve)
+    pickers.years_page[2024] eq [2017, 2028]
+    pickers.years_page[2017] eq [2017, 2028]
+    pickers.years_page[2016] eq [2005, 2016]
+
+test a_range_is_begun_by_its_first_press_and_ended_by_a_later_one[]
+    r = calendar.rules[]
+    none = calendar.no_days[]
+    begun = calendar.chosen_by[none, rdp_day[2024, 3, 10], 'range', false, r, 0]
+    _words[begun] eq '2024-03-10'
+    _words[calendar.chosen_by[begun, rdp_day[2024, 3, 14], 'range', false, r, 0]] eq '2024-03-10 2024-03-14'
+    --- (its first day again: a range of one day)
+    _words[calendar.chosen_by[begun, rdp_day[2024, 3, 10], 'range', false, r, 0]] eq '2024-03-10 2024-03-10'
+    calendar.choice_ends[begun, rdp_day[2024, 3, 10], 'range', false]
+    --- (a day before its first begins it again there, or, swapRange,
+    --- ends it with the two swapped)
+    _words[calendar.chosen_by[begun, rdp_day[2024, 3, 2], 'range', false, r, 0]] eq '2024-03-02'
+    not calendar.choice_ends[begun, rdp_day[2024, 3, 2], 'range', false]
+    _words[calendar.chosen_by[begun, rdp_day[2024, 3, 2], 'range', true, r, 0]] eq '2024-03-02 2024-03-10'
+    calendar.choice_ends[begun, rdp_day[2024, 3, 2], 'range', true]
+    --- (once whole, a press begins a new one)
+    whole = [rdp_day[2024, 3, 10], rdp_day[2024, 3, 14]]
+    _words[calendar.chosen_by[whole, rdp_day[2024, 3, 12], 'range', false, r, 0]] eq '2024-03-12'
+
+test several_days_are_added_as_pressed_and_taken_away_when_pressed_again[]
+    r = calendar.rules[]
+    one = calendar.chosen_by[calendar.no_days[], rdp_day[2024, 3, 5], 'days', false, r, 0]
+    two = calendar.chosen_by[one, rdp_day[2024, 3, 3], 'days', false, r, 0]
+    _words[two] eq '2024-03-05 2024-03-03'
+    _words[calendar.chosen_by[two, rdp_day[2024, 3, 5], 'days', false, r, 0]] eq '2024-03-03'
+    not calendar.choice_ends[two, rdp_day[2024, 3, 9], 'days', false]
+    pickers.written[pickers.dates_picker['many'], two] eq '03/05/2024, 03/03/2024'
+
+test words_typed_are_held_to_the_pattern_only_where_parsing_is_strict[]
+    p = pickers.date_picker['typed']
+    held = pickers.strict[p]
+    jan = rdp_day[2024, 1, 1]
+    --- (parseDate: date-fns's parse reads `3/5/2024` by `MM/dd/yyyy`, and
+    --- `03/05/24` as the year 24; with strictParsing the words must be
+    --- what the day they read is written as)
+    _words[pickers.read_words[p, '3/5/2024', jan].chosen] eq '2024-03-05'
+    pickers.read_words[p, '03/05/24', jan].chosen[0].year eq 24
+    not pickers.read_words[held, '3/5/2024', jan].fits
+    not pickers.read_words[held, '03/05/24', jan].fits
+    _words[pickers.read_words[held, '03/05/2024', jan].chosen] eq '2024-03-05'
+
+test the_time_list_holds_a_time_every_interval_from_the_days_start[]
+    p = pickers.time_picker['t']
+    day = rdp_day[2024, 3, 5]
+    len[pickers.times_of[p, day]] eq 48
+    len[pickers.times_of[pickers.timed[p, 15], day]] eq 96
+    len[pickers.times_of[pickers.timed[p, 60], day]] eq 24
+    len[pickers.times_of[pickers.timed[p, 45], day]] eq 32
+    pickers.times_of[p, day][0] eq day
+    pickers.times_of[p, day][47] eq day + 23 * 3600 + 1800
+    --- (injectTimes: put between the two they fall between)
+    added = pickers.times_adding[p, [3600 + 60, 3600 + 120, 5 * 3600]]
+    len[pickers.times_of[added, day]] eq 50
+    pickers.times_of[added, day][3] eq day + 3600 + 60
+    pickers.times_of[added, day][4] eq day + 3600 + 120
+
+test times_are_left_out_outside_both_bounds_and_as_react_datepicker_lists_them[]
+    p = pickers.time_picker['t']
+    day = rdp_day[2024, 3, 5]
+    b = pickers.times_bounded[p, 9 * 3600, 17 * 3600]
+    pickers.time_off[b, day + 8 * 3600 + 1800]
+    not pickers.time_off[b, day + 9 * 3600]
+    not pickers.time_off[b, day + 17 * 3600]
+    pickers.time_off[b, day + 17 * 3600 + 1800]
+    --- (minTime and maxTime both or neither; given the wrong way round,
+    --- date-fns's interval takes them the right way)
+    not pickers.time_off[pickers.times_bounded[p, 9 * 3600, -1], day]
+    not pickers.time_off[pickers.times_bounded[p, 17 * 3600, 9 * 3600], day + 12 * 3600]
+    pickers.time_off[pickers.times_bounded[p, 17 * 3600, 9 * 3600], day + 18 * 3600]
+    --- (excludeTimes, includeTimes and filterTime)
+    pickers.time_off[pickers.times_excluding[p, [12 * 3600]], day + 12 * 3600]
+    not pickers.time_off[pickers.times_excluding[p, [12 * 3600]], day + 12 * 3600 + 1800]
+    pickers.time_off[pickers.times_including[p, [9 * 3600]], day + 10 * 3600]
+    not pickers.time_off[pickers.times_including[p, [9 * 3600]], day + 9 * 3600]
+    pickers.time_off[pickers.times_filtered[p, rdp_before_noon], day + 13 * 3600]
+
+fn rdp_before_noon[t]
+    calendar.seconds_into[t] lt 12 * 3600
+
+test a_day_the_clocks_turn_lists_twenty_three_or_twenty_five_hours[]
+    ny = pickers.zoned[pickers.time_picker['ny'], 'America/New_York']
+    len[pickers.times_of[ny, rdp_day[2024, 3, 10]]] eq 46
+    len[pickers.times_of[ny, rdp_day[2024, 11, 3]]] eq 50
+    len[pickers.times_of[ny, rdp_day[2024, 7, 4]]] eq 48
+    pickers.times_of[ny, rdp_day[2024, 7, 4]][0] eq moment[2024, 7, 4, 4, 0, 0]
+
+--- ---- in frames: a picker on a page, pressed and typed into ----
+
+fn _screen[given]
+    json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _keys[names]
+    out = []
+    for k in names
+        out = push[out, '{"type": "key", "key": "`k`", "code": "`k`", "shift": false}']
+    joined = join[out, ', ']
+    '[`joined`]'
+
+fn _shown[p, chosen, frame]
+    gui.show[lory.begin[frame], gui.column[[pickers.control[p, chosen]]]]
+
+test enter_chooses_the_day_the_keys_moved_to_and_escape_closes[]
+    gui.unfocus[]
+    p = pickers.date_picker['due']
+    chosen = [rdp_day[2024, 3, 13]]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = pickers.answered[p, chosen, first]
+    b = first.boxes['due']
+    opened = _shown[p, chosen, _screen[_press_at[b[0] + 5.0, b[1] + 5.0]]]
+    chosen = pickers.answered[p, chosen, opened]
+    pickers.is_open[p]
+    moved = _shown[p, chosen, _screen[_keys[['ArrowUp', 'ArrowUp']]]]
+    chosen = pickers.answered[p, chosen, moved]
+    entered = _shown[p, chosen, _screen[_keys[['Enter']]]]
+    chosen = pickers.answered[p, chosen, entered]
+    _words[chosen] eq '2024-02-28'
+    not pickers.is_open[p]
+    --- (opened again, moved, and closed by Escape: nothing chosen anew)
+    again = _shown[p, chosen, _screen[_keys[['Enter']]]]
+    chosen = pickers.answered[p, chosen, again]
+    pickers.is_open[p]
+    down = _shown[p, chosen, _screen[_keys[['ArrowDown']]]]
+    chosen = pickers.answered[p, chosen, down]
+    closed = _shown[p, chosen, _screen[_keys[['Escape']]]]
+    chosen = pickers.answered[p, chosen, closed]
+    not pickers.is_open[p]
+    _words[chosen] eq '2024-02-28'
+
+test the_time_lists_keys_move_a_time_and_enter_chooses_it[]
+    gui.unfocus[]
+    p = pickers.inline[pickers.time_picker['clock']]
+    day = rdp_day[2024, 3, 5]
+    chosen = [day + 9 * 3600]
+    first = _shown[p, chosen, _screen[_press_at[899.0, 699.0]]]
+    chosen = pickers.answered[p, chosen, first]
+    g = first.boxes['clock:times']
+    spot = pickers.time_spot[p, chosen, day + 10 * 3600]
+    pressed = _shown[p, chosen, _screen[_press_at[g[0] + spot[0] + 10.0, g[1] + spot[1] + 6.0]]]
+    chosen = pickers.answered[p, chosen, pressed]
+    pickers.written[p, chosen] eq '10:00 AM'
+    moved = _shown[p, chosen, _screen[_keys[['ArrowDown', 'ArrowDown', 'ArrowUp']]]]
+    chosen = pickers.answered[p, chosen, moved]
+    pickers.written[p, chosen] eq '10:00 AM'
+    entered = _shown[p, chosen, _screen[_keys[['Enter']]]]
+    chosen = pickers.answered[p, chosen, entered]
+    pickers.written[p, chosen] eq '10:30 AM'

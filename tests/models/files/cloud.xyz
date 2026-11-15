@@ -1,0 +1,11 @@
+# points written for Lory's tests: three numbers a point, six with a colour
+0 0 0
+1 0 0 255 0 0
+
+0 1 0 0 255 0
+  0 0 1   0 0 255  
+1 1 1 1
+# a comment
+0.5 0.5 0.5 128 64 32
+2 2
+1e-3 -2.5 +3 10.5 20.25 30.125

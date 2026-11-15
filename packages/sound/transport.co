@@ -1,0 +1,541 @@
+--- The transport: a tempo's clock of ticks (192 a quarter note, as Tone
+--- counts them) and the events scheduled on it, which fall when Tone's
+--- Transport would fire them — once, repeated, a loop of so many
+--- iterations, a sequence whose nested steps split a step, a part of timed
+--- notes looped by its own length, a pattern walking its values up, down
+--- or both ways — swung by a share of a subdivision, and looped between
+--- two of its times. A program asks which events fall in a stretch of
+--- time (`fired`), renders them ahead of when they are heard, and hands
+--- the page the samples that are due (`due`, then `sound.play_at`):
+---
+---     tr = transport.sequence[transport.transport[120.0], 0, 'C4 [E4 G4] . B4', '8n', '0']
+---     transport.fired[tr, 0.0, 1.0]      (C4 at 0, E4 at 0.25, G4 at 0.375, B4 at 0.75)
+---
+--- A sequence's steps are words in one text: a note's name, `.` a rest,
+--- and `[ … ]` a step split evenly among what it holds (Tone's nested
+--- arrays).
+
+use math
+use sound
+
+--- the transport: its tempo (`sound.Tempo`), how much an off-beat is
+--- swung (0 to 1) and the subdivision swung (in ticks), whether it loops
+--- and between which ticks, and the events scheduled on it
+struct Transport [tempo, swing, swing_ticks, loop, loop_start, loop_end, events]
+
+--- one event on the transport: the track it belongs to (a number the
+--- program gives it), its first tick, the ticks between its repeats (0 for
+--- one that fires once), the tick it stops repeating before, its values,
+--- and the pattern its values are walked in (`up`, `down`, `upDown`, …;
+--- none for an event of one value)
+struct Event [track, at, interval, until, values, pattern]
+
+--- an event's firing: when (seconds after the transport started), its
+--- track, its value, and the tick it fired on
+struct Fired [time, track, value, tick]
+
+--- how far a program has handed the page its sound: the transport's time
+--- rendered up to, and how far ahead of now it renders
+struct Clock [handed, lead]
+
+--- the events due in a frame: those firing from `from` to `to` (seconds
+--- after the transport started), and the clock that has handed them
+struct Due [events, from, to, clock]
+
+fn _forever[]
+    10.0 ^ 300.0
+
+fn _no_events[]
+    slice[[Event[0, 0.0, 0.0, 0.0, [''], '']], 0, 0]
+
+fn _no_firings[]
+    slice[[Fired[0.0, 0, '', 0]], 0, 0]
+
+--- a transport at `bpm` beats a minute, four to a bar, not swung, not
+--- looping, with nothing on it
+fn transport[bpm]
+    Transport[sound.tempo[bpm], 0.0, 96.0, false, 0.0, 0.0, _no_events[]]
+
+--- the transport counting `signature` quarter notes to a bar
+fn in_meter[tr, signature]
+    tr.tempo.signature = 0.0 + signature
+    tr
+
+--- the transport swung: each off-beat of `subdivision` (`8n`) moved later
+--- by `amount` (0 to 1) of a third of two subdivisions, along a half sine
+--- over each pair, as Tone swings it
+fn swung[tr, amount, subdivision]
+    tr.swing = 0.0 + amount
+    tr.swing_ticks = sound.ticks_of[subdivision, tr.tempo]
+    tr
+
+--- the transport looping from `start` to `end` (time notation): reaching
+--- `end`, it goes back to `start`
+fn looping[tr, start, end]
+    tr.loop = true
+    tr.loop_start = sound.ticks_of[start, tr.tempo]
+    tr.loop_end = sound.ticks_of[end, tr.tempo]
+    tr
+
+--- a time in notation as the transport's ticks
+fn _ticks[tr, words]
+    sound.ticks_of[words, tr.tempo]
+
+fn _added[tr, event]
+    tr.events = push[tr.events, event]
+    tr
+
+--- an event firing once at `at` (Tone's `schedule`); in a looping
+--- transport it fires again each time the loop passes it
+fn once[tr, track, at, value]
+    _added[tr, Event[track, _ticks[tr, at], 0.0, _forever[], [value], '']]
+
+--- an event firing every `interval` from `at`, for `duration` (time
+--- notation; none, ``, for ever), as Tone's `scheduleRepeat`
+fn every[tr, track, interval, at, duration]
+    from = _ticks[tr, at]
+    until = _forever[]
+    if trim[duration] ne ''
+        until = from + _ticks[tr, duration]
+    _added[tr, Event[track, from, _ticks[tr, interval], until, [''], '']]
+
+--- a loop (Tone's `Loop`): every `interval` from `at`, `iterations` times
+--- (0 for ever), at `rate` times its pace (2 fires twice as often)
+fn loop[tr, track, interval, at, iterations, rate]
+    from = _ticks[tr, at]
+    each = _ticks[tr, interval] / rate
+    if iterations eq 1
+        return _added[tr, Event[track, from, 0.0, _forever[], [''], '']]
+    until = _forever[]
+    if iterations gt 1
+        until = from + iterations * each
+    _added[tr, Event[track, from, each, until, [''], '']]
+
+--- one step of a part: its time within the part (in notation) and value
+struct Note [at, value]
+
+--- a part's note at a time within it
+fn note_at[at, value]
+    Note[at, value]
+
+--- a part's notes as ticks within it and their values: a list of
+--- `[ticks, place]` and the values in that order
+struct Laid [offsets, values]
+
+--- a part's notes started at `start` ticks (Tone's `Part.start`): each a
+--- loop of the part's length where the part loops and the note lies within
+--- its loop, else fired once; notes before `offset` are skipped (looping,
+--- they come round on the next pass)
+fn _parted[tr, track, laid, start, looped, loop_start, loop_end]
+    looped_length = loop_end - loop_start
+    offset = 0.0
+    if looped
+        offset = loop_start
+    i = 0
+    while i lt len[laid.values]
+        o = laid.offsets[i]
+        value = laid.values[i]
+        t = start - offset
+        if looped
+            if o gte loop_start and o lt loop_end
+                if o lt offset
+                    t = t + looped_length
+                tr = _added[tr, Event[track, t + round[o], looped_length, _forever[], [value], '']]
+            else if o lt loop_start and o gte offset
+                tr = _added[tr, Event[track, t + round[o], 0.0, _forever[], [value], '']]
+        else if o gte offset
+            tr = _added[tr, Event[track, t + round[o], 0.0, _forever[], [value], '']]
+        i = i + 1
+    tr
+
+--- a part (Tone's `Part`): notes at their times within it, started at
+--- `at`; looped, it plays again every `loop_end` (time notation, from its
+--- start), and a note at or past its end is not played
+fn part[tr, track, notes, at, looped, loop_end]
+    offsets = slice[[0.0], 0, 0]
+    said = slice[[''], 0, 0]
+    for n in notes
+        offsets = push[offsets, _ticks[tr, n.at]]
+        said = push[said, n.value]
+    _parted[tr, track, Laid[offsets, said], _ticks[tr, at], looped, 0.0, _ticks[tr, loop_end]]
+
+--- the words of a sequence's text, a bracket its own word
+fn _tokens[steps]
+    spaced = replace[replace[steps, '[', ' [ '], ']', ' ] ']
+    out = slice[[''], 0, 0]
+    for w in split[spaced, ' ']
+        if trim[w] ne ''
+            out = push[out, trim[w]]
+    out
+
+--- where the elements of tokens `from` to `to` begin, each a word or a
+--- bracketed group
+fn _elements[tokens, from, to]
+    starts_at = slice[[0], 0, 0]
+    depth = 0
+    i = from
+    while i lt to
+        if depth eq 0
+            starts_at = push[starts_at, i]
+        if tokens[i] eq '['
+            depth = depth + 1
+        if tokens[i] eq ']'
+            depth = depth - 1
+        i = i + 1
+    starts_at
+
+--- the steps of tokens `from` to `to` laid from `offset` ticks, each
+--- element `each` ticks long, a group split evenly among its own elements,
+--- rests left out
+fn _laid[tokens, from, to, offset, each, into]
+    starts_at = _elements[tokens, from, to]
+    k = 0
+    while k lt len[starts_at]
+        i = starts_at[k]
+        ends_at = to
+        if k + 1 lt len[starts_at]
+            ends_at = starts_at[k + 1]
+        place = k * each + offset
+        if tokens[i] eq '['
+            inner = len[_elements[tokens, i + 1, ends_at - 1]]
+            if inner gt 0
+                into = _laid[tokens, i + 1, ends_at - 1, place, each / inner, into]
+        else if tokens[i] ne '.' and tokens[i] ne '~'
+            into.offsets = push[into.offsets, place]
+            into.values = push[into.values, tokens[i]]
+        k = k + 1
+    into
+
+--- how many steps a sequence's text has at its top level
+fn steps_in[steps]
+    t = _tokens[steps]
+    len[_elements[t, 0, len[t]]]
+
+--- a sequence (Tone's `Sequence`): its steps each a `subdivision` long
+--- (`8n`), a bracketed step split among what it holds, a `.` a rest,
+--- started at `at` and looping over its length
+fn sequence[tr, track, steps, subdivision, at]
+    t = _tokens[steps]
+    each = _ticks[tr, subdivision]
+    laid = _laid[t, 0, len[t], 0.0, each, Laid[slice[[0.0], 0, 0], slice[[''], 0, 0]]]
+    _parted[tr, track, laid, _ticks[tr, at], true, 0.0, steps_in[steps] * each]
+
+--- a pattern (Tone's `Pattern`): its values walked one each `interval`
+--- from `at`, in the order its kind names: `up`, `down`, `upDown`,
+--- `downUp`, `alternateUp`, `alternateDown`, `random`, `randomOnce` or
+--- `randomWalk` (the random ones by a fixed seed, so each run is the same)
+fn pattern[tr, track, choices, kind, interval, at]
+    _added[tr, Event[track, _ticks[tr, at], _ticks[tr, interval], _forever[], choices, kind]]
+
+--- the place among `n` values a pattern's `k`th step (from 0) takes
+fn pattern_index[kind, n, k]
+    if n lte 1
+        return 0
+    if kind eq 'down'
+        return n - 1 - k % n
+    if kind eq 'upDown' or kind eq 'downUp'
+        period = 2 * (n - 1)
+        j = k % period
+        if kind eq 'downUp'
+            j = (j + n - 1) % period
+        if j lt n
+            return j
+        return period - j
+    if kind eq 'alternateUp' or kind eq 'alternateDown'
+        cycle = _jumps[kind, n]
+        return cycle[k % len[cycle]]
+    if kind eq 'random'
+        return _drawn[k] % n
+    if kind eq 'randomOnce'
+        return _shuffled[n, floor[(0.0 + k) / n]][k % n]
+    if kind eq 'randomWalk'
+        return _walked[n, k]
+    k % n
+
+--- one cycle of an alternating pattern: up two and back one from the
+--- bottom (`alternateUp`), or down two and up one from the top, until it
+--- passes the end
+fn _jumps[kind, n]
+    out = slice[[0], 0, 0]
+    up = kind eq 'alternateUp'
+    index = 0
+    if not up
+        index = n - 1
+    step = 0
+    while index gte 0 and index lt n
+        out = push[out, index]
+        step = step + 1
+        if up
+            if step % 2 eq 1
+                index = index + 2
+            else
+                index = index - 1
+        else
+            if step % 2 eq 1
+                index = index - 2
+            else
+                index = index + 1
+    out
+
+--- a whole number from a step's place, the same each run (a hash of it)
+fn _drawn[k]
+    x = (k * 2654435761 + 1013904223) % 4294967296
+    x = (x * 1103515245 + 12345) % 2147483648
+    floor[(0.0 + x) / 65536.0]
+
+--- the values' places in the order the `round`th shuffle deals them
+fn _shuffled[n, turn]
+    left = for i in range[n]
+        i
+    out = slice[[0], 0, 0]
+    j = 0
+    while len[left] gt 0
+        pick = _drawn[turn * 7919 + j] % len[left]
+        out = push[out, left[pick]]
+        left = concat[slice[left, 0, pick], slice[left, pick + 1, len[left]]]
+        j = j + 1
+    out
+
+--- where a random walk over `n` places stands at its `k`th step: a fixed
+--- first place, then one place up or down each step (up from the bottom,
+--- down from the top)
+fn _walked[n, k]
+    index = _drawn[0] % n
+    i = 0
+    while i lte k
+        if index eq 0
+            index = 1
+        else if index eq n - 1
+            index = n - 2
+        else if _drawn[i + 1] % 2 eq 0
+            index = index - 1
+        else
+            index = index + 1
+        i = i + 1
+    index
+
+--- ---- when ticks fall ----
+
+--- what is left of `x` after the most whole `y`s it holds
+fn _remainder[x, y]
+    x - floor[x / y] * y
+
+--- seconds a tick lasts
+fn _tick_seconds[tr]
+    60.0 / tr.tempo.bpm / tr.tempo.ppq
+
+--- the passes the transport makes over its ticks: the first from tick 0,
+--- then (looping) each from the loop's start; pass `p`'s first tick, the
+--- tick it ends before, and when it starts
+fn _pass[tr, p]
+    if not tr.loop or tr.loop_end lte tr.loop_start
+        return [0.0, _forever[], 0.0]
+    first = tr.loop_end * _tick_seconds[tr]
+    if p eq 0
+        return [0.0, tr.loop_end, 0.0]
+    [tr.loop_start, tr.loop_end, first + (p - 1) * (tr.loop_end - tr.loop_start) * _tick_seconds[tr]]
+
+--- the pass the transport is making `seconds` after it started
+fn _pass_at[tr, seconds_in]
+    if not tr.loop or tr.loop_end lte tr.loop_start
+        return 0
+    first = tr.loop_end * _tick_seconds[tr]
+    if seconds_in lt first
+        return 0
+    1 + floor[(seconds_in - first) / ((tr.loop_end - tr.loop_start) * _tick_seconds[tr])]
+
+--- how much later swing moves the tick `k`: an off-beat of the swung
+--- subdivision by `swing` of a third of two subdivisions, along a half sine
+fn _swing_of[tr, k]
+    if tr.swing lte 0.0
+        return 0.0
+    pair = tr.swing_ticks * 2.0
+    if k % tr.tempo.ppq eq 0 or _remainder[0.0 + k, pair] eq 0.0
+        return 0.0
+    progress = _remainder[0.0 + k, pair] / pair
+    pair / 3.0 * _tick_seconds[tr] * (sin[progress * pi] * tr.swing)
+
+--- the ticks of an event's firings within ticks `low` to `high` of a
+--- pass, the event's repeats taken from its first at or after `low`
+fn _ticks_within[event, low, high]
+    out = slice[[0.0], 0, 0]
+    if event.interval lte 0.0
+        if event.at gte low and event.at lt high
+            out = push[out, event.at]
+        return out
+    n = 0
+    if low gt event.at
+        n = ceil[(low - event.at) / event.interval - 0.000000001]
+    k = event.at + n * event.interval
+    while k lt high and k lt event.until - 0.000001
+        out = push[out, k]
+        n = n + 1
+        k = event.at + n * event.interval
+    out
+
+--- how many times an event fires in a pass, ticks `low` to `high`
+fn _count_within[event, low, high]
+    if event.interval lte 0.0
+        if event.at gte low and event.at lt high
+            return 1
+        return 0
+    top = min[high, event.until - 0.000001]
+    first = 0
+    if low gt event.at
+        first = ceil[(low - event.at) / event.interval - 0.000000001]
+    if event.at + first * event.interval gte top
+        return 0
+    last = ceil[(top - event.at) / event.interval - 0.000000001]
+    last - first
+
+--- the events firing from `from` to `to` seconds after the transport
+--- started, in time order (events at one time in the order they were
+--- scheduled), each with its value: a pattern's walked to its step
+fn fired[tr, from, to]
+    out = _no_firings[]
+    if to lte from
+        return out
+    dt = _tick_seconds[tr]
+    early = (tr.swing_ticks * 2.0 / 3.0 + 1.0) * dt
+    p = _pass_at[tr, max[0.0, from - early]]
+    last = _pass_at[tr, to]
+    while p lte last
+        pass = _pass[tr, p]
+        low = max[pass[0], pass[0] + floor[(from - early - pass[2]) / dt]]
+        high = min[pass[1], pass[0] + ceil[(to - pass[2]) / dt] + 1.0]
+        for event in tr.events
+            if high gt low
+                for k in _ticks_within[event, low, high]
+                    tick = floor[k]
+                    time = pass[2] + (tick - pass[0]) * dt + _swing_of[tr, tick] + (k - tick) * dt
+                    if time gte from and time lt to
+                        value = event.values[0]
+                        if event.pattern ne ''
+                            value = event.values[pattern_index[event.pattern, len[event.values], _step_of[tr, event, p, k]]]
+                        out = push[out, Fired[time, event.track, value, tick]]
+        p = p + 1
+    _in_time_order[out]
+
+--- which step of its walk a repeating event takes at tick `k` of pass `p`:
+--- how many times it fired in the passes before, and before `k` in this
+fn _step_of[tr, event, p, k]
+    count = 0
+    q = 0
+    while q lt p
+        pass = _pass[tr, q]
+        count = count + _count_within[event, pass[0], pass[1]]
+        q = q + 1
+    pass = _pass[tr, p]
+    count + _count_within[event, pass[0], k]
+
+--- firings sorted by time, those at one time kept in the order given
+--- (each put after the last one not later than it)
+fn _in_time_order[xs]
+    out = _no_firings[]
+    for f in xs
+        i = len[out]
+        while i gt 0 and out[i - 1].time gt f.time
+            i = i - 1
+        out = concat[push[slice[out, 0, i], f], slice[out, i, len[out]]]
+    out
+
+--- the transport's ticks `seconds` after it started (looping, counted
+--- from the loop's start on each pass after the first)
+fn ticks_at[tr, seconds_in]
+    p = _pass_at[tr, seconds_in]
+    pass = _pass[tr, p]
+    pass[0] + (seconds_in - pass[2]) / _tick_seconds[tr]
+
+--- where the transport is `seconds` after it started, as bars, beats and
+--- sixteenths (`1:2:0.5`), as Tone shows its position
+fn position[tr, seconds_in]
+    sound.bars_beats[sound.seconds_of_ticks[ticks_at[tr, seconds_in], tr.tempo], tr.tempo]
+
+--- how far through its loop the transport is (0 to 1), 0 where it does not
+--- loop
+fn progress[tr, seconds_in]
+    if not tr.loop or tr.loop_end lte tr.loop_start
+        return 0.0
+    (ticks_at[tr, seconds_in] - tr.loop_start) / (tr.loop_end - tr.loop_start)
+
+--- the next time after `seconds` that falls on a subdivision (`4n`) of
+--- the transport's ticks, as Tone's `nextSubdivision` answers
+fn next_subdivision[tr, seconds_in, subdivision]
+    each = _ticks[tr, subdivision]
+    ticks_now = ticks_at[tr, seconds_in]
+    left = each - _remainder[ticks_now, each]
+    seconds_in + left * _tick_seconds[tr]
+
+--- ---- handing sound ahead ----
+
+--- a clock that has handed nothing and hands `lead` seconds ahead
+fn clock[lead]
+    Clock[0.0, 0.0 + lead]
+
+--- the events due in a frame `now` seconds after the transport started:
+--- those from where the clock had handed to `lead` seconds past now (none
+--- where that is already handed), and the clock moved on to there
+fn due[c, tr, now_at]
+    from = max[0.0 + c.handed, 0.0 + now_at]
+    to = 0.0 + now_at + c.lead
+    if to lte from
+        return Due[_no_firings[], from, from, c]
+    Due[fired[tr, from, to], from, to, Clock[to, 0.0 + c.lead]]
+
+--- ---- tests ----
+
+test events_fall_where_tone_fires_them[]
+    tr = every[transport[120.0], 0, '4n', '0', '']
+    f = fired[tr, 0.0, 1.1]
+    len[f] eq 3
+    f[1].time eq 0.5
+    tr = once[transport[120.0], 1, '0:1', 'x']
+    fired[tr, 0.0, 2.0][0].time eq 0.5
+    fired[tr, 0.0, 2.0][0].value eq 'x'
+    l = loop[transport[100.0], 2, '8n', '0', 5, 1.0]
+    len[fired[l, 0.0, 10.0]] eq 5
+
+test a_sequence_splits_its_steps_and_loops[]
+    tr = sequence[transport[120.0], 0, 'C4 [E4 G4] . B4', '8n', '0']
+    f = fired[tr, 0.0, 1.1]
+    times = for x in f
+        x.time
+    names = for x in f
+        x.value
+    times eq [0.0, 0.25, 0.375, 0.75, 1.0]
+    names eq ['C4', 'E4', 'G4', 'B4', 'C4']
+    steps_in['C4 [E4 G4] . B4'] eq 4
+
+test patterns_walk_their_values[]
+    ups = for k in range[6]
+        pattern_index['upDown', 4, k]
+    ups eq [0, 1, 2, 3, 2, 1]
+    downs = for k in range[7]
+        pattern_index['alternateDown', 5, k]
+    downs eq [4, 2, 3, 1, 2, 0, 1]
+    pattern_index['alternateUp', 4, 3] eq 3
+
+test a_looping_transport_comes_back_to_its_start[]
+    tr = every[looping[transport[120.0], '0', '2n'], 0, '8n', '8n', '']
+    f = fired[tr, 0.0, 2.0]
+    times = for x in f
+        x.time
+    times eq [0.25, 0.5, 0.75, 1.25, 1.5, 1.75]
+    position[tr, 1.25] eq '0:0:2'
+    progress[tr, 1.5] eq 0.5
+
+test swing_moves_the_off_beats[]
+    tr = every[swung[transport[120.0], 0.5, '8n'], 0, '8n', '0', '']
+    f = fired[tr, 0.0, 0.6]
+    abs[f[1].time - 1.0 / 3.0] lt 0.000000001
+    f[2].time eq 0.5
+
+test the_clock_hands_each_stretch_once[]
+    tr = every[transport[120.0], 0, '4n', '0', '']
+    d = due[clock[0.3], tr, 0.0]
+    len[d.events] eq 1
+    d.to eq 0.3
+    d = due[d.clock, tr, 0.25]
+    d.from eq 0.3
+    len[d.events] eq 1
+    d.events[0].time eq 0.5

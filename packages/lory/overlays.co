@@ -1,0 +1,1677 @@
+--- Lory's overlays: the dialog and the alert dialog that asks before it
+--- acts, the popover, the hover card, the tooltip, toasts and snackbars,
+--- sheets along a side of the page, the banner and the dimmer. Each
+--- answers the pointer and the keys as the library it follows does
+--- (Radix's Dialog, AlertDialog, Popover, HoverCard, Tooltip and Toast;
+--- Vuetify's VSnackbar and VSnackbarQueue, VBottomSheet and VBanner;
+--- Semantic UI's Dimmer), number for number where the library gives one:
+--- docs/components/menus.md says which, and where each number comes from.
+---
+--- An overlay stands in a gui layer: laid after the page, as a portal is,
+--- its box among the boxes `gui.show` answers and its events among the
+--- events, by id. A program holds whether each is open (`open`, `active`)
+--- and closes one on its `dismiss` event; the popover alone is held open
+--- by Lory, as gui's dropdown is. An overlay that comes and goes does so
+--- with lory.motion's presence: it is drawn on its way out, and takes no
+--- pointer, keys or focus then.
+
+use memory
+use lory
+use gui
+use icons
+use motion
+use menus
+
+--- ---- buttons the overlays draw ----
+
+--- a button of words that tells `act` (with `why`, naming `target`) when
+--- it is pressed, or Enter or space is typed with the focus on it; its
+--- `tone` 'accent', 'danger' or '' (on the panel, with an edge)
+fn _act_button[c, id, target, act, why, words, tone]
+    wide = lory.measure[c, words, 14.0] + 32.0
+    gui.drawn[id, 0.0, wide, 34.0, _act_drawn, words = '`tone`\t`target`\t`act`\t`why`\t`words`']
+
+fn _act_drawn[d]
+    parts = split[d.words, '\t']
+    if _struck[d]
+        d.told = push[d.told, gui.Event[parts[1], parts[2], parts[3], 0.0]]
+    d.c = _face[d, parts[0], parts[4]]
+    d
+
+--- whether the drawn control was pressed, or Enter or space typed on it
+fn _struck[d]
+    hit = d.pressed
+    for k in d.keys
+        if k eq 'Enter' or k eq ' '
+            hit = true
+    hit
+
+--- a button's face: its ground in its tone (lighter under the pointer,
+--- darker held down) and its words in the middle
+fn _face[d, tone, words]
+    c = d.c
+    s = d.s
+    look = d.look
+    ground = look.panel
+    ink = look.ink
+    if tone eq 'accent'
+        ground = look.accent
+        ink = look.on_accent
+    if tone eq 'danger'
+        ground = look.danger
+        ink = look.on_accent
+    if d.hover
+        ground = lory.mix[ground, lory.white[], 0.08]
+    if d.down
+        ground = lory.mix[ground, lory.black[], 0.12]
+    r = 6.0 * s
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, ground]
+    if tone ne 'accent' and tone ne 'danger'
+        c = lory.round_outline[c, d.x, d.y, d.w, d.h, r, 1.0 * s, look.edge]
+    lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, words, 14.0 * s, ink]
+
+--- a close button (Radix's demos' cross, 25 CSS pixels square): pressed,
+--- or Enter or space typed on it, it tells `dismiss` (`close`, naming
+--- `target`); the close button of a layer Lory holds open (`held`) asks
+--- it closed, and it closes as the next frame is built
+fn _closer[target, held]
+    gui.drawn['`target`:close', 0.0, 25.0, 25.0, _closer_drawn, words = '`target`\t`held`']
+
+fn _closer_drawn[d]
+    parts = split[d.words, '\t']
+    if _struck[d]
+        d.told = push[d.told, gui.Event[parts[0], 'dismiss', 'close', 0.0]]
+        if len[parts] gt 1
+            if parts[1] ne ''
+                _ask_closed[parts[1]]
+    c = d.c
+    s = d.s
+    look = d.look
+    if d.hover
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, d.w / 2.0, look.hover]
+    d.c = icons.draw[c, 'cross-2', d.x + 5.0 * s, d.y + 5.0 * s, 15.0 * s, look.muted]
+    d
+
+--- the layers Lory holds open that a close button asked closed
+struct Closing [ids]
+
+fn _closing[]
+    recall['lory.overlays.closing', Closing[slice[[''], 0, 0]]]
+
+fn _ask_closed[id]
+    held = _closing[]
+    held.ids = push[held.ids, id]
+    remember['lory.overlays.closing', held]
+
+--- the closings asked for, done (before the frame's tree is shown)
+fn _closings_done[]
+    held = _closing[]
+    for id in held.ids
+        gui.close_layer[id]
+    held.ids = slice[[''], 0, 0]
+    remember['lory.overlays.closing', held]
+
+--- ---- the dimming under a modal overlay ----
+
+--- a layer over the whole page, drawn before the overlay that follows
+--- it, dimmed `k` of the way to gui's scrim (`shade` 0), or to Semantic
+--- UI's dimming (1 its black, 2 its white): it keeps the pointer from the
+--- page, as a modal overlay's dimming does
+fn _scrim[c, id, k, shade = 0.0]
+    s = lory.px[c]
+    tall = lory.height[c] / s
+    dim = gui.drawn['', k, 0.0, tall, _scrim_drawn, lo = shade]
+    gui.layer['`id`:scrim', [dim], place = 'top', bare = true, pad = 0.0, dismiss = false]
+
+fn _scrim_drawn[d]
+    look = d.look
+    color = lory.fade[look.scrim, d.num]
+    if d.lo gt 0.5
+        color = lory.Color[0.0, 0.0, 0.0, dim_depth[] * d.num]
+    if d.lo gt 1.5
+        color = lory.Color[1.0, 1.0, 1.0, dim_depth[] * d.num]
+    d.c = lory.rect[d.c, d.x, d.y, d.w, d.h, color]
+    d
+
+--- a part of an overlay coming or going: faded to `k` and grown from
+--- `from` of its size
+fn _come[n, k, from]
+    if k gte 1.0
+        return n
+    gui.scaled[gui.faded[n, k], from + (1.0 - from) * k]
+
+--- ---- a dialog (Radix's Dialog) and an alert dialog (its AlertDialog) ----
+
+--- the curve and the time Radix's demos open and close a dialog on
+--- (cubic-bezier(0.16, 1, 0.3, 1), 150 ms: its overlay fades in, its
+--- content fades in grown from 0.96)
+fn dialog_time[]
+    150.0
+
+fn _dialog_curve[]
+    'cubic-bezier(0.16, 1, 0.3, 1)'
+
+--- a dialog in the middle of the page, `wide` CSS pixels, over the page
+--- dimmed: its `title`, its `words` under it, its controls, and a close
+--- button at its top right (after its controls, as Tab reaches it). Open,
+--- it takes the focus to its first control, keeps Tab among its controls
+--- and the pointer from the page; Escape, a press on the dimming
+--- (`dismiss` false: neither) and its close button tell `dismiss`
+--- (`escape`, `outside`, `close`), and the program closes it. Closed, the
+--- focus goes back to where it was
+fn dialog[c, id, title, kids, open, words = '', wide = 440.0, dismiss = true]
+    seen = motion.presence[c, 'lory.overlays/`id`', open, dialog_time[], dialog_time[], _dialog_curve[]]
+    if not seen.present
+        return gui.space[0.0]
+    parts = [gui.heading[title]]
+    if words ne ''
+        parts = push[parts, gui.text[words, tone = 'muted']]
+    for n in kids
+        parts = push[parts, n]
+    body = gui.overlay[gui.column[parts, gap = 12.0], _closer[id, ''], anchor = 'top_right']
+    box = gui.layer[id, [_come[body, seen.value, 0.96]], place = 'center', modal = open, dismiss = dismiss and open, focused = open, wide = wide, pad = 24.0]
+    gui.column[[_scrim[c, id, seen.value], box], gap = 0.0]
+
+--- a dialog that asks before an act (Radix's AlertDialog): its `title`,
+--- its `words`, a Cancel button and the act's button (`danger`: in the
+--- danger's tone). Open, the focus is on Cancel; a press on the dimming
+--- does not close it. Cancel and Escape tell `dismiss` (`cancel`,
+--- `escape`); the act's button tells `choose` (`act`); the program closes
+--- it on either
+fn alert_dialog[c, id, title, words, act, open, cancel = 'Cancel', danger = false, wide = 440.0]
+    seen = motion.presence[c, 'lory.overlays/`id`', open, dialog_time[], dialog_time[], _dialog_curve[]]
+    if not seen.present
+        return gui.space[0.0]
+    tone = 'accent'
+    if danger
+        tone = 'danger'
+    no = gui.drawn['`id`:cancel', 0.0, lory.measure[c, cancel, 14.0] + 32.0, 34.0, _cancel_drawn, words = '\t`id`\tdismiss\tcancel\t`cancel`']
+    yes = _act_button[c, '`id`:act', id, 'choose', 'act', act, tone]
+    buttons = gui.row[[no, yes], gap = 10.0, justify = 'end']
+    body = gui.column[[gui.heading[title], gui.text[words, tone = 'muted'], buttons], gap = 12.0]
+    box = gui.layer[id, [_come[body, seen.value, 0.96]], place = 'center', modal = open, dismiss = false, focused = open, wide = wide, pad = 24.0]
+    gui.column[[_scrim[c, id, seen.value], box], gap = 0.0]
+
+--- an alert dialog's Cancel: a button that tells `dismiss` (`cancel`)
+--- when pressed, and (`escape`) when Escape is typed anywhere while its
+--- dialog is the one on top
+fn _cancel_drawn[d]
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    parts = split[d.words, '\t']
+    if _struck[d]
+        d.told = push[d.told, gui.Event[parts[1], 'dismiss', 'cancel', 0.0]]
+    else
+        for e in evs
+            if e.on eq 'key' and e.key eq 'Escape'
+                d.told = push[d.told, gui.Event[parts[1], 'dismiss', 'escape', 0.0]]
+    d.c = _face[d, '', parts[4]]
+    d
+
+--- ---- a popover (Radix's Popover) ----
+
+--- a button that opens a panel of `kids` on its `side`, `align`ed and
+--- `gap` away (Radix's demos' sideOffset 5), held open by Lory: a press
+--- on the button opens it and, open, closes it; open, it takes the focus
+--- to its first control; Escape, a press outside and its close button
+--- close it, and the focus goes back to the button. Its events are gui's
+--- (`open`, `dismiss` with the panel's id, '`id`:panel') and the close
+--- button's `dismiss` (`close`)
+fn popover[id, words, kids, side = 'bottom', align = 'center', gap = 5.0, wide = 0.0]
+    _closings_done[]
+    panel = gui.overlay[gui.column[kids, gap = 10.0], _closer[id, '`id`:panel'], anchor = 'top_right']
+    gui.row[[gui.opens[gui.button[id, words], '`id`:panel'], gui.layer['`id`:panel', [panel], at = id, side = side, align = align, gap = gap, held = true, focused = true, wide = wide, pad = 14.0]], gap = 0.0]
+
+--- ---- a hover card (Radix's HoverCard) ----
+
+--- what each hover card holds between frames: whether it is open, the
+--- pointer over its link and over its card, when it began to wait to
+--- open and to close (-1: it is not), its card's box, and the device
+--- the pointer last was
+struct Card [open, on_link, on_card, opening_at, closing_at, box, device, focused]
+
+fn _no_card[]
+    Card[false, false, false, -1.0, -1.0, [0.0, 0.0, 0.0, 0.0], 'mouse', false]
+
+
+struct Cards [by]
+
+fn _cards[]
+    recall['lory.overlays.cards', Cards[map['' = _no_card[]]]]
+
+fn _card_of[id]
+    held = _cards[]
+    if id in held.by
+        return held.by[id]
+    _no_card[]
+
+fn _card_kept[id, card]
+    held = _cards[]
+    held.by[id] = card
+    remember['lory.overlays.cards', held]
+
+--- the waits Radix's HoverCard keeps by default: the pointer resting on
+--- the link 700 ms opens its card, and off both 300 ms closes it
+fn card_open_delay[]
+    700.0
+
+fn card_close_delay[]
+    300.0
+
+--- whether hover card `id` is open
+fn card_open[id]
+    _card_of[id].open
+
+--- a link (`words`, in the accent's tone) whose card of `kids` opens
+--- under it (`side`, `align`ed, `gap` away; Radix's demos' sideOffset 5)
+--- once the pointer has rested on it `open_delay` ms, and closes once the
+--- pointer has been off the link and the card `close_delay` ms (on the
+--- card it stays: its controls can be reached). The focus on the link
+--- opens it too, after the same wait; a touch does not (nor the focus a
+--- touch gives it). A press on the
+--- link tells `press`; the card's opening and closing tell `open` and
+--- `dismiss` (its id)
+fn hover_card[c, id, words, kids, side = 'bottom', align = 'center', gap = 5.0, open_delay = 700.0, close_delay = 300.0, wide = 300.0]
+    card = _card_of[id]
+    link = gui.drawn[id, 0.0, lory.measure[c, words, 15.0] + 4.0, 24.0, _link_drawn, lo = open_delay, hi = close_delay, words = words]
+    if not card.open
+        return gui.row[[link], gap = 0.0]
+    probed = gui.overlay[gui.overlay[gui.column[kids, gap = 8.0], _card_probe[id, 0.0], anchor = 'top_left'], _card_probe[id, 1.0], anchor = 'bottom_right']
+    panel = gui.layer['`id`:card', [probed], at = id, side = side, align = align, gap = gap, dismiss = false, wide = wide, pad = 14.0, fade = 150.0]
+    gui.row[[link, panel], gap = 0.0]
+
+--- a probe at a corner of an open card: the first keeps its top left,
+--- the second its box and whether the pointer is on it
+fn _card_probe[id, corner]
+    gui.drawn['', corner, 0.0, 0.0, _card_probed, words = id]
+
+fn _card_probed[d]
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    s = d.s
+    card = _card_of[d.words]
+    if d.num lt 0.5
+        card.box = [d.x / s, d.y / s, 0.0, 0.0]
+        _card_kept[d.words, card]
+        return d
+    card.box = [card.box[0], card.box[1], (d.x + d.w) / s - card.box[0], d.y / s - card.box[1]]
+    for e in evs
+        if e.on eq 'move' or e.on eq 'down'
+            card.device = e.device
+            if e.device ne 'touch'
+                card.on_card = _inside[e.x / s, e.y / s, card.box]
+        if e.on eq 'leave'
+            card.on_card = false
+    _card_kept[d.words, card]
+    d
+
+--- a hover card's link: drawn underlined in the accent's tone; the
+--- pointer coming onto it and leaving it (and onto and off its card),
+--- the focus coming and going, and its waits answered
+fn _link_drawn[d]
+    clock = lory.time[d.c]
+    if not clock.ok
+        return d
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    card = _card_of[d.id]
+    s = d.s
+    box = [d.x / s, d.y / s, d.w / s, d.h / s]
+    for e in evs
+        if e.on eq 'move' or e.on eq 'down' or e.on eq 'up'
+            card.device = e.device
+            if e.device ne 'touch'
+                card.on_link = _inside[e.x / s, e.y / s, box]
+                --- (a move this control sees off the card: the card's own
+                --- are kept from it, as the card covers them)
+                if card.open and not _inside[e.x / s, e.y / s, card.box]
+                    card.on_card = false
+        if e.on eq 'leave'
+            card.on_link = false
+            card.on_card = false
+    was_on = card.opening_at gte 0.0 or (card.open and card.closing_at lt 0.0)
+    on = card.on_link or card.on_card or (d.focused and card.device ne 'touch')
+    if on and not was_on
+        card.closing_at = -1.0
+        if not card.open
+            card.opening_at = clock
+    if not on and was_on
+        card.opening_at = -1.0
+        if card.open
+            card.closing_at = clock
+    if card.opening_at gte 0.0 and clock - card.opening_at gte d.lo
+        card.open = true
+        card.opening_at = -1.0
+        d = gui.tell[d, 'open', '', 1.0]
+    if card.closing_at gte 0.0 and clock - card.closing_at gte d.hi
+        card.open = false
+        card.closing_at = -1.0
+        card.on_card = false
+        d = gui.tell[d, 'dismiss', 'leave', 0.0]
+    if d.pressed
+        d = gui.tell[d, 'press', '', 0.0]
+    _card_kept[d.id, card]
+    c = d.c
+    look = d.look
+    ink = look.accent
+    if d.hover
+        ink = lory.mix[look.accent, look.ink, 0.25]
+    c = lory.text[c, d.x + 2.0 * s, d.y + (d.h - lory.line_height[c, 15.0 * s]) / 2.0, d.words, 15.0 * s, ink]
+    c = lory.rect[c, d.x + 2.0 * s, d.y + d.h - 3.0 * s, d.w - 4.0 * s, 1.0 * s, lory.fade[ink, 0.6]]
+    if d.hover
+        c = lory.cursor[c, 'pointer']
+    d.c = c
+    d
+
+fn _inside[x, y, b]
+    x gte b[0] and x lt b[0] + b[2] and y gte b[1] and y lt b[1] + b[3]
+
+--- ---- tooltips (Radix's Tooltip and its Provider) ----
+
+--- the waits Radix's Tooltip keeps by default: the pointer resting on a
+--- control 700 ms opens its tip; once one has been open, another opens at
+--- once until 300 ms after the last closed; the pointer leaving toward
+--- the tip keeps it inside the hull of the tip and the points 5 CSS
+--- pixels either side of where it left
+fn tip_delay[]
+    700.0
+
+fn tip_skip_delay[]
+    300.0
+
+fn tip_padding[]
+    5.0
+
+--- what the tooltips hold between frames: the control whose tip is open
+--- ('' for none) and the one waiting to open (and since when); whether a
+--- tip waits its rest (none has been open lately) and when the last
+--- closed; the control the pointer is over and whether its moving there
+--- opened it (no more until it leaves); the control a press went down on
+--- (its focus is a press's, not the keys'); the open tip's box and each
+--- control's (and where each starts); the grace kept on the way between
+--- them (corners, x and y in turn; none: empty); the focus as the last
+--- frame left it; why the tip is open (`pointer`, `focus`)
+struct Tips [open, waiting, waiting_at, delayed, closed_at, over, moved, downed, tip, starts, boxes, grace, focus, why, focus_now, focus_at]
+
+fn _fresh_tips[]
+    Tips['', '', 0.0, true, -1000000.0, '', false, '', [0.0, 0.0, 0.0, 0.0], map['' = [0.0, 0.0]], map['' = [0.0, 0.0, 0.0, 0.0]], slice[[0.0], 0, 0], '', '', '', -1.0]
+
+fn _tips[]
+    recall['lory.overlays.tips', _fresh_tips[]]
+
+fn _trigger_box[tips, id]
+    if id in tips.boxes
+        return tips.boxes[id]
+    [0.0, 0.0, 0.0, 0.0]
+
+--- the control whose tooltip is open ('' for none)
+fn tip_open[]
+    _tips[].open
+
+--- the control `n` (it needs an id) with a tooltip of `words` on its
+--- `side`, `gap` away (Radix's demos' sideOffset 5): the pointer resting
+--- on it `delay` ms opens it (at once while another has just been open),
+--- the focus coming to it by the keys opens it at once; it closes as the
+--- pointer leaves (unless on its way to the tip: `hoverable`), a press on
+--- the control, Escape, and the focus leaving
+fn tooltip[c, n, words, side = 'top', gap = 5.0, delay = 700.0, hoverable = true]
+    tips = _tips[]
+    id = n.id
+    focus = recall['lory.gui', gui._fresh[]].focus
+    --- (the focus as the last frame left it, kept once a frame)
+    at = lory.time[c]
+    if at ne tips.focus_at
+        tips.focus = tips.focus_now
+        tips.focus_now = focus
+        tips.focus_at = at
+    --- (the focus coming by the keys opens it at once; going, it closes)
+    if focus eq id and tips.focus ne id
+        if tips.downed ne id
+            tips = _tip_opened[tips, id, lory.time[c]]
+            tips.why = 'focus'
+    if focus ne id and tips.focus eq id and tips.open eq id
+        tips = _tip_closed[tips, lory.time[c]]
+    if focus ne id and tips.downed eq id and tips.over ne id
+        tips.downed = ''
+    remember['lory.overlays.tips', tips]
+    probed = gui.overlay[gui.overlay[n, _tip_probe[id, 0.0, delay], anchor = 'top_left'], _tip_probe[id, 1.0, delay], anchor = 'bottom_right']
+    if tips.open ne id
+        return gui.row[[probed], gap = 0.0]
+    wide = lory.measure[c, words, 13.0] + 20.0
+    bubble = gui.drawn['', 0.0, wide, 28.0, _bubble, words = '`id`\t`words`\t`_one[hoverable]`']
+    layer = gui.layer['`id`:tip', [bubble], at = id, side = side, gap = gap, dismiss = false, bare = true, pad = 0.0, fade = 100.0]
+    gui.row[[probed, layer], gap = 0.0]
+
+fn _one[yes]
+    if yes
+        return 1.0
+    0.0
+
+fn _tip_probe[id, corner, delay]
+    gui.drawn['', corner, 0.0, 0.0, _tip_probed, lo = delay, words = id]
+
+fn _tip_opened[tips, id, clock]
+    tips.open = id
+    tips.waiting = ''
+    tips.delayed = false
+    tips.grace = slice[[0.0], 0, 0]
+    tips
+
+fn _tip_closed[tips, clock]
+    if tips.open eq ''
+        return tips
+    tips.open = ''
+    tips.closed_at = clock
+    tips.grace = slice[[0.0], 0, 0]
+    tips
+
+--- a probe at a corner of a control with a tooltip: the first keeps its
+--- top left, the second its box, and answers the pointer while its tip is
+--- closed: moving onto it (not a touch), it opens at once or waits its
+--- rest; leaving, the wait goes; a press keeps it closed until the
+--- pointer leaves. The rest and the skip are kept here too
+fn _tip_probed[d]
+    clock = lory.time[d.c]
+    if not clock.ok
+        return d
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    s = d.s
+    id = d.words
+    tips = _tips[]
+    if d.num lt 0.5
+        tips.starts[id] = [d.x / s, d.y / s]
+        remember['lory.overlays.tips', tips]
+        return d
+    if not (id in tips.starts)
+        return d
+    delay = d.lo
+    start = tips.starts[id]
+    box = [start[0], start[1], (d.x + d.w) / s - start[0], d.y / s - start[1]]
+    tips.boxes[id] = box
+    for e in evs
+        x = e.x / s
+        y = e.y / s
+        inside = _inside[x, y, box]
+        if e.on eq 'down' and inside
+            tips.downed = id
+            tips.moved = true
+            if tips.waiting eq id
+                tips.waiting = ''
+            if tips.open eq id
+                tips = _tip_closed[tips, clock]
+        if e.on eq 'move' and e.device ne 'touch'
+            if inside and tips.over ne id
+                tips.over = id
+                tips.moved = false
+            if inside and not tips.moved and tips.open ne id
+                tips.moved = true
+                if tips.delayed
+                    tips.waiting = id
+                    tips.waiting_at = clock
+                else
+                    tips = _tip_opened[tips, id, clock]
+                    tips.why = 'pointer'
+            if not inside and tips.over eq id
+                tips.over = ''
+                tips.moved = false
+                if tips.downed eq id
+                    tips.downed = ''
+                if tips.waiting eq id
+                    tips.waiting = ''
+    if tips.waiting eq id and clock - tips.waiting_at gte delay
+        tips = _tip_opened[tips, id, clock]
+        tips.why = 'pointer'
+    if tips.open eq '' and not tips.delayed and clock - tips.closed_at gte tip_skip_delay[]
+        tips.delayed = true
+    remember['lory.overlays.tips', tips]
+    d
+
+--- an open tooltip: its words on the ink's ground; it keeps its box, and
+--- answers the pointer while it is open: off the control and the tip, it
+--- closes, unless on its way between them, inside their grace (where
+--- `hoverable`); a press on the control, and Escape, close it
+fn _bubble[d]
+    clock = lory.time[d.c]
+    if not clock.ok
+        return d
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    s = d.s
+    parts = split[d.words, '\t']
+    id = parts[0]
+    hoverable = parts[2] eq '1'
+    tips = _tips[]
+    box = [d.x / s, d.y / s, d.w / s, d.h / s]
+    tips.tip = box
+    trigger = _trigger_box[tips, id]
+    for e in evs
+        if tips.open eq id
+            x = e.x / s
+            y = e.y / s
+            on_trigger = _inside[x, y, trigger]
+            on_tip = _inside[x, y, box]
+            if e.on eq 'key' and e.key eq 'Escape'
+                tips = _tip_closed[tips, clock]
+            if e.on eq 'down' and on_trigger
+                tips.downed = id
+                tips = _tip_closed[tips, clock]
+            if e.on eq 'move' and e.device ne 'touch' and tips.open eq id
+                if on_trigger or on_tip
+                    tips.grace = slice[[0.0], 0, 0]
+                else
+                    if len[tips.grace] eq 0
+                        if hoverable and tips.why eq 'pointer'
+                            --- (leaving the control toward the tip, or the
+                            --- tip toward the control)
+                            target = box
+                            from = trigger
+                            if tips.over ne id
+                                target = trigger
+                                from = box
+                            tips.grace = grace_hull[x, y, from, target]
+                        else
+                            tips = _tip_closed[tips, clock]
+                    if len[tips.grace] gt 0
+                        if not menus.inside_polygon[x, y, tips.grace]
+                            tips = _tip_closed[tips, clock]
+                if not on_trigger and tips.over eq id
+                    tips.over = ''
+                    tips.moved = false
+                    if tips.downed eq id
+                        tips.downed = ''
+    remember['lory.overlays.tips', tips]
+    c = d.c
+    look = d.look
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 6.0 * s, look.ink]
+    d.c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, parts[1], 13.0 * s, look.page]
+    d
+
+--- the side of `box` nearest the point (x, y) left it by: top, bottom,
+--- left or right (where two are as near, the first of left, right, top
+--- and bottom, as Radix answers it)
+fn exit_side[x, y, box]
+    top = abs[box[1] - y]
+    bottom = abs[box[1] + box[3] - y]
+    right = abs[box[0] + box[2] - x]
+    left = abs[box[0] - x]
+    least = min[min[top, bottom], min[right, left]]
+    if least eq left
+        return 'left'
+    if least eq right
+        return 'right'
+    if least eq top
+        return 'top'
+    'bottom'
+
+--- the two points `tip_padding` either side of where the pointer left,
+--- stepped back toward the box it left (x and y in turn)
+fn padded_exit[x, y, side]
+    p = tip_padding[]
+    if side eq 'top'
+        return [x - p, y + p, x + p, y + p]
+    if side eq 'bottom'
+        return [x - p, y - p, x + p, y - p]
+    if side eq 'left'
+        return [x + p, y - p, x + p, y + p]
+    [x - p, y - p, x - p, y + p]
+
+--- the grace on the way from box `from`, left at (x, y), to box `to`:
+--- the hull of the two padded points and the corners of `to` (x and y in
+--- turn, round the hull)
+fn grace_hull[x, y, from, to]
+    side = exit_side[x, y, from]
+    points = padded_exit[x, y, side]
+    for v in [to[0], to[1], to[0] + to[2], to[1], to[0] + to[2], to[1] + to[3], to[0], to[1] + to[3]]
+        points = push[points, v]
+    hull[points]
+
+--- the convex hull of points (x and y in turn), round from the leftmost:
+--- Andrew's monotone chain, the points sorted by x then y, its lower and
+--- upper halves, points in a straight line between two left out
+fn hull[points]
+    n = len[points] / 2
+    xs = slice[[0.0], 0, 0]
+    ys = slice[[0.0], 0, 0]
+    i = 0
+    while i lt n
+        --- (sorted by insertion: by x, then by y)
+        x = points[2 * i]
+        y = points[2 * i + 1]
+        at = len[xs]
+        while at gt 0 and (xs[at - 1] gt x or (xs[at - 1] eq x and ys[at - 1] gt y))
+            at = at - 1
+        xs = concat[slice[xs, 0, at], [x], slice[xs, at, len[xs]]]
+        ys = concat[slice[ys, 0, at], [y], slice[ys, at, len[ys]]]
+        i = i + 1
+    if n lte 1
+        return points
+    rising = _half[xs, ys, 0, n, 1]
+    falling = _half[xs, ys, n - 1, -1, -1]
+    --- (each half ends where the other begins: those ends once)
+    out = slice[[0.0], 0, 0]
+    k = 0
+    while k + 3 lt len[rising]
+        out = push[out, rising[k]]
+        out = push[out, rising[k + 1]]
+        k = k + 2
+    k = 0
+    while k + 3 lt len[falling]
+        out = push[out, falling[k]]
+        out = push[out, falling[k + 1]]
+        k = k + 2
+    if len[out] eq 4
+        if out[0] eq out[2] and out[1] eq out[3]
+            return slice[out, 0, 2]
+    out
+
+--- one half of the hull, the sorted points from `from` to before `to` by
+--- `step`: each point kept while the turn it makes is to the left of the
+--- last two kept
+fn _half[xs, ys, from, to, step]
+    kept = slice[[0.0], 0, 0]
+    i = from
+    while i ne to
+        while len[kept] gte 4 and _turn[kept[len[kept] - 4], kept[len[kept] - 3], kept[len[kept] - 2], kept[len[kept] - 1], xs[i], ys[i]] gte 0.0
+            kept = slice[kept, 0, len[kept] - 2]
+        kept = push[kept, xs[i]]
+        kept = push[kept, ys[i]]
+        i = i + step
+    kept
+
+--- which way the path from a through b to c turns, on the page's axes (y
+--- down): more than 0 is clockwise
+fn _turn[ax, ay, bx, by, cx, cy]
+    (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+--- ---- toasts (Radix's Toast) and snackbars (Vuetify's VSnackbar and
+--- VSnackbarQueue) ----
+
+--- one notice: its id (its events name it), its title, its words, an
+--- act's words ('' for none), its tone ('' plain, 'accent', 'danger',
+--- 'success' or 'warning') and how long it shows (ms; 0: until closed)
+struct Notice [id, title, words, act, tone, lasts]
+
+fn notice[id, title, words = '', act = '', tone = '', lasts = 5000.0]
+    Notice[id, title, words, act, tone, lasts]
+
+--- the numbers held to the libraries: a toast's time and its swipe's
+--- threshold, the move a swipe begins past (a mouse's, a touch's), the key
+--- that takes the focus to the toasts (Radix's Toast); a snackbar's time
+--- and the swipe that closes it (Vuetify's VSnackbar), the gap of its
+--- queue
+fn toast_time[]
+    5000.0
+
+fn swipe_threshold[]
+    50.0
+
+fn swipe_start[device]
+    if device eq 'touch'
+        return 10.0
+    2.0
+
+fn toast_hotkey[]
+    'F8'
+
+fn snack_gap[]
+    8.0
+
+--- what a stack of notices holds between frames: each notice's time
+--- left and when it was last counted; the pointer's last place; the
+--- notices' boxes; whether the stack is paused (the pointer on it, the
+--- focus in it, the window not holding the keyboard); the notice a press
+--- is on and which of its parts, where the press began, how far it has
+--- come and whether a swipe has begun; whether the key that takes the
+--- focus to the stack was typed
+struct Stack [left, counted, x, y, boxes, paused, blurred, pressed, part, from_x, from_y, dx, dy, swiping, hotkey]
+
+fn _no_stack[]
+    Stack[map['' = 0.0], map['' = 0.0], -1000000.0, -1000000.0, map['' = [0.0, 0.0, 0.0, 0.0]], false, false, '', '', 0.0, 0.0, 0.0, 0.0, false, false]
+
+struct Stacks [by]
+
+fn _stack_of[id]
+    held = recall['lory.overlays.stacks', Stacks[map['' = _no_stack[]]]]
+    if id in held.by
+        return held.by[id]
+    _no_stack[]
+
+fn _stack_kept[id, st]
+    held = recall['lory.overlays.stacks', Stacks[map['' = _no_stack[]]]]
+    held.by[id] = st
+    remember['lory.overlays.stacks', held]
+
+--- how long notice `notice_id` of stack `id` has left (ms)
+fn time_left[id, notice_id]
+    st = _stack_of[id]
+    if notice_id in st.left
+        return st.left[notice_id]
+    0.0
+
+--- the notices the program holds, at a `place` of the page (gui's
+--- corners), `most` of them at once, the first given first: the rest wait
+--- their turn (Vuetify's queue holds them so). Each shows its `lasts`
+--- (5000 ms by default), the time counted while the stack is not paused:
+--- the pointer on it, the focus in it, or the window without the keyboard
+--- pause every one and keep what each has left (Radix's viewport). A
+--- notice swiped toward `swipe` past `threshold` CSS pixels closes; short
+--- of it, it goes back. F8 takes the focus to the newest; with the focus,
+--- Escape closes it and Enter does its act. Its events, each naming the
+--- notice: `act` (its act's words) and `dismiss` (`timeout`, `swipe`,
+--- `close`, `escape`, `act`); the program takes a notice away on its
+--- `dismiss`
+fn toasts[c, id, notices, place = 'bottom_right', most = 3, swipe = 'right', threshold = 50.0, wide = 360.0]
+    _stacked[c, id, notices, place, most, swipe, threshold, wide, 'toast', 10.0]
+
+--- snackbars (Vuetify's VSnackbar in a VSnackbarQueue): `most` (one by
+--- default) at the foot of the page, the rest waiting; each shows its
+--- `lasts`, and the pointer on it or the focus in it holds it, its time
+--- starting again once they leave (as Vuetify's does), as the window
+--- without the keyboard does; a touch swiped 50 CSS pixels up or down
+--- closes it. Its events are a toast's
+fn snackbars[c, id, notices, most = 1, wide = 560.0]
+    _stacked[c, id, notices, 'bottom', most, 'down', 50.0, wide, 'snack', snack_gap[]]
+
+fn _stacked[c, id, notices, place, most, swipe, threshold, wide, style, gap]
+    st = _stack_of[id]
+    shown = slice[[notice['', '']], 0, 0]
+    for n in notices
+        if len[shown] lt most
+            shown = push[shown, n]
+    focus = recall['lory.gui', gui._fresh[]].focus
+    if st.hotkey and len[shown] gt 0
+        gui.focus['`id`:`shown[len[shown] - 1].id`', '']
+        focus = '`id`:`shown[len[shown] - 1].id`'
+    st.hotkey = false
+    --- (what pauses the stack, as the last frame left it)
+    over = false
+    held = false
+    for n in shown
+        if n.id in st.boxes
+            if _inside[st.x, st.y, st.boxes[n.id]]
+                over = true
+        if focus eq '`id`:`n.id`'
+            held = true
+    st.paused = st.blurred or over or held
+    if style eq 'snack'
+        st.paused = st.blurred
+    --- (the times of notices taken away forgotten)
+    kept = map['' = 0.0]
+    counted = map['' = 0.0]
+    for n in shown
+        if n.id in st.left
+            kept[n.id] = st.left[n.id]
+            counted[n.id] = st.counted[n.id]
+    st.left = kept
+    st.counted = counted
+    _stack_kept[id, st]
+    kids = slice[[gui.space[0.0]], 0, 0]
+    for n in shown
+        kids = push[kids, _notice_node[c, id, n, wide, style, swipe, threshold]]
+    if len[kids] eq 0
+        return gui.space[0.0]
+    column = gui.column[kids, gap = gap]
+    if style eq 'snack'
+        column = gui.column[kids, gap = gap, align = 'center']
+        return gui.layer['`id`:queue', [column], place = place, bare = true, pad = 8.0, dismiss = false]
+    gui.layer['`id`:viewport', [column], place = place, bare = true, pad = 8.0, dismiss = false, wide = wide + 16.0]
+
+--- a notice's control: as wide as its stack, as tall as its lines
+fn _notice_node[c, id, n, wide, style, swipe, threshold]
+    tall = 52.0
+    if n.words ne ''
+        tall = 70.0
+    act_wide = 0.0
+    if n.act ne ''
+        act_wide = lory.measure[c, n.act, 13.0] + 20.0
+    gui.drawn['`id`:`n.id`', n.lasts, wide, tall, _notice_drawn, lo = act_wide, hi = threshold, words = '`id`\t`n.id`\t`n.title`\t`n.words`\t`n.act`\t`n.tone`\t`swipe`\t`style`']
+
+--- where a notice's act stands in it, and its close button (CSS pixels
+--- from its top left)
+fn _act_box[w, h, act_wide]
+    [w - act_wide - 38.0, (h - 28.0) / 2.0, act_wide, 28.0]
+
+fn _shut_box[w]
+    [w - 30.0, 6.0, 22.0, 22.0]
+
+--- whether a move of (dx, dy) goes toward `way` past `threshold` (Radix's
+--- test: along the swipe's axis more than across it, and past it)
+fn swiped_past[dx, dy, way, threshold]
+    across = abs[dx] gt abs[dy]
+    if way eq 'left' or way eq 'right'
+        return across and abs[dx] gt threshold
+    (not across) and abs[dy] gt threshold
+
+--- a notice: its time counted, the pointer's presses on its act and its
+--- close button, its swipe, the keys on it, and drawn (moved as far as
+--- it is swiped)
+fn _notice_drawn[d]
+    clock = lory.time[d.c]
+    if not clock.ok
+        return d
+    evs = lory.events[d.c]
+    if not evs.ok
+        return d
+    s = d.s
+    parts = split[d.words, '\t']
+    stack_id = parts[0]
+    nid = parts[1]
+    way = parts[6]
+    style = parts[7]
+    st = _stack_of[stack_id]
+    box = [d.x / s, d.y / s, d.w / s, d.h / s]
+    st.boxes[nid] = box
+    act_box = _act_box[box[2], box[3], d.lo]
+    shut_box = _shut_box[box[2]]
+    told = slice[[''], 0, 0]
+    for e in evs
+        x = e.x / s
+        y = e.y / s
+        if e.on eq 'move' or e.on eq 'down' or e.on eq 'up'
+            st.x = x
+            st.y = y
+            st.blurred = false
+        if e.on eq 'leave'
+            st.x = -1000000.0
+            st.y = -1000000.0
+        if e.on eq 'blur'
+            st.blurred = true
+        if e.on eq 'key'
+            st.blurred = false
+            if e.code eq toast_hotkey[] or e.key eq toast_hotkey[]
+                st.hotkey = true
+        if e.on eq 'down' and _inside[x, y, box] and (e.button eq 0 or e.device eq 'touch')
+            st.pressed = nid
+            st.part = 'body'
+            ox = x - box[0]
+            oy = y - box[1]
+            if d.lo gt 0.0 and _inside[ox, oy, act_box]
+                st.part = 'act'
+            if style eq 'toast' and _inside[ox, oy, shut_box]
+                st.part = 'shut'
+            st.from_x = x
+            st.from_y = y
+            st.dx = 0.0
+            st.dy = 0.0
+            st.swiping = false
+        if e.on eq 'move' and st.pressed eq nid and style eq 'toast'
+            st = _swipe_moved[st, x, y, way, e.device]
+        if e.on eq 'up' and st.pressed eq nid
+            ox = x - box[0]
+            oy = y - box[1]
+            if style eq 'snack'
+                if e.device eq 'touch' and abs[st.from_y - y] gt d.hi
+                    told = push[told, 'dismiss\tswipe']
+            if st.swiping
+                if swiped_past[st.dx, st.dy, way, d.hi]
+                    told = push[told, 'dismiss\tswipe']
+            else
+                if st.part eq 'act' and _inside[ox, oy, act_box]
+                    told = push[told, 'act\t`parts[4]`']
+                    told = push[told, 'dismiss\tact']
+                if st.part eq 'shut' and _inside[ox, oy, shut_box]
+                    told = push[told, 'dismiss\tclose']
+            st.pressed = ''
+            st.swiping = false
+            st.dx = 0.0
+            st.dy = 0.0
+    for k in d.keys
+        if k eq 'Escape'
+            told = push[told, 'dismiss\tescape']
+        if k eq 'Enter' and parts[4] ne ''
+            told = push[told, 'act\t`parts[4]`']
+            told = push[told, 'dismiss\tact']
+    --- (its time: a snackbar's starts again while the pointer or the
+    --- focus is on it)
+    if not (nid in st.left)
+        st.left[nid] = d.num
+        st.counted[nid] = clock
+    before = st.left[nid]
+    if style eq 'snack' and (st.paused or d.focused or _inside[st.x, st.y, box])
+        st.left[nid] = d.num
+    else
+        if not st.paused
+            st.left[nid] = st.left[nid] - (clock - st.counted[nid])
+    st.counted[nid] = clock
+    if d.num gt 0.0 and before gt 0.0 and st.left[nid] lte 0.0
+        told = push[told, 'dismiss\ttimeout']
+    _stack_kept[stack_id, st]
+    --- (told once each: a notice closed tells nothing more)
+    done = false
+    for t in told
+        bits = split[t, '\t']
+        if not done
+            d.told = push[d.told, gui.Event[nid, bits[0], bits[1], 0.0]]
+            if bits[0] eq 'dismiss'
+                done = true
+    shift_x = 0.0
+    shift_y = 0.0
+    if st.pressed eq nid and st.swiping
+        shift_x = st.dx * s
+        shift_y = st.dy * s
+    d.c = _notice_painted[d, parts, shift_x, shift_y, act_box, shut_box, style]
+    d
+
+--- the swipe of the notice pressed, the pointer moved to (x, y): its move
+--- toward `way` kept (nothing the other way); once that passes the
+--- start's few pixels the swipe has begun, and a move first past them
+--- any other way lets the press go (Radix's toast, number for number)
+fn _swipe_moved[st, x, y, way, device]
+    mx = x - st.from_x
+    my = y - st.from_y
+    along = way eq 'left' or way eq 'right'
+    dx = 0.0
+    dy = 0.0
+    if along
+        dx = max[0.0, mx]
+        if way eq 'left'
+            dx = min[0.0, mx]
+    else
+        dy = max[0.0, my]
+        if way eq 'up'
+            dy = min[0.0, my]
+    buffer = swipe_start[device]
+    if st.swiping
+        st.dx = dx
+        st.dy = dy
+        return st
+    if swiped_past[dx, dy, way, buffer]
+        st.swiping = true
+        st.dx = dx
+        st.dy = dy
+        return st
+    if abs[mx] gt buffer or abs[my] gt buffer
+        st.pressed = ''
+    st
+
+--- a notice drawn: its ground with its tone's stripe, its title and
+--- words, its act's button and (a toast's) close button
+fn _notice_painted[d, parts, shift_x, shift_y, act_box, shut_box, style]
+    c = d.c
+    s = d.s
+    look = d.look
+    x = d.x + shift_x
+    y = d.y + shift_y
+    tone = parts[5]
+    stripe = look.edge
+    if tone eq 'accent'
+        stripe = look.accent
+    if tone eq 'danger'
+        stripe = look.danger
+    if tone eq 'success'
+        stripe = look.success
+    if tone eq 'warning'
+        stripe = look.warning
+    r = 8.0 * s
+    if style eq 'snack'
+        r = 4.0 * s
+    c = lory.round_rect[c, x - 2.0 * s, y + 3.0 * s, d.w + 4.0 * s, d.h + 4.0 * s, r + 2.0 * s, lory.fade[look.shadow, look.shadow.a * 0.5]]
+    c = lory.round_rect[c, x, y, d.w, d.h, r, look.panel]
+    c = lory.round_outline[c, x, y, d.w, d.h, r, 1.0 * s, look.edge]
+    if tone ne ''
+        c = lory.round_rect[c, x + 6.0 * s, y + 10.0 * s, 3.0 * s, d.h - 20.0 * s, 1.5 * s, stripe]
+    tx = x + 18.0 * s
+    if parts[3] eq ''
+        c = lory.text[c, tx, y + (d.h - lory.line_height[c, 14.0 * s]) / 2.0, parts[2], 14.0 * s, look.ink]
+    else
+        c = lory.text[c, tx, y + 14.0 * s, parts[2], 14.0 * s, look.ink]
+        c = lory.text[c, tx, y + 38.0 * s, parts[3], 13.0 * s, look.muted]
+    if d.lo gt 0.0
+        ax = x + act_box[0] * s
+        ay = y + act_box[1] * s
+        aw = act_box[2] * s
+        ah = act_box[3] * s
+        c = lory.round_outline[c, ax, ay, aw, ah, 5.0 * s, 1.0 * s, look.edge]
+        c = lory.text_centered[c, ax + aw / 2.0, ay + ah / 2.0, parts[4], 13.0 * s, look.accent]
+    if style eq 'toast'
+        c = icons.draw[c, 'cross-2', x + (shut_box[0] + 3.5) * s, y + (shut_box[1] + 3.5) * s, 15.0 * s, look.muted]
+    c
+
+--- ---- sheets (a dialog along a side: Radix's Dialog as its demos lay
+--- it, Vuetify's VBottomSheet) ----
+
+--- the time a sheet comes in and goes, on its curve (Vuetify's bottom
+--- sheet: 0.2 s, its standard curve, cubic-bezier(0.4, 0, 0.2, 1)),
+--- sliding its whole size
+fn sheet_time[]
+    200.0
+
+--- a sheet along a `side` of the page ('right', 'left', 'top' or
+--- 'bottom'), `size` CSS pixels across (wide at a side, tall at the top
+--- or foot), over the page dimmed: its `title` and its controls under it
+--- (scrolled where they are more), a close button at its top right. It
+--- slides in from its side; open, it keeps the focus, Tab and the pointer
+--- as a dialog does, and tells `dismiss` (`escape`, `outside`, `close`)
+fn sheet[c, id, kids, open, side = 'right', size = 320.0, title = '', dismiss = true]
+    seen = motion.presence[c, 'lory.overlays/`id`', open, sheet_time[], sheet_time[], 'cubic-bezier(0.4, 0, 0.2, 1)']
+    if not seen.present
+        return gui.space[0.0]
+    s = lory.px[c]
+    page_w = lory.width[c] / s
+    page_h = lory.height[c] / s
+    wide = size
+    tall = page_h
+    if side eq 'top' or side eq 'bottom'
+        wide = page_w
+        tall = size
+    parts = slice[[gui.space[0.0]], 0, 0]
+    if title ne ''
+        parts = push[parts, gui.heading[title]]
+    for n in kids
+        parts = push[parts, n]
+    inner = gui.scroll['`id`:body', tall - 40.0, [gui.column[parts, gap = 12.0]]]
+    content = gui.column[[gui.overlay[inner, _closer[id, ''], anchor = 'top_right']], pad = 20.0]
+    ground = gui.drawn['', 0.0, wide, tall, _sheet_ground, words = side]
+    body = gui.overlay[ground, content, anchor = 'top_left']
+    away = 1.0 - seen.value
+    dx = 0.0
+    dy = 0.0
+    if side eq 'right'
+        dx = wide * away
+    if side eq 'left'
+        dx = -wide * away
+    if side eq 'bottom'
+        dy = tall * away
+    if side eq 'top'
+        dy = -tall * away
+    layer = gui.layer[id, [gui.moved[body, dx, dy]], place = side, modal = open, dismiss = dismiss and open, focused = open, wide = wide, bare = true, pad = 0.0]
+    gui.column[[_scrim[c, id, seen.value], layer], gap = 0.0]
+
+fn _sheet_ground[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    c = lory.rect[c, d.x, d.y, d.w, d.h, look.panel]
+    edge = d.x
+    if d.words eq 'left'
+        edge = d.x + d.w - 1.0 * s
+    if d.words eq 'left' or d.words eq 'right'
+        c = lory.rect[c, edge, d.y, 1.0 * s, d.h, look.edge]
+    else
+        rule = d.y
+        if d.words eq 'top'
+            rule = d.y + d.h - 1.0 * s
+        c = lory.rect[c, d.x, rule, d.w, 1.0 * s, look.edge]
+    d.c = c
+    d
+
+--- ---- a banner (Vuetify's VBanner) ----
+
+--- one of a banner's acts: its id and its words
+struct Act [id, words]
+
+fn banner_act[id, words]
+    Act[id, words]
+
+--- a strip across its column (Vuetify's VBanner): an icon in its `tone`,
+--- its `words`, and its acts' buttons at its end, a rule under it; a
+--- press on an act tells gui's `press` ('`id`:`act`'); the program takes
+--- it away
+fn banner[c, id, words, acts, icon = 'info-circled', tone = 'accent']
+    buttons = slice[[gui.space[0.0]], 0, 0]
+    for a in acts
+        buttons = push[buttons, gui.button['`id`:`a.id`', a.words]]
+    mark = gui.drawn['', 0.0, 40.0, 40.0, _banner_mark, words = '`icon`\t`tone`']
+    told = gui.row[[mark, gui.text[words]], gap = 16.0, align = 'center']
+    line = gui.row[[told, gui.row[buttons, gap = 8.0]], gap = 16.0, align = 'center', justify = 'between', pad = 12.0]
+    gui.column[[line, gui.drawn['', 0.0, 0.0, 1.0, _banner_rule]], gap = 0.0]
+
+fn _banner_rule[d]
+    d.c = lory.rect[d.c, d.x, d.y, d.w, d.h, d.look.edge]
+    d
+
+fn _banner_mark[d]
+    parts = split[d.words, '\t']
+    look = d.look
+    s = d.s
+    tone = look.accent
+    if parts[1] eq 'danger'
+        tone = look.danger
+    if parts[1] eq 'success'
+        tone = look.success
+    if parts[1] eq 'warning'
+        tone = look.warning
+    c = lory.round_rect[d.c, d.x, d.y, d.w, d.h, d.w / 2.0, lory.fade[tone, 0.18]]
+    d.c = icons.draw[c, parts[0], d.x + 10.0 * s, d.y + 10.0 * s, 20.0 * s, tone]
+    d
+
+--- ---- a dimmer (Semantic UI's Dimmer) ----
+
+--- Semantic UI's dimmer: 0.85 of black (of white, `inverted`), coming and
+--- going over 0.5 s on a straight line
+fn dim_time[]
+    500.0
+
+fn dim_depth[]
+    0.85
+
+--- what each dimmer holds between frames: the box of what it dims
+struct Dims [by]
+
+fn _dims[]
+    recall['lory.overlays.dims', Dims[map['' = [0.0, 0.0, 0.0, 0.0]]]]
+
+fn _dimmed_box[id]
+    held = _dims[]
+    if id in held.by
+        return held.by[id]
+    [0.0, 0.0, 0.0, 0.0]
+
+--- `kids` with a dimmer over them while it is `active`: the dimming over
+--- their box, its `words` in its middle; the controls under it are not
+--- reached, and a press on it tells `dismiss` (`press`) where it is
+--- `closable`
+fn dimmer[c, id, kids, active, words = '', inverted = false, closable = true]
+    seen = motion.presence[c, 'lory.overlays/`id`', active, dim_time[], dim_time[], 'linear']
+    base = gui.column[kids]
+    probed = gui.overlay[gui.overlay[base, _dim_probe[id, 0.0], anchor = 'top_left'], _dim_probe[id, 1.0], anchor = 'bottom_right']
+    if not seen.present
+        return probed
+    box = _dimmed_box[id]
+    dim = gui.drawn['`id`:dim', seen.value, box[2], box[3], _dim_drawn, lo = _one[inverted], hi = _one[closable and active], words = words]
+    gui.overlay[probed, dim, anchor = 'top_left']
+
+--- the whole page dimmed while it is `active`, its `kids` in its middle
+--- (Semantic UI's page dimmer): the page is not reached; Escape and a
+--- press on the dimming tell `dismiss` where it is `closable`
+fn page_dimmer[c, id, kids, active, inverted = false, closable = true]
+    seen = motion.presence[c, 'lory.overlays/`id`', active, dim_time[], dim_time[], 'linear']
+    if not seen.present
+        return gui.space[0.0]
+    shade = 1.0
+    if inverted
+        shade = 2.0
+    inside = gui.layer[id, [gui.faded[gui.column[kids, align = 'center'], seen.value]], place = 'center', modal = active, dismiss = closable and active, focused = active, bare = true, pad = 0.0]
+    gui.column[[_scrim[c, id, seen.value, shade = shade], inside], gap = 0.0]
+
+fn _dim_probe[id, corner]
+    gui.drawn['', corner, 0.0, 0.0, _dim_probed, words = id]
+
+fn _dim_probed[d]
+    s = d.s
+    held = _dims[]
+    box = _dimmed_box[d.words]
+    if d.num lt 0.5
+        held.by[d.words] = [d.x / s, d.y / s, box[2], box[3]]
+    else
+        held.by[d.words] = [box[0], box[1], (d.x + d.w) / s - box[0], d.y / s - box[1]]
+    remember['lory.overlays.dims', held]
+    d
+
+fn _dim_drawn[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    shade = lory.Color[0.0, 0.0, 0.0, dim_depth[] * d.num]
+    ink = lory.fade[lory.white[], d.num]
+    if d.lo gt 0.5
+        shade = lory.Color[1.0, 1.0, 1.0, dim_depth[] * d.num]
+        ink = lory.fade[look.ink, d.num]
+    c = lory.rect[c, d.x, d.y, d.w, d.h, shade]
+    if d.words ne ''
+        c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, d.words, 16.0 * s, ink]
+    if d.hi gt 0.5
+        hit = d.pressed
+        for k in d.keys
+            if k eq 'Escape' or k eq 'Enter'
+                hit = true
+        if hit
+            d = gui.tell[d, 'dismiss', 'press', 0.0]
+    d.c = c
+    d
+
+
+--- ---- tests: frames as a page hands them ----
+
+fn _frame_at[t, given]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+--- a headset's frame: the page on its panel, the rays' presses arriving
+--- as a pointer's
+fn _headset_at[t, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 900, "height": 700, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _event_at[on, x, y, button, device]
+    '{"type": "`on`", "device": "`device`", "id": 1, "x": `x`, "y": `y`, "button": `button`}'
+
+fn _press[x, y]
+    down = _event_at['down', x, y, 0, 'mouse']
+    up = _event_at['up', x, y, 0, 'mouse']
+    '[`down`, `up`]'
+
+fn _one_event[on, x, y, device]
+    one = _event_at[on, x, y, 0, device]
+    '[`one`]'
+
+fn _move[x, y]
+    _one_event['move', x, y, 'mouse']
+
+fn _typed_key[name]
+    '[{"type": "key", "key": "`name`", "code": "`name`"}]'
+
+fn _told_words[shown]
+    out = slice[[''], 0, 0]
+    for e in shown.events
+        n = int[e.num]
+        out = push[out, '`e.id`/`e.act`/`e.words`/`n`']
+    join[out, ' ']
+
+fn _focus_now[]
+    recall['lory.gui', gui._fresh[]].focus
+
+--- a frame with nothing in it, the focus let go and the overlays' own
+--- memory as at the start
+fn _begun[]
+    gui.show[_frame_at[0.0, '[]'], gui.column[[gui.space[10.0]]]]
+    gui.unfocus[]
+    remember['lory.overlays.tips', _fresh_tips[]]
+    remember['lory.overlays.cards', Cards[map['' = _no_card[]]]]
+    remember['lory.overlays.stacks', Stacks[map['' = _no_stack[]]]]
+    ''
+
+fn _dialog_page[t, given, open]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[gui.button['opener', 'Open'], dialog[c, 'edit', 'Edit profile', [gui.field['name', 'Ada'], gui.button['save', 'Save']], open, words = 'Make changes here.']]]]
+
+--- a dialog stands in the middle of the page; open, the focus goes to
+--- its first control and Tab goes round its controls (its close button
+--- last); Escape and a press on the dimming tell `dismiss`, and a press
+--- in it nothing; closed by the program, it goes over 150 ms and the
+--- focus comes back to where it was
+test a_dialog_takes_the_focus_keeps_tab_and_tells_why_it_closes[]
+    _begun[]
+    _dialog_page[0.0, _press[60.0, 40.0], false]
+    _focus_now[] eq 'opener'
+    b = _dialog_page[16.0, '[]', true].boxes['edit']
+    b[0] eq (900.0 - 440.0) / 2.0
+    abs[b[1] - (700.0 - b[3]) / 2.0] lt 0.000001
+    _focus_now[] eq 'name'
+    _dialog_page[32.0, _typed_key['Tab'], true]
+    _focus_now[] eq 'save'
+    _dialog_page[48.0, _typed_key['Tab'], true]
+    _focus_now[] eq 'edit:close'
+    _dialog_page[64.0, _typed_key['Tab'], true]
+    _focus_now[] eq 'name'
+    _told_words[_dialog_page[80.0, _typed_key['Escape'], true]] eq 'edit/dismiss/escape/0'
+    _told_words[_dialog_page[96.0, _press[5.0, 690.0], true]] eq 'edit/dismiss/outside/0'
+    _told_words[_dialog_page[112.0, _press[450.0, 350.0], true]] eq ''
+    _told_words[_dialog_page[128.0, _press[b[0] + b[2] - 30.0, b[1] + 30.0], true]] eq 'edit/dismiss/close/0'
+    --- (closed once it is wholly open: drawn on its way out until 150 ms
+    --- have gone; closed half way, it goes back from where it was)
+    _dialog_page[200.0, '[]', true]
+    'edit' in _dialog_page[216.0, '[]', false].boxes
+    'edit' in _dialog_page[365.0, '[]', false].boxes
+    not ('edit' in _dialog_page[366.0, '[]', false].boxes)
+    _dialog_page[382.0, '[]', false]
+    _focus_now[] eq 'opener'
+
+fn _alert_page[t, given, open]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[gui.button['opener', 'Delete'], alert_dialog[c, 'sure', 'Are you sure?', 'This cannot be undone.', 'Delete account', open, danger = true]]]]
+
+--- an alert dialog's focus goes to Cancel (Radix's AlertDialog), a press
+--- outside does nothing; its act tells `choose`, Cancel and Escape tell
+--- `dismiss`
+test an_alert_dialog_focuses_cancel_and_a_press_outside_does_not_close_it[]
+    _begun[]
+    _alert_page[0.0, _press[60.0, 40.0], false]
+    _alert_page[16.0, '[]', true]
+    _focus_now[] eq 'sure:cancel'
+    _told_words[_alert_page[32.0, _press[5.0, 690.0], true]] eq ''
+    _alert_page[48.0, _typed_key['Tab'], true]
+    _focus_now[] eq 'sure:act'
+    _told_words[_alert_page[64.0, _typed_key['Enter'], true]] eq 'sure/choose/act/0'
+    _told_words[_alert_page[80.0, _typed_key['Escape'], true]] eq 'sure/dismiss/escape/0'
+    _alert_page[96.0, _typed_key['Tab'], true]
+    _told_words[_alert_page[112.0, _typed_key[' '], true]] eq 'sure/dismiss/cancel/0'
+    _alert_page[128.0, '[]', false]
+    _alert_page[300.0, '[]', false]
+    _focus_now[] eq 'opener'
+
+fn _popover_page[t, given]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[popover['dims', 'Dimensions', [gui.field['width', '100'], gui.field['height', '25']]], gui.button['after', 'After']]]]
+
+--- a popover's button opens its panel under it (5 CSS pixels away) and
+--- the focus goes into it; Escape, a press outside and its close button
+--- close it, and the focus comes back to the button
+test a_popover_opens_on_its_button_and_closes_on_escape_outside_and_its_close_button[]
+    _begun[]
+    trigger = _popover_page[0.0, '[]'].boxes['dims']
+    opened_once = _popover_page[16.0, _press[trigger[0] + 10.0, trigger[1] + 10.0]]
+    _told_words[opened_once] eq 'dims/press/Dimensions/0 dims:panel/open//1'
+    opened_once.boxes['dims:panel'][1] eq trigger[1] + trigger[3] + 5.0
+    _focus_now[] eq 'width'
+    _told_words[_popover_page[32.0, _typed_key['Escape']]] eq 'dims:panel/dismiss/escape/0'
+    _popover_page[48.0, '[]']
+    _focus_now[] eq 'dims'
+    _popover_page[64.0, _press[trigger[0] + 10.0, trigger[1] + 10.0]]
+    _told_words[_popover_page[80.0, _press[700.0, 600.0]]] eq 'dims:panel/dismiss/outside/0'
+    _popover_page[88.0, '[]']
+    _popover_page[96.0, _press[trigger[0] + 10.0, trigger[1] + 10.0]]
+    _popover_page[112.0, _typed_key['Tab']]
+    _popover_page[128.0, _typed_key['Tab']]
+    _focus_now[] eq 'dims:close'
+    _told_words[_popover_page[144.0, _typed_key['Enter']]] eq 'dims/dismiss/close/0'
+    not ('dims:panel' in _popover_page[160.0, '[]'].boxes)
+    _focus_now[] eq 'dims'
+
+fn _card_page[t, given]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[hover_card[c, 'radix', '@radix_ui', [gui.text['Radix'], gui.button['follow', 'Follow']]], gui.button['after', 'After']]]]
+
+--- the pointer resting on a hover card's link 700 ms opens its card
+--- (Radix's openDelay), and off the link and the card 300 ms closes it
+--- (its closeDelay); on the card it stays; a touch opens nothing
+test a_hover_card_opens_after_700_ms_and_closes_300_ms_after_the_pointer_leaves[]
+    _begun[]
+    _card_page[1000.0, '[]']
+    _card_page[1016.0, _move[40.0, 36.0]]
+    _told_words[_card_page[1715.0, '[]']] eq ''
+    _told_words[_card_page[1716.0, '[]']] eq 'radix/open//1'
+    box = _card_page[1732.0, '[]'].boxes['radix:card']
+    box[1] eq 24.0 + 24.0 + 5.0
+    _card_page[1748.0, _move[40.0, 300.0]]
+    _told_words[_card_page[2047.0, '[]']] eq ''
+    _told_words[_card_page[2048.0, '[]']] eq 'radix/dismiss/leave/0'
+    _card_page[2064.0, _move[40.0, 36.0]]
+    _card_page[2764.0, '[]']
+    card_open['radix']
+    --- (onto the card: it stays; off it, it goes 300 ms later)
+    _card_page[2780.0, '[]']
+    _card_page[2796.0, _move[40.0, 80.0]]
+    _card_page[3200.0, '[]']
+    card_open['radix']
+    _card_page[3216.0, _move[600.0, 600.0]]
+    _card_page[3515.0, '[]']
+    card_open['radix']
+    _told_words[_card_page[3516.0, '[]']] eq 'radix/dismiss/leave/0'
+    _card_page[4000.0, _one_event['down', 40.0, 36.0, 'touch']]
+    _card_page[5000.0, '[]']
+    not card_open['radix']
+
+fn _tips_page[t, given]
+    c = _frame_at[t, given]
+    gui.show[c, gui.row[[tooltip[c, gui.button['bold', 'Bold'], 'Bold (Ctrl+B)'], tooltip[c, gui.button['italic', 'Italic'], 'Italic (Ctrl+I)']]]]
+
+--- the pointer resting on a control 700 ms opens its tip (Radix's
+--- delayDuration); while one is open, and for 300 ms after the last
+--- closes, another opens at once (its skipDelayDuration), then the wait
+--- comes back; a press on the control closes its tip, and the pointer
+--- staying does not open it again; Escape closes it; the focus brought
+--- by the keys opens it at once
+test a_tooltip_waits_700_ms_skips_the_wait_for_300_ms_and_a_press_closes_it[]
+    _begun[]
+    _tips_page[4000.0, '[]']
+    _tips_page[4016.0, _move[40.0, 40.0]]
+    _tips_page[4715.0, '[]']
+    tip_open[] eq ''
+    _tips_page[4716.0, '[]']
+    tip_open[] eq 'bold'
+    shown = _tips_page[4732.0, '[]']
+    --- (no room above: the tip flips below, 5 CSS pixels away)
+    shown.boxes['bold:tip'][1] eq 24.0 + 34.0 + 5.0
+    _tips_page[4748.0, _move[110.0, 40.0]]
+    tip_open[] eq 'italic'
+    _tips_page[4764.0, '[]']
+    _tips_page[4780.0, _move[110.0, 300.0]]
+    tip_open[] eq ''
+    --- (270 ms after: at once)
+    _tips_page[5050.0, _move[40.0, 40.0]]
+    tip_open[] eq 'bold'
+    _tips_page[5066.0, '[]']
+    _tips_page[5100.0, _move[41.0, 40.0]]
+    tip_open[] eq 'bold'
+    _tips_page[5116.0, _press[41.0, 40.0]]
+    tip_open[] eq ''
+    _tips_page[5132.0, _move[42.0, 40.0]]
+    _tips_page[6000.0, '[]']
+    tip_open[] eq ''
+    --- (off and on again past 300 ms: the wait again)
+    _tips_page[6016.0, _move[600.0, 400.0]]
+    _tips_page[6032.0, _move[40.0, 40.0]]
+    _tips_page[6731.0, '[]']
+    tip_open[] eq ''
+    _tips_page[6732.0, '[]']
+    tip_open[] eq 'bold'
+    _tips_page[6748.0, _typed_key['Escape']]
+    tip_open[] eq ''
+    --- (Tab from bold to italic: the keys' focus opens it at once)
+    _tips_page[6764.0, _typed_key['Tab']]
+    _tips_page[6780.0, '[]']
+    _focus_now[] eq 'italic'
+    tip_open[] eq 'italic'
+
+--- the grace on the way to a tip: the side a box was left by, the two
+--- points 5 CSS pixels either side of the exit stepped back into it, and
+--- the hull of those and the tip's corners; a point inside it keeps the
+--- tip, one outside lets it go
+test a_tooltip_keeps_open_inside_the_hull_on_the_way_to_it[]
+    exit_side[50.0, 59.0, [24.0, 24.0, 64.0, 34.0]] eq 'bottom'
+    exit_side[24.5, 40.0, [24.0, 24.0, 64.0, 34.0]] eq 'left'
+    exit_side[60.0, 24.0, [24.0, 24.0, 64.0, 34.0]] eq 'top'
+    padded_exit[50.0, 59.0, 'bottom'] eq [45.0, 54.0, 55.0, 54.0]
+    padded_exit[90.0, 40.0, 'right'] eq [85.0, 35.0, 85.0, 45.0]
+    hull[[0.0, 0.0, 1.0, 1.0, 2.0, 0.0, 1.0, 2.0, 1.0, 0.5]] eq [0.0, 0.0, 1.0, 2.0, 2.0, 0.0]
+    grace = grace_hull[50.0, 59.0, [24.0, 24.0, 64.0, 34.0], [8.0, 63.0, 113.0, 28.0]]
+    menus.inside_polygon[50.0, 61.0, grace]
+    not menus.inside_polygon[2.0, 61.0, grace]
+    not menus.inside_polygon[50.0, 95.0, grace]
+
+struct Held [ids]
+
+fn _notices[]
+    held = recall['lory.overlays.test', Held[['a', 'b', 'c', 'd']]]
+    out = slice[[notice['', '']], 0, 0]
+    for id in held.ids
+        out = push[out, notice[id, 'Saved `id`', words = 'The file was saved.', act = 'Undo']]
+    out
+
+--- a page of toasts, the program taking each away on its `dismiss`
+fn _toast_page[t, given]
+    c = _frame_at[t, given]
+    shown = gui.show[c, gui.column[[gui.button['before', 'Before'], toasts[c, 'stack', _notices[]]]]]
+    held = recall['lory.overlays.test', Held[['a', 'b', 'c', 'd']]]
+    for e in shown.events
+        if e.act eq 'dismiss'
+            kept = slice[[''], 0, 0]
+            for id in held.ids
+                if id ne e.id
+                    kept = push[kept, id]
+            held.ids = kept
+    remember['lory.overlays.test', held]
+    shown
+
+fn _toasts_held[ids]
+    remember['lory.overlays.test', Held[ids]]
+
+--- three toasts show at once, the first given first, 8 CSS pixels in from
+--- the corner and 10 apart; each shows 5000 ms (Radix's duration), the
+--- time kept while the pointer is on the stack; on time each tells
+--- `dismiss` (`timeout`), and the one waiting takes its turn
+test toasts_show_three_at_once_and_pause_while_the_pointer_is_on_them[]
+    _begun[]
+    _toasts_held[['a', 'b', 'c', 'd']]
+    first = _toast_page[0.0, '[]']
+    a = first.boxes['stack:a']
+    b = first.boxes['stack:b']
+    c3 = first.boxes['stack:c']
+    not ('stack:d' in first.boxes)
+    c3[0] eq 900.0 - 16.0 - 360.0
+    c3[1] + c3[3] eq 700.0 - 16.0
+    b[1] eq a[1] + a[3] + 10.0
+    _toast_page[1000.0, '[]']
+    time_left['stack', 'a'] eq 4000.0
+    _toast_page[1016.0, _move[a[0] + 100.0, a[1] + 20.0]]
+    _toast_page[3000.0, '[]']
+    time_left['stack', 'a'] eq 3984.0
+    _toast_page[3016.0, _move[100.0, 300.0]]
+    _toast_page[5000.0, '[]']
+    time_left['stack', 'a'] eq 2000.0
+    _told_words[_toast_page[7000.0, '[]']] eq 'a/dismiss/timeout/0 b/dismiss/timeout/0 c/dismiss/timeout/0'
+    'stack:d' in _toast_page[7016.0, '[]'].boxes
+
+--- a toast pressed and moved right past 50 CSS pixels closes as it is
+--- let go; at 49 it goes back (Radix's swipeThreshold); a mouse's swipe
+--- begins past 2 pixels, a touch's past 10, and a move that first goes
+--- past them another way lets the press go
+test a_toast_swiped_past_50_closes_and_one_short_of_it_goes_back[]
+    _begun[]
+    _toasts_held[['a', 'b']]
+    a = _toast_page[0.0, '[]'].boxes['stack:a']
+    x = a[0] + 80.0
+    y = a[1] + 20.0
+    _toast_page[16.0, _one_event['down', x, y, 'mouse']]
+    _toast_page[32.0, _move[x + 3.0, y]]
+    _toast_page[48.0, _move[x + 49.0, y]]
+    _told_words[_toast_page[64.0, _one_event['up', x + 49.0, y, 'mouse']]] eq ''
+    _toast_page[80.0, _one_event['down', x, y, 'mouse']]
+    _toast_page[96.0, _move[x + 3.0, y]]
+    _toast_page[112.0, _move[x + 51.0, y]]
+    _told_words[_toast_page[128.0, _one_event['up', x + 51.0, y, 'mouse']]] eq 'a/dismiss/swipe/0'
+    _toasts_held[['a', 'b']]
+    _toast_page[144.0, '[]']
+    a2 = _toast_page[160.0, '[]'].boxes['stack:a']
+    _toast_page[176.0, _one_event['down', a2[0] + 80.0, a2[1] + 20.0, 'touch']]
+    _toast_page[192.0, _one_event['move', a2[0] + 80.0, a2[1] + 31.0, 'touch']]
+    _toast_page[208.0, _one_event['move', a2[0] + 180.0, a2[1] + 31.0, 'touch']]
+    _told_words[_toast_page[224.0, _one_event['up', a2[0] + 180.0, a2[1] + 31.0, 'touch']]] eq ''
+    swiped_past[51.0, 0.0, 'right', 50.0]
+    not swiped_past[50.0, 0.0, 'right', 50.0]
+    not swiped_past[51.0, 52.0, 'right', 50.0]
+    swiped_past[0.0, 11.0, 'down', swipe_start['touch']]
+    not swiped_past[0.0, 10.0, 'down', swipe_start['touch']]
+
+--- F8 takes the focus to the newest toast (Radix's hotkey), where Escape
+--- closes it; the window losing the keyboard pauses the toasts until it
+--- has it again; a press on a toast's act tells it and closes the toast,
+--- and one on its close button closes it
+test f8_takes_the_focus_to_the_newest_toast_and_a_blurred_window_pauses_them[]
+    _begun[]
+    _toasts_held[['a', 'b']]
+    _toast_page[0.0, '[]']
+    _toast_page[16.0, '[{"type": "key", "key": "F8", "code": "F8"}]']
+    _toast_page[32.0, '[]']
+    _focus_now[] eq 'stack:b'
+    _told_words[_toast_page[48.0, _typed_key['Escape']]] eq 'b/dismiss/escape/0'
+    _toast_page[64.0, '[]']
+    gui.unfocus[]
+    _toast_page[80.0, '[]']
+    left = time_left['stack', 'a']
+    _toast_page[96.0, '[{"type": "blur"}]']
+    _toast_page[2000.0, '[]']
+    _toast_page[2016.0, _typed_key['Shift']]
+    time_left['stack', 'a'] eq left - 16.0
+    _toast_page[3016.0, '[]']
+    time_left['stack', 'a'] eq left - 1016.0
+    _toasts_held[['a', 'b']]
+    a = _toast_page[3032.0, '[]'].boxes['stack:a']
+    _told_words[_toast_page[3048.0, _press[a[0] + a[2] - 60.0, a[1] + 35.0]]] eq 'a/act/Undo/0 a/dismiss/act/0'
+    b = _toast_page[3064.0, '[]'].boxes['stack:b']
+    _told_words[_toast_page[3080.0, _press[b[0] + b[2] - 19.0, b[1] + 17.0]]] eq 'b/dismiss/close/0'
+
+fn _snack_page[t, given, listed]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[gui.button['before', 'Before'], snackbars[c, 'snacks', listed]]]]
+
+fn _two_snacks[]
+    [notice['one', 'First saved'], notice['two', 'Second saved', act = 'Undo']]
+
+--- snackbars show one at a time at the foot of the page, in its middle
+--- (Vuetify's VSnackbarQueue, totalVisible 1); the pointer on one holds
+--- it, its 5000 ms starting again once the pointer leaves (Vuetify's
+--- VSnackbar); a touch swiped 50 CSS pixels closes it, at 50 it stays
+test snackbars_show_one_at_a_time_and_start_again_after_the_pointer_leaves[]
+    _begun[]
+    first = _snack_page[0.0, '[]', _two_snacks[]]
+    one = first.boxes['snacks:one']
+    not ('snacks:two' in first.boxes)
+    one[0] eq (900.0 - 560.0) / 2.0
+    _snack_page[16.0, _move[450.0, one[1] + 10.0], _two_snacks[]]
+    _snack_page[2000.0, '[]', _two_snacks[]]
+    time_left['snacks', 'one'] eq 5000.0
+    _snack_page[2016.0, _move[100.0, 100.0], _two_snacks[]]
+    time_left['snacks', 'one'] eq 4984.0
+    --- (held until 2000, its time counted again from there)
+    _told_words[_snack_page[6999.0, '[]', _two_snacks[]]] eq ''
+    _told_words[_snack_page[7000.0, '[]', _two_snacks[]]] eq 'one/dismiss/timeout/0'
+    later_on = [notice['two', 'Second saved', act = 'Undo']]
+    two = _snack_page[7032.0, '[]', later_on].boxes['snacks:two']
+    two eq one
+    _snack_page[7048.0, _one_event['down', 450.0, two[1] + 10.0, 'touch'], later_on]
+    _told_words[_snack_page[7064.0, _one_event['up', 450.0, two[1] - 40.0, 'touch'], later_on]] eq ''
+    _snack_page[7080.0, _one_event['down', 450.0, two[1] + 10.0, 'touch'], later_on]
+    _told_words[_snack_page[7096.0, _one_event['up', 450.0, two[1] - 41.0, 'touch'], later_on]] eq 'two/dismiss/swipe/0'
+
+fn _sheet_page[t, given, open]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[gui.button['before', 'Before'], sheet[c, 'side', [gui.field['name', 'Ada']], open, title = 'Edit']]]]
+
+--- a sheet stands along the right of the page, 320 CSS pixels wide and
+--- the page's height, and slides in from beyond it over 200 ms
+--- (Vuetify's bottom sheet's time and curve); open, it holds the focus as
+--- a dialog does and tells `dismiss`; closed, it slides out, and the
+--- focus comes back
+test a_sheet_slides_in_from_its_side_over_200_ms[]
+    _begun[]
+    _sheet_page[0.0, _press[50.0, 40.0], false]
+    first = _sheet_page[16.0, '[]', true]
+    first.boxes['side'] eq [580.0, 0.0, 320.0, 700.0]
+    first.boxes['name'][0] eq 580.0 + 20.0 + 320.0
+    _focus_now[] eq 'name'
+    half = _sheet_page[116.0, '[]', true].boxes['name'][0]
+    k = motion.ease_at['cubic-bezier(0.4, 0, 0.2, 1)', 0.5]
+    abs[half - (600.0 + 320.0 * (1.0 - k))] lt 0.000001
+    _sheet_page[216.0, '[]', true].boxes['name'][0] eq 600.0
+    _told_words[_sheet_page[232.0, _press[100.0, 300.0], true]] eq 'side/dismiss/outside/0'
+    _told_words[_sheet_page[248.0, _typed_key['Escape'], true]] eq 'side/dismiss/escape/0'
+    _sheet_page[264.0, '[]', false]
+    not ('side' in _sheet_page[464.0, '[]', false].boxes)
+    _sheet_page[480.0, '[]', false]
+    _focus_now[] eq 'before'
+
+fn _dim_page[t, given, active]
+    c = _frame_at[t, given]
+    gui.show[c, gui.column[[dimmer[c, 'seg', [gui.button['inside', 'Inside'], gui.space[100.0]], active, words = 'Loading'], gui.button['after', 'After'], banner[c, 'ban', 'Your connection was lost.', [banner_act['retry', 'Retry'], banner_act['close', 'Dismiss']], icon = 'exclamation-triangle', tone = 'warning']]]]
+
+--- a dimmer covers the box of what it dims, fading in over 0.5 s to 0.85
+--- (Semantic UI's), and keeps presses from what is under it (a press on
+--- it tells `dismiss`); gone, a press reaches it again. A banner lays its
+--- icon and words at its start and its acts at its end
+test a_dimmer_covers_what_it_dims_and_a_banner_lays_its_acts_at_its_end[]
+    _begun[]
+    first = _dim_page[9000.0, '[]', false]
+    not ('seg:dim' in first.boxes)
+    _dim_page[9016.0, '[]', true].boxes['seg:dim'] eq [24.0, 24.0, 852.0, 144.0]
+    _told_words[_dim_page[9532.0, _press[60.0, 40.0], true]] eq 'seg:dim/dismiss/press/0'
+    _dim_page[9548.0, '[]', false]
+    _told_words[_dim_page[10100.0, _press[60.0, 40.0], false]] eq 'inside/press/Inside/0'
+    close = first.boxes['ban:close']
+    close[0] + close[2] eq 876.0 - 12.0
+    first.boxes['ban:retry'][0] + first.boxes['ban:retry'][2] + 8.0 eq close[0]
+    dim_depth[] eq 0.85
+    dim_time[] eq 500.0
+
+--- in a headset a dialog is drawn on the page's panel, takes the focus,
+--- and its close button, pressed by a ray, tells as on a screen
+test in_a_headset_a_dialog_opens_and_its_close_button_tells_as_on_a_page[]
+    _begun[]
+    c = _headset_at[0.0, '[]']
+    closed = gui.show[c, gui.column[[gui.button['opener', 'Open'], dialog[c, 'edit', 'Edit', [gui.button['save', 'Save']], false]]]]
+    c = _headset_at[16.0, '[]']
+    gui.show[c, gui.column[[gui.button['opener', 'Open'], dialog[c, 'edit', 'Edit', [gui.button['save', 'Save']], true]]]]
+    c = _headset_at[200.0, '[]']
+    shown = gui.show[c, gui.column[[gui.button['opener', 'Open'], dialog[c, 'edit', 'Edit', [gui.button['save', 'Save']], true]]]]
+    len[shown.canvas.verts] gt len[closed.canvas.verts]
+    lory.end[shown.canvas] gt 0
+    _focus_now[] eq 'save'
+    b = shown.boxes['edit:close']
+    c = _headset_at[216.0, _press[b[0] + 10.0, b[1] + 10.0]]
+    _told_words[gui.show[c, gui.column[[gui.button['opener', 'Open'], dialog[c, 'edit', 'Edit', [gui.button['save', 'Save']], true]]]]] eq 'edit/dismiss/close/0'

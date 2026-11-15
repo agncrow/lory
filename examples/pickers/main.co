@@ -1,0 +1,210 @@
+--- Lory's pickers: a day in a field with its calendar under it, a stay
+--- chosen first day then last over two months, a calendar inline with the
+--- weeks' numbers, a month and a year, a time from a list, and a week of
+--- a scheduler whose meetings overlap. What is chosen is the program's, a
+--- record kept in process memory between frames; the pickers' own (the
+--- month shown, the day the keys move from, whether a calendar is open) is
+--- Lory's.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.calendar
+use lory.pickers
+
+struct App [due, stay, seen, month, year, at, opened]
+
+fn fresh[]
+    App[[calendar.day[2026, 7, 14]], [calendar.day[2026, 7, 20], calendar.day[2026, 7, 24]], [calendar.day[2026, 7, 9]], [calendar.day[2026, 7, 1]], [calendar.day[2026, 1, 1]], [calendar.day[2026, 7, 14] + 9 * 3600 + 1800], '']
+
+--- the days the inline calendar marks: a holiday, and two days of a
+--- sprint's review
+fn seen_rules[]
+    r = calendar.marking[calendar.rules[], [calendar.day[2026, 7, 16], calendar.day[2026, 7, 17]], 'success']
+    calendar.observing[r, [calendar.Holiday[calendar.day[2026, 7, 4], 'Independence Day']]]
+
+fn due_of[]
+    p = pickers.with_icon[pickers.date_picker['due']]
+    p = pickers.clearable[pickers.with_today[p, 'Today']]
+    pickers.hinted[p, 'MM/dd/yyyy']
+
+fn stay_of[]
+    pickers.showing[pickers.range_picker['stay'], 2, 2]
+
+fn seen_of[]
+    pickers.ruled[pickers.numbered[pickers.inline[pickers.date_picker['seen']]], seen_rules[]]
+
+fn month_of[]
+    pickers.month_picker['month']
+
+fn year_of[]
+    pickers.year_picker['year']
+
+fn at_of[]
+    p = pickers.times_bounded[pickers.inline[pickers.time_picker['at']], 8 * 3600, 18 * 3600]
+    pickers.timed[p, 30]
+
+--- a week of meetings, three of them overlapping on the Monday and two on
+--- the Thursday, and an offsite over two whole days
+fn entries_of[]
+    t = calendar.day[2026, 7, 13]
+    hour = 3600
+    out = [calendar.entry['plan', 'Planning', t + 9 * hour, t + 10 * hour]]
+    out = push[out, calendar.entry['review', 'Design review', t + 9 * hour + 1800, t + 11 * hour]]
+    out = push[out, calendar.entry['call', 'Call', t + 10 * hour, t + 10 * hour + 1800]]
+    out = push[out, calendar.entry['lunch', 'Lunch talk', calendar.add_days[t, 1] + 12 * hour, calendar.add_days[t, 1] + 13 * hour]]
+    out = push[out, calendar.whole_days['offsite', 'Offsite', calendar.add_days[t, 2], calendar.add_days[t, 3]]]
+    out = push[out, calendar.entry['interviews', 'Interviews', calendar.add_days[t, 3] + 14 * hour, calendar.add_days[t, 3] + 16 * hour + 1800]]
+    out = push[out, calendar.entry['sync', 'Sync', calendar.add_days[t, 3] + 15 * hour, calendar.add_days[t, 3] + 15 * hour + 1800]]
+    push[out, calendar.entry['demo', 'Demo', calendar.add_days[t, 4] + 11 * hour, calendar.add_days[t, 4] + 12 * hour]]
+
+fn week_of[]
+    sch = calendar.schedule['week', 'week', calendar.day[2026, 7, 13], entries_of[]]
+    sch.first_hour = 8
+    sch.last_hour = 18
+    sch.hour_tall = 26.0
+    sch.wide = 860.0
+    sch
+
+fn _day_words[chosen]
+    if len[chosen] eq 0
+        return 'none'
+    calendar.format[chosen[0], 'EEE, MMM d', calendar.locale['en-US']]
+
+fn page_of[a]
+    fields = gui.panel[[gui.heading['Pickers'], gui.label['Due'], pickers.control[due_of[], a.due], gui.label['Stay'], pickers.control[stay_of[], a.stay], gui.row[[gui.column[[gui.label['Month'], pickers.control[month_of[], a.month]]], gui.column[[gui.label['Year'], pickers.control[year_of[], a.year]]]]], gui.note['Due `_day_words[a.due]`, staying `pickers.written[stay_of[], a.stay]`.']]]
+    seen = gui.panel[[gui.heading['Seen'], gui.row[[pickers.control[seen_of[], a.seen], pickers.control[at_of[], a.at]], align = 'start'], gui.note['Seen `_day_words[a.seen]` at `pickers.written[at_of[], a.at]`.']]]
+    opened = 'Press a meeting to open it.'
+    if a.opened ne ''
+        opened = 'Opened: `a.opened`.'
+    week = gui.panel[[gui.heading['The week'], calendar.scheduler[week_of[]], gui.note[opened]]]
+    gui.column[[gui.row[[gui.sized[fields, 370.0], seen], align = 'start'], week]]
+
+fn applied[a, shown]
+    a.due = pickers.answered[due_of[], a.due, shown]
+    a.stay = pickers.answered[stay_of[], a.stay, shown]
+    a.seen = pickers.answered[seen_of[], a.seen, shown]
+    a.month = pickers.answered[month_of[], a.month, shown]
+    a.year = pickers.answered[year_of[], a.year, shown]
+    a.at = pickers.answered[at_of[], a.at, shown]
+    for e in shown.events
+        if e.id eq 'week' and e.act eq 'open'
+            a.opened = e.words
+    a
+
+fn draw[frame]
+    a = recall['app', fresh[]]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    shown = gui.show[c, page_of[a]]
+    a = applied[a, shown]
+    remember['app', a]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+fn screen[given]
+    json['{"t": 0, "width": 1000, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 900, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn headset[given]
+    json['{"t": 0, "width": 1000, "height": 900, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 900, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+--- where a day is in a picker's calendar, its first month shown given
+fn _day_spot[p, first, t]
+    sh = calendar.sheet['', [first]]
+    sh.months = p.months
+    sh.columns = p.columns
+    sh.numbers = p.numbers
+    calendar.day_spot[sh, t]
+
+test the_page_draws_every_picker_and_the_week[]
+    gui.unfocus[]
+    shown = gui.show[lory.begin[screen[_press_at[999.0, 899.0]]], page_of[fresh[]]]
+    missing = slice[[''], 0, 0]
+    for id in ['due', 'stay', 'month', 'year', 'seen:days', 'at:times', 'week']
+        if not (id in shown.boxes)
+            missing = push[missing, id]
+    join[missing, ' '] eq ''
+    len[shown.canvas.verts] gt 1000
+
+test a_due_day_is_chosen_from_the_calendar_under_its_field[]
+    gui.unfocus[]
+    a = fresh[]
+    first = gui.show[lory.begin[screen[_press_at[999.0, 899.0]]], page_of[a]]
+    a = applied[a, first]
+    b = first.boxes['due']
+    opened = gui.show[lory.begin[screen[_press_at[b[0] + 5.0, b[1] + 5.0]]], page_of[a]]
+    a = applied[a, opened]
+    pickers.is_open[due_of[]]
+    again = gui.show[lory.begin[screen['[]']], page_of[a]]
+    g = again.boxes['due:days']
+    spot = _day_spot[due_of[], calendar.day[2026, 7, 1], calendar.day[2026, 7, 28]]
+    picked = gui.show[lory.begin[screen[_press_at[g[0] + spot[0] + 10.0, g[1] + spot[1] + 10.0]]], page_of[a]]
+    a = applied[a, picked]
+    pickers.written[due_of[], a.due] eq '07/28/2026'
+    not pickers.is_open[due_of[]]
+
+test a_stay_is_chosen_first_day_then_last_over_two_months[]
+    gui.unfocus[]
+    a = fresh[]
+    first = gui.show[lory.begin[screen[_press_at[999.0, 899.0]]], page_of[a]]
+    a = applied[a, first]
+    b = first.boxes['stay']
+    opened = gui.show[lory.begin[screen[_press_at[b[0] + 5.0, b[1] + 5.0]]], page_of[a]]
+    a = applied[a, opened]
+    again = gui.show[lory.begin[screen['[]']], page_of[a]]
+    g = again.boxes['stay:days']
+    begin = _day_spot[stay_of[], calendar.day[2026, 7, 1], calendar.day[2026, 7, 30]]
+    begun = gui.show[lory.begin[screen[_press_at[g[0] + begin[0] + 10.0, g[1] + begin[1] + 10.0]]], page_of[a]]
+    a = applied[a, begun]
+    pickers.is_open[stay_of[]]
+    last = _day_spot[stay_of[], calendar.day[2026, 7, 1], calendar.day[2026, 8, 4]]
+    ended = gui.show[lory.begin[screen[_press_at[g[0] + last[0] + 10.0, g[1] + last[1] + 10.0]]], page_of[a]]
+    a = applied[a, ended]
+    pickers.written[stay_of[], a.stay] eq '07/30/2026 - 08/04/2026'
+    not pickers.is_open[stay_of[]]
+
+test the_inline_calendar_and_the_time_list_choose_on_a_press[]
+    gui.unfocus[]
+    a = fresh[]
+    first = gui.show[lory.begin[screen[_press_at[999.0, 899.0]]], page_of[a]]
+    a = applied[a, first]
+    g = first.boxes['seen:days']
+    spot = _day_spot[seen_of[], calendar.day[2026, 7, 1], calendar.day[2026, 7, 22]]
+    pressed = gui.show[lory.begin[screen[_press_at[g[0] + spot[0] + 10.0, g[1] + spot[1] + 10.0]]], page_of[a]]
+    a = applied[a, pressed]
+    _day_words[a.seen] eq 'Wed, Jul 22'
+    l = pressed.boxes['at:times']
+    t = pickers.time_spot[at_of[], a.at, calendar.day[2026, 7, 14] + 10 * 3600]
+    timed = gui.show[lory.begin[screen[_press_at[l[0] + t[0] + 10.0, l[1] + t[1] + 6.0]]], page_of[a]]
+    a = applied[a, timed]
+    pickers.written[at_of[], a.at] eq '10:00 AM'
+
+test a_meeting_of_the_week_pressed_is_opened[]
+    gui.unfocus[]
+    a = fresh[]
+    first = gui.show[lory.begin[screen[_press_at[999.0, 899.0]]], page_of[a]]
+    a = applied[a, first]
+    w = first.boxes['week']
+    spot = calendar.entry_spot[week_of[], 'call']
+    pressed = gui.show[lory.begin[screen[_press_at[w[0] + spot[0] + 4.0, w[1] + spot[1] + 4.0]]], page_of[a]]
+    a = applied[a, pressed]
+    a.opened eq 'call'
+    laid = calendar.side_by_side[entries_of[], calendar.day[2026, 7, 13], 'UTC']
+    columns = for k in laid
+        '`k.entry.id` `k.column` `k.columns`'
+    join[columns, ', '] eq 'plan 0 2, review 1 2, call 0 2'
+
+test a_day_is_chosen_in_a_headset_as_on_a_page[]
+    gui.unfocus[]
+    a = fresh[]
+    first = gui.show[lory.begin[headset[_press_at[999.0, 899.0]]], page_of[a]]
+    a = applied[a, first]
+    g = first.boxes['seen:days']
+    spot = _day_spot[seen_of[], calendar.day[2026, 7, 1], calendar.day[2026, 7, 29]]
+    pressed = gui.show[lory.begin[headset[_press_at[g[0] + spot[0] + 10.0, g[1] + spot[1] + 10.0]]], page_of[a]]
+    a = applied[a, pressed]
+    _day_words[a.seen] eq 'Wed, Jul 29'

@@ -1,0 +1,352 @@
+--- Everything lory.drag computes, written out, to diff the interpreter's
+--- run against the compiled program's: each SortableJS scenario of
+--- tests/drag/reference.json run through Lory's lists (what was told,
+--- step by step, the lists' orders at the end and the dragged picture's
+--- box half way), each of Motion's curves sampled through lory.drag's
+--- release, the elastic pull, and a free control thrown, a card swiped, a
+--- row swiped open and a pinch, frame by frame. Every number is written
+--- with 17 decimals, so the two runs write the same line only when every
+--- bit is the same. tests/drag/reference.co holds the interpreter's
+--- numbers to the libraries themselves. Run from the repository's root:
+---
+---     tests/modes.sh crow tests/modes/drag.co
+
+use memory
+use lory
+use lory.gui
+use lory.drag
+use lory.motion
+
+fn _spaced[xs]
+    join[xs, ' ']
+
+fn _digits[x]
+    fmt[x, decimals = 17]
+
+fn _box_words[b]
+    '`_digits[0.0 + b[0]]` `_digits[0.0 + b[1]]` `_digits[0.0 + b[2]]` `_digits[0.0 + b[3]]`'
+
+--- a frame of the scenario at `t` ms, with its events
+fn _frame[t, given]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _pointer[on, x, y]
+    '{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+--- the step's events as the page hands them
+fn _input[step]
+    on = '`step[0]`'
+    if on eq 'wait'
+        return '[]'
+    x = 0.0 + step[1]
+    y = 0.0 + step[2]
+    if on eq 'click'
+        d = _pointer['down', x, y]
+        u = _pointer['up', x, y]
+        return '[`d`, `u`]'
+    p = _pointer[on, x, y]
+    '[`p`]'
+
+fn _names[j]
+    out = []
+    for x in j
+        out = push[out, '`x`']
+    join[out, ',']
+
+--- a list as the scenario asks for it, holding `ids` (each item's size
+--- the scenario's)
+fn _list_of[l, ids, sizes]
+    o = l.options
+    shape = l['kind']
+    kind = '`shape`'
+    handle = o.handle.ok
+    blocked = []
+    if o.filter.ok
+        for x in o.filter
+            blocked = push[blocked, '`x`']
+    kids = slice[[gui.space[0.0]], 0, 0]
+    for id in ids
+        h = 40.0
+        w = 0.0
+        base = id
+        if ends[base, ':copy']
+            base = slice[base, 0, len[base] - 5]
+        if base in sizes
+            h = sizes[base][1]
+            w = sizes[base][0]
+        inner = [gui.space[h - 12.0]]
+        if handle
+            inner = [drag.grip[], gui.space[h - 12.0]]
+        it = gui.item[id, inner]
+        if w gt 0.0
+            it = gui.sized[it, w]
+        if id in blocked
+            it = drag.filtered[it]
+        kids = push[kids, _sure_node[it]]
+    columns = 2
+    if l.columns.ok
+        columns = 0 + l.columns
+    n = drag.list['`l.id`', kids, along = kind, gap = 0.0 + l.gap, pad = 0.0 + l.pad, columns = columns, tall = 0.0 + l.tall]
+    if o.group.ok
+        g = o.group
+        if g.name.ok
+            pull = ''
+            take = ''
+            if g.pull.ok
+                if '`g.pull`' eq 'clone'
+                    pull = 'clone'
+                else if '`g.pull`' eq 'false'
+                    pull = 'no'
+                else
+                    pull = _names[g.pull]
+            if g.put.ok
+                if '`g.put`' eq 'false'
+                    take = 'no'
+                else if '`g.put`' eq 'true'
+                    take = 'yes'
+                else
+                    take = _names[g.put]
+            n = drag.grouped[n, '`g.name`', pull = pull, take = take]
+        else
+            n = drag.grouped[n, '`g`']
+    if o.sort.ok and '`o.sort`' eq 'false'
+        n = drag.unsorted[n]
+    if o.animation.ok
+        n = drag.animated[n, 0.0 + o.animation]
+    swap_at = 1.0
+    if o.swapThreshold.ok
+        swap_at = 0.0 + o.swapThreshold
+    invert = o.invertSwap.ok
+    inverted = -1.0
+    if o.invertedSwapThreshold.ok
+        inverted = 0.0 + o.invertedSwapThreshold
+    n = drag.thresholds[n, swap = swap_at, invert = invert, inverted = inverted]
+    if o.swap.ok
+        n = drag.swapping[n]
+    if o.multiDrag.ok
+        n = drag.multiple[n]
+    if o.revertOnSpill.ok
+        n = drag.spilled[n, 'revert']
+    if o.removeOnSpill.ok
+        n = drag.spilled[n, 'remove']
+    if o.delay.ok
+        n = drag.delayed[n, 0.0 + o.delay]
+    if o.fallbackTolerance.ok
+        n = drag.tolerance[n, 0.0 + o.fallbackTolerance]
+    if o.disabled.ok
+        n = drag.disabled[n]
+    if handle
+        n = drag.handled[n]
+    n = gui.sized[n, 0.0 + l.width]
+    --- (gui's grid is as wide as the column it stands in)
+    if kind eq 'grid'
+        n = gui.sized[gui.column[[_sure_node[n]], gap = 0.0], 0.0 + l.width]
+    if l.scroll.ok
+        n = gui.sized[gui.scroll['`l.id`:scroll', 0.0 + l.scroll, [_sure_node[n]]], 0.0 + l.width]
+    n
+
+fn _tree[sc, lists, sizes]
+    kids = slice[[gui.space[0.0]], 0, 0]
+    for l in sc.lists
+        kids = push[kids, _sure_node[_list_of[l, lists['`l.id`'], sizes]]]
+    gui.row[kids, gap = 20.0]
+
+--- a node sure (made from the scenario's numbers, it might have failed)
+fn _sure_node[x]
+    if not x.ok
+        return gui.space[0.0]
+    x
+
+--- an id as both sides name it: a copy's and a clone's marks taken off
+fn _plain[id]
+    out = id
+    if ends[out, '+']
+        out = slice[out, 0, len[out] - 1]
+    if ends[out, ':copy']
+        out = slice[out, 0, len[out] - 5]
+    parts = split[out, '*']
+    parts[0]
+
+
+--- a scenario run: what was told at each step, the orders at the end,
+--- the picture dragged half way through
+fn _scenario[sc]
+    drag.forget[]
+    gui.unfocus[]
+    lists = map['' = ['']]
+    sizes = map['' = [0.0, 0.0]]
+    for l in sc.lists
+        ids = []
+        for it in l.items
+            ids = push[ids, '`it.id`']
+            sizes['`it.id`'] = [0.0 + it.w, 0.0 + it.h]
+        lists['`l.id`'] = ids
+    name = '`sc.name`'
+    steps = sc.steps
+    given = sc.steps_given
+    half = len[steps] / 2
+    i = 0
+    while i lt len[steps]
+        given_now = '[]'
+        if i gt 0
+            given_now = _input[given[i - 1]]
+        shown = drag.show[_frame[50 * i, given_now], _tree[sc, lists, sizes]]
+        words = []
+        for told in shown.told
+            words = push[words, '`told.act`:`told.list`:`told.item`:`told.old_index`:`told.new_index`']
+            lists = drag.after[lists, told]
+        if len[words] gt 0
+            log['`name` `i` `_spaced[words]`']
+        if i eq half and 'drag:image' in shown.boxes
+            pic = shown.boxes['drag:image']
+            log['`name` picture `_box_words[pic]`']
+        i = i + 1
+    for l in sc.lists
+        id = '`l.id`'
+        log['`name` order `id` `_spaced[lists[id]]`']
+    true
+
+fn _given_num[g, key, otherwise]
+    v = g[key]
+    if v.ok
+        return 0.0 + v
+    otherwise
+
+fn _given_flag[g, key, otherwise]
+    v = g[key]
+    if v.ok
+        return '`v`' eq 'true'
+    otherwise
+
+--- a curve's samples through Lory, a few to a line
+fn _curve[cv]
+    g = cv.given
+    shape = cv['kind']
+    form = '`shape`'
+    words = []
+    if form eq 'spring'
+        sp = motion.spring[_given_num[g, 'stiffness', 100.0], _given_num[g, 'damping', 10.0], _given_num[g, 'mass', 1.0]]
+        for s in cv.samples
+            at = motion.spring_sample[sp, 0.0 + g.from, 0.0 + g.to, 0.0 + g.velocity, 0.0 + s[0]]
+            words = push[words, _digits[at.value]]
+    else
+        th = drag.released[0.0 + g.value, 0.0 + g.velocity, low = _given_num[g, 'min', -1000000000.0], high = _given_num[g, 'max', 1000000000.0], elastic = _given_flag[g, 'elastic', true], snap = _given_flag[g, 'snap', false], momentum = _given_flag[g, 'momentum', true]]
+        if form eq 'inertia'
+            th = motion.inertia[0.0 + g.value, 0.0 + g.velocity]
+            th.high = _given_num[g, 'max', inf]
+            th.power = _given_num[g, 'power', 0.8]
+            th.time_constant = _given_num[g, 'timeConstant', 325.0]
+        gl = motion.glide[th]
+        for s in cv.samples
+            gl = motion.glided[th, gl, 0.0 + s[0]]
+            words = push[words, _digits[gl.value]]
+    --- (every eighth sample, and the last)
+    kept = []
+    j = 0
+    while j lt len[words]
+        if j % 8 eq 0 or j eq len[words] - 1
+            kept = push[kept, words[j]]
+        j = j + 1
+    log['curve `cv.name` `_digits[0.0 + cv.step]` `_spaced[kept]`']
+    true
+
+fn _mouse[on, x, y]
+    p = _pointer[on, x, y]
+    '[`p`]'
+
+fn _thrown[]
+    drag.free['ball', gui.sized[gui.panel[[gui.space[40.0]]], 80.0], left = -100.0, right = 300.0, top = -50.0, bottom = 50.0]
+
+--- a control thrown: where it is each frame until it rests
+fn _throw[]
+    drag.forget[]
+    first = drag.show[_frame[0, '[]'], _thrown[]]
+    b = first.boxes['ball']
+    x = 0.0 + b[0] + 20.0
+    y = 0.0 + b[1] + 20.0
+    drag.show[_frame[16, _mouse['down', x, y]], _thrown[]]
+    drag.show[_frame[32, _mouse['move', x + 15.0, y + 4.0]], _thrown[]]
+    drag.show[_frame[48, _mouse['move', x + 45.0, y + 9.0]], _thrown[]]
+    drag.show[_frame[64, _mouse['move', x + 80.0, y + 12.0]], _thrown[]]
+    drag.show[_frame[80, _mouse['up', x + 80.0, y + 12.0]], _thrown[]]
+    t = 96
+    while t lt 2500
+        shown = drag.show[_frame[t, '[]'], _thrown[]]
+        p = drag.place_of['ball']
+        if t % 160 eq 0
+            log['throw `t` `_digits[p[0]]` `_digits[p[1]]`']
+        for td in shown.told
+            log['throw `t` told `td.act`']
+        t = t + 16
+    true
+
+fn _deck[]
+    kids = []
+    for id in ['one', 'two', 'three']
+        n = gui.sized[gui.panel[[gui.text[id], gui.space[120.0]]], 260.0]
+        n.id = id
+        kids = push[kids, n]
+    drag.cards['deck', kids]
+
+--- a card swiped: where it is each frame until it is gone
+fn _swipe[]
+    drag.forget[]
+    first = drag.show[_frame[0, '[]'], _deck[]]
+    b = first.boxes['deck']
+    x = 0.0 + b[0] + 100.0
+    y = 0.0 + b[1] + 60.0
+    drag.show[_frame[16, _mouse['down', x, y]], _deck[]]
+    drag.show[_frame[32, _mouse['move', x - 30.0, y]], _deck[]]
+    drag.show[_frame[48, _mouse['move', x - 70.0, y]], _deck[]]
+    drag.show[_frame[64, _mouse['up', x - 70.0, y]], _deck[]]
+    t = 80
+    while t lt 1500
+        shown = drag.show[_frame[t, '[]'], _deck[]]
+        if t % 80 eq 0
+            at = drag.place_of['deck']
+            log['swipe `t` `_digits[at[0]]`']
+        for td in shown.told
+            log['swipe `t` told `td.act` `td.to`']
+        t = t + 16
+    true
+
+fn _photo[]
+    gui.column[[drag.pinch['photo', gui.sized[gui.panel[[gui.space[200.0]]], 300.0], 232.0]]]
+
+fn _touch[on, id, x, y]
+    '{"type": "`on`", "device": "touch", "id": `id`, "x": `x`, "y": `y`, "button": 0}'
+
+--- a pinch: the view at each step of two fingers spreading and turning
+fn _pinch[]
+    drag.forget[]
+    first = drag.show[_frame[0, '[]'], _photo[]]
+    b = first.boxes['photo']
+    cx = 0.0 + b[0] + b[2] / 2.0
+    cy = 0.0 + b[1] + b[3] / 2.0
+    one = _touch['down', 1, cx - 30.0, cy + 10.0]
+    two = _touch['down', 2, cx + 10.0, cy - 5.0]
+    drag.show[_frame[16, '[`one`, `two`]'], _photo[]]
+    i = 1
+    while i lte 6
+        a = 0.3 * i
+        r = 20.0 + 9.0 * i
+        m1 = _touch['move', 1, cx - 10.0 - r * cos[a], cy + 2.0 - r * sin[a]]
+        m2 = _touch['move', 2, cx - 10.0 + r * cos[a], cy + 2.0 + r * sin[a]]
+        drag.show[_frame[16 + 16 * i, '[`m1`, `m2`]'], _photo[]]
+        v = drag.view_of['photo']
+        log['pinch `i` `_digits[v[0]]` `_digits[v[1]]` `_digits[v[2]]` `_digits[v[3]]`']
+        i = i + 1
+    true
+
+j = json[read['tests/drag/reference.json']]
+for sc in j.sortable.scenarios
+    _scenario[sc]
+for cv in j.motion.curves
+    _curve[cv]
+words = []
+for row in j.motion.elastic
+    words = push[words, _digits[drag.pulled[0.0 + row[1], -100.0, 100.0, 0.0 + row[0]]]]
+log['elastic `_spaced[words]`']
+_throw[]
+_swipe[]
+_pinch[]

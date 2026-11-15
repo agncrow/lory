@@ -1,0 +1,2035 @@
+--- Lory's editors (docs/components/forms.md): a Markdown editor, its
+--- words typed in a field of lines beside a preview Lory draws (and that
+--- preview alone, to be read), and an image editor that crops, turns,
+--- flips and zooms a picture and draws on it (a pen, lines, boxes, rings
+--- and words), each step undone and done again.
+---
+--- The Markdown is read as CommonMark reads it (commonmark 0.31.2, held to
+--- its trees in tests/forms/reference.co): headings of both kinds,
+--- paragraphs, hard and soft breaks, block quotes, lists of bullets and of
+--- numbers (tight and loose, nested), fenced and indented code, thematic
+--- breaks, and within a line emphasis and strong emphasis by CommonMark's
+--- rules of delimiter runs, code spans, backslash escapes and inline
+--- links. What it does not read is in docs/components/forms.md.
+---
+---     doc = editors.markdown_blocks['# Notes\n\nSome *words*.']
+---     editors.tree_text[doc]
+---         --- (document (heading 1 (text "Notes")) (paragraph …))
+
+use memory
+use lory
+use gui
+use icons
+
+fn _part[parts, i]
+    if i lt len[parts]
+        return parts[i]
+    ''
+
+fn _no_words[]
+    slice[[''], 0, 0]
+
+fn _no_ints[]
+    slice[[0], 0, 0]
+
+--- ---- Markdown: the blocks (CommonMark's block structure) ----
+
+--- one inline piece of a paragraph or heading: `text`, `code` (its words
+--- the code's), `softbreak`, `linebreak`, `link` and `unlink` (where a
+--- link opens, with its destination and title, and closes), each with
+--- the emphasis that closes just before it and opens just after it
+--- (`before`, `after`: `emph` or `strong`, outermost first where they
+--- open, innermost first where they close)
+struct Inline [how, words, dest, title, before, after]
+
+--- one block of the document, the blocks held in a list with the
+--- document first and each block's children by their places: `how` is
+--- document, block_quote, list, item, paragraph, heading, code_block or
+--- thematic_break; `words` what it holds while it is read; a heading's
+--- `level`; a code block's `info` and whether it is `fenced` (with its
+--- fence's character, length and indent); a list's or item's marker
+--- (`ordered`, its `bullet` or `delim`, `start`, where the marker stands
+--- and the item's `padding`) and whether a list is `tight`; the lines it
+--- starts and ends on; and a paragraph's or heading's inline pieces
+struct Block [how, parent, kids, open, words, level, info, fenced, fence_char, fence_len, fence_at, ordered, bullet, delim, start, tight, marker_at, padding, first, last, inlines]
+
+fn _no_inlines[]
+    slice[[Inline['', '', '', '', _no_words[], _no_words[]]], 0, 0]
+
+fn _block[how, parent, line]
+    Block[how, parent, _no_ints[], true, '', 0, '', false, '', 0, 0, false, '', '', 0, true, 0, 0, line, line, _no_inlines[]]
+
+--- the reading of the document's lines: its blocks, the one open deepest
+--- (`tip`) and the one that was at the line's start, the line's
+--- characters, where the reading stands in them and the first that is
+--- not a space after it (`next`: `indent` spaces on, `blank` where there
+--- is none), whether every open block was matched, the deepest matched,
+--- the line's number, and what a block's step answered (`went`: 0 matched,
+--- 1 not, 2 the line is done)
+struct Reading [blocks, tip, oldtip, chars, offset, next, indent, blank, all_closed, matched, line, went]
+
+fn _peek[r, i]
+    if i lt len[r.chars]
+        return r.chars[i]
+    ''
+
+fn _rest[r, i]
+    join[slice[r.chars, min[i, len[r.chars]], len[r.chars]], '']
+
+fn _nonspace_found[r]
+    i = r.offset
+    while _peek[r, i] eq ' '
+        i = i + 1
+    r.next = i
+    r.blank = i gte len[r.chars]
+    r.indent = i - r.offset
+    r
+
+fn _indented[r]
+    r.indent gte 4
+
+fn _how[r, i]
+    b = r.blocks[i]
+    b.how
+
+--- a tab read as the spaces to the next multiple of four columns
+fn _untabbed[words]
+    if not (occurs[words, '\t'] gt 0)
+        return words
+    out = []
+    col = 0
+    for ch in split[words, '']
+        if ch eq '\t'
+            n = 4 - col % 4
+            out = push[out, repeat[' ', n]]
+            col = col + n
+        else
+            out = push[out, ch]
+            col = col + 1
+    join[out, '']
+
+--- whether a block of one kind may hold one of another
+fn _holds[parent, child]
+    if parent eq 'document' or parent eq 'block_quote' or parent eq 'item'
+        return child ne 'item'
+    if parent eq 'list'
+        return child eq 'item'
+    false
+
+--- the block closed at a line: a fenced block's first line its info, an
+--- indented block's last blank lines left out, a list tight unless one of
+--- its items, or one of an item's blocks, ends with a blank line before
+--- the next (CommonMark's rule, by the lines each starts and ends on)
+fn _finalized[r, i, line]
+    bs = r.blocks
+    b = bs[i]
+    b.open = false
+    b.last = line
+    if b.how eq 'code_block'
+        lines = split[b.words, '\n']
+        if b.fenced
+            b.info = _unescaped[trim[_part[lines, 0]]]
+            rest = slice[lines, 1, len[lines]]
+            b.words = join[rest, '\n']
+        else
+            kept = lines
+            while len[kept] gt 0 and trim[kept[len[kept] - 1]] eq ''
+                kept = slice[kept, 0, len[kept] - 1]
+            body = join[kept, '\n']
+            b.words = '`body`\n'
+            b.last = b.first + len[kept] - 1
+    if b.how eq 'item'
+        if len[b.kids] gt 0
+            k = bs[b.kids[len[b.kids] - 1]]
+            b.last = k.last
+        else
+            b.last = b.first
+    if b.how eq 'list'
+        tight = true
+        n = len[b.kids]
+        for j in range[n]
+            item = bs[b.kids[j]]
+            if j lt n - 1 and _ends_blank[bs, b.kids[j], b.kids[j + 1]]
+                tight = false
+            m = len[item.kids]
+            for q in range[m]
+                if q lt m - 1 and _ends_blank[bs, item.kids[q], item.kids[q + 1]]
+                    tight = false
+        b.tight = tight
+        if n gt 0
+            k = bs[b.kids[n - 1]]
+            b.last = k.last
+    bs[i] = b
+    r.blocks = bs
+    r.tip = b.parent
+    r
+
+fn _ends_blank[bs, a, b]
+    one = bs[a]
+    two = bs[b]
+    one.last ne two.first - 1
+
+--- a block added under the tip (the tip closed first, and its parent, while
+--- it may not hold one of this kind)
+fn _added[r, how]
+    while not _holds[_how[r, r.tip], how]
+        r = _finalized[r, r.tip, r.line - 1]
+    bs = r.blocks
+    n = len[bs]
+    bs = push[bs, _block[how, r.tip, r.line]]
+    parent = bs[r.tip]
+    parent.kids = push[parent.kids, n]
+    bs[r.tip] = parent
+    r.blocks = bs
+    r.tip = n
+    r
+
+fn _closed_unmatched[r]
+    if not r.all_closed
+        while r.oldtip ne r.matched
+            up = r.blocks[r.oldtip].parent
+            r = _finalized[r, r.oldtip, r.line - 1]
+            r.oldtip = up
+        r.all_closed = true
+    r
+
+--- the line's rest added to the tip's words
+fn _line_added[r]
+    bs = r.blocks
+    b = bs[r.tip]
+    rest = _rest[r, r.offset]
+    b.words = '`b.words``rest`\n'
+    bs[r.tip] = b
+    r.blocks = bs
+    r
+
+fn _last_open_kid[r, i]
+    b = r.blocks[i]
+    if len[b.kids] eq 0
+        return -1
+    k = b.kids[len[b.kids] - 1]
+    if r.blocks[k].open
+        return k
+    -1
+
+--- whether an open block goes on through the line (`went`), the reading
+--- moved past what it takes of it
+fn _continued[r, i]
+    b = r.blocks[i]
+    r.went = 0
+    if b.how eq 'block_quote'
+        if not _indented[r] and _peek[r, r.next] eq '>'
+            r.offset = r.next + 1
+            if _peek[r, r.offset] eq ' '
+                r.offset = r.offset + 1
+        else
+            r.went = 1
+    if b.how eq 'item'
+        if r.blank
+            if len[b.kids] eq 0
+                r.went = 1
+            else
+                r.offset = r.next
+        else if r.indent gte b.marker_at + b.padding
+            r.offset = r.offset + b.marker_at + b.padding
+        else
+            r.went = 1
+    if b.how eq 'heading' or b.how eq 'thematic_break'
+        r.went = 1
+    if b.how eq 'paragraph' and r.blank
+        r.went = 1
+    if b.how eq 'code_block'
+        if b.fenced
+            run = _run_of[r, r.next, b.fence_char]
+            if r.indent lte 3 and run gte b.fence_len and trim[_rest[r, r.next + run]] eq ''
+                r = _finalized[r, i, r.line]
+                r.went = 2
+            else
+                k = b.fence_at
+                while k gt 0 and _peek[r, r.offset] eq ' '
+                    r.offset = r.offset + 1
+                    k = k - 1
+        else
+            if r.indent gte 4
+                r.offset = r.offset + 4
+            else if r.blank
+                r.offset = r.next
+            else
+                r.went = 1
+    r
+
+--- how many of a character stand in a row from `i`
+fn _run_of[r, i, ch]
+    n = 0
+    while _peek[r, i + n] eq ch
+        n = n + 1
+    n
+
+--- ---- the starts of blocks, in CommonMark's order ----
+
+fn _quote_started[r]
+    if _indented[r] or _peek[r, r.next] ne '>'
+        return r
+    r.offset = r.next + 1
+    if _peek[r, r.offset] eq ' '
+        r.offset = r.offset + 1
+    r = _closed_unmatched[r]
+    r = _added[r, 'block_quote']
+    r.went = 1
+    r
+
+fn _heading_started[r]
+    if _indented[r]
+        return r
+    n = _run_of[r, r.next, '#']
+    after = _peek[r, r.next + n]
+    if n lt 1 or n gt 6 or not (after eq '' or after eq ' ')
+        return r
+    r.offset = r.next + n
+    while _peek[r, r.offset] eq ' '
+        r.offset = r.offset + 1
+    r = _closed_unmatched[r]
+    r = _added[r, 'heading']
+    bs = r.blocks
+    b = bs[r.tip]
+    b.level = n
+    b.words = _closing_hashes_off[_rest[r, r.offset]]
+    bs[r.tip] = b
+    r.blocks = bs
+    r.offset = len[r.chars]
+    r.went = 2
+    r
+
+--- a heading's words without the hashes that may close it
+fn _closing_hashes_off[words]
+    if matches[words, '^[ \t]*#+[ \t]*$']
+        return ''
+    if matches[words, '[ \t]+#+[ \t]*$']
+        chars = split[words, '']
+        i = len[chars]
+        while i gt 0 and chars[i - 1] eq ' '
+            i = i - 1
+        while i gt 0 and chars[i - 1] eq '#'
+            i = i - 1
+        while i gt 0 and chars[i - 1] eq ' '
+            i = i - 1
+        return join[slice[chars, 0, i], '']
+    words
+
+fn _fence_started[r]
+    if _indented[r]
+        return r
+    ch = _peek[r, r.next]
+    if ch ne '\`' and ch ne '~'
+        return r
+    n = _run_of[r, r.next, ch]
+    if n lt 3
+        return r
+    if ch eq '\`' and occurs[_rest[r, r.next + n], '\`'] gt 0
+        return r
+    r = _closed_unmatched[r]
+    r = _added[r, 'code_block']
+    bs = r.blocks
+    b = bs[r.tip]
+    b.fenced = true
+    b.fence_char = ch
+    b.fence_len = n
+    b.fence_at = r.indent
+    bs[r.tip] = b
+    r.blocks = bs
+    r.offset = r.next + n
+    r.went = 2
+    r
+
+fn _setext_started[r, container]
+    if _indented[r] or _how[r, container] ne 'paragraph'
+        return r
+    rest = _rest[r, r.next]
+    if not (matches[rest, '^=+[ \t]*$'] or matches[rest, '^-+[ \t]*$'])
+        return r
+    r = _closed_unmatched[r]
+    bs = r.blocks
+    b = bs[container]
+    if b.words eq ''
+        return r
+    b.how = 'heading'
+    b.level = 2
+    if starts[rest, '=']
+        b.level = 1
+    bs[container] = b
+    r.blocks = bs
+    r.tip = container
+    r.offset = len[r.chars]
+    r.went = 2
+    r
+
+fn _break_started[r]
+    if _indented[r]
+        return r
+    rest = _rest[r, r.next]
+    if not (matches[rest, '^(?:\*[ \t]*){3,}$'] or matches[rest, '^(?:_[ \t]*){3,}$'] or matches[rest, '^(?:-[ \t]*){3,}$'])
+        return r
+    r = _closed_unmatched[r]
+    r = _added[r, 'thematic_break']
+    r.offset = len[r.chars]
+    r.went = 2
+    r
+
+--- a list's marker read: bullet (`-`, `+`, `*`) or number (one to nine
+--- digits and `.` or `)`), a space or the line's end after it; a number
+--- that breaks into a paragraph must be 1, and an item that breaks into
+--- one may not be empty
+fn _item_started[r, container]
+    if (_indented[r] and _how[r, container] ne 'list') or r.indent gte 4
+        return r
+    ch = _peek[r, r.next]
+    ordered = false
+    bullet = ''
+    delim = ''
+    start = 0
+    size = 0
+    if ch eq '-' or ch eq '+' or ch eq '*'
+        bullet = ch
+        size = 1
+    else
+        digits = 0
+        while digits lt 10 and matches[_peek[r, r.next + digits], '^[0-9]$']
+            digits = digits + 1
+        mark = _peek[r, r.next + digits]
+        if digits lt 1 or digits gt 9 or not (mark eq '.' or mark eq ')')
+            return r
+        number = int[join[slice[r.chars, r.next, r.next + digits], '']]
+        if not number.ok
+            return r
+        if _how[r, container] eq 'paragraph' and number ne 1
+            return r
+        ordered = true
+        delim = mark
+        start = number
+        size = digits + 1
+    after = _peek[r, r.next + size]
+    if not (after eq '' or after eq ' ')
+        return r
+    if _how[r, container] eq 'paragraph' and trim[_rest[r, r.next + size]] eq ''
+        return r
+    marker_at = r.indent
+    r.offset = r.next + size
+    from = r.offset
+    r.offset = min[r.offset + 1, len[r.chars]]
+    while r.offset - from lt 5 and _peek[r, r.offset] eq ' '
+        r.offset = r.offset + 1
+    empty = r.offset gte len[r.chars]
+    spaces = r.offset - from
+    padding = size + spaces
+    if spaces gte 5 or spaces lt 1 or empty
+        padding = size + 1
+        r.offset = from
+        if _peek[r, r.offset] eq ' '
+            r.offset = r.offset + 1
+    r = _closed_unmatched[r]
+    tip = r.blocks[r.tip]
+    if not (tip.how eq 'list' and tip.ordered eq ordered and tip.bullet eq bullet and tip.delim eq delim)
+        r = _added[r, 'list']
+        r = _marked[r, ordered, bullet, delim, start, marker_at, padding]
+    r = _added[r, 'item']
+    r = _marked[r, ordered, bullet, delim, start, marker_at, padding]
+    r.went = 1
+    r
+
+fn _marked[r, ordered, bullet, delim, start, marker_at, padding]
+    bs = r.blocks
+    b = bs[r.tip]
+    b.ordered = ordered
+    b.bullet = bullet
+    b.delim = delim
+    b.start = start
+    b.marker_at = marker_at
+    b.padding = padding
+    bs[r.tip] = b
+    r.blocks = bs
+    r
+
+fn _code_started[r]
+    if not _indented[r] or _how[r, r.tip] eq 'paragraph' or r.blank
+        return r
+    r.offset = r.offset + 4
+    r = _closed_unmatched[r]
+    r = _added[r, 'code_block']
+    r.went = 2
+    r
+
+--- the block starts tried in turn on the line: what the first that
+--- matches answered (`went` 1, a container begun; 2, a leaf)
+fn _started[r, container]
+    r.went = 0
+    r = _quote_started[r]
+    if r.went eq 0
+        r = _heading_started[r]
+    if r.went eq 0
+        r = _fence_started[r]
+    if r.went eq 0
+        r = _setext_started[r, container]
+    if r.went eq 0
+        r = _break_started[r]
+    if r.went eq 0
+        r = _item_started[r, container]
+    if r.went eq 0
+        r = _code_started[r]
+    r
+
+--- one line read into the blocks (CommonMark's incorporateLine)
+fn _line_read[r, words]
+    line = _untabbed[words]
+    r.chars = _no_words[]
+    if line ne ''
+        r.chars = split[line, '']
+    r.offset = 0
+    r.blank = false
+    r.line = r.line + 1
+    r.oldtip = r.tip
+    container = 0
+    matched_all = true
+    going = true
+    while going
+        k = _last_open_kid[r, container]
+        if k lt 0
+            going = false
+        else
+            r = _nonspace_found[r]
+            r = _continued[r, k]
+            if r.went eq 2
+                return r
+            if r.went eq 1
+                matched_all = false
+                going = false
+            else
+                container = k
+    r.all_closed = container eq r.oldtip
+    r.matched = container
+    leaf = _how[r, container] eq 'code_block'
+    while not leaf
+        r = _nonspace_found[r]
+        if not _indented[r] and not matches[_rest[r, r.next], '^[#\`~*+_=<>0-9-]']
+            r.offset = r.next
+            leaf = true
+        else
+            r = _started[r, container]
+            if r.went eq 0
+                r.offset = r.next
+                leaf = true
+            else
+                container = r.tip
+                if r.went eq 2
+                    leaf = true
+    if not r.all_closed and not r.blank and _how[r, r.tip] eq 'paragraph'
+        return _line_added[r]
+    r = _closed_unmatched[r]
+    how = _how[r, container]
+    if how eq 'paragraph' or how eq 'code_block'
+        return _line_added[r]
+    if r.offset lt len[r.chars] and not r.blank
+        r = _added[r, 'paragraph']
+        r.offset = r.next
+        r = _line_added[r]
+    r
+
+--- the document's blocks, read as CommonMark reads them, each paragraph's
+--- and heading's words read into its inline pieces
+fn markdown_blocks[text]
+    r = Reading[[_block['document', -1, 1]], 0, 0, _no_words[], 0, 0, 0, false, true, 0, 0, 0]
+    lines = split[replace[replace[text, '\r\n', '\n'], '\r', '\n'], '\n']
+    n = len[lines]
+    if text eq ''
+        n = 0
+    else if ends[text, '\n']
+        n = n - 1
+    i = 0
+    while i lt n
+        r = _line_read[r, lines[i]]
+        i = i + 1
+    while r.tip gte 0
+        r = _finalized[r, r.tip, n]
+    bs = r.blocks
+    for j in range[len[bs]]
+        b = bs[j]
+        if b.how eq 'paragraph' or b.how eq 'heading'
+            b.inlines = inlines_of[trim[b.words]]
+            bs[j] = b
+    bs
+
+--- ---- Markdown: within a line (CommonMark's inlines) ----
+
+--- a run of `*` or `_` that may open or close emphasis: its piece's
+--- place, its character, how many of it are left and were at first, and
+--- whether it may open and close (CommonMark's flanking rules)
+struct Delim [at, ch, count, first, opens, closes]
+
+--- a `[` that may open a link: its piece's place, how many runs stood
+--- before it, and whether a link may still open there
+struct Bracket [at, below, live]
+
+--- what the inline reading holds: the pieces, the runs and brackets not
+--- yet matched
+struct Pieces [items, delims, brackets]
+
+fn _piece[how, words]
+    Inline[how, words, '', '', _no_words[], _no_words[]]
+
+fn _no_delims[]
+    slice[[Delim[0, '', 0, 0, false, false]], 0, 0]
+
+fn _no_brackets[]
+    slice[[Bracket[0, 0, false]], 0, 0]
+
+--- words added as text (to the text before them, where that is text)
+fn _texted[p, words]
+    items = p.items
+    n = len[items]
+    if n gt 0
+        last = items[n - 1]
+        if last.how eq 'text' and len[last.after] eq 0
+            last.words = '`last.words``words`'
+            items[n - 1] = last
+            p.items = items
+            return p
+    p.items = push[items, _piece['text', words]]
+    p
+
+fn _pushed[p, piece]
+    p.items = push[p.items, piece]
+    p
+
+--- the ASCII punctuation a backslash may escape
+fn _escapable[ch]
+    ch ne '' and occurs['!"#$%&\'()*+,-./:;<=>?@[\\]^_\`{|}~', ch] gt 0
+
+fn _punctuation[ch]
+    ch ne '' and (_escapable[ch] or matches[ch, '^[\p{P}\p{S}]$'])
+
+fn _space[ch]
+    ch eq '' or matches[ch, '^\s$']
+
+--- the words with each backslash escape read
+fn _unescaped[words]
+    if not (occurs[words, '\\'] gt 0)
+        return words
+    chars = split[words, '']
+    out = []
+    i = 0
+    while i lt len[chars]
+        ch = chars[i]
+        if ch eq '\\' and i + 1 lt len[chars] and _escapable[chars[i + 1]]
+            out = push[out, chars[i + 1]]
+            i = i + 2
+        else
+            out = push[out, ch]
+            i = i + 1
+    join[out, '']
+
+fn _at[chars, i]
+    if i gte 0 and i lt len[chars]
+        return chars[i]
+    ''
+
+--- a paragraph's or heading's words read into inline pieces
+fn inlines_of[words]
+    chars = _no_words[]
+    if words ne ''
+        chars = split[words, '']
+    p = Pieces[_no_inlines[], _no_delims[], _no_brackets[]]
+    n = len[chars]
+    i = 0
+    while i lt n
+        ch = chars[i]
+        if ch eq '\n'
+            p = _newline[p]
+            i = i + 1
+            while _at[chars, i] eq ' '
+                i = i + 1
+        else if ch eq '\\'
+            next = _at[chars, i + 1]
+            if next eq '\n'
+                p = _pushed[p, _piece['linebreak', '']]
+                i = i + 2
+            else if _escapable[next]
+                p = _texted[p, next]
+                i = i + 2
+            else
+                p = _texted[p, '\\']
+                i = i + 1
+        else if ch eq '\`'
+            run = _ticks_at[chars, i]
+            close = _ticks_closing[chars, i + run, run]
+            if close lt 0
+                p = _texted[p, repeat['\`', run]]
+                i = i + run
+            else
+                inner = replace[join[slice[chars, i + run, close], ''], '\n', ' ']
+                if len[inner] gt 0 and trim[inner] ne '' and starts[inner, ' '] and ends[inner, ' ']
+                    inner = join[slice[split[inner, ''], 1, len[inner] - 1], '']
+                p = _pushed[p, _piece['code', inner]]
+                i = close + run
+        else if ch eq '*' or ch eq '_'
+            run = _ticks_of[chars, i, ch]
+            before = _at[chars, i - 1]
+            after = _at[chars, i + run]
+            if i eq 0
+                before = '\n'
+            if i + run gte n
+                after = '\n'
+            after_space = _space[after]
+            after_punct = _punctuation[after]
+            before_space = _space[before]
+            before_punct = _punctuation[before]
+            left = not after_space and (not after_punct or before_space or before_punct)
+            right = not before_space and (not before_punct or after_space or after_punct)
+            opens = left
+            closes = right
+            if ch eq '_'
+                opens = left and (not right or before_punct)
+                closes = right and (not left or after_punct)
+            at = len[p.items]
+            p = _pushed[p, _piece['delim', repeat[ch, run]]]
+            p.delims = push[p.delims, Delim[at, ch, run, run, opens, closes]]
+            i = i + run
+        else if ch eq '['
+            at = len[p.items]
+            p = _pushed[p, _piece['delim', '[']]
+            p.brackets = push[p.brackets, Bracket[at, len[p.delims], true]]
+            i = i + 1
+        else if ch eq ']'
+            p = _bracket_closed[p, chars, i + 1]
+            i = _link_end[p, chars, i + 1]
+        else
+            j = i
+            while j lt n and not _special[chars[j]]
+                j = j + 1
+            p = _texted[p, join[slice[chars, i, j], '']]
+            i = j
+    p = _emphasized[p, 0]
+    p.items
+
+fn _special[ch]
+    ch eq '\n' or ch eq '\\' or ch eq '\`' or ch eq '*' or ch eq '_' or ch eq '[' or ch eq ']'
+
+fn _ticks_at[chars, i]
+    _ticks_of[chars, i, '\`']
+
+fn _ticks_of[chars, i, ch]
+    n = 0
+    while _at[chars, i + n] eq ch
+        n = n + 1
+    n
+
+--- where a run of exactly `run` backticks starts after `from`, or -1
+fn _ticks_closing[chars, from, run]
+    i = from
+    while i lt len[chars]
+        if chars[i] eq '\`'
+            k = _ticks_of[chars, i, '\`']
+            if k eq run
+                return i
+            i = i + k
+        else
+            i = i + 1
+    -1
+
+--- a line's end: two spaces or more before it a hard break, else a soft
+--- one, the spaces left out
+fn _newline[p]
+    items = p.items
+    n = len[items]
+    if n gt 0
+        last = items[n - 1]
+        if last.how eq 'text' and ends[last.words, ' ']
+            hard = ends[last.words, '  ']
+            chars = split[last.words, '']
+            k = len[chars]
+            while k gt 0 and chars[k - 1] eq ' '
+                k = k - 1
+            last.words = join[slice[chars, 0, k], '']
+            items[n - 1] = last
+            p.items = items
+            if hard
+                return _pushed[p, _piece['linebreak', '']]
+    _pushed[p, _piece['softbreak', '']]
+
+--- ---- links ----
+
+--- an inline link's destination, title and where it ends after `](`, or
+--- where it would be read on from if there is none (`Link.end` -1)
+struct Link [dest, title, end]
+
+fn _no_link[]
+    Link['', '', -1]
+
+fn _spaces_skipped[chars, i]
+    j = i
+    while _at[chars, j] eq ' '
+        j = j + 1
+    if _at[chars, j] eq '\n'
+        j = j + 1
+        while _at[chars, j] eq ' '
+            j = j + 1
+    j
+
+--- `(destination "title")` read from `i`, where it is one
+fn _link_read[chars, i]
+    if _at[chars, i] ne '('
+        return _no_link[]
+    j = _spaces_skipped[chars, i + 1]
+    dest = ''
+    if _at[chars, j] eq '<'
+        k = j + 1
+        while k lt len[chars] and chars[k] ne '>' and chars[k] ne '<' and chars[k] ne '\n'
+            if chars[k] eq '\\'
+                k = k + 1
+            k = k + 1
+        if _at[chars, k] ne '>'
+            return _no_link[]
+        dest = _unescaped[join[slice[chars, j + 1, k], '']]
+        j = k + 1
+    else
+        k = j
+        depth = 0
+        going = true
+        while going and k lt len[chars]
+            ch = chars[k]
+            if ch eq '\\' and _escapable[_at[chars, k + 1]]
+                k = k + 2
+            else if ch eq '('
+                depth = depth + 1
+                k = k + 1
+            else if ch eq ')'
+                if depth lt 1
+                    going = false
+                else
+                    depth = depth - 1
+                    k = k + 1
+            else if ch eq ' ' or ch eq '\t' or ch eq '\n' or ch eq '\r'
+                going = false
+            else
+                k = k + 1
+        if k eq j and _at[chars, k] ne ')'
+            return _no_link[]
+        if depth ne 0
+            return _no_link[]
+        dest = _unescaped[join[slice[chars, j, k], '']]
+        j = k
+    before_title = j
+    j = _spaces_skipped[chars, j]
+    title = ''
+    q = _at[chars, j]
+    if j gt before_title and (q eq '"' or q eq '\'' or q eq '(')
+        shut = q
+        if q eq '('
+            shut = ')'
+        k = j + 1
+        while k lt len[chars] and chars[k] ne shut
+            if chars[k] eq '\\'
+                k = k + 1
+            k = k + 1
+        if k lt len[chars]
+            title = _unescaped[join[slice[chars, j + 1, k], '']]
+            j = _spaces_skipped[chars, k + 1]
+    if _at[chars, j] ne ')'
+        return _no_link[]
+    Link[dest, title, j + 1]
+
+--- a `]`: a link where the last `[` still may open one and an inline
+--- destination follows (its emphasis read first, and the `[`s before it
+--- may open no link now), else a `]` as text
+fn _bracket_closed[p, chars, after]
+    nb = len[p.brackets]
+    if nb eq 0
+        return _texted[p, ']']
+    b = p.brackets[nb - 1]
+    p.brackets = slice[p.brackets, 0, nb - 1]
+    if not b.live
+        return _texted[p, ']']
+    found = _link_read[chars, after]
+    if found.end lt 0
+        return _texted[p, ']']
+    p = _emphasized[p, b.below]
+    items = p.items
+    opener = items[b.at]
+    opener.how = 'link'
+    opener.words = ''
+    opener.dest = found.dest
+    opener.title = found.title
+    items[b.at] = opener
+    p.items = push[items, _piece['unlink', '']]
+    kept = _no_brackets[]
+    for one in p.brackets
+        one.live = false
+        kept = push[kept, one]
+    p.brackets = kept
+    p
+
+--- where reading goes on after a `]`: past its link, where it closed one
+fn _link_end[p, chars, after]
+    n = len[p.items]
+    if n gt 0
+        last = p.items[n - 1]
+        if last.how eq 'unlink'
+            found = _link_read[chars, after]
+            if found.end gte 0
+                return found.end
+    after
+
+--- ---- emphasis (CommonMark's process emphasis) ----
+
+--- the runs from `bottom` on matched, closer by closer: each closer to the
+--- nearest opener of its character before it (not one whose lengths make
+--- a multiple of three, where either may both open and close and the
+--- closer's is not one), two of each taken for strong emphasis where both
+--- have two, one for emphasis; the runs between them, and those left,
+--- stay as text
+fn _emphasized[p, bottom]
+    ds = p.delims
+    items = p.items
+    ci = bottom
+    while ci lt len[ds]
+        closer = ds[ci]
+        if not closer.closes
+            ci = ci + 1
+        else
+            oi = ci - 1
+            found = -1
+            while found lt 0 and oi gte bottom
+                op = ds[oi]
+                odd = (closer.opens or op.closes) and closer.first % 3 ne 0 and (op.first + closer.first) % 3 eq 0
+                if op.ch eq closer.ch and op.opens and not odd
+                    found = oi
+                oi = oi - 1
+            if found lt 0
+                if not closer.opens
+                    ds = concat[slice[ds, 0, ci], slice[ds, ci + 1, len[ds]]]
+                else
+                    ci = ci + 1
+            else
+                op = ds[found]
+                taken = 1
+                if closer.count gte 2 and op.count gte 2
+                    taken = 2
+                kind = 'emph'
+                if taken eq 2
+                    kind = 'strong'
+                op.count = op.count - taken
+                closer.count = closer.count - taken
+                a = items[op.at]
+                a.words = repeat[op.ch, op.count]
+                a.after = concat[[kind], a.after]
+                items[op.at] = a
+                z = items[closer.at]
+                z.words = repeat[closer.ch, closer.count]
+                z.before = push[z.before, kind]
+                items[closer.at] = z
+                ds[found] = op
+                ds[ci] = closer
+                --- (the runs between them are text now)
+                ds = concat[slice[ds, 0, found + 1], slice[ds, ci, len[ds]]]
+                ci = found + 1
+                if op.count eq 0
+                    ds = concat[slice[ds, 0, found], slice[ds, found + 1, len[ds]]]
+                    ci = ci - 1
+                if closer.count eq 0
+                    ds = concat[slice[ds, 0, ci], slice[ds, ci + 1, len[ds]]]
+    p.items = items
+    p.delims = slice[ds, 0, min[bottom, len[ds]]]
+    p
+
+--- ---- the tree as text (the reference's S-expressions) ----
+
+--- words quoted as JSON writes them
+fn _quoted[words]
+    out = []
+    for ch in split[words, '']
+        if ch eq '"'
+            out = push[out, '\\"']
+        else if ch eq '\\'
+            out = push[out, '\\\\']
+        else if ch eq '\n'
+            out = push[out, '\\n']
+        else if ch eq '\t'
+            out = push[out, '\\t']
+        else if ch eq '\r'
+            out = push[out, '\\r']
+        else
+            out = push[out, ch]
+    inner = join[out, '']
+    '"`inner`"'
+
+--- the document as the reference writes CommonMark's tree: each node in
+--- brackets with what it holds, texts that touch as one
+fn tree_text[blocks]
+    _block_text[blocks, 0]
+
+fn _block_text[bs, i]
+    b = bs[i]
+    parts = [b.how]
+    if b.how eq 'heading'
+        parts = ['heading `b.level`']
+    if b.how eq 'code_block'
+        parts = ['code_block `_quoted[b.info]` `_quoted[b.words]`']
+    if b.how eq 'list'
+        how = 'bullet'
+        if b.ordered
+            how = 'ordered'
+        tight = 'loose'
+        if b.tight
+            tight = 'tight'
+        parts = ['list `how` `b.start` `tight`']
+    if b.how eq 'paragraph' or b.how eq 'heading'
+        parts = concat[parts, _inline_parts[b.inlines]]
+    for k in b.kids
+        parts = push[parts, _block_text[bs, k]]
+    inner = join[parts, ' ']
+    '(`inner`)'
+
+--- the inline pieces as the reference writes them: texts that touch as
+--- one, each node opened and closed in brackets
+fn _inline_parts[items]
+    out = _no_words[]
+    text = _no_words[]
+    for one in items
+        for k in one.before
+            out = _flushed[out, text]
+            text = _no_words[]
+            out = push[out, ')']
+        if one.how eq 'text' or one.how eq 'delim'
+            text = push[text, one.words]
+        if one.how eq 'code'
+            out = push[_flushed[out, text], '(code `_quoted[one.words]`)']
+            text = _no_words[]
+        if one.how eq 'softbreak' or one.how eq 'linebreak'
+            out = push[_flushed[out, text], '(`one.how`)']
+            text = _no_words[]
+        if one.how eq 'link'
+            out = push[_flushed[out, text], '(link `_quoted[one.dest]` `_quoted[one.title]`']
+            text = _no_words[]
+        if one.how eq 'unlink'
+            out = push[_flushed[out, text], ')']
+            text = _no_words[]
+        for k in one.after
+            out = push[_flushed[out, text], '(`k`']
+            text = _no_words[]
+    _joined_closes[_flushed[out, text]]
+
+fn _flushed[out, text]
+    words = join[text, '']
+    if words eq ''
+        return out
+    push[out, '(text `_quoted[words]`)']
+
+--- the parts with each `)` set against what it closes (no space before
+--- it), each part else after a space
+fn _joined_closes[parts]
+    out = _no_words[]
+    for one in parts
+        n = len[out]
+        if one eq ')' and n gt 0
+            last = out[n - 1]
+            out[n - 1] = '`last`)'
+        else
+            out = push[out, one]
+    out
+
+--- ---- a Markdown editor: a field of lines and its preview ----
+
+--- what the editor holds: its words, the blocks they were last read into
+--- and the words read (`read`), when they are read again (100
+--- milliseconds after the last change: `due`), the field's turn, the
+--- words to go back to (`past`, the last last) and forward to again
+--- (`future`), when the last step to go back to was kept, how far the
+--- preview is scrolled (CSS pixels), and whether the field has the focus
+struct Notes [text, doc, read, due, gen, past, future, kept_at, scroll, focused]
+
+fn notes_of[text]
+    Notes[text, markdown_blocks[text], text, -1.0, 0, _no_words[], _no_words[], -100000.0, 0.0, false]
+
+--- what the painters of these editors read (they see only their
+--- `Drawn`): each preview's blocks and each picture, by the editor's id
+struct Kept [docs, pictures]
+
+fn _kept[]
+    recall['lory.editors', Kept[map['' = [_block['document', -1, 1]]], map['' = _no_picture[]]]]
+
+fn _doc_kept[id, doc]
+    held = _kept[]
+    docs = held.docs
+    docs[id] = doc
+    held.docs = docs
+    remember['lory.editors', held]
+
+fn _doc_of[id]
+    held = _kept[]
+    if id in held.docs
+        return held.docs[id]
+    [_block['document', -1, 1]]
+
+--- a field of `lines` lines for the words, and beside it their preview
+--- drawn by Lory, `wide` CSS pixels across in all: the preview scrolled
+--- by the wheel, or by the arrows and Page Up and Page Down while it has
+--- the focus. Typing reads the words again a tenth of a second after it
+--- stops; Control or Command with Z goes back a step, with Shift (or Y)
+--- forward again. `markdown_after` answers the reader.
+fn markdown_editor[id, s, wide = 640.0, lines = 14]
+    half = (wide - 12.0) / 2.0
+    tall = lines * 21.0 + 16.0
+    _doc_kept[id, s.doc]
+    field = gui.sized[gui.field['`id`:field:`s.gen`', s.text, lines = lines], half]
+    preview = gui.drawn['`id`:preview', s.scroll, half, tall, _preview_painted, words = id]
+    gui.row[[field, preview], gap = 12.0]
+
+--- the preview alone, to be read and not edited (TOAST UI's viewer): the
+--- blocks `doc` (as `markdown_blocks` read them) drawn `wide` by `tall`
+--- CSS pixels, scrolled `scroll` down by the wheel, or by the arrows and
+--- Page Up and Page Down while it has the focus; each scroll tells `change`
+--- under `id` (`num` how far), which the program keeps
+fn markdown_viewer[id, doc, scroll = 0.0, wide = 320.0, tall = 240.0]
+    _doc_kept[id, doc]
+    gui.row[[gui.drawn[id, scroll, wide, tall, _preview_painted, words = id]]]
+
+--- a number no field of the editors has had for its turn (gui keeps each
+--- id's caret, and `gui.focus` sets none: a new id puts it at the end)
+fn _turn[]
+    held = recall['lory.editors.turn', Turns[0]]
+    held.last = held.last + 1
+    remember['lory.editors.turn', held]
+    held.last
+
+struct Turns [last]
+
+--- the editor once the reader's frame is answered: its words as typed
+--- (kept for going back to where typing paused for a second or more),
+--- read again once a tenth of a second has passed since the last change,
+--- a step back or forward, and the preview's scroll
+fn markdown_after[id, s, shown]
+    c = shown.canvas
+    t = lory.time[c]
+    field = '`id`:field:`s.gen`'
+    for e in shown.events
+        if e.id eq field and e.act eq 'edit' and e.words ne s.text
+            if t - s.kept_at gte 1000.0
+                s.past = push[s.past, s.text]
+            s.kept_at = t
+            s.future = _no_words[]
+            s.text = e.words
+            s.due = t + 100.0
+            s.focused = true
+        if e.id eq '`id`:preview' and e.act eq 'change'
+            s.scroll = e.num
+    s.focused = _focus_kept[s.focused, '`id`:field:', shown]
+    if s.focused
+        for e in lory.events[c]
+            if e.on eq 'key' and (e.ctrl or e.meta) and lower[e.key] eq 'z' and not e.shift
+                s = _stepped_back[s, id, t]
+            else if e.on eq 'key' and (e.ctrl or e.meta) and ((lower[e.key] eq 'z' and e.shift) or lower[e.key] eq 'y')
+                s = _stepped_on[s, id, t]
+    if s.due gte 0.0 and t gte s.due and s.read ne s.text
+        s.doc = markdown_blocks[s.text]
+        s.read = s.text
+        s.due = -1.0
+    s
+
+fn _stepped_back[s, id, t]
+    n = len[s.past]
+    if n eq 0
+        return s
+    s.future = push[s.future, s.text]
+    s.text = s.past[n - 1]
+    s.past = slice[s.past, 0, n - 1]
+    s.kept_at = -100000.0
+    s.due = t
+    s.gen = _turn[]
+    gui.focus['`id`:field:`s.gen`', s.text]
+    s
+
+fn _stepped_on[s, id, t]
+    n = len[s.future]
+    if n eq 0
+        return s
+    s.past = push[s.past, s.text]
+    s.text = s.future[n - 1]
+    s.future = slice[s.future, 0, n - 1]
+    s.kept_at = -100000.0
+    s.due = t
+    s.gen = _turn[]
+    gui.focus['`id`:field:`s.gen`', s.text]
+    s
+
+--- whether the focus stays in a part whose id starts so, as far as the
+--- frame shows: an edit there puts it there, a press elsewhere or Tab
+--- takes it away
+fn _focus_kept[was, prefix, shown]
+    on = was
+    for e in shown.events
+        if starts[e.id, prefix] and (e.act eq 'edit' or e.act eq 'submit')
+            on = true
+    c = shown.canvas
+    s = lory.px[c]
+    for e in lory.events[c]
+        if e.on eq 'down'
+            hit = false
+            for k in keys[shown.boxes]
+                if starts[k, prefix]
+                    b = shown.boxes[k]
+                    if len[b] eq 4
+                        if e.x / s gte b[0] and e.y / s gte b[1] and e.x / s lt b[0] + b[2] and e.y / s lt b[1] + b[3]
+                            hit = true
+            on = hit
+        if e.on eq 'key' and e.key eq 'Tab'
+            on = false
+    on
+
+--- ---- the preview, drawn by Lory ----
+
+--- the canvas and how far down the drawing has come
+struct Inked [c, y]
+
+fn _preview_painted[d]
+    out = _preview_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _preview_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    doc = _doc_of[d.words]
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * s, look.panel]
+    c = lory.round_outline[c, d.x, d.y, d.w, d.h, 8.0 * s, 1.0 * s, look.edge]
+    --- (the wheel over it, or the keys while it has the focus, scroll it)
+    scroll = d.num
+    for e in lory.events[c]
+        if e.on eq 'wheel' and e.x gte d.x and e.y gte d.y and e.x lt d.x + d.w and e.y lt d.y + d.h
+            scroll = scroll + e.dy / s
+    for k in d.keys
+        if k eq 'ArrowDown'
+            scroll = scroll + 40.0
+        if k eq 'ArrowUp'
+            scroll = scroll - 40.0
+        if k eq 'PageDown'
+            scroll = scroll + d.h / s - 40.0
+        if k eq 'PageUp'
+            scroll = scroll - d.h / s + 40.0
+        if k eq 'Home'
+            scroll = 0.0
+    scroll = max[0.0, scroll]
+    kept = lory.clipped[c]
+    c = lory.clip[c, d.x + 1.0 * s, d.y + 1.0 * s, d.w - 2.0 * s, d.h - 2.0 * s]
+    pad = 14.0 * s
+    top = d.y + pad - scroll * s
+    inked = _blocks_drawn[Inked[c, top], d, doc, 0, d.x + pad, d.w - 2.0 * pad, false]
+    c = lory.unclip[inked.c, kept]
+    --- (no further than the end of what it shows)
+    room = (inked.y - top) / s + 2.0 * pad / s - d.h / s
+    scroll = min[scroll, max[0.0, room]]
+    if scroll ne d.num
+        d.num = scroll
+    d.c = c
+    d
+
+--- a block's children drawn one under another, `tight` (a tight list's
+--- item) with less room between paragraphs
+fn _blocks_drawn[k, d, doc, i, x, w, tight]
+    b = doc[i]
+    for j in b.kids
+        k = _block_drawn[k, d, doc, j, x, w, tight]
+    k
+
+fn _block_drawn[k, d, doc, i, x, w, tight]
+    s = d.s
+    look = d.look
+    b = doc[i]
+    gap = 10.0 * s
+    if tight
+        gap = 3.0 * s
+    if b.how eq 'paragraph'
+        k = _runs_drawn[k, d, b.inlines, x, w, 15.0, look.ink]
+        k.y = k.y + gap
+    if b.how eq 'heading'
+        size = _heading_size[b.level]
+        k.y = k.y + 4.0 * s
+        k = _runs_drawn[k, d, concat[[Inline['text', '', '', '', _no_words[], ['strong']]], b.inlines], x, w, size, look.ink]
+        k.y = k.y + gap
+    if b.how eq 'thematic_break'
+        k.y = k.y + 6.0 * s
+        k.c = lory.rect[k.c, x, k.y, w, 1.0 * s, look.edge]
+        k.y = k.y + 6.0 * s + gap
+    if b.how eq 'code_block'
+        code = split[b.words, '\n']
+        n = max[1, len[code] - 1]
+        line = 19.0 * s
+        tall = n * line + 16.0 * s
+        k.c = lory.round_rect[k.c, x, k.y, w, tall, 6.0 * s, look.field]
+        for q in range[n]
+            k.c = lory.text[k.c, x + 10.0 * s, k.y + 8.0 * s + q * line, _part[code, q], 13.0 * s, look.ink]
+        k.y = k.y + tall + gap
+    if b.how eq 'block_quote'
+        from = k.y
+        k = _blocks_drawn[k, d, doc, i, x + 16.0 * s, w - 16.0 * s, false]
+        k.c = lory.rect[k.c, x + 2.0 * s, from, 3.0 * s, max[0.0, k.y - from - gap], look.edge]
+    if b.how eq 'list'
+        n = 0
+        for j in b.kids
+            mark = '•'
+            if b.ordered
+                number = b.start + n
+                mark = '`number``b.delim`'
+            k.c = lory.text[k.c, x + 2.0 * s, k.y, mark, 15.0 * s, look.muted]
+            k = _blocks_drawn[k, d, doc, j, x + 22.0 * s, w - 22.0 * s, b.tight]
+            n = n + 1
+        if b.tight
+            k.y = k.y + gap
+    k
+
+fn _heading_size[level]
+    sizes = [26.0, 22.0, 19.0, 17.0, 15.0, 14.0]
+    sizes[max[0, min[5, level - 1]]]
+
+--- a piece of a word to place: its words, how it is written (strong,
+--- emphasis, code, a link), whether a space stands before it, and whether
+--- a hard break does
+struct Word [words, strong, emph, code, link, spaced, broken]
+
+--- the inline pieces written in words, wrapped to the width at their
+--- spaces: strong words drawn twice a little apart, emphasis slanted,
+--- code on the field's ground, links in the accent and underlined
+fn _runs_drawn[k, d, items, x, w, size, ink]
+    s = d.s
+    look = d.look
+    c = k.c
+    px = size * s
+    line = px * 1.45
+    space = lory.measure[c, ' ', px]
+    at_x = x
+    y = k.y
+    for one in _words_of[items]
+        wide = lory.measure[c, one.words, px]
+        if one.broken
+            at_x = x
+            y = y + line
+        else if one.spaced and at_x gt x
+            if at_x + space + wide gt x + w
+                at_x = x
+                y = y + line
+            else
+                at_x = at_x + space
+        color = ink
+        if one.link
+            color = look.accent
+        if one.code
+            c = lory.round_rect[c, at_x - 2.0 * s, y + 1.0 * s, wide + 4.0 * s, line - 2.0 * s, 4.0 * s, look.field]
+        before = len[c.verts]
+        ty = y + (line - lory.line_height[c, px]) / 2.0
+        c = lory.text[c, at_x, ty, one.words, px, color]
+        if one.strong
+            c = lory.text[c, at_x + 0.6 * s, ty, one.words, px, color]
+        if one.emph
+            c = _slanted[c, before, y + line * 0.8, 0.2]
+        if one.link
+            c = lory.rect[c, at_x, y + line - 3.0 * s, wide, 1.0 * s, color]
+        at_x = at_x + wide
+    k.c = c
+    k.y = y + line
+    k
+
+--- the canvas with its vertices from float `before` on slanted: each the
+--- further right the higher it stands over the line `base`
+fn _slanted[c, before, base, k]
+    vs = c.verts
+    step = lory.floats[]
+    i = before
+    while i lt len[vs]
+        vs[i] = vs[i] + k * (base - vs[i + 1])
+        i = i + step
+    c.verts = vs
+    c
+
+--- the pieces cut into the parts of words they write, each with how it
+--- is written
+fn _words_of[items]
+    out = slice[[Word['', false, false, false, false, false, false]], 0, 0]
+    strong = 0
+    emph = 0
+    link = 0
+    spaced = false
+    broken = false
+    for one in items
+        for kind in one.before
+            if kind eq 'strong'
+                strong = strong - 1
+            else
+                emph = emph - 1
+        if one.how eq 'text' or one.how eq 'delim'
+            parts = split[one.words, ' ']
+            for q in range[len[parts]]
+                if q gt 0
+                    spaced = true
+                w = parts[q]
+                if w ne ''
+                    out = push[out, Word[w, strong gt 0, emph gt 0, false, link gt 0, spaced, broken]]
+                    spaced = false
+                    broken = false
+        if one.how eq 'code'
+            out = push[out, Word[one.words, strong gt 0, emph gt 0, true, link gt 0, spaced, broken]]
+            spaced = false
+            broken = false
+        if one.how eq 'softbreak'
+            spaced = true
+        if one.how eq 'linebreak'
+            broken = true
+            spaced = false
+        if one.how eq 'link'
+            link = link + 1
+        if one.how eq 'unlink'
+            link = link - 1
+        for kind in one.after
+            if kind eq 'strong'
+                strong = strong + 1
+            else
+                emph = emph + 1
+    out
+
+--- ---- an image editor ----
+
+--- a mark drawn on the picture, in the picture's own pixels: a `pen`'s
+--- path, a `line`, a `box` or a `ring` from one corner to the other, or
+--- `words` written at a point; its colour, its stroke's width and its words
+struct Mark [how, xs, ys, color, width, words]
+
+--- what is shown of the picture: the part kept (`crop`: x, y, wide and
+--- tall in its pixels), how many quarter turns clockwise, whether it is
+--- mirrored left to right (`across`) and top to bottom (`upright`), and its
+--- marks
+struct Shot [crop, turns, across, upright, marks]
+
+--- a picture being edited: the image Lory draws (`image`, as
+--- `lory.load_image` numbered it: -1 none, a grid standing in) and its size
+--- in pixels; what is shown now, the shots to go back to and forward to
+--- again; the zoom and where the view's middle is moved to (`pan`, in the
+--- picture's pixels); the tool in hand (`pen`, `line`, `box`, `ring`,
+--- `words`, `crop`, `move`), its colour, width and words; the mark being
+--- drawn while the pointer is down, and whether it is; and whether the
+--- editor has the focus
+struct Picture [image, wide, tall, now, past, future, zoom, pan, tool, color, width, words, drawing, dragging, focused]
+
+fn _no_marks[]
+    slice[[Mark['', [0.0], [0.0], lory.Color[0.0, 0.0, 0.0, 1.0], 1.0, '']], 0, 0]
+
+fn _no_shots[]
+    slice[[Shot[[0.0], 0, false, false, _no_marks[]]], 0, 0]
+
+fn _no_picture[]
+    picture_of[-1, 1.0, 1.0]
+
+--- a picture of `wide` by `tall` pixels drawn from image `image` (-1:
+--- none), shown whole, the pen in hand in red
+fn picture_of[image, wide, tall]
+    whole = Shot[[0.0, 0.0, wide + 0.0, tall + 0.0], 0, false, false, _no_marks[]]
+    Picture[image, wide + 0.0, tall + 0.0, whole, _no_shots[], _no_shots[], 1.0, [0.0, 0.0], 'pen', lory.Color[0.9, 0.2, 0.2, 1.0], 4.0, 'Words', Mark['', [0.0], [0.0], lory.Color[0.0, 0.0, 0.0, 1.0], 1.0, ''], false, false]
+
+fn _picture_kept[id, p]
+    held = _kept[]
+    pictures = held.pictures
+    pictures[id] = p
+    held.pictures = pictures
+    remember['lory.editors', held]
+
+fn _picture_of_id[id]
+    held = _kept[]
+    if id in held.pictures
+        return held.pictures[id]
+    _no_picture[]
+
+--- the tools to choose and the steps to take, and under them the picture
+--- `wide` by `tall` CSS pixels: dragged on, the tool in hand draws its mark
+--- (or keeps the part dragged over, or moves the view); the buttons turn
+--- it a quarter left or right, mirror it, zoom it, show it whole again and
+--- go back a step or forward again (as Control or Command with Z does,
+--- with Shift or Y forward). `picture_after` answers the reader.
+fn image_editor[id, p, wide = 640.0, tall = 400.0]
+    _picture_kept[id, p]
+    tools = gui.roving['`id`:tools', _tool_buttons[id, p.tool], along = 'row', loop = true, gap = 4.0]
+    steps = []
+    for one in [['undo', 'undo'], ['redo', 'redo'], ['left', 'counter-clockwise-clock'], ['right', 'rotate-clockwise'], ['across', 'flip-horizontal'], ['upright', 'flip-vertical'], ['out', 'zoom-out'], ['in', 'zoom-in'], ['whole', 'reset']]
+        b = gui.drawn['`id`:`one[0]`', 0.0, 34.0, 34.0, _icon_painted, words = one[1]]
+        if (one[0] eq 'undo' and len[p.past] eq 0) or (one[0] eq 'redo' and len[p.future] eq 0)
+            b = gui.disabled[b]
+        steps = push[steps, b]
+    board = gui.drawn['`id`:canvas', 0.0, wide, tall, _picture_painted, words = id]
+    gui.column[[gui.row[[tools, gui.row[steps, gap = 4.0]], gap = 16.0], gui.row[[board]]], gap = 10.0]
+
+fn _tool_buttons[id, tool]
+    out = []
+    for one in [['pen', 'pencil-1'], ['line', 'slash'], ['box', 'square'], ['ring', 'circle'], ['words', 'text'], ['crop', 'crop'], ['move', 'move']]
+        out = push[out, gui.drawn['`id`:tool:`one[0]`', _flag[one[0] eq tool], 34.0, 34.0, _icon_painted, words = one[1]]]
+    out
+
+fn _flag[on]
+    if on
+        return 1.0
+    0.0
+
+--- a button showing an icon (pressed in where its number is 1): a press,
+--- or Enter or space while it has the focus, tells `press`
+fn _icon_painted[d]
+    out = _icon_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _icon_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    hit = d.pressed
+    for k in d.keys
+        if k eq 'Enter' or k eq ' '
+            hit = true
+    if hit
+        d = gui.tell[d, 'press', d.words, 0.0]
+    ground = look.panel
+    if d.num gt 0.5
+        ground = lory.mix[look.panel, look.accent, 0.25]
+    else if d.down
+        ground = look.press
+    else if d.hover
+        ground = look.hover
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 8.0 * s, ground]
+    c = icons.draw[c, d.words, d.x + d.w / 2.0 - 8.0 * s, d.y + d.h / 2.0 - 8.0 * s, 16.0 * s, look.ink]
+    d.c = c
+    d
+
+--- where the picture's pixels stand in a box: its middle (the box's), the
+--- scale, and the picture's point at the middle (the kept part's middle,
+--- moved by the pan)
+struct View [cx, cy, scale, ox, oy, turns, across, upright]
+
+fn view_of[p, x, y, w, h]
+    crop = p.now.crop
+    dw = crop[2]
+    dh = crop[3]
+    if p.now.turns % 2 eq 1
+        dw = crop[3]
+        dh = crop[2]
+    scale = p.zoom * min[w / max[1.0, dw], h / max[1.0, dh]]
+    View[x + w / 2.0, y + h / 2.0, scale, crop[0] + crop[2] / 2.0 + p.pan[0], crop[1] + crop[3] / 2.0 + p.pan[1], p.now.turns, p.now.across, p.now.upright]
+
+--- the picture's point (u, v) where it stands in the box
+fn on_screen[v, u, w]
+    a = u - v.ox
+    b = w - v.oy
+    for i in range[v.turns % 4]
+        t = a
+        a = 0.0 - b
+        b = t
+    if v.across
+        a = 0.0 - a
+    if v.upright
+        b = 0.0 - b
+    [v.cx + a * v.scale, v.cy + b * v.scale]
+
+--- the picture's point a point in the box stands on
+fn on_picture[v, x, y]
+    a = (x - v.cx) / v.scale
+    b = (y - v.cy) / v.scale
+    if v.across
+        a = 0.0 - a
+    if v.upright
+        b = 0.0 - b
+    for i in range[v.turns % 4]
+        t = a
+        a = b
+        b = 0.0 - t
+    [a + v.ox, b + v.oy]
+
+fn _picture_painted[d]
+    out = _picture_drawing[d]
+    if not out.ok
+        return d
+    out
+
+fn _picture_drawing[d]
+    c = d.c
+    s = d.s
+    look = d.look
+    p = _picture_of_id[d.words]
+    c = lory.rect[c, d.x, d.y, d.w, d.h, look.field]
+    v = view_of[p, d.x, d.y, d.w, d.h]
+    crop = p.now.crop
+    a = on_screen[v, crop[0], crop[1]]
+    b = on_screen[v, crop[0] + crop[2], crop[1] + crop[3]]
+    lo_x = max[d.x, min[a[0], b[0]]]
+    lo_y = max[d.y, min[a[1], b[1]]]
+    hi_x = min[d.x + d.w, max[a[0], b[0]]]
+    hi_y = min[d.y + d.h, max[a[1], b[1]]]
+    kept = lory.clipped[c]
+    c = lory.clip[c, lo_x, lo_y, max[0.0, hi_x - lo_x], max[0.0, hi_y - lo_y]]
+    if p.image gte 0
+        before = len[c.verts]
+        c = lory.image[c, p.image, 0.0, 0.0, p.wide, p.tall]
+        c = _placed[c, before, v]
+    else
+        c = _grid_drawn[c, v, p, look]
+    for m in p.now.marks
+        c = _mark_drawn[c, v, m, s]
+    if p.dragging and p.tool ne 'crop' and p.tool ne 'move'
+        c = _mark_drawn[c, v, p.drawing, s]
+    c = lory.unclip[c, kept]
+    if p.dragging and p.tool eq 'crop' and len[p.drawing.xs] gt 1
+        one = on_screen[v, p.drawing.xs[0], p.drawing.ys[0]]
+        two = on_screen[v, p.drawing.xs[1], p.drawing.ys[1]]
+        xs = [one[0], two[0], two[0], one[0], one[0]]
+        ys = [one[1], one[1], two[1], two[1], one[1]]
+        c = lory.dashed_path[c, xs, ys, 1.5 * s, look.ink, 6.0 * s, 4.0 * s]
+    d.c = c
+    d
+
+--- the vertices from float `before` on moved from the picture's pixels to
+--- where they stand in the view
+fn _placed[c, before, v]
+    vs = c.verts
+    step = lory.floats[]
+    i = before
+    while i lt len[vs]
+        at = on_screen[v, vs[i], vs[i + 1]]
+        vs[i] = at[0]
+        vs[i + 1] = at[1]
+        i = i + step
+    c.verts = vs
+    c
+
+--- squares standing in for a picture not given, and a ring and a bar so
+--- its turns and mirrors show
+fn _grid_drawn[c, v, p, look]
+    n = 8
+    for i in range[n]
+        for j in range[n]
+            if (i + j) % 2 eq 0
+                one = on_screen[v, p.wide * i / n, p.tall * j / n]
+                two = on_screen[v, p.wide * (i + 1) / n, p.tall * (j + 1) / n]
+                c = lory.rect[c, min[one[0], two[0]], min[one[1], two[1]], abs[two[0] - one[0]], abs[two[1] - one[1]], look.hover]
+    top = on_screen[v, p.wide * 0.1, p.tall * 0.1]
+    corner = on_screen[v, p.wide * 0.3, p.tall * 0.12]
+    c = lory.rect[c, min[top[0], corner[0]], min[top[1], corner[1]], abs[corner[0] - top[0]], abs[corner[1] - top[1]], look.accent]
+    mid = on_screen[v, p.wide / 2.0, p.tall / 2.0]
+    lory.ring[c, mid[0], mid[1], min[p.wide, p.tall] * 0.25 * v.scale, 2.0, look.muted]
+
+fn _mark_drawn[c, v, m, s]
+    width = max[1.0, m.width * v.scale]
+    n = len[m.xs]
+    if n eq 0
+        return c
+    pts_x = []
+    pts_y = []
+    for i in range[n]
+        at = on_screen[v, m.xs[i], m.ys[i]]
+        pts_x = push[pts_x, at[0]]
+        pts_y = push[pts_y, at[1]]
+    if m.how eq 'words'
+        return lory.text[c, pts_x[0], pts_y[0], m.words, max[8.0, 18.0 * v.scale], m.color]
+    if m.how eq 'pen'
+        if n eq 1
+            return lory.circle[c, pts_x[0], pts_y[0], width / 2.0, m.color]
+        return lory.path[c, pts_x, pts_y, width, m.color]
+    if n lt 2
+        return c
+    x0 = pts_x[0]
+    y0 = pts_y[0]
+    x1 = pts_x[n - 1]
+    y1 = pts_y[n - 1]
+    if m.how eq 'line'
+        return lory.line[c, x0, y0, x1, y1, width, m.color]
+    if m.how eq 'box'
+        return lory.path[c, [x0, x1, x1, x0, x0], [y0, y0, y1, y1, y0], width, m.color]
+    if m.how eq 'ring'
+        xs = []
+        ys = []
+        for i in range[49]
+            a = 6.2831853 * i / 48.0
+            xs = push[xs, (x0 + x1) / 2.0 + (x1 - x0) / 2.0 * cos[a]]
+            ys = push[ys, (y0 + y1) / 2.0 + (y1 - y0) / 2.0 * sin[a]]
+        return lory.path[c, xs, ys, width, m.color]
+    c
+
+--- the picture once the reader's frame is answered: a tool chosen, a step
+--- taken, a mark drawn or a part kept by dragging on it, the view moved
+--- or zoomed (the wheel over it zooms too)
+fn picture_after[id, p, shown]
+    c = shown.canvas
+    px = lory.px[c]
+    for e in shown.events
+        if starts[e.id, '`id`:tool:'] and e.act eq 'press'
+            p.tool = slice[e.id, len[id] + 6, len[e.id]]
+        if e.act eq 'press' and e.id eq '`id`:undo'
+            p = picture_back[p]
+        if e.act eq 'press' and e.id eq '`id`:redo'
+            p = picture_on[p]
+        if e.act eq 'press' and e.id eq '`id`:left'
+            p = _shot_taken[p, _turned_by[p.now, 3]]
+        if e.act eq 'press' and e.id eq '`id`:right'
+            p = _shot_taken[p, _turned_by[p.now, 1]]
+        if e.act eq 'press' and e.id eq '`id`:across'
+            p = _shot_taken[p, _mirrored[p.now, true]]
+        if e.act eq 'press' and e.id eq '`id`:upright'
+            p = _shot_taken[p, _mirrored[p.now, false]]
+        if e.act eq 'press' and e.id eq '`id`:in'
+            p.zoom = min[8.0, p.zoom * 1.25]
+        if e.act eq 'press' and e.id eq '`id`:out'
+            p.zoom = max[0.25, p.zoom / 1.25]
+        if e.act eq 'press' and e.id eq '`id`:whole'
+            whole = p.now
+            whole.crop = [0.0, 0.0, p.wide, p.tall]
+            p = _shot_taken[p, whole]
+            p.zoom = 1.0
+            p.pan = [0.0, 0.0]
+    key = '`id`:canvas'
+    if not (key in shown.boxes)
+        return p
+    box = shown.boxes[key]
+    v = view_of[p, box[0], box[1], box[2], box[3]]
+    p.focused = _focus_kept[p.focused, '`id`:', shown]
+    evs = lory.events[c]
+    i = 0
+    while i lt len[evs]
+        e = evs[i]
+        x = e.x / px
+        y = e.y / px
+        inside = x gte box[0] and y gte box[1] and x lt box[0] + box[2] and y lt box[1] + box[3]
+        at = on_picture[v, x, y]
+        if e.on eq 'down' and inside
+            p.dragging = true
+            p.drawing = Mark[p.tool, [at[0]], [at[1]], p.color, p.width, p.words]
+            if p.tool eq 'words'
+                p = _mark_added[p]
+        if e.on eq 'move' and p.dragging
+            if p.tool eq 'move'
+                start = on_screen[v, p.drawing.xs[0], p.drawing.ys[0]]
+                p.pan = [p.pan[0] - (at[0] - p.drawing.xs[0]), p.pan[1] - (at[1] - p.drawing.ys[0])]
+                v = view_of[p, box[0], box[1], box[2], box[3]]
+            else if p.tool eq 'pen'
+                m = p.drawing
+                m.xs = push[m.xs, at[0]]
+                m.ys = push[m.ys, at[1]]
+                p.drawing = m
+            else
+                m = p.drawing
+                m.xs = [m.xs[0], at[0]]
+                m.ys = [m.ys[0], at[1]]
+                p.drawing = m
+        if e.on eq 'up' and p.dragging
+            if p.tool ne 'pen' and p.tool ne 'move'
+                m = p.drawing
+                m.xs = [m.xs[0], at[0]]
+                m.ys = [m.ys[0], at[1]]
+                p.drawing = m
+            if p.tool eq 'crop'
+                p = _cropped[p]
+            else if p.tool ne 'move'
+                p = _mark_added[p]
+            p.dragging = false
+        if e.on eq 'wheel' and inside
+            if e.dy lt 0.0
+                p.zoom = min[8.0, p.zoom * 1.1]
+            else if e.dy gt 0.0
+                p.zoom = max[0.25, p.zoom / 1.1]
+        if e.on eq 'key' and p.focused and (e.ctrl or e.meta)
+            if lower[e.key] eq 'z' and not e.shift
+                p = picture_back[p]
+            else if lower[e.key] eq 'y' or (lower[e.key] eq 'z' and e.shift)
+                p = picture_on[p]
+        i = i + 1
+    p
+
+--- the shot with a mark more (one that is only a point, but for the pen
+--- and words, is not kept)
+fn _mark_added[p]
+    m = p.drawing
+    n = len[m.xs]
+    if m.how ne 'pen' and m.how ne 'words'
+        if n lt 2 or (m.xs[0] eq m.xs[n - 1] and m.ys[0] eq m.ys[n - 1])
+            p.dragging = false
+            return p
+    if m.how eq 'words' and m.words eq ''
+        return p
+    shot = p.now
+    shot.marks = push[shot.marks, m]
+    p = _shot_taken[p, shot]
+    if m.how eq 'words'
+        p.dragging = false
+    p
+
+--- the part dragged over kept (within what was kept), where it is more
+--- than two pixels each way
+fn _cropped[p]
+    m = p.drawing
+    if len[m.xs] lt 2
+        return p
+    crop = p.now.crop
+    x0 = max[crop[0], min[m.xs[0], m.xs[1]]]
+    y0 = max[crop[1], min[m.ys[0], m.ys[1]]]
+    x1 = min[crop[0] + crop[2], max[m.xs[0], m.xs[1]]]
+    y1 = min[crop[1] + crop[3], max[m.ys[0], m.ys[1]]]
+    if x1 - x0 lt 2.0 or y1 - y0 lt 2.0
+        return p
+    shot = p.now
+    shot.crop = [x0, y0, x1 - x0, y1 - y0]
+    p.pan = [0.0, 0.0]
+    _shot_taken[p, shot]
+
+fn _turned_by[shot, quarters]
+    shot.turns = (shot.turns + quarters) % 4
+    shot
+
+--- mirrored as it is seen: left to right where `across`, else top to
+--- bottom (a quarter turn swaps which of the picture's ways that is)
+fn _mirrored[shot, across]
+    if across
+        shot.across = not shot.across
+    else
+        shot.upright = not shot.upright
+    shot
+
+--- a new shot, the one before kept to go back to (and none to go forward
+--- to)
+fn _shot_taken[p, shot]
+    p.past = push[p.past, p.now]
+    p.future = _no_shots[]
+    p.now = shot
+    p
+
+--- the picture a step back, and a step forward again
+fn picture_back[p]
+    n = len[p.past]
+    if n eq 0
+        return p
+    p.future = push[p.future, p.now]
+    p.now = p.past[n - 1]
+    p.past = slice[p.past, 0, n - 1]
+    p
+
+fn picture_on[p]
+    n = len[p.future]
+    if n eq 0
+        return p
+    p.past = push[p.past, p.now]
+    p.now = p.future[n - 1]
+    p.future = slice[p.future, 0, n - 1]
+    p
+
+--- ---- tests: frames as a page hands them ----
+
+fn _frame_of[t, items]
+    inner = join[items, ', ']
+    given = '[`inner`]'
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _event_at[on, x, y]
+    '{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+fn _press[x, y]
+    [_event_at['down', x, y], _event_at['up', x, y]]
+
+fn _key[name]
+    '{"type": "key", "key": "`name`", "code": "`name`", "shift": false}'
+
+fn _key_with[name, held]
+    '{"type": "key", "key": "`name`", "code": "`name`", "shift": false, "`held`": true}'
+
+fn _text[words]
+    '{"type": "text", "text": "`words`"}'
+
+fn _wheel[x, y, dy]
+    '{"type": "wheel", "x": `x`, "y": `y`, "dx": 0, "dy": `dy`}'
+
+fn _shown[tree, items, t = 0.0]
+    gui.show[_frame_of[t, items], tree]
+
+fn _first[tree]
+    gui.unfocus[]
+    _shown[tree, _press[899.0, 699.0]]
+
+fn _mid[shown, id]
+    b = shown.boxes[id]
+    [b[0] + b[2] / 2.0, b[1] + b[3] / 2.0]
+
+fn _into[shown, id, fx, fy]
+    b = shown.boxes[id]
+    [b[0] + b[2] * fx, b[1] + b[3] * fy]
+
+fn _press_on[shown, id]
+    m = _mid[shown, id]
+    _press[m[0], m[1]]
+
+fn _one_of[item]
+    [item]
+
+test markdown_reads_its_blocks_and_their_inline_pieces[]
+    tree_text[markdown_blocks['# Notes\n\nSome *words* and \`code\`.']] eq '(document (heading 1 (text "Notes")) (paragraph (text "Some ") (emph (text "words")) (text " and ") (code "code") (text ".")))'
+    tree_text[markdown_blocks['- a\n- b\n\n> quote']] eq '(document (list bullet 0 tight (item (paragraph (text "a"))) (item (paragraph (text "b")))) (block_quote (paragraph (text "quote"))))'
+    pieces = inlines_of['**a** [b](u "t")']
+    --- (the runs of `**` are pieces of their own, their words used up)
+    len[pieces] eq 7
+    pieces[0].after eq ['strong'] and pieces[0].words eq ''
+    pieces[2].before eq ['strong']
+    pieces[4].how eq 'link' and pieces[4].dest eq 'u' and pieces[4].title eq 't'
+    pieces[6].how eq 'unlink'
+    tree_text[markdown_blocks['']] eq '(document)'
+
+fn _notes[s]
+    markdown_editor['md', s, wide = 640.0, lines = 8]
+
+test a_markdown_editor_reads_its_words_again_a_tenth_of_a_second_after_typing_stops[]
+    s = notes_of['# Hi']
+    first = _first[_notes[s]]
+    s = markdown_after['md', s, _shown[_notes[s], _press_on[first, 'md:field:0'], t = 1000.0]]
+    s = markdown_after['md', s, _shown[_notes[s], [_key['End'], _text['!']], t = 1100.0]]
+    s.text eq '# Hi!'
+    tree_text[s.doc] eq '(document (heading 1 (text "Hi")))'
+    s = markdown_after['md', s, _shown[_notes[s], [], t = 1150.0]]
+    tree_text[s.doc] eq '(document (heading 1 (text "Hi")))'
+    s = markdown_after['md', s, _shown[_notes[s], [], t = 1200.0]]
+    tree_text[s.doc] eq '(document (heading 1 (text "Hi!")))'
+    --- (Control with Z goes back, with Shift forward again)
+    s = markdown_after['md', s, _shown[_notes[s], _one_of[_key_with['z', 'ctrl']], t = 1300.0]]
+    s.text eq '# Hi'
+    s = markdown_after['md', s, _shown[_notes[s], _one_of[_text['?']], t = 1400.0]]
+    s.text eq '# Hi?'
+    s = markdown_after['md', s, _shown[_notes[s], _one_of[_key_with['z', 'meta']], t = 1500.0]]
+    s.text eq '# Hi'
+    s = markdown_after['md', s, _shown[_notes[s], _one_of[_key_with['y', 'ctrl']], t = 1600.0]]
+    s.text eq '# Hi?'
+
+test a_markdown_preview_is_drawn_and_scrolled_by_the_wheel_to_its_end[]
+    long = []
+    for i in range[30]
+        long = push[long, '- item `i`']
+    s = notes_of[join[long, '\n']]
+    first = _first[_notes[s]]
+    drawn = lory.end[first.canvas]
+    drawn gt 0
+    at = _mid[first, 'md:preview']
+    turned = _shown[_notes[s], _one_of[_wheel[at[0], at[1], 120.0]]]
+    s = markdown_after['md', s, turned]
+    s.scroll eq 120.0
+    far = _shown[_notes[s], _one_of[_wheel[at[0], at[1], 100000.0]]]
+    s = markdown_after['md', s, far]
+    s.scroll gt 120.0 and s.scroll lt 1000.0
+
+fn _viewer[doc, scroll]
+    markdown_viewer['view', doc, scroll = scroll, wide = 300.0, tall = 200.0]
+
+test a_markdown_viewer_draws_the_words_alone_and_tells_its_scroll[]
+    long = []
+    for i in range[30]
+        long = push[long, '- item `i`']
+    doc = markdown_blocks[join[long, '\n']]
+    first = _first[_viewer[doc, 0.0]]
+    b = first.boxes['view']
+    b[2] eq 300.0 and b[3] eq 200.0
+    at = _mid[first, 'view']
+    turned = _shown[_viewer[doc, 0.0], _one_of[_wheel[at[0], at[1], 120.0]]]
+    told = -1.0
+    for e in turned.events
+        if e.id eq 'view' and e.act eq 'change'
+            told = e.num
+    told eq 120.0
+
+test a_pictures_points_stand_where_its_turns_and_mirrors_put_them[]
+    p = picture_of[-1, 200.0, 100.0]
+    v = view_of[p, 0.0, 0.0, 400.0, 400.0]
+    v.scale eq 2.0
+    on_screen[v, 0.0, 0.0] eq [0.0, 100.0]
+    p.now.turns = 1
+    v = view_of[p, 0.0, 0.0, 400.0, 400.0]
+    v.scale eq 2.0
+    --- (a quarter turn clockwise: the top left corner to the top right)
+    on_screen[v, 0.0, 0.0] eq [300.0, 0.0]
+    p.now.across = true
+    v = view_of[p, 0.0, 0.0, 400.0, 400.0]
+    on_screen[v, 0.0, 0.0] eq [100.0, 0.0]
+    back = on_picture[v, 100.0, 0.0]
+    abs[back[0]] lt 0.000001 and abs[back[1]] lt 0.000001
+    p.now.turns = 3
+    p.now.upright = true
+    v = view_of[p, 0.0, 0.0, 400.0, 400.0]
+    there = on_picture[v, on_screen[v, 37.0, 64.0][0], on_screen[v, 37.0, 64.0][1]]
+    abs[there[0] - 37.0] lt 0.000001 and abs[there[1] - 64.0] lt 0.000001
+
+fn _studio[p]
+    image_editor['pic', p, wide = 400.0, tall = 200.0]
+
+fn _studio_after[p, items]
+    picture_after['pic', p, _shown[_studio[p], items]]
+
+test an_image_editor_draws_marks_turns_crops_and_steps_back_and_on[]
+    p = picture_of[-1, 200.0, 100.0]
+    first = _first[_studio[p]]
+    a = _into[first, 'pic:canvas', 0.25, 0.5]
+    b = _into[first, 'pic:canvas', 0.75, 0.5]
+    p = _studio_after[p, _press_on[first, 'pic:tool:line']]
+    p.tool eq 'line'
+    p = _studio_after[p, [_event_at['down', a[0], a[1]], _event_at['move', b[0], b[1]], _event_at['up', b[0], b[1]]]]
+    len[p.now.marks] eq 1
+    m = p.now.marks[0]
+    m.how eq 'line' and abs[m.xs[0] - 50.0] lt 0.001 and abs[m.xs[1] - 150.0] lt 0.001 and abs[m.ys[0] - 50.0] lt 0.001
+    p = _studio_after[p, _press_on[first, 'pic:right']]
+    p.now.turns eq 1
+    p = _studio_after[p, _one_of[_key_with['z', 'ctrl']]]
+    p.now.turns eq 0 and len[p.now.marks] eq 1
+    p = _studio_after[p, _press_on[first, 'pic:undo']]
+    len[p.now.marks] eq 0
+    p = _studio_after[p, _press_on[first, 'pic:redo']]
+    len[p.now.marks] eq 1
+    --- (the crop: the part dragged over kept)
+    p = _studio_after[p, _press_on[first, 'pic:tool:crop']]
+    p = _studio_after[p, [_event_at['down', a[0], a[1] - 20.0], _event_at['move', b[0], b[1] + 20.0], _event_at['up', b[0], b[1] + 20.0]]]
+    abs[p.now.crop[0] - 50.0] lt 0.001 and abs[p.now.crop[2] - 100.0] lt 0.001
+    --- (the picture is drawn twice its size: 20 CSS pixels are 10 of its)
+    abs[p.now.crop[1] - 40.0] lt 0.001 and abs[p.now.crop[3] - 20.0] lt 0.001
+    p = _studio_after[p, _press_on[first, 'pic:in']]
+    p.zoom eq 1.25
+    p = _studio_after[p, _press_on[first, 'pic:whole']]
+    p.now.crop eq [0.0, 0.0, 200.0, 100.0] and p.zoom eq 1.0
+    drawn = _shown[_studio[p], []]
+    lory.end[drawn.canvas] gt 0
+
+--- a headset's frame at `t`, the right hand's ray at (x, y) on its page of
+--- 1000 by 560, with the ray's events given
+fn _headset_at[t, x, y, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    ox = x * 0.002 - 1.0
+    oy = 1.8 - y * 0.002
+    inner = join[given, ', ']
+    lory.begin[json['{"t": `t`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": [`inner`], "pointers": [], "controllers": [{"hand": "right", "origin": [`ox`, `oy`, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']]
+
+fn _ray[on]
+    '{"type": "`on`", "device": "ray", "id": "right"}'
+
+--- in a headset the ray draws with the pen as a pointer does, and the
+--- Markdown field given the focus brings up gui's drawn keyboard
+test in_a_headset_the_ray_draws_on_a_picture_and_types_markdown[]
+    gui.unfocus[]
+    p = picture_of[-1, 200.0, 100.0]
+    first = gui.show[_headset_at[1000.0, 999.0, 559.0, []], _studio[p]]
+    a = _into[first, 'pic:canvas', 0.25, 0.25]
+    b = _into[first, 'pic:canvas', 0.5, 0.75]
+    p = picture_after['pic', p, gui.show[_headset_at[1100.0, a[0], a[1], [_ray['down']]], _studio[p]]]
+    p.dragging
+    p = picture_after['pic', p, gui.show[_headset_at[1200.0, b[0], b[1], [_ray['move']]], _studio[p]]]
+    p = picture_after['pic', p, gui.show[_headset_at[1300.0, b[0], b[1], [_ray['up']]], _studio[p]]]
+    len[p.now.marks] eq 1 and len[p.now.marks[0].xs] eq 2
+    s = notes_of['']
+    seen = gui.show[_headset_at[1400.0, 999.0, 559.0, []], _notes[s]]
+    spot = _mid[seen, 'md:field:0']
+    focused = gui.show[_headset_at[1500.0, spot[0], spot[1], [_ray['down'], _ray['up']]], _notes[s]]
+    board = gui.keys_of[focused.canvas, false]
+    h = board[25]
+    h.face eq 'h'
+    typed = gui.show[_headset_at[1600.0, h.x + h.w / 2.0, h.y + h.h / 2.0, [_ray['down'], _ray['up']]], _notes[s]]
+    s = markdown_after['md', s, typed]
+    s.text eq 'h'

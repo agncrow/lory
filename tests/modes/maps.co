@@ -1,0 +1,484 @@
+--- Everything Lory's maps compute, written out, to diff the interpreter's
+--- run against the compiled program's: places projected and back, views,
+--- the zooms that fit boxes and scale bars, flights, wheels, throws and
+--- pinches, tiles and their addresses, GeoJSON read into shapes, cut into
+--- triangles and found under points, clusters and heat, and a map driven
+--- through frames as a page hands them, its drawing summed each frame.
+--- Nothing in it reads a clock, a random number or the network.
+use math
+use memory
+use lory
+use lory.gui
+use map
+use map.geo
+use map.camera
+use map.grid
+use map.features
+use map.points
+
+--- numbers written one after another
+fn _row[xs]
+    out = slice[[''], 0, 0]
+    for x in xs
+        out = push[out, '`x`']
+    join[out, ' ']
+
+--- a colour's four parts
+fn _color[c]
+    '`c.r` `c.g` `c.b` `c.a`'
+
+--- a frame 900 by 700 at time `t` (milliseconds), with the input given,
+--- what the page said and where the pointer rests (JSON lists)
+fn _frame[t, given, said, resting]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": `resting`, "controllers": [], "said": `said`}']]
+
+--- a mouse's event at a place (`on`: down, move, up, double)
+fn _mouse[on, x, y, shift]
+    '{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0, "shift": `shift`}'
+
+--- a finger's event at a place
+fn _finger[on, id, x, y]
+    '{"type": "`on`", "device": "touch", "id": `id`, "x": `x`, "y": `y`, "button": 0}'
+
+--- one event as a list of input
+fn _one[ev]
+    '[`ev`]'
+
+--- two events as a list of input
+fn _two[first, second]
+    '[`first`, `second`]'
+
+--- a press and its release at a place
+fn _press[x, y]
+    d = _mouse['down', x, y, false]
+    u = _mouse['up', x, y, false]
+    '[`d`, `u`]'
+
+--- a key typed
+fn _typed[name, code, shift]
+    '[{"type": "key", "key": "`name`", "code": "`code`", "shift": `shift`}]'
+
+--- what a frame drew, summed: how many numbers its vertices are, their
+--- sum, the pictures it drew, and what it asked the page for
+fn _drawing[c]
+    asked = slice[[''], 0, 0]
+    for a in c.asks
+        asked = push[asked, join[a, ' ']]
+    listed = join[asked, ', ']
+    '`len[c.verts]` `sum[c.verts]` images `_row[c.seg_image]` asks `len[asked]` `listed`'
+
+--- what the reader did to the map in its last frame
+fn _told[id]
+    out = slice[[''], 0, 0]
+    for t in map.happened[id]
+        out = push[out, '`t.act`:`t.what`:`t.lat`:`t.lng`:`t.zoom`']
+    join[out, ' ']
+
+--- the map `modes` shown at `t` with the input given, written out
+fn _step[label, t, given, said, resting]
+    c = map.show[_frame[t, given, said, resting], map.of['modes'], 0.0, 0.0, 900.0, 700.0]
+    m = map.of['modes']
+    log['`label` t `t`: `m.lat` `m.lng` `m.zoom` moving `m.motion.how` popup `m.popup.shown` `m.popup.lat` `m.popup.lng` over `m.over` hover `m.hover`']
+    log['  drawn `_drawing[c]`']
+    told = _told[m.id]
+    if told ne ''
+        log['  told `told`']
+    m
+
+--- the images of the slots held for the map's tiles answered, as the
+--- page answers them, the first `n` that are asked for
+fn _answers[n]
+    held = recall['map.modes.tiles', grid.held_none[1]]
+    out = slice[[''], 0, 0]
+    for i in range[len[held.urls]]
+        if held.urls[i] ne '' and len[out] lt n
+            out = push[out, '{"what": "image", "id": `40000 + i`, "url": "`held.urls[i]`", "width": 256, "height": 256}']
+    listed = join[out, ', ']
+    '[`listed`]'
+
+--- ---- places projected ----
+
+places = [[0.0, 0.0], [48.8566, 2.3522], [-33.8688, 151.2093], [85.0511287798, -180.0], [-85.2, 179.9], [40.7128, -74.006], [35.6762, 139.6503], [-90.0, 0.0], [90.0, 0.0], [12.5, 390.0]]
+for p in places
+    for zoom in [0.0, 3.5, 10.0, 18.0]
+        q = geo.project[p[0], p[1], zoom]
+        back = geo.unproject[q.x, q.y, zoom]
+        log['project `p[0]` `p[1]` at `zoom`: `q.x` `q.y`, back `back.lat` `back.lng`']
+    on_ground = geo.metres[p[0], p[1]]
+    again = geo.from_metres[on_ground.x, on_ground.y]
+    wrapped = geo.wrap[p[0], p[1]]
+    log['metres `p[0]` `p[1]`: `on_ground.x` `on_ground.y`, back `again.lat` `again.lng`, wrapped `wrapped.lat` `wrapped.lng`, per pixel `geo.metres_per_pixel[p[0], 0.0]` `geo.metres_per_pixel[p[0], 12.0]`']
+for i in range[len[places] - 1]
+    a = places[i]
+    b = places[i + 1]
+    log['distance `a[0]` `a[1]` to `b[0]` `b[1]`: `geo.distance[a[0], a[1], b[0], b[1]]`']
+rounded = for x in [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5, -0.49, 7.5000001]
+    geo.js_round[x]
+log['rounded `_row[rounded]`']
+wrapped_numbers = for x in [-540.0, -180.0, -179.0, 0.0, 180.0, 181.0, 360.0, 725.5]
+    geo.wrap_number[x, -180.0, 180.0, false]
+log['wrapped `_row[wrapped_numbers]`']
+log['world `geo.world[0.0]` `geo.world[3.5]` `geo.world[18.0]`, zoom of `geo.zoom_of[1000.0]`, scales `geo.zoom_scale[5.0, 3.0]` `geo.zoom_scale[2.5, 4.0]` `geo.scale_zoom[3.0, 2.0]`']
+
+--- ---- views ----
+
+views = [[0.0, 0.0, 0.0, 900.0, 700.0], [48.8566, 2.3522, 12.0, 900.0, 700.0], [60.0, 10.0, 5.5, 400.0, 300.0], [-33.86, 151.2, 16.0, 1280.0, 800.0], [0.0, 179.0, 18.0, 300.0, 200.0], [70.0, -20.0, 2.25, 1024.0, 768.0]]
+for v in views
+    s = geo.seen[v[0], v[1], v[2], v[3], v[4]]
+    b = geo.bounds_of[s]
+    corner = geo.place_at[s, 0.0, 0.0]
+    far = geo.place_at[s, v[3], v[4]]
+    mid = geo.point_of[s, v[0], v[1]]
+    sc = geo.scale_of[s, 100.0]
+    log['view `v[0]` `v[1]` `v[2]` `v[3]`x`v[4]`: origin `s.ox` `s.oy`, bounds `b.south` `b.west` `b.north` `b.east`']
+    log['  corners `corner.lat` `corner.lng` and `far.lat` `far.lng`, middle at `mid.x` `mid.y`']
+    log['  scale `sc.most` m: `sc.metric` `sc.metric_wide` px, `sc.imperial` `sc.imperial_wide` px']
+boxes = [[-10.0, -10.0, 10.0, 10.0], [48.8, 2.2, 48.9, 2.45], [-60.0, -170.0, 70.0, 170.0], [51.5, -0.13, 51.5, -0.13], [35.0, 139.0, 36.0, 140.5]]
+for b in boxes
+    box_of = geo.Bounds[b[0], b[1], b[2], b[3]]
+    for snap in [1.0, 0.5, 0.0]
+        v = geo.fit[box_of, 900.0, 700.0, 3.0, snap, 0.0, 18.0, 20.0, 10.0, 30.0, 40.0]
+        held = geo.fit[box_of, 900.0, 700.0, 3.0, snap, 0.0, 18.0, 0.0, 0.0, 0.0, 0.0, most = 9.0]
+        inside = geo.bounds_zoom[box_of, 900.0, 700.0, 3.0, snap, 0.0, 18.0, true, 0.0, 0.0]
+        log['fit `b[0]` `b[1]` `b[2]` `b[3]` snap `snap`: `v.lat` `v.lng` `v.zoom`, at most 9 `held.lat` `held.lng` `held.zoom`, filled at `inside`']
+limited = for z in [[3.7, 1.0, 0.0, 18.0], [3.7, 0.25, 0.0, 18.0], [21.0, 1.0, 0.0, 19.0], [-2.0, 1.0, 1.0, 18.0], [3.3, 0.0, 0.0, 18.0], [3.125, 0.25, 0.0, 18.0]]
+    geo.limit_zoom[z[0], z[1], z[2], z[3]]
+log['limited `_row[limited]`']
+round_lengths = for n in [1.0, 2.0, 3.0, 7.0, 12.0, 45.0, 99.0, 101.0, 999.0, 5000.0, 0.7, 123456.0]
+    geo.round_number[n]
+log['round lengths `_row[round_lengths]`']
+for r in [[0.0, 0.0, 1000.0, 10.0], [60.0, 0.0, 1000.0, 10.0], [48.85, 2.35, 250.0, 15.0], [-70.0, 20.0, 50000.0, 3.0]]
+    radius_of = geo.circle_radius[r[0], r[1], r[2], r[3]]
+    log['circle `r[2]` m at `r[0]` `r[1]` zoom `r[3]`: `radius_of.x` across, `radius_of.y` up']
+line_lats = [0.0, 1.0, 1.0, 3.0, 4.5]
+line_lngs = [0.0, 0.0, 2.0, 2.5, 6.0]
+along = geo.line_middle[line_lats, line_lngs]
+ring_lats = [0.0, 0.0, 6.0, 6.0, 3.0]
+ring_lngs = [0.0, 8.0, 8.0, 0.0, 4.0]
+inner = geo.polygon_middle[ring_lats, ring_lngs]
+log['middles: line `along.lat` `along.lng`, polygon `inner.lat` `inner.lng`']
+zig_x = []
+zig_y = []
+for i in range[40]
+    zig_x = push[zig_x, i * 3.0]
+    zig_y = push[zig_y, sin[i * 0.7] * 6.0 + (i % 5) * 0.4]
+log['simplified at 1: `_row[geo.simplify[zig_x, zig_y, 1.0]]`']
+log['simplified at 4: `_row[geo.simplify[zig_x, zig_y, 4.0]]`']
+log['segment distance `geo.segment_distance_squared[3.0, 4.0, 0.0, 0.0, 10.0, 0.0]` `geo.segment_distance_squared[-3.0, 4.0, 0.0, 0.0, 10.0, 0.0]`']
+
+--- ---- moving the view ----
+
+from_view = geo.seen[0.0, 0.0, 3.0, 900.0, 700.0]
+for goal in [[48.8566, 2.3522, 10.0, 0.0], [-33.86, 151.2, 4.0, 2.0], [0.5, 0.5, 3.0, 0.0], [60.0, 100.0, 1.0, 0.0], [10.0, -20.0, 7.5, 1.5]]
+    f = camera.flight[from_view, goal[0], goal[1], goal[2], goal[3]]
+    log['flight to `goal[0]` `goal[1]` `goal[2]`: `f.w0` `f.w1` `f.u1` `f.r0` `f.s` `f.duration` ms']
+    spots = slice[[''], 0, 0]
+    for t in [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0, 1.2]
+        spot = camera.flight_at[f, t * f.duration]
+        spots = push[spots, '`spot.lat` `spot.lng` `spot.zoom` `spot.done`']
+    path_of = join[spots, ' | ']
+    log['  `path_of`']
+for snap in [1.0, 0.5, 0.0]
+    turned = for d in [-1200.0, -300.0, -100.0, -60.0, -10.0, -1.0, 1.0, 10.0, 60.0, 100.0, 300.0, 1200.0]
+        camera.wheel_step[d, 5.0, snap, 0.0, 18.0, 60.0]
+    log['wheel at 5 snap `snap`: `_row[turned]`']
+near_top = for d in [100.0, 300.0, -100.0]
+    camera.wheel_step[d, 17.5, 0.5, 0.0, 18.0, 60.0]
+log['wheel at 17.5: `_row[near_top]`']
+pinched = for apart in [25.0, 50.0, 100.0, 150.0, 400.0]
+    camera.pinch_zoom[apart, 100.0, 3.0]
+log['pinched `_row[pinched]`']
+drag_x = [100.0, 110.0, 125.0, 145.0, 170.0, 200.0]
+drag_y = [100.0, 102.0, 105.0, 109.0, 114.0, 120.0]
+drag_t = [0.0, 16.0, 32.0, 48.0, 64.0, 80.0]
+for let_go in [80.0, 90.0, 140.0, 400.0]
+    thrown = camera.throw_of[drag_x, drag_y, drag_t, let_go]
+    slower = camera.throw_of[drag_x, drag_y, drag_t, let_go, ease = 0.3, deceleration = 2000.0, fastest = 500.0]
+    log['thrown at `let_go`: `thrown.dx` `thrown.dy` `thrown.seconds`, slower `slower.dx` `slower.dy` `slower.seconds`']
+for z in [[200.0, 500.0, 6.0], [0.0, 0.0, 4.0], [899.0, 699.0, 1.5]]
+    about = camera.zoom_around[from_view, z[0], z[1], z[2]]
+    log['zoom about `z[0]` `z[1]` to `z[2]`: `about.lat` `about.lng`']
+fence = geo.Bounds[-60.0, -100.0, 60.0, 100.0]
+for h in [[0.0, 0.0, 3.0], [0.0, 170.0, 3.0], [80.0, -150.0, 2.0], [10.0, 10.0, 0.0]]
+    kept = camera.held_inside[h[0], h[1], h[2], 900.0, 700.0, fence]
+    log['held inside from `h[0]` `h[1]` at `h[2]`: `kept.lat` `kept.lng`']
+eased = for t in [0.0, 0.1, 0.5, 0.9, 1.0]
+    camera.ease_out[t, 2.0]
+thrown_eased = for t in [0.0, 0.1, 0.5, 0.9, 1.0]
+    camera.ease_out[t, 5.0]
+curve = for t in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    camera.bezier[t, 0.0, 0.0, 0.25, 1.0]
+log['eased `_row[eased]` thrown `_row[thrown_eased]`']
+log['bezier `_row[curve]`']
+for t in [0.0, 0.3, 0.8, 1.0]
+    between = camera.zoom_between[0.0, 0.0, 3.0, 48.8566, 2.3522, 5.0, t]
+    log['zoom between at `t`: `between.lat` `between.lng` `between.zoom` `between.done`']
+
+--- ---- tiles ----
+
+osm = map.openstreetmap[]
+log['openstreetmap `osm.template` `osm.subdomains` `osm.credit` `osm.lowest` `osm.highest` `osm.native_low` `osm.native_high` `osm.base` `osm.slots`']
+lettered = grid.layer['https://{s}.tiles.example.test/{z}/{x}/{y}.png?flip={-y}', 'Example tiles']
+zooms_of = for z in [-1.0, 0.0, 0.4, 0.5, 3.49, 3.5, 18.2, 19.4, 19.6, 25.0]
+    grid.tile_zoom[osm, z]
+log['tile zooms `_row[zooms_of]`']
+for v in views
+    tz = grid.tile_zoom[osm, v[2]]
+    seen_tiles = grid.tiles_at[osm, tz, v[0], v[1], v[2], v[3], v[4], 0.0, 0.0]
+    first = slice[seen_tiles, 0, min[6, len[seen_tiles]]]
+    shown = slice[[''], 0, 0]
+    for tile in first
+        shown = push[shown, '`tile.key` `tile.wx` `tile.url` `tile.left` `tile.top` `tile.size`']
+    listed = join[shown, '; ']
+    log['tiles of `v[0]` `v[1]` `v[2]`: `len[seen_tiles]`; `listed`']
+addressed = slice[[''], 0, 0]
+for a in [[0, 0, 0], [5, 3, 3], [-1, 2, 2], [7, 0, 3], [1023, 511, 10]]
+    addressed = push[addressed, grid.address[lettered, a[0], a[1], a[2]]]
+listed_addresses = join[addressed, ' ']
+log['addresses `listed_addresses`']
+
+--- ---- shapes ----
+
+shapes_text = '{"type": "FeatureCollection", "features": [{"type": "Feature", "id": "yard", "properties": {"name": "Yard", "rank": 3}, "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [8, 0], [8, 6], [0, 6], [0, 0]], [[2, 2], [2, 4], [5, 4], [5, 2], [2, 2]]]}}, {"type": "Feature", "id": 17, "properties": {"name": "Pair", "rank": 12.5}, "geometry": {"type": "MultiPolygon", "coordinates": [[[[10, 10], [14, 10], [12, 13], [10, 10]]], [[[20, -5], [24, -5], [24, -1], [22, -3], [20, -1], [20, -5]]]]}}, {"type": "Feature", "properties": {"name": "Road"}, "geometry": {"type": "LineString", "coordinates": [[-5, 40], [0, 42], [5, 41], [10, 45]]}}, {"type": "Feature", "id": "streams", "properties": {"rank": 40}, "geometry": {"type": "MultiLineString", "coordinates": [[[30, 10], [31, 12], [33, 13]], [[35, 10], [36, 9]]]}}, {"type": "Feature", "id": "well", "properties": {"name": "Well", "deep": true, "note": null}, "geometry": {"type": "Point", "coordinates": [3.5, 50.25]}}, {"type": "Feature", "id": "stops", "properties": {}, "geometry": {"type": "MultiPoint", "coordinates": [[100, -10], [101.5, -10.5]]}}, {"type": "Feature", "id": "mixed", "geometry": {"type": "GeometryCollection", "geometries": [{"type": "Point", "coordinates": [-60, -30]}, {"type": "LineString", "coordinates": [[-61, -31], [-59, -29]]}, {"type": "Polygon", "coordinates": [[[-70, -40], [-65, -40], [-67, -35], [-70, -40]]]}]}}, {"type": "Feature", "id": "comb", "properties": {"rank": 7, "name": "Comb"}, "geometry": {"type": "Polygon", "coordinates": [[[40, 0], [50, 0], [50, 10], [48, 10], [48, 3], [46, 3], [46, 10], [44, 10], [44, 3], [42, 3], [42, 10], [40, 10], [40, 0]]]}}]}'
+read_in = features.read_geojson['shapes', shapes_text, features.style[]]
+log['shapes read `len[read_in]`']
+for f in read_in
+    name = ''
+    if 'name' in f.words
+        name = f.words['name']
+    rank = -1.0
+    if 'rank' in f.numbers
+        rank = f.numbers['rank']
+    middle = features.middle_of[f]
+    log['feature `f.id` of `f.layer` named `name` ranked `rank`: `len[f.pieces]` pieces, box `f.south` `f.west` `f.north` `f.east`, middle `middle.lat` `middle.lng`']
+    for piece in f.pieces
+        log['  `piece.form` of `len[piece.lats]`: rings at `_row[piece.ring_at]`, triangles `_row[piece.triangles]`, sums `sum[piece.xs]` `sum[piece.ys]`']
+probes = [[3.0, 1.0], [3.0, 3.0], [11.0, 12.0], [41.0, 0.0], [50.25, 3.5], [5.0, 45.0], [5.0, 47.0], [-10.0, 100.0], [-30.0, -60.0], [-38.0, -67.0], [11.5, 31.0]]
+k5 = geo.world[5.0] / 256.0
+for at in probes
+    w = geo.project[at[0], at[1], 0.0]
+    hit_by = slice[[''], 0, 0]
+    for f in read_in
+        if features.hits[f, w.x, w.y, 1.0 / k5]
+            hit_by = push[hit_by, f.id]
+    listed = join[hit_by, ' ']
+    log['under `at[0]` `at[1]` at zoom 5: `listed`']
+stepped = features.fill_steps[read_in, 'rank', '#eeeeee', [0.0, 5.0, 10.0, 20.0], ['#ffffcc', '#a1dab4', '#41b6c4', '#225ea8']]
+matched = features.fill_match[read_in, 'name', ['Yard', 'Comb', 'Yard'], ['#ff0000', '#00ff00', '#0000ff'], '#999999']
+for i in range[len[stepped]]
+    log['filled `stepped[i].id`: by rank `_color[stepped[i].style.fill_color]`, by name `_color[matched[i].style.fill_color]`']
+ringed = features.circle_of['circles', 'ring', 51.5, -0.12, 1500.0, features.filled[features.stroke[features.style[], '#aa3300', 2.0], '#ffaa00', 0.4]]
+pinned = features.marker_of['pins', 'pin', 40.0, -3.7, features.icon[features.style[], 12, 30.0, 40.0, 15.0, 40.0]]
+log['circle `ringed.id` `ringed.metres` m `ringed.pieces[0].form` `ringed.pieces[0].xs[0]` `ringed.pieces[0].ys[0]` style `_color[ringed.style.color]` `ringed.style.weight` `_color[ringed.style.fill_color]` `ringed.style.fill_opacity`']
+log['marker `pinned.id` `pinned.pieces[0].xs[0]` `pinned.pieces[0].ys[0]` icon `pinned.style.icon` `pinned.style.icon_w` `pinned.style.icon_h` `pinned.style.icon_x` `pinned.style.icon_y`']
+tacked = features.marker_of['pins', 'tack', 40.0, -3.7, features.glyph[features.style[], 'sewing-pin-filled', 24.0, '#d6336c']]
+log['marker `tacked.id` drawn as `tacked.style.glyph` `_color[tacked.style.glyph_color]` box `tacked.style.icon_w` `tacked.style.icon_h` point `tacked.style.icon_x` `tacked.style.icon_y`']
+ring_hit = features.hits[ringed, geo.project[51.505, -0.12, 0.0].x, geo.project[51.505, -0.12, 0.0].y, 1.0 / (geo.world[12.0] / 256.0)]
+ring_miss = features.hits[ringed, geo.project[51.53, -0.12, 0.0].x, geo.project[51.53, -0.12, 0.0].y, 1.0 / (geo.world[12.0] / 256.0)]
+log['circle hit `ring_hit` missed `ring_miss`']
+star_x = []
+star_y = []
+for i in range[10]
+    reach = 10.0
+    if i % 2 eq 1
+        reach = 4.0
+    star_x = push[star_x, cos[i * pi / 5.0] * reach]
+    star_y = push[star_y, sin[i * pi / 5.0] * reach]
+log['star cut `_row[features.triangulate[star_x, star_y, [0]]]`']
+
+--- ---- clusters and heat ----
+
+crowd_lats = []
+crowd_lngs = []
+for i in range[60]
+    crowd_lats = push[crowd_lats, 40.0 + (i % 8) * 0.7 + sin[i * 1.0] * 0.05]
+    crowd_lngs = push[crowd_lngs, -3.0 + floor[(0.0 + i) / 8.0] * 0.9 + cos[i * 1.7] * 0.05]
+crowd = points.points_at[crowd_lats, crowd_lngs]
+gathered = points.tree[crowd, 60.0, 0.0, 18.0]
+log['tree of `gathered.count`: `len[gathered.groups]` groups, levels from `_row[gathered.level_from]`']
+for z in range[9]
+    groups = points.groups_at[gathered, 0.0 + z]
+    counts = for g in groups
+        g.count
+    weighed = 0.0
+    for g in groups
+        weighed = weighed + g.lat * g.count + g.lng
+    log['clusters at `z`: `len[groups]`, counts `_row[counts]`, weighed `weighed`']
+for g in points.groups_at[gathered, 5.0]
+    log['  at 5: `g.lat` `g.lng` `g.x` `g.y` `g.count` splits `g.splits` alone `g.index`']
+radii = for n in [2, 9, 10, 99, 100, 5000]
+    points.cluster_radius[n]
+log['cluster radii `_row[radii]`']
+for n in [2, 10, 100]
+    log['cluster colour of `n`: `_color[points.cluster_color[n]]`']
+for t in [0.0, 0.1, 0.25, 0.6, 1.0, 1.5]
+    log['heat colour at `t`: `_color[points.heat_color[t]]`']
+k6 = geo.world[6.0] / 256.0
+heat_view = geo.seen[42.0, 0.0, 6.0, 400.0, 300.0]
+heat = points.heat_grid[crowd, k6, heat_view.ox, heat_view.oy, 400.0, 300.0, 25.0, 6.25]
+hottest = 0.0
+warm = 0
+for v in heat
+    hottest = max[hottest, v]
+    if v gt 0.01
+        warm = warm + 1
+log['heat grid `len[heat]`: sum `sum[heat]` hottest `hottest` warm `warm`, some `heat[0]` `heat[1000]` `heat[2000]` `heat[3000]`']
+under_cluster = points.cluster_under[points.groups_at[gathered, 5.0], geo.world[5.0] / 256.0, 0.0, 0.0, 0.0, 0.0]
+log['cluster under the corner `under_cluster`']
+
+--- ---- a map driven through frames ----
+
+forget['map.modes']
+forget['map.modes.layers']
+forget['map.modes.tiles']
+m = map.of['modes']
+m = map.at[m, 20.0, 0.0, 2.0]
+m = map.tiles[m, map.tile_layer['tiles/{z}/{x}/{y}.png', 'Tiles of our own']]
+m = map.add_geojson[m, 'shapes', shapes_text, map.filled[map.stroke[map.style[], '#225ea8', 2.0], '#41b6c4', 0.35]]
+m = map.fill_steps[m, 'shapes', 'rank', '#eeeeee', [0.0, 5.0, 10.0, 20.0], ['#ffffcc', '#a1dab4', '#41b6c4', '#225ea8']]
+m = map.bind_tooltip[m, 'yard', 'The yard']
+m = map.bind_popup[m, 'comb', 'A comb of a building']
+m = map.add_marker[m, 'paris', 48.8566, 2.3522, 'Paris, a city on the Seine']
+m = map.add_point[m, 'markers', 'lima', -12.0464, -77.0428, map.glyph[map.style[], 'map-pin-filled', 30.0, '#d6336c']]
+m = map.bind_popup[m, 'lima', 'Lima']
+m = map.add_circle[m, 'ring', 51.5, -0.12, 150000.0, map.filled[map.style[], '#ff7800', 0.3]]
+for i in range[60]
+    m = map.add_point[m, 'crowd', 'c`i`', crowd_lats[i], crowd_lngs[i], map.circles[map.style[], 6.0]]
+m = map.cluster[m, 'crowd', 60.0]
+for i in range[30]
+    m = map.add_point[m, 'warmth', 'w`i`', -20.0 + sin[i * 0.9] * 4.0, 130.0 + cos[i * 1.3] * 6.0, map.circles[map.style[], 4.0]]
+m = map.heat[m, 'warmth', 30.0]
+m = map.keep[m]
+nothing = '[]'
+m = _step['first', 0.0, nothing, nothing, nothing]
+m = _step['tiles come', 500.0, nothing, _answers[4], nothing]
+m = _step['after', 516.0, nothing, nothing, nothing]
+--- (a drag, thrown)
+m = _step['press', 600.0, _one[_mouse['down', 450.0, 350.0, false]], nothing, nothing]
+m = _step['drag', 616.0, _one[_mouse['move', 500.0, 360.0, false]], nothing, nothing]
+m = _step['drag', 632.0, _one[_mouse['move', 560.0, 380.0, false]], nothing, nothing]
+m = _step['let go', 640.0, _one[_mouse['up', 560.0, 380.0, false]], nothing, nothing]
+for t in [700.0, 900.0, 1300.0, 2200.0]
+    m = _step['thrown', t, nothing, nothing, nothing]
+--- (the wheel, about the pointer)
+m = _step['wheel', 2300.0, '[{"type": "wheel", "device": "mouse", "x": 600, "y": 300, "dx": 0, "dy": -100}]', nothing, nothing]
+for t in [2345.0, 2400.0, 2500.0, 2700.0]
+    m = _step['wheeled', t, nothing, nothing, nothing]
+--- (a double click, and one with Shift)
+m = _step['double', 2800.0, _one[_mouse['double', 200.0, 500.0, false]], nothing, nothing]
+m = _step['doubled', 3100.0, nothing, nothing, nothing]
+m = _step['double out', 3200.0, _one[_mouse['double', 200.0, 500.0, true]], nothing, nothing]
+m = _step['doubled', 3500.0, nothing, nothing, nothing]
+--- (the keys, once the map has the keyboard)
+m = _step['focus', 3600.0, _press[700.0, 600.0], nothing, nothing]
+m = _step['arrow', 3616.0, _typed['ArrowRight', 'ArrowRight', false], nothing, nothing]
+m = _step['arrowed', 3750.0, nothing, nothing, nothing]
+m = _step['arrowed', 4000.0, nothing, nothing, nothing]
+m = _step['plus', 4100.0, _typed['=', 'Equal', false], nothing, nothing]
+m = _step['minus', 4500.0, _typed['-', 'Minus', true], nothing, nothing]
+m = _step['keyed', 4900.0, nothing, nothing, nothing]
+--- (a box drawn with Shift)
+m = _step['box', 5000.0, _one[_mouse['down', 300.0, 200.0, true]], nothing, nothing]
+m = _step['boxing', 5016.0, _one[_mouse['move', 600.0, 420.0, false]], nothing, nothing]
+m = _step['boxed', 5032.0, _one[_mouse['up', 600.0, 420.0, false]], nothing, nothing]
+m = _step['boxed', 5400.0, nothing, nothing, nothing]
+--- (two fingers drawn apart, and let go)
+a = _finger['down', 1, 400.0, 350.0]
+b = _finger['down', 2, 500.0, 350.0]
+m = _step['fingers', 5500.0, '[`a`, `b`]', nothing, nothing]
+m = _step['pinch', 5516.0, _one[_finger['move', 2, 640.0, 380.0]], nothing, nothing]
+m = _step['pinch', 5532.0, _one[_finger['move', 1, 380.0, 340.0]], nothing, nothing]
+m = _step['let go', 5548.0, _two[_finger['up', 2, 640.0, 380.0], _finger['up', 1, 380.0, 340.0]], nothing, nothing]
+m = _step['pinched', 5900.0, nothing, nothing, nothing]
+--- (a marker's popup, and the map panned to show it)
+m = map.keep[map.at[map.of['modes'], 46.0, 2.0, 5.0]]
+m = _step['to paris', 6000.0, nothing, nothing, nothing]
+spot = map.point_on[m, 48.8566, 2.3522]
+m = _step['marker', 6016.0, _press[spot.x, spot.y - 20.0], nothing, nothing]
+m = _step['popup', 6100.0, nothing, nothing, nothing]
+m = _step['popup', 6400.0, nothing, nothing, nothing]
+m = _step['closed', 6500.0, _press[800.0, 650.0], nothing, nothing]
+--- (a shape's tooltip, under a resting pointer, and a press on a shape)
+m = map.keep[map.at[map.of['modes'], 3.0, 4.0, 5.0]]
+yard_at = map.point_on[m, 1.0, 1.0]
+m = _step['rest', 6600.0, nothing, nothing, '[{"x": `yard_at.x`, "y": `yard_at.y`, "down": false}]']
+m = _step['hover', 6616.0, _one[_mouse['move', yard_at.x, yard_at.y, false]], nothing, '[{"x": `yard_at.x`, "y": `yard_at.y`, "down": false}]']
+comb_at = map.point_on[m, 1.0, 41.0]
+m = map.keep[map.at[map.of['modes'], 5.0, 44.0, 5.0]]
+comb_at = map.point_on[m, 1.0, 41.0]
+m = _step['comb', 6700.0, _press[comb_at.x, comb_at.y], nothing, nothing]
+--- (a cluster pressed: zoomed to where it comes apart)
+m = map.keep[map.at[map.of['modes'], 42.0, -1.0, 4.0]]
+m = _step['crowd', 6800.0, nothing, nothing, nothing]
+lump = points.groups_at[gathered, 4.0][0]
+lump_at = map.point_on[m, lump.lat, lump.lng]
+m = _step['cluster', 6816.0, _press[lump_at.x, lump_at.y], nothing, nothing]
+m = _step['clustered', 7200.0, nothing, nothing, nothing]
+--- (a flight)
+m = map.keep[map.fly_to[map.of['modes'], -33.8688, 151.2093, 9.0]]
+for t in [7300.0, 7700.0, 8100.0, 8500.0, 8900.0, 9300.0, 9700.0, 12000.0]
+    m = _step['flying', t, nothing, nothing, nothing]
+--- (a box fitted, an ease, a pan, zooms by the program)
+m = map.keep[map.fit_bounds[map.of['modes'], 35.0, 139.0, 36.0, 140.5, 20.0]]
+m = _step['fitted', 12100.0, nothing, nothing, nothing]
+m = _step['fitted', 12400.0, nothing, nothing, nothing]
+m = map.keep[map.ease_to[map.of['modes'], 35.6762, 139.6503, 11.0, 0.5]]
+m = _step['easing', 12500.0, nothing, nothing, nothing]
+m = _step['easing', 12750.0, nothing, nothing, nothing]
+m = _step['eased', 13100.0, nothing, nothing, nothing]
+m = map.keep[map.pan_by[map.of['modes'], 200.0, -100.0]]
+m = _step['panning', 13200.0, nothing, nothing, nothing]
+m = _step['panned', 13500.0, nothing, nothing, nothing]
+m = map.keep[map.zoom_out[map.of['modes'], steps = 2.0]]
+m = _step['out', 13600.0, nothing, nothing, nothing]
+m = map.keep[map.zoom_in[map.of['modes']]]
+m = _step['in', 13900.0, nothing, nothing, nothing]
+--- (held inside a box of places, a drag pulled past its edge)
+m = map.keep[map.bounded[map.at[map.of['modes'], 0.0, 0.0, 3.0], -60.0, -100.0, 60.0, 100.0, viscosity = 0.5]]
+m = _step['bounded', 14000.0, nothing, nothing, nothing]
+m = _step['pull', 14016.0, _two[_mouse['down', 450.0, 350.0, false], _mouse['move', 880.0, 350.0, false]], nothing, nothing]
+m = _step['pulled', 14032.0, _one[_mouse['up', 880.0, 350.0, false]], nothing, nothing]
+for t in [14100.0, 14500.0, 15500.0]
+    m = _step['settling', t, nothing, nothing, nothing]
+m = map.keep[map.unbounded[map.of['modes']]]
+--- (the device's place, as a page would say it)
+m = _step['located', 15600.0, nothing, '[{"what": "position", "id": 3, "lat": 51.5007, "lng": -0.1246, "accuracy": 35}]', nothing]
+m = map.keep[map.locate[map.of['modes'], 40.4168, -3.7038, 120.0, zoom = 12.0]]
+m = _step['locating', 15700.0, nothing, nothing, nothing]
+m = _step['located', 20000.0, nothing, nothing, nothing]
+sc = map.scale_shown[m]
+shown_box = map.bounds_shown[m]
+under = map.place_under[m, 100.0, 100.0]
+log['at the end: scale `sc.metric` `sc.metric_wide` `sc.imperial` `sc.imperial_wide`, bounds `shown_box.south` `shown_box.west` `shown_box.north` `shown_box.east`, under 100 100 `under.lat` `under.lng`']
+--- (a layer drawn anew from new data, a marker taken away, a layer emptied)
+m = map.keep[map.set_geojson[map.of['modes'], 'shapes', '{"type": "Point", "coordinates": [-3.7, 40.4]}', map.circles[map.style[], 8.0]]]
+m = map.keep[map.remove_feature[map.of['modes'], 'lima']]
+m = map.keep[map.clear_layer[map.of['modes'], 'warmth']]
+m = _step['anew', 20100.0, nothing, nothing, nothing]
+layers_now = map.layers_of['modes']
+names_now = join[layers_now.names, ' ']
+ids_now = slice[[''], 0, 0]
+for f in layers_now.features
+    if f.layer ne 'crowd'
+        ids_now = push[ids_now, f.id]
+listed_ids = join[ids_now, ' ']
+log['layers `names_now`: `len[layers_now.features]` features, but the crowd `listed_ids`']
+--- (a layer hidden, and shown again)
+m = map.keep[map.at[map.hide_layer[map.of['modes'], 'crowd'], 42.0, -1.0, 5.0]]
+m = _step['hidden', 20200.0, nothing, nothing, nothing]
+m = map.keep[map.show_layer[map.of['modes'], 'crowd']]
+m = _step['shown', 20300.0, nothing, nothing, nothing]
+--- (the map as a control in a tree of Lory's)
+forget['map.tree']
+forget['map.tree.layers']
+held_map = map.keep[map.add_marker[map.at[map.of['tree'], 10.0, 10.0, 3.0], 'here', 10.0, 10.0, 'Here']]
+tree = gui.column[[gui.drawn['tree', 0.0, 400.0, 300.0, map.painter]]]
+first_shown = gui.show[_frame[0.0, nothing, nothing, nothing], tree]
+inside_map = map.point_on[map.of['tree'], 10.0, 10.0]
+pressed_shown = gui.show[_frame[16.0, _press[inside_map.x, inside_map.y - 20.0], nothing, nothing], tree]
+events_told = slice[[''], 0, 0]
+for ev in pressed_shown.events
+    events_told = push[events_told, '`ev.id`:`ev.act`:`ev.words`:`ev.num`']
+tree_map = map.of['tree']
+listed_events = join[events_told, ' ']
+log['in a tree: box `tree_map.box.x` `tree_map.box.y` `tree_map.box.w` `tree_map.box.h`, events `listed_events`, drawn `len[pressed_shown.canvas.verts]` `sum[pressed_shown.canvas.verts]`']

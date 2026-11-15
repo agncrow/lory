@@ -1,0 +1,1379 @@
+--- A chart's axes as Chart.js lays its scales: its datasets read against
+--- them (each value placed on its axis, stacked where the axis stacks),
+--- the range each axis spans, the ticks it is marked with and their
+--- labels, how much room it takes beside the chart's area (its labels
+--- turned where they would meet, some left out where they still would),
+--- and where a value stands on it in pixels. Linear, logarithmic, category,
+--- time and time-series axes run along a side; a radial one runs out from
+--- the centre of a radar or a polar area, its point labels round it. How
+--- an axis is laid in the room it is given, and a radial one in the
+--- chart's area, is charts_fit's.
+---
+--- These are Chart.js 4.5.1's rules, read from its scales and written
+--- anew (see charts_model.co).
+use math
+use lory
+use charts_model
+use charts_time
+
+--- an axis as a chart lays it: its id, kind, which way it runs and its
+--- side, whether it runs across (`horizontal`) and is shown, and its place
+--- among the chart's axes; the labels of a category axis; the range asked
+--- for and hoped for, whether a logarithmic axis met a naught (`zero`);
+--- the range it spans (`min`, `max`) and the data's range with its grace
+--- (`lo`, `hi`); its ticks (values), their labels and which are major, and
+--- how far its labels are turned (degrees); its box (left, top, right,
+--- bottom, width, height), the room it was offered (`max_width`,
+--- `max_height`), the margins it was given and the room its labels want
+--- past its ends (`padding`, left, top, right, bottom); the pixels it runs
+--- between, its length and the most it could be, whether its pixels run
+--- backwards, and the value at its start and the values it spans; of a
+--- time axis its unit, the unit its times are rounded down to and its
+--- major unit, its ends' offsets (start, end, and
+--- the share left between), and of a time-series axis the times it is
+--- interpolated through and their places, and where its range starts in
+--- them and spans; of a radial axis its centre, its radius
+--- (`drawing_area`) and its point labels with their boxes, alignments and
+--- whether each is shown
+struct Scale [id, form, axis, position, horizontal, shown, place, labels, user_min, user_max, soft_min, soft_max, zero, min, max, lo, hi, ticks, texts, majors, rotation, left, top, right, bottom, width, height, max_width, max_height, margins, padding, start_pixel, end_pixel, length, max_length, reverse_pixels, start_value, value_range, unit, round, major_unit, offsets, table_times, table_spots, min_pos, table_range, x_center, y_center, drawing_area, point_labels, label_items, label_aligns, label_shown]
+
+--- a dataset read against its axes: its place, its kind; the ids of the
+--- axes it is drawn against (x and y, the one it is laid along and the one
+--- of its values) and which way those run; where each value stands along
+--- its index axis (`ivs`) and what it is (`vvs`; nan for none, -inf for a
+--- naught on a logarithmic axis); a floating bar's start and end values
+--- (nan where a bar does not float); a bubble's radii; whether it is
+--- stacked, singly (`single`, every value added whatever its sign), and in
+--- which stack (`key`); whether its index values rise (`sorted`) and
+--- whether it is shown
+struct Parsed [set, form, x_id, y_id, i_id, v_id, i_axis, v_axis, ivs, vvs, starts, ends, rs, stacked, single, key, sorted, visible]
+
+--- ---- the axes ----
+
+--- the chart's axes, each as Chart.js starts laying it
+fn scales_of[ch]
+    out = slice[[_blank_scale[]], 0, 0]
+    i = 0
+    while i lt len[ch.axes]
+        a = ch.axes[i]
+        out = push[out, _scale_of[ch, a, i]]
+        i = i + 1
+    out
+
+fn _blank_scale[]
+    _scale_of[charts_model.chart_of['', 'line', slice[[''], 0, 0]], charts_model.axis_of['x', 'linear', 'x', 'bottom'], 0]
+
+fn _scale_of[ch, a, place]
+    labels = a.labels
+    if len[labels] eq 0
+        labels = ch.labels
+    horizontal = a.position eq 'top' or a.position eq 'bottom' or a.axis eq 'x'
+    if a.axis eq 'r'
+        horizontal = false
+    user_min = a.min
+    user_max = a.max
+    if a.form eq 'category'
+        user_min = _category_index[labels, a.min]
+        user_max = _category_index[labels, a.max]
+    no = charts_model.no_numbers[]
+    Scale[a.id, a.form, a.axis, a.position, horizontal, a.display, place, labels, user_min, user_max, a.soft_min, a.soft_max, false, 0.0, 1.0, 0.0, 1.0, no, slice[[''], 0, 0], slice[[false], 0, 0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], 0.0, 0.0, 0.0, 0.0, false, 0.0, 1.0, a.unit, a.round, '', [0.0, 0.0, 1.0], no, no, 0.0, 1.0, 0.0, 0.0, 0.0, slice[[''], 0, 0], slice[[[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], 0, 0], slice[[''], 0, 0], slice[[false], 0, 0]]
+
+fn _category_index[labels, v]
+    if v ne v
+        return v
+    charts_model.limited[charts_model.js_round[v], 0.0, 0.0 + len[labels] - 1]
+
+--- the place among `scales` of the axis of that id, -1 for none
+fn scale_at[scales, id]
+    i = 0
+    while i lt len[scales]
+        if scales[i].id eq id
+            return i
+        i = i + 1
+    -1
+
+--- ---- the datasets read against them ----
+
+--- the chart's datasets each read against its axes
+fn parsed_of[ch, scales]
+    out = slice[[_blank_parsed[]], 0, 0]
+    d = 0
+    while d lt len[ch.sets]
+        out = push[out, _parsed_set[ch, scales, d]]
+        d = d + 1
+    out
+
+fn _blank_parsed[]
+    no = charts_model.no_numbers[]
+    Parsed[0, 'line', '', '', '', '', 'x', 'y', no, no, no, no, no, false, false, '', true, true]
+
+fn _parsed_set[ch, scales, d]
+    s = ch.sets[d]
+    form = charts_model.form_of[ch, s]
+    visible = not s.hidden
+    no = charts_model.no_numbers[]
+    n = len[s.ys]
+    if form eq 'pie' or form eq 'doughnut'
+        return Parsed[d, form, '', '', '', '', 'r', 'r', _places[n], s.ys, _nans[n], _nans[n], no, false, false, '', true, visible]
+    if form eq 'radar' or form eq 'polarArea'
+        r_id = charts_model.axis_id_of[ch, s, 'r']
+        k = scale_at[scales, r_id]
+        vs = s.ys
+        if k gte 0
+            vs = _parsed_values[scales[k], s.ys]
+        return Parsed[d, form, '', '', r_id, r_id, 'r', 'r', _places[n], vs, _nans[n], _nans[n], no, false, false, '', _rising[vs], visible]
+    index_axis = ch.index_axis
+    if form eq 'scatter' or form eq 'bubble'
+        index_axis = 'x'
+    value_axis = 'y'
+    if index_axis eq 'y'
+        value_axis = 'x'
+    x_id = charts_model.axis_id_of[ch, s, 'x']
+    y_id = charts_model.axis_id_of[ch, s, 'y']
+    i_id = x_id
+    v_id = y_id
+    if index_axis eq 'y'
+        i_id = y_id
+        v_id = x_id
+    ki = scale_at[scales, i_id]
+    kv = scale_at[scales, v_id]
+    ivs = _index_values[ch, scales, ki, s]
+    vvs = s.ys
+    if kv gte 0
+        vvs = _parsed_values[scales[kv], s.ys]
+    froms = _nans[n]
+    tos = _nans[n]
+    if form eq 'bar' and len[s.starts] gt 0
+        froms = _floating_starts[scales, kv, s]
+        tos = vvs
+        vvs = _bar_ends[froms, tos]
+    stacked = false
+    single = false
+    if kv gte 0
+        how = ch.axes[scales[kv].place].stacked
+        stacked = how eq 'true' or how eq 'single' or (how eq '' and s.stack ne '')
+        single = how eq 'single'
+    group = s.stack
+    if group eq ''
+        group = form
+    key = '`i_id`.`v_id`.`group`'
+    Parsed[d, form, x_id, y_id, i_id, v_id, index_axis, value_axis, ivs, vvs, froms, tos, s.rs, stacked, single, key, _rising[ivs], visible]
+
+--- 0, 1, … n - 1
+fn _places[n]
+    out = charts_model.no_numbers[]
+    i = 0
+    while i lt n
+        out = push[out, 0.0 + i]
+        i = i + 1
+    out
+
+fn _nans[n]
+    out = charts_model.no_numbers[]
+    i = 0
+    while i lt n
+        out = push[out, nan]
+        i = i + 1
+    out
+
+--- whether the values never fall (none missing): Chart.js then finds
+--- elements along them by halving
+fn _rising[vs]
+    i = 0
+    while i lt len[vs]
+        v = vs[i]
+        if v ne v
+            return false
+        if i gt 0 and v lt vs[i - 1]
+            return false
+        i = i + 1
+    true
+
+--- where each value stands along the dataset's index axis: its place
+--- among the labels, or its own x (a number or a time)
+fn _index_values[ch, scales, ki, s]
+    n = len[s.ys]
+    if ki lt 0
+        return _places[n]
+    sc = scales[ki]
+    if len[s.xs] gt 0
+        return _parsed_values[sc, s.xs]
+    out = charts_model.no_numbers[]
+    top = 0.0 + len[sc.labels] - 1
+    i = 0
+    while i lt n
+        v = nan
+        if sc.form eq 'category'
+            v = charts_model.limited[0.0 + i, 0.0, top]
+        else if i lt len[sc.labels]
+            v = parse_value[sc, _number_of[sc.labels[i]]]
+        out = push[out, v]
+        i = i + 1
+    out
+
+--- a label read as a number (a time in milliseconds), nan where it is
+--- none
+fn _number_of[words]
+    v = float[words]
+    if not v.ok
+        return nan
+    0.0 + v
+
+--- values placed on an axis as it reads them
+fn _parsed_values[sc, vs]
+    out = charts_model.no_numbers[]
+    i = 0
+    while i lt len[vs]
+        out = push[out, parse_value[sc, vs[i]]]
+        i = i + 1
+    out
+
+--- a value as the axis reads it: nan for none; a category's place kept
+--- among its labels; on a logarithmic axis a naught is -inf (drawn at
+--- the axis's least) and less than naught is none; a time brought down to
+--- its axis's rounding unit
+fn parse_value[sc, v]
+    if v ne v
+        return v
+    if sc.form eq 'logarithmic'
+        if v eq 0.0
+            return 0.0 - inf
+        if v lt 0.0 or not charts_model.finite[v]
+            return nan
+        return v
+    if not charts_model.finite[v]
+        return nan
+    if sc.form eq 'category'
+        return charts_model.limited[charts_model.js_round[v], 0.0, 0.0 + len[sc.labels] - 1]
+    if (sc.form eq 'time' or sc.form eq 'timeseries') and sc.round ne ''
+        return charts_time.start_of[v, sc.round, 0]
+    v
+
+fn _floating_starts[scales, kv, s]
+    out = charts_model.no_numbers[]
+    i = 0
+    while i lt len[s.ys]
+        v = nan
+        if i lt len[s.starts]
+            v = s.starts[i]
+            if kv gte 0
+                v = parse_value[scales[kv], v]
+        out = push[out, v]
+        i = i + 1
+    out
+
+--- a floating bar's value as Chart.js keeps it: the end further from
+--- naught
+fn _bar_ends[froms, tos]
+    out = charts_model.no_numbers[]
+    i = 0
+    while i lt len[tos]
+        a = froms[i]
+        b = tos[i]
+        v = b
+        if a eq a and b eq b
+            lo = min[a, b]
+            hi = max[a, b]
+            v = hi
+            if abs[lo] gt abs[hi]
+                v = lo
+        out = push[out, v]
+        i = i + 1
+    out
+
+--- whether the dataset's `j`th bar floats
+fn floats[p, j]
+    j lt len[p.starts] and p.starts[j] eq p.starts[j]
+
+--- the end of a floating bar nearer naught (its start as Chart.js draws
+--- it)
+fn bar_start[p, j]
+    a = p.starts[j]
+    b = p.ends[j]
+    lo = min[a, b]
+    hi = max[a, b]
+    if abs[lo] gt abs[hi]
+        return hi
+    lo
+
+--- the datasets' places in the order they are found, shown only
+fn visible_order[ch, ps]
+    order = charts_model.sorted_sets[ch, true]
+    out = []
+    for i in range[0]
+        out = push[out, 0]
+    k = 0
+    while k lt len[order]
+        if ps[order[k]].visible
+            out = push[out, order[k]]
+        k = k + 1
+    out
+
+--- the shown datasets drawn against the axis, in the order they are
+--- found (of `form` only, '' for any)
+fn matching[ch, ps, sc, form]
+    order = visible_order[ch, ps]
+    out = []
+    for i in range[0]
+        out = push[out, 0]
+    k = 0
+    while k lt len[order]
+        p = ps[order[k]]
+        id = p.y_id
+        if sc.axis eq 'x'
+            id = p.x_id
+        if sc.axis eq 'r'
+            id = p.i_id
+        if id eq sc.id and (form eq '' or p.form eq form)
+            out = push[out, order[k]]
+        k = k + 1
+    out
+
+--- ---- stacks ----
+
+--- the value at the dataset's index value `iv` (the last one standing
+--- there, as a stack keeps it; its `j`th where its index values rise and
+--- none after it stands there too), nan for none
+fn value_at[p, iv, j]
+    n = len[p.ivs]
+    if j gte 0 and j lt n and p.sorted and p.ivs[j] eq iv
+        if j eq n - 1 or p.ivs[j + 1] ne iv
+            return p.vvs[j]
+    k = n - 1
+    while k gte 0
+        if p.ivs[k] eq iv
+            return p.vvs[k]
+        k = k - 1
+    nan
+
+--- the dataset's `j`th value with those of its stack found before it
+--- (`order`: the shown datasets in the order found) added, as Chart.js
+--- stacks a value: those of its sign, or all where `single`; 0 where the
+--- dataset is not among those found
+fn stacked_value[ps, order, d, j, single]
+    p = ps[d]
+    value = p.vvs[j]
+    if value ne value
+        return value
+    iv = p.ivs[j]
+    k = 0
+    while k lt len[order]
+        o = order[k]
+        if o eq d
+            return value
+        q = ps[o]
+        if q.stacked and q.key eq p.key
+            other = value_at[q, iv, j]
+            if charts_model.finite[other] and (single or value eq 0.0 or charts_model.sign_of[value] eq charts_model.sign_of[other])
+                value = value + other
+        k = k + 1
+    0.0
+
+--- the last dataset found (of the same kind) in the stack at index value
+--- `iv` whose value there is above naught (`up`) or below it; -1 for
+--- none: the bars a stack's rounded ends belong to
+fn stack_end[ch, ps, scales, d, iv, up]
+    p = ps[d]
+    kv = scale_at[scales, p.v_id]
+    if kv lt 0
+        return -1
+    found = matching[ch, ps, scales[kv], p.form]
+    k = len[found] - 1
+    while k gte 0
+        q = ps[found[k]]
+        if q.stacked and q.key eq p.key
+            v = value_at[q, iv, -1]
+            if (up and v gt 0.0) or (not up and v lt 0.0)
+                return found[k]
+        k = k - 1
+    -1
+
+--- ---- the range each axis spans ----
+
+--- the axis's range asked for and hoped for: least, most, and whether
+--- each was asked for
+fn user_bounds[sc]
+    lo = inf
+    hi = 0.0 - inf
+    if charts_model.finite[sc.soft_min]
+        lo = sc.soft_min
+    if charts_model.finite[sc.soft_max]
+        hi = sc.soft_max
+    if charts_model.finite[sc.user_min]
+        lo = sc.user_min
+    if charts_model.finite[sc.user_max]
+        hi = sc.user_max
+    [lo, hi]
+
+fn _min_defined[sc]
+    charts_model.finite[sc.user_min]
+
+fn _max_defined[sc]
+    charts_model.finite[sc.user_max]
+
+--- the least and most of the datasets' values along the axis (stacked
+--- where `can_stack`), within what was asked for
+fn min_max[ch, ps, scales, k, can_stack]
+    sc = scales[k]
+    b = user_bounds[sc]
+    lo = b[0]
+    hi = b[1]
+    lo_set = _min_defined[sc]
+    hi_set = _max_defined[sc]
+    if lo_set and hi_set
+        return [lo, hi]
+    found = matching[ch, ps, sc, '']
+    order = visible_order[ch, ps]
+    i = 0
+    while i lt len[found]
+        r = _set_range[ch, ps, scales, found[i], sc, can_stack, order]
+        if not lo_set
+            lo = min[lo, r[0]]
+        if not hi_set
+            hi = max[hi, r[1]]
+        i = i + 1
+    if hi_set and lo gt hi
+        lo = hi
+    if lo_set and lo gt hi
+        hi = lo
+    out_lo = lo
+    if not charts_model.finite[out_lo]
+        out_lo = hi
+        if not charts_model.finite[hi]
+            out_lo = lo
+    out_hi = hi
+    if not charts_model.finite[out_hi]
+        out_hi = lo
+        if not charts_model.finite[lo]
+            out_hi = hi
+    [out_lo, out_hi]
+
+--- one dataset's least and most along the axis, as its kind counts them
+fn _set_range[ch, ps, scales, d, sc, can_stack, order]
+    p = ps[d]
+    lo = inf
+    hi = 0.0 - inf
+    if p.form eq 'polarArea'
+        j = 0
+        while j lt len[p.vvs]
+            v = p.vvs[j]
+            if v eq v and not charts_model.point_hidden[ch, j]
+                lo = min[lo, v]
+                hi = max[hi, v]
+            j = j + 1
+        return [lo, hi]
+    on_index = sc.id eq p.i_id and sc.axis eq p.i_axis
+    if p.i_axis eq 'r'
+        on_index = false
+    other_id = p.i_id
+    if on_index
+        other_id = p.v_id
+    ko = scale_at[scales, other_id]
+    other_lo = 0.0 - inf
+    other_hi = inf
+    if ko gte 0
+        if _min_defined[scales[ko]]
+            other_lo = scales[ko].user_min
+        if _max_defined[scales[ko]]
+            other_hi = scales[ko].user_max
+    stacking = can_stack and p.visible and p.stacked and not on_index
+    j = 0
+    while j lt len[p.vvs]
+        v = p.vvs[j]
+        w = p.ivs[j]
+        if on_index
+            v = p.ivs[j]
+            w = p.vvs[j]
+        if p.i_axis eq 'r'
+            w = v
+        if w eq 0.0 - inf
+            w = nan
+        skip = not charts_model.finite[v] or other_lo gt w or other_hi lt w
+        if not skip
+            value = v
+            if stacking
+                value = _range_stacked[ps, order, d, j]
+            lo = min[lo, value]
+            hi = max[hi, value]
+            if not on_index and floats[p, j]
+                lo = min[lo, min[p.starts[j], p.ends[j]]]
+                hi = max[hi, max[p.starts[j], p.ends[j]]]
+        j = j + 1
+    [lo, hi]
+
+--- a value stacked as Chart.js stacks it when it counts an axis's range
+--- (by sign, whatever the axis's own stacking)
+fn _range_stacked[ps, order, d, j]
+    stacked_value[ps, order, d, j, false]
+
+--- each axis's range from the datasets, before its ticks are chosen
+fn ranged[ch, ps, scales]
+    out = scales
+    k = 0
+    while k lt len[out]
+        a = ch.axes[out[k].place]
+        out[k] = _ranged_scale[ch, ps, out, k, a]
+        k = k + 1
+    out
+
+fn _ranged_scale[ch, ps, scales, k, a]
+    sc = scales[k]
+    form = sc.form
+    if form eq 'category'
+        r = min_max[ch, ps, scales, k, true]
+        lo = r[0]
+        hi = r[1]
+        if a.bounds eq 'ticks'
+            if not _min_defined[sc]
+                lo = 0.0
+            if not _max_defined[sc]
+                hi = 0.0 + len[sc.labels] - 1
+        sc.min = lo
+        sc.max = hi
+    else if form eq 'logarithmic'
+        sc = _log_limits[ch, ps, scales, k, a]
+    else if form eq 'time' or form eq 'timeseries'
+        sc = _time_limits[ch, ps, scales, k, a]
+    else
+        can_stack = form ne 'radialLinear'
+        r = min_max[ch, ps, scales, k, can_stack]
+        lo = r[0]
+        hi = r[1]
+        if not charts_model.finite[lo]
+            lo = 0.0
+        if not charts_model.finite[hi]
+            hi = 1.0
+            if form eq 'radialLinear'
+                hi = 0.0
+        sc.min = lo
+        sc.max = hi
+        sc = _linear_range_options[sc, a]
+    g = _graced[sc.min, sc.max, a]
+    sc.lo = g[0]
+    sc.hi = g[1]
+    sc
+
+--- the range kept to naught where asked (`from_zero`) and widened where
+--- it is one value, as Chart.js widens it
+fn _linear_range_options[sc, a]
+    lo = sc.min
+    hi = sc.max
+    lo_set = _min_defined[sc]
+    hi_set = _max_defined[sc]
+    if a.from_zero
+        if lo lt 0.0 and hi lt 0.0
+            if not hi_set
+                hi = 0.0
+        else if lo gt 0.0 and hi gt 0.0
+            if not lo_set
+                lo = 0.0
+    if lo eq hi
+        more = abs[hi * 0.05]
+        if hi eq 0.0
+            more = 1.0
+        if not hi_set
+            hi = hi + more
+        if not a.from_zero
+            if not lo_set
+                lo = lo - more
+    sc.min = lo
+    sc.max = hi
+    sc
+
+--- the range with the axis's grace added (a share of half the range
+--- where `grace_share`), naught kept where the axis starts there
+fn _graced[lo, hi, a]
+    change = a.grace
+    if a.grace_share
+        change = a.grace * (hi - lo) / 2.0
+    out_lo = lo - abs[change]
+    out_hi = hi + change
+    if a.from_zero and lo eq 0.0
+        out_lo = 0.0
+    if a.from_zero and hi eq 0.0
+        out_hi = 0.0
+    [out_lo, out_hi]
+
+fn _log_limits[ch, ps, scales, k, a]
+    sc = scales[k]
+    r = min_max[ch, ps, scales, k, true]
+    zero = _met_naught[ch, ps, sc]
+    lo = nan
+    hi = nan
+    if charts_model.finite[r[0]]
+        lo = max[0.0, r[0]]
+    if charts_model.finite[r[1]]
+        hi = max[0.0, r[1]]
+    if a.from_zero
+        zero = true
+    if zero and lo ne sc.soft_min and not _min_defined[sc] and lo eq lo
+        if r[0] eq _exponent_moved[lo, 0]
+            lo = _exponent_moved[lo, -1]
+        else
+            lo = _exponent_moved[lo, 0]
+    lo_set = _min_defined[sc]
+    hi_set = _max_defined[sc]
+    if lo eq hi or (lo ne lo and hi ne hi)
+        if lo lte 0.0 or lo ne lo
+            if not lo_set
+                lo = 1.0
+            if not hi_set
+                hi = 10.0
+        else
+            if not lo_set
+                lo = _exponent_moved[lo, -1]
+            if not hi_set
+                hi = _exponent_moved[hi, 1]
+    if lo lte 0.0 or lo ne lo
+        if not lo_set
+            lo = _exponent_moved[hi, -1]
+    if hi lte 0.0 or hi ne hi
+        if not hi_set
+            hi = _exponent_moved[lo, 1]
+    sc.zero = zero
+    sc.min = lo
+    sc.max = hi
+    sc
+
+--- ten to the power of the number's order moved by `m`
+fn _exponent_moved[v, m]
+    charts_model.pow10[floor[log10[v]] + m]
+
+--- whether a dataset drawn against the axis, shown or hidden, holds a
+--- naught where it is read against it
+fn _met_naught[ch, ps, sc]
+    i = 0
+    while i lt len[ps]
+        p = ps[i]
+        vs = p.vvs
+        if sc.id ne p.v_id and sc.id ne p.i_id
+            vs = charts_model.no_numbers[]
+        if sc.id eq p.i_id and sc.axis eq p.i_axis
+            vs = p.ivs
+        j = 0
+        while j lt len[vs]
+            if vs[j] eq 0.0 - inf
+                return true
+            j = j + 1
+        i = i + 1
+    false
+
+fn _time_limits[ch, ps, scales, k, a]
+    sc = scales[k]
+    b = user_bounds[sc]
+    lo = b[0]
+    hi = b[1]
+    if not _min_defined[sc] or not _max_defined[sc]
+        r = min_max[ch, ps, scales, k, false]
+        if not _min_defined[sc] and r[0] eq r[0]
+            lo = min[lo, r[0]]
+        if not _max_defined[sc] and r[1] eq r[1]
+            hi = max[hi, r[1]]
+    unit = a.unit
+    if unit eq ''
+        unit = 'day'
+    if not charts_model.finite[lo]
+        lo = charts_time.start_of[0.0, unit, 0]
+    if not charts_model.finite[hi]
+        hi = charts_time.end_of[0.0, unit] + 1.0
+    sc.min = min[lo, hi - 1.0]
+    sc.max = max[lo + 1.0, hi]
+    sc
+
+--- the times of the axis's datasets, rising, each once
+fn data_times[ch, ps, sc]
+    found = matching[ch, ps, sc, '']
+    all_times = charts_model.no_numbers[]
+    i = 0
+    while i lt len[found]
+        p = ps[found[i]]
+        vs = p.ivs
+        if not (sc.id eq p.i_id and sc.axis eq p.i_axis)
+            vs = p.vvs
+        j = 0
+        while j lt len[vs]
+            if charts_model.finite[vs[j]]
+                all_times = push[all_times, vs[j]]
+            j = j + 1
+        i = i + 1
+    _unique_sorted[all_times]
+
+fn _unique_sorted[vs]
+    s = sort[vs]
+    out = charts_model.no_numbers[]
+    i = 0
+    while i lt len[s]
+        if i eq 0 or s[i] ne s[i - 1]
+            out = push[out, s[i]]
+        i = i + 1
+    out
+
+--- ---- ticks ----
+
+--- the nice step near `range`: 1, 2, 5 or 10 times a power of ten
+fn nice_num[span]
+    rounded = charts_model.js_round[span]
+    r = span
+    if abs[span - rounded] lt span / 1000.0
+        r = rounded
+    nice = charts_model.pow10[floor[log10[r]]]
+    share = r / nice
+    f = 10.0
+    if share lte 5.0
+        f = 5.0
+    if share lte 2.0
+        f = 2.0
+    if share lte 1.0
+        f = 1.0
+    f * nice
+
+fn _almost_whole[x, epsilon]
+    rounded = charts_model.js_round[x]
+    rounded - epsilon lte x and rounded + epsilon gte x
+
+fn _almost_equals[x, y, epsilon]
+    abs[x - y] lt epsilon
+
+--- how much room a tick's label takes along the axis, as Chart.js counts
+--- it to tell whether a range's end is too near a tick
+fn _label_room[value, min_spacing, horizontal, min_rotation]
+    rad = charts_model.radians[min_rotation]
+    ratio = cos[rad]
+    if horizontal
+        ratio = sin[rad]
+    if ratio eq 0.0
+        ratio = 0.001
+    length = 0.75 * min_spacing * len[str[value]]
+    min[min_spacing / ratio, length]
+
+--- the ticks of a numeric axis over the range `rmin` to `rmax`, as
+--- Chart.js generates them: nice steps, at most `max_ticks`, the ends
+--- asked for (`user_min`, `user_max`, nan for none) kept where
+--- `include_bounds`, a step or a count of ticks where asked, rounded to
+--- `precision` decimals where asked
+fn numeric_ticks[bounds, step, user_min, user_max, precision, count, max_ticks, max_digits, horizontal, min_rotation, include_bounds, rmin, rmax]
+    out = charts_model.no_numbers[]
+    unit = 1.0
+    if step eq step and step ne 0.0
+        unit = step
+    max_spaces = max_ticks - 1.0
+    min_defined = user_min eq user_min
+    max_defined = user_max eq user_max
+    count_defined = count eq count
+    min_spacing = (rmax - rmin) / (max_digits + 1.0)
+    spacing = nice_num[(rmax - rmin) / max_spaces / unit] * unit
+    if spacing lt 10.0 ^ -14 and not min_defined and not max_defined
+        out = push[out, rmin]
+        return push[out, rmax]
+    spaces = (0.0 + ceil[rmax / spacing]) - floor[rmin / spacing]
+    if spaces gt max_spaces
+        spacing = nice_num[spaces * spacing / max_spaces / unit] * unit
+    if precision eq precision
+        factor = 10.0 ^ precision
+        spacing = (0.0 + ceil[spacing * factor]) / factor
+    nice_min = rmin
+    nice_max = rmax
+    if bounds eq 'ticks'
+        nice_min = (0.0 + floor[rmin / spacing]) * spacing
+        nice_max = (0.0 + ceil[rmax / spacing]) * spacing
+    stepped = step eq step and step ne 0.0
+    if min_defined and max_defined and stepped and _almost_whole[(user_max - user_min) / step, spacing / 1000.0]
+        spaces = charts_model.js_round[min[(user_max - user_min) / spacing, max_ticks]]
+        spacing = (user_max - user_min) / spaces
+        nice_min = user_min
+        nice_max = user_max
+    else if count_defined
+        if min_defined
+            nice_min = user_min
+        if max_defined
+            nice_max = user_max
+        spaces = count - 1.0
+        spacing = (nice_max - nice_min) / spaces
+    else
+        spaces = (nice_max - nice_min) / spacing
+        if _almost_equals[spaces, charts_model.js_round[spaces], spacing / 1000.0]
+            spaces = charts_model.js_round[spaces]
+        else
+            spaces = 0.0 + ceil[spaces]
+    places = max[charts_model.decimals_of[spacing], charts_model.decimals_of[nice_min]]
+    if precision eq precision
+        places = precision
+    factor = 10.0 ^ places
+    nice_min = charts_model.js_round[nice_min * factor] / factor
+    nice_max = charts_model.js_round[nice_max * factor] / factor
+    j = 0.0
+    if min_defined
+        if include_bounds and nice_min ne user_min
+            out = push[out, user_min]
+            if nice_min lt user_min
+                j = j + 1.0
+            near = charts_model.js_round[(nice_min + j * spacing) * factor] / factor
+            if _almost_equals[near, user_min, _label_room[user_min, min_spacing, horizontal, min_rotation]]
+                j = j + 1.0
+        else if nice_min lt user_min
+            j = j + 1.0
+    going = true
+    while going and j lt spaces
+        v = charts_model.js_round[(nice_min + j * spacing) * factor] / factor
+        if max_defined and v gt user_max
+            going = false
+        else
+            out = push[out, v]
+            j = j + 1.0
+    if max_defined and include_bounds and nice_max ne user_max
+        n = len[out]
+        if n gt 0 and _almost_equals[out[n - 1], user_max, _label_room[user_max, min_spacing, horizontal, min_rotation]]
+            out[n - 1] = user_max
+        else
+            out = push[out, user_max]
+    else if not max_defined or nice_max eq user_max
+        out = push[out, nice_max]
+    out
+
+--- a logarithmic axis's ticks: their values, and the digit each is a
+--- power of ten times (15 and 20 past ten)
+struct Logged [values, significands]
+
+--- the ticks of a logarithmic axis from `lo` to `hi`, its ends asked for
+--- kept, as Chart.js steps them: 1 to 9 times each power of ten (then 15
+--- and 20 of the last), from the order of the range's tenth
+fn log_ticks[user_min, user_max, lo, hi]
+    vals = charts_model.no_numbers[]
+    sigs = charts_model.no_numbers[]
+    start_at = lo
+    if charts_model.finite[user_min]
+        start_at = user_min
+    min_exp = floor[log10[start_at]]
+    power = _start_exponent[start_at, hi]
+    precision = 1.0
+    if power lt 0
+        precision = 10.0 ^ abs[power]
+    step = charts_model.pow10[power]
+    base = 0.0
+    if min_exp gt power
+        base = charts_model.pow10[min_exp]
+    start = charts_model.js_round[(start_at - base) * precision] / precision
+    offset = (0.0 + floor[(start_at - base) / step / 10.0]) * step * 10.0
+    significand = 0.0 + floor[(start - offset) / (charts_model.pow10[power])]
+    value = charts_model.js_round[(base + offset + significand * charts_model.pow10[power]) * precision] / precision
+    if charts_model.finite[user_min]
+        value = user_min
+    while value lt hi
+        vals = push[vals, value]
+        sigs = push[sigs, significand]
+        if significand gte 10.0
+            if significand lt 15.0
+                significand = 15.0
+            else
+                significand = 20.0
+        else
+            significand = significand + 1.0
+        if significand gte 20.0
+            power = power + 1
+            significand = 2.0
+            if power gte 0
+                precision = 1.0
+        value = charts_model.js_round[(base + offset + significand * charts_model.pow10[power]) * precision] / precision
+    last = value
+    if charts_model.finite[user_max]
+        last = user_max
+    vals = push[vals, last]
+    sigs = push[sigs, significand]
+    Logged[vals, sigs]
+
+fn _log_steps[lo, hi, power]
+    step = charts_model.pow10[power]
+    (0.0 + ceil[hi / step]) - floor[lo / step]
+
+fn _start_exponent[lo, hi]
+    power = floor[log10[hi - lo]]
+    while _log_steps[lo, hi, power] gt 10.0
+        power = power + 1
+    while _log_steps[lo, hi, power] lt 10.0
+        power = power - 1
+    min[power, floor[log10[lo]]]
+
+--- whether a logarithmic tick is a power of ten
+fn log_major[v]
+    v / charts_model.pow10[floor[log10[v]]] eq 1.0
+
+--- ---- labels ----
+
+--- a numeric axis's label for the `i`th of its ticks, written with the
+--- decimals the step between ticks needs (scientific where the ticks are
+--- tiny or huge)
+fn numeric_label[ticks, i]
+    v = ticks[i]
+    if v eq 0.0
+        return '0'
+    n = len[ticks]
+    delta = v
+    scientific = false
+    if n gt 1
+        top = max[abs[ticks[0]], abs[ticks[n - 1]]]
+        if top lt 10.0 ^ -4 or top gt 10.0 ^ 15
+            scientific = true
+        delta = ticks[1] - ticks[0]
+        if n gt 3
+            delta = ticks[2] - ticks[1]
+        if abs[delta] gte 1.0 and v ne 0.0 + floor[v]
+            delta = v - floor[v]
+    places = 20
+    if delta ne 0.0 and charts_model.finite[delta]
+        places = max[min[0 - floor[log10[abs[delta]]], 20], 0]
+    if delta ne delta
+        places = 1
+    if scientific
+        return charts_model.written_scientific[v, places]
+    charts_model.written[v, places]
+
+--- a logarithmic axis's label: written for 1, 2, 3, 5, 10 and 15 times a
+--- power of ten and for the last fifth of the ticks, empty between
+fn log_label[ticks, sigs, i]
+    v = ticks[i]
+    if v eq 0.0
+        return '0'
+    remain = sigs[i]
+    if remain eq 0.0
+        remain = v / (10.0 ^ floor[log10[v]])
+    shown = remain eq 1.0 or remain eq 2.0 or remain eq 3.0 or remain eq 5.0 or remain eq 10.0 or remain eq 15.0
+    if shown or 0.0 + i gt 0.8 * len[ticks]
+        return numeric_label[ticks, i]
+    ''
+
+--- a value as an axis writes it in a tooltip: a category's label, a
+--- number in en-US, a time in the axis's tooltip format (or its full one)
+fn label_for_value[sc, a, v]
+    if sc.form eq 'category'
+        k = int[v]
+        if v eq v and v gte 0.0 and k lt len[sc.labels]
+            return sc.labels[k]
+        return str[v]
+    if sc.form eq 'time' or sc.form eq 'timeseries'
+        pattern = a.tip_format
+        if pattern eq ''
+            pattern = a.formats['datetime']
+        return charts_time.formatted[v, pattern]
+    if sc.form eq 'logarithmic' and v eq 0.0 - inf
+        return '0'
+    if v ne v
+        return 'NaN'
+    charts_model.written_plain[v]
+
+fn _reversed_numbers[vs]
+    out = charts_model.no_numbers[]
+    i = len[vs] - 1
+    while i gte 0
+        out = push[out, vs[i]]
+        i = i - 1
+    out
+
+--- ---- time ----
+
+fn _time_ticked[sc0, a, ch, ps, pen]
+    sc = sc0
+    stamps = _generated_times[sc, a, ch, ps, pen]
+    if a.source eq 'labels'
+        stamps = _label_times[sc]
+    if a.bounds eq 'ticks' and len[stamps] gt 0
+        sc.min = stamps[0]
+        if charts_model.finite[sc.user_min]
+            sc.min = sc.user_min
+        sc.max = stamps[len[stamps] - 1]
+        if charts_model.finite[sc.user_max]
+            sc.max = sc.user_max
+    vals = _between[stamps, sc.min, sc.max]
+    unit = a.unit
+    if unit eq ''
+        unit = _auto_unit[a.min_unit, sc.min, sc.max, _label_capacity[sc, a, pen, sc.min]]
+    sc.unit = unit
+    major = ''
+    if a.major and unit ne 'year'
+        major = _major_unit[unit]
+    sc.major_unit = major
+    sc = _time_offsets[sc, a, ch, ps, stamps]
+    if a.reverse
+        vals = _reversed_numbers[vals]
+    majors = _major_flags[vals, major]
+    texts = slice[[''], 0, 0]
+    i = 0
+    while i lt len[vals]
+        pattern = a.formats[unit]
+        if majors[i] and major ne ''
+            pattern = a.formats[major]
+        texts = push[texts, charts_time.formatted[vals[i], pattern]]
+        i = i + 1
+    sc.ticks = vals
+    sc.texts = texts
+    sc.majors = majors
+    sc
+
+fn _label_times[sc]
+    out = charts_model.no_numbers[]
+    i = 0
+    while i lt len[sc.labels]
+        t = _number_of[sc.labels[i]]
+        if t eq t
+            out = push[out, t]
+        i = i + 1
+    _unique_sorted[out]
+
+fn _between[vs, lo, hi]
+    out = charts_model.no_numbers[]
+    i = 0
+    while i lt len[vs]
+        if vs[i] gte lo and vs[i] lte hi
+            out = push[out, vs[i]]
+        i = i + 1
+    out
+
+--- the unit a time axis chooses of itself: the least common unit from
+--- `least` on that marks the range in no more ticks than fit
+fn _auto_unit[least, lo, hi, capacity]
+    all_units = charts_time.units[]
+    i = charts_time.unit_place[least]
+    n = len[all_units]
+    while i lt n - 1
+        u = all_units[i]
+        if charts_time.unit_common[u] and ceil[(hi - lo) / (charts_time.unit_steps[u] * charts_time.unit_size[u])] lte capacity
+            return u
+        i = i + 1
+    all_units[n - 1]
+
+fn _major_unit[unit]
+    all_units = charts_time.units[]
+    i = charts_time.unit_place[unit] + 1
+    while i lt len[all_units]
+        if charts_time.unit_common[all_units[i]]
+            return all_units[i]
+        i = i + 1
+    ''
+
+fn _major_flags[vals, major]
+    out = slice[[false], 0, 0]
+    i = 0
+    while i lt len[vals]
+        out = push[out, false]
+        i = i + 1
+    if major eq '' or len[vals] eq 0
+        return out
+    first = charts_time.start_of[vals[0], major, 0]
+    last = vals[len[vals] - 1]
+    t = first
+    guard = 0
+    while t lte last and guard lt 100000
+        i = 0
+        while i lt len[vals]
+            if vals[i] eq t
+                out[i] = true
+            i = i + 1
+        t = charts_time.moved_by[t, 1, major]
+        guard = guard + 1
+    out
+
+--- how many labels of a time axis fit along it: an example label (the
+--- first time written in the unit's format) turned as far as the labels
+--- may turn
+fn _label_capacity[sc, a, pen, t]
+    pattern = a.formats['millisecond']
+    if a.unit ne ''
+        pattern = a.formats[a.unit]
+    words = charts_time.formatted[t, pattern]
+    w = charts_model.wide[pen, a.tick_size, a.tick_bold, words]
+    angle = charts_model.radians[a.min_rotation]
+    if sc.horizontal
+        angle = charts_model.radians[a.max_rotation]
+    wide_room = w * cos[angle] + a.tick_size * sin[angle]
+    tall_room = w * sin[angle] + a.tick_size * cos[angle]
+    capacity = floor[sc.height / tall_room] - 1
+    if sc.horizontal
+        capacity = floor[sc.width / wide_room] - 1
+    if capacity gt 0
+        return 0.0 + capacity
+    1.0
+
+--- the times a time axis marks: each unit (by its step) from the start of
+--- the unit its range starts in; where it takes them from its data, the
+--- data's time at or after each
+fn _generated_times[sc, a, ch, ps, pen]
+    if sc.form eq 'timeseries'
+        return _series_times[sc, ch, ps]
+    lo = sc.min
+    hi = sc.max
+    minor = a.unit
+    if minor eq ''
+        minor = _auto_unit[a.min_unit, lo, hi, _label_capacity[sc, a, pen, lo]]
+    step = 1.0
+    if a.step eq a.step and a.step ne 0.0
+        step = a.step
+    first = charts_time.start_of[lo, minor, 0]
+    from_data = a.source eq 'data'
+    stamps = charts_model.no_numbers[]
+    if from_data
+        stamps = data_times[ch, ps, sc]
+    got = charts_model.no_numbers[]
+    t = first
+    count = 0
+    while t lt hi and count lt 100000
+        got = _tick_added[got, t, stamps, from_data]
+        t = charts_time.moved_by[t, int[step], minor]
+        count = count + 1
+    if t eq hi or a.bounds eq 'ticks' or count eq 1
+        got = _tick_added[got, t, stamps, from_data]
+    _unique_sorted[got]
+
+fn _tick_added[got, t, stamps, from_data]
+    if not from_data
+        return push[got, t]
+    if len[stamps] eq 0
+        return got
+    lh = lookup[stamps, t]
+    pick = stamps[lh[1]]
+    if stamps[lh[0]] gte t
+        pick = stamps[lh[0]]
+    push[got, pick]
+
+--- where `v` falls among rising values: the places of the last below it
+--- and the next (Chart.js's halving search)
+fn lookup[vs, v]
+    hi = len[vs] - 1
+    lo = 0
+    while hi - lo gt 1
+        mid = (lo + hi) / 2
+        if vs[mid] lt v
+            lo = mid
+        else
+            hi = mid
+    [lo, hi]
+
+fn _series_times[sc, ch, ps]
+    stamps = data_times[ch, ps, sc]
+    out = charts_model.no_numbers[]
+    has_min = sc.min in stamps
+    has_max = sc.max in stamps
+    if not has_min or len[stamps] eq 0
+        out = push[out, sc.min]
+    i = 0
+    while i lt len[stamps]
+        out = push[out, stamps[i]]
+        i = i + 1
+    if not has_max or len[out] eq 1
+        out = push[out, sc.max]
+    sort[out]
+
+--- a time axis's ends kept in from the edges where it is offset (half
+--- the room of its first and last steps, at most a quarter, a half for
+--- fewer than three ticks), and a time-series axis's table of times
+fn _time_offsets[sc0, a, ch, ps, stamps0]
+    sc = sc0
+    stamps = stamps0
+    if sc.form eq 'timeseries'
+        stamps = data_times[ch, ps, sc]
+        labelled = _label_times[sc]
+        i = 0
+        while i lt len[labelled]
+            stamps = push[stamps, labelled[i]]
+            i = i + 1
+        stamps = _unique_sorted[stamps]
+        sc = _series_table[sc, stamps]
+    start = 0.0
+    finish = 0.0
+    n = len[stamps]
+    if a.offset and n gt 0
+        first = time_decimal[sc, stamps[0]]
+        if n eq 1
+            start = 1.0 - first
+        else
+            start = (time_decimal[sc, stamps[1]] - first) / 2.0
+        last = time_decimal[sc, stamps[n - 1]]
+        if n eq 1
+            finish = last
+        else
+            finish = (last - time_decimal[sc, stamps[n - 2]]) / 2.0
+    limit = 0.25
+    if n lt 3
+        limit = 0.5
+    start = charts_model.limited[start, 0.0, limit]
+    finish = charts_model.limited[finish, 0.0, limit]
+    sc.offsets = [start, finish, 1.0 / (start + 1.0 + finish)]
+    sc
+
+fn _series_table[sc0, stamps]
+    sc = sc0
+    items = _between[stamps, sc.min, sc.max]
+    ts = charts_model.no_numbers[]
+    spots = charts_model.no_numbers[]
+    n = len[items]
+    if n lt 2
+        ts = push[ts, sc.min]
+        ts = push[ts, sc.max]
+        spots = push[spots, 0.0]
+        spots = push[spots, 1.0]
+    else
+        i = 0
+        while i lt n
+            keep = true
+            if i gt 0 and i lt n - 1
+                keep = charts_model.js_round[(items[i + 1] + items[i - 1]) / 2.0] ne items[i]
+            if keep
+                ts = push[ts, items[i]]
+                spots = push[spots, (0.0 + i) / (n - 1.0)]
+            i = i + 1
+    sc.table_times = ts
+    sc.table_spots = spots
+    sc.min_pos = _interpolated[ts, spots, sc.min]
+    sc.table_range = _interpolated[ts, spots, sc.max] - sc.min_pos
+    sc
+
+fn _interpolated[ts, spots, v]
+    n = len[ts]
+    lo = 0
+    hi = n - 1
+    if v gte ts[lo] and v lte ts[hi]
+        lh = lookup[ts, v]
+        lo = lh[0]
+        hi = lh[1]
+    span = ts[hi] - ts[lo]
+    if span eq 0.0
+        return spots[lo]
+    spots[lo] + (spots[hi] - spots[lo]) * (v - ts[lo]) / span
+
+--- where a time falls along its axis, 0 at its start and 1 at its end
+--- (through its table where it is a time series)
+fn time_decimal[sc, v]
+    if v ne v
+        return nan
+    if sc.form eq 'timeseries'
+        return (_interpolated[sc.table_times, sc.table_spots, v] - sc.min_pos) / sc.table_range
+    (v - sc.min) / (sc.max - sc.min)
+
+--- ---- pixels ----
+
+--- the axis's pixels set from its box: where it starts and ends, which
+--- way it runs, and the values it spans
+fn configured[sc0, a]
+    sc = sc0
+    backwards = a.reverse
+    if sc.horizontal
+        sc.start_pixel = sc.left
+        sc.end_pixel = sc.right
+    else
+        sc.start_pixel = sc.top
+        sc.end_pixel = sc.bottom
+        backwards = not backwards
+    if sc.form eq 'category' and not sc.horizontal
+        backwards = not backwards
+    sc.reverse_pixels = backwards
+    sc.length = sc.end_pixel - sc.start_pixel
+    if sc.form eq 'linear' or sc.form eq 'radialLinear'
+        lo = sc.min
+        hi = sc.max
+        n = len[sc.ticks]
+        if a.offset and n gt 0
+            half = (hi - lo) / max[0.0 + n - 1, 1.0] / 2.0
+            lo = lo - half
+            hi = hi + half
+        sc.start_value = lo
+        sc.value_range = hi - lo
+    if sc.form eq 'logarithmic'
+        sc.start_value = log10[sc.min]
+        sc.value_range = log10[sc.max] - log10[sc.min]
+    sc
+
+--- the pixel a share of the axis (0 at its start, 1 at its end) stands at
+fn decimal_pixel[sc, d]
+    share = d
+    if sc.reverse_pixels
+        share = 1.0 - d
+    charts_model.pixel_range[sc.start_pixel + share * sc.length]
+
+--- the share of the axis a pixel stands at
+fn pixel_decimal[sc, p]
+    d = (p - sc.start_pixel) / sc.length
+    if sc.reverse_pixels
+        return 1.0 - d
+    d
+
+--- the pixel a value stands at on the axis (nan for none)
+fn pixel[sc, v]
+    if sc.form eq 'logarithmic'
+        w = v
+        if w eq 0.0 - inf or w eq 0.0
+            w = sc.min
+        if w ne w
+            return nan
+        if w eq sc.min
+            return decimal_pixel[sc, 0.0]
+        return decimal_pixel[sc, (log10[w] - sc.start_value) / sc.value_range]
+    if v ne v
+        return nan
+    if sc.form eq 'time' or sc.form eq 'timeseries'
+        o = sc.offsets
+        return decimal_pixel[sc, (o[0] + time_decimal[sc, v]) * o[2]]
+    decimal_pixel[sc, (v - sc.start_value) / sc.value_range]
+
+--- the value at a pixel of the axis
+fn value_at_pixel[sc, p]
+    d = pixel_decimal[sc, p]
+    if sc.form eq 'logarithmic'
+        return 10.0 ^ (sc.start_value + d * sc.value_range)
+    if sc.form eq 'category'
+        return charts_model.js_round[sc.start_value + d * sc.value_range]
+    if sc.form eq 'time'
+        o = sc.offsets
+        return sc.min + (d / o[2] - o[1]) * (sc.max - sc.min)
+    sc.start_value + d * sc.value_range
+
+--- the pixel of the axis's `i`th tick
+fn tick_pixel[sc, i]
+    pixel[sc, sc.ticks[i]]
+
+--- the value bars and fills stand on: naught, or the range's end nearer it
+fn base_value[sc]
+    if sc.min lt 0.0 and sc.max lt 0.0
+        return sc.max
+    if sc.min gt 0.0 and sc.max gt 0.0
+        return sc.min
+    0.0
+
+--- the pixel bars and fills stand on (of a category axis, its first
+--- label's, or its least shown's)
+fn base_pixel[sc]
+    pixel[sc, base_value[sc]]
+
+--- the width of the grid line drawn at a value (none where no tick stands
+--- there): half of it is kept off a bar that stands on it
+fn line_width_at[sc, a, v]
+    if not sc.shown or not a.grid_shown
+        return 0.0
+    i = 0
+    while i lt len[sc.ticks]
+        if sc.ticks[i] eq v
+            return a.grid_width
+        i = i + 1
+    0.0
+
+--- ---- tests ----
+
+test nice_steps_are_ones_twos_and_fives[]
+    nice_num[7.3] eq 10.0
+    nice_num[0.23] eq 0.5
+    nice_num[1.5] eq 2.0
+    nice_num[3.0] eq 5.0
+
+test numeric_ticks_fall_on_nice_steps[]
+    t = numeric_ticks['ticks', nan, nan, nan, nan, nan, 11.0, 20.0, false, 0.0, true, 0.0, 90.0]
+    t[0] eq 0.0
+    t[len[t] - 1] eq 90.0
+    len[t] eq 10
+    u = numeric_ticks['ticks', nan, -50.0, 150.0, nan, nan, 11.0, 20.0, false, 0.0, true, -50.0, 150.0]
+    u[0] eq -50.0
+    u[len[u] - 1] eq 150.0
+    l = log_ticks[nan, nan, 1.0, 100000.0]
+    l.values[0] eq 1.0
+    l.values[len[l.values] - 1] eq 100000.0
+
+test labels_are_written_as_chart_js_writes_them[]
+    numeric_label[[0.0, 0.5, 1.0, 1.5], 1] eq '0.5'
+    numeric_label[[0.0, 20.0, 40.0], 2] eq '40'
+    numeric_label[[1000.0, 2000.0], 0] eq '1,000'

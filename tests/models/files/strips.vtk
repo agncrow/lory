@@ -1,0 +1,19 @@
+# vtk DataFile Version 3.0
+A strip of four triangles, each with its own colour, written for Lory's tests; its title runs on so that the first 250 bytes, which three reads to learn the file's form, lie within its header
+ASCII
+DATASET POLYDATA
+POINTS 6 float
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+0 2 0
+1 2 0
+TRIANGLE_STRIPS 1 7
+6 0 1 2 3 4 5
+CELL_DATA 4
+COLOR_SCALARS cell 3
+1 0 0
+0 1 0
+0 0 1
+1 1 0

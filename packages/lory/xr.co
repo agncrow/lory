@@ -1,0 +1,357 @@
+--- A headset's part of Lory: a room stood about the reader, what stands
+--- on it, and the reader's head and hands — in a headset, or on a screen
+--- seen as one, through one eye.
+---
+--- A room is the page on panels: folded about the reader (`room`), or
+--- each stood freely (`pane`: a window before the reader, a bar under it,
+--- a keyboard near and leaned back), and only a part of each shown and met
+--- by a ray (`Room.live`: a tall page seen through a window, scrolled by
+--- standing its panel higher). A canvas begun in a room (`begin_room`)
+--- reads one pointer wherever it is shown — a controller's ray in a
+--- headset, a ray from the room's eye through the mouse on a screen — so a
+--- program draws one room for both.
+---
+---     use lory
+---     use lory.xr
+---
+---     fn draw[frame]
+---         r = xr.room[1, 1000.0, 3000.0]
+---         r.placed = [xr.pane[[0.0, 1.1, -1.75], 0.0, 0.0, 0.002, 500.0, 400.0]]
+---         r.live = [[0.0, 0.0, 1000.0, 800.0]]
+---         c = xr.begin_room[frame, r]
+---         c = lory.text[c, 40.0, 40.0, 'Hello', 24.0, lory.white[]]
+---         m = xr.spot[c, 500.0, 400.0]      --- a thing stood on the window
+---         planes = xr.edges[c, 0]           --- and cut at its edges (space.cut)
+---         right = xr.hand[c, 'right']       --- its ray, trigger, grip, buttons, stick
+---         lory.end[c]
+---
+--- Lory itself draws the page onto the panels and meets a ray with them
+--- (main.co: `Room`, its panels' matrices and the shader that folds the
+--- page); what is here is what a program asks of them.
+use math
+use lory
+
+--- ---- a room ----
+
+--- a canvas for the frame, its page folded around the reader as the room
+--- says: in a headset the panels stand about the reader, the controller's
+--- ray the pointer; on a screen the same room is seen through one eye, the
+--- pointer a ray from it and its press the ray's — so a program draws one
+--- room and reads one pointer wherever it is shown
+fn begin_room[frame, r]
+    lory._begun[_through_an_eye[frame, r], r]
+
+--- a room of `cols` panels `wide` by `tall` pixels, as a seated reader
+--- has it: a pixel 1.8 mm, the panels 1.75 m away, the page's top a little
+--- over the eye's height, the first panel ahead
+fn room[cols, wide, tall]
+    lory.Room[min[8, max[1, cols]], 0.0 + wide, 0.0 + tall, 0.0018, 1.75, 1.25 + 0.55 * tall * 0.0018, 0.0, 0.0, 1.25, 0.0, 0.0, 1.2, lory._no_facets[], lory._no_facets[], true]
+
+--- a panel's matrix, stood freely (one of a room's `placed`): the page's
+--- point (`cx`, `cy`) at `at` in the room (metres), the panel turned
+--- `turn` radians to the right about the upright (at 0 it faces a reader
+--- who looks along -z) and leaned `lean` radians back, its face turned
+--- up as a desk's is, a pixel of the page `mm` metres
+fn pane[at, turn, lean, mm, cx, cy]
+    co = cos[turn]
+    si = sin[turn]
+    cl = cos[lean]
+    sl = sin[lean]
+    --- (its up, and the way it faces: its right is (co, 0, si))
+    ux = si * sl
+    uy = cl
+    uz = 0.0 - co * sl
+    nx = 0.0 - si * cl
+    ny = sl
+    nz = co * cl
+    [mm * co, 0.0, mm * si, 0.0, 0.0 - mm * ux, 0.0 - mm * uy, 0.0 - mm * uz, 0.0, mm * nx, mm * ny, mm * nz, 0.0, at[0] - mm * co * cx + mm * ux * cy, at[1] + mm * uy * cy, at[2] - mm * si * cx + mm * uz * cy, 1.0]
+
+--- the four planes about the part of panel `k` that is shown, each as
+--- four numbers (a point is inside where the plane's first three times
+--- the point, and the fourth, come to no less than 0): what a shape of
+--- the scene is cut by to stay within a window (`space.cut`)
+fn edges[c, k]
+    r = c.room
+    f = lory._facet[r, k]
+    w = lory._shown_part[r, k]
+    uu = f[0] * f[0] + f[1] * f[1] + f[2] * f[2]
+    vv = f[4] * f[4] + f[5] * f[5] + f[6] * f[6]
+    tu = f[12] * f[0] + f[13] * f[1] + f[14] * f[2]
+    tv = f[12] * f[4] + f[13] * f[5] + f[14] * f[6]
+    [f[0], f[1], f[2], 0.0 - tu - w[0] * uu, 0.0 - f[0], 0.0 - f[1], 0.0 - f[2], tu + w[2] * uu, f[4], f[5], f[6], 0.0 - tv - w[1] * vv, 0.0 - f[4], 0.0 - f[5], 0.0 - f[6], tv + w[3] * vv]
+
+--- which panel a page's x lies on
+fn _panel_of[r, x]
+    if r.cols lt 1 or r.wide lte 0.0
+        return 0
+    k = int[x / r.wide]
+    max[0, min[r.cols - 1, k]]
+
+--- a place in the room for a thing standing at the page's point (x, y):
+--- the matrix that puts it there, a unit of the thing a pixel of the page,
+--- its x to the right along the panel, its y up, its z out of the panel
+--- toward the reader (on one flat page in a headset, the panel that page
+--- hangs on; elsewhere the page's own pixels, y down)
+fn spot[c, x, y]
+    r = c.room
+    if r.cols lt 1
+        if c.xr
+            w = c.panel
+            k = w / c.width
+            return [k, 0.0, 0.0, 0.0, 0.0, k, 0.0, 0.0, 0.0, 0.0, k, 0.0, x * k - w / 2.0, 1.8 - y * k, -1.5, 1.0]
+        return [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0 + x, 0.0 + y, 0.0, 1.0]
+    k = _panel_of[r, x]
+    f = lory._facet[r, k]
+    [f[0], f[1], f[2], 0.0, 0.0 - f[4], 0.0 - f[5], 0.0 - f[6], 0.0, f[8], f[9], f[10], 0.0, f[0] * x + f[4] * y + f[12], f[1] * x + f[5] * y + f[13], f[2] * x + f[6] * y + f[14], 1.0]
+
+--- where a headset's drawn keyboard stands on the page: `wide` across
+--- from `left`, its foot at `foot` (a room's page is many panels wide, and
+--- a keyboard along its whole foot would be folded across them)
+fn keys_at[c, left, foot, wide]
+    c.keys = [0.0 + left, 0.0 + foot, 0.0 + wide]
+    c
+
+--- the room the canvas was begun in (no panels: one flat page)
+fn room_of[c]
+    c.room
+
+--- ---- a screen seen as a headset ----
+
+fn _unit3[v]
+    n = sqrt[v[0] * v[0] + v[1] * v[1] + v[2] * v[2]]
+    if n lte 0.0
+        return [0.0, 0.0, -1.0]
+    [v[0] / n, v[1] / n, v[2] / n]
+
+--- a screen's frame as a headset's, for a room: one view through the
+--- room's eye, each pointer a controller whose ray leaves the eye through
+--- where it points, its press and release the ray's (its moves are the
+--- ray's own; a double press is two presses), and the rest as it came
+fn _through_an_eye[frame, r]
+    if frame.xr eq true
+        return frame
+    w = max[1.0, 0.0 + frame.width]
+    h = max[1.0, 0.0 + frame.height]
+    aspect = w / h
+    half = tan[r.fov / 2.0]
+    right = [cos[r.look], 0.0, sin[r.look]]
+    up = [0.0 - sin[r.nod] * sin[r.look], cos[r.nod], sin[r.nod] * cos[r.look]]
+    ahead = [cos[r.nod] * sin[r.look], sin[r.nod], 0.0 - cos[r.nod] * cos[r.look]]
+    high = 0.0 + r.eye
+    camera = [right[0], up[0], 0.0 - ahead[0], 0.0, right[1], up[1], 0.0 - ahead[1], 0.0, right[2], up[2], 0.0 - ahead[2], 0.0, 0.0 - right[1] * high, 0.0 - up[1] * high, ahead[1] * high, 1.0]
+    near = 0.05
+    far = 100.0
+    k = 1.0 / half
+    projection = [k / aspect, 0.0, 0.0, 0.0, 0.0, k, 0.0, 0.0, 0.0, 0.0, (far + near) / (near - far), -1.0, 0.0, 0.0, 2.0 * far * near / (near - far), 0.0]
+    --- (where the pointer is: where the page last had one, or where the
+    --- frame's own press, move or release says — a mouse let go is no
+    --- pointer of the page's any more, and its release must still land)
+    at_x = -1.0
+    at_y = -1.0
+    there = false
+    for p in frame.pointers
+        at_x = 0.0 + p.x
+        at_y = 0.0 + p.y
+        there = true
+    told = []
+    for j in frame.input
+        kind = '`j.type`'
+        if kind eq 'down' or kind eq 'up' or kind eq 'move'
+            at_x = 0.0 + j.x
+            at_y = 0.0 + j.y
+            there = true
+        if kind eq 'down' or kind eq 'up'
+            told = push[told, '{"type": "`kind`", "device": "ray", "id": "right", "hand": "right"}']
+        else
+            if kind ne 'move' and kind ne 'leave' and kind ne 'double'
+                told = push[told, encode[j]]
+    hands = ''
+    if there
+        nx = (2.0 * at_x / w - 1.0) * half * aspect
+        ny = (1.0 - 2.0 * at_y / h) * half
+        way = _unit3[[right[0] * nx + up[0] * ny + ahead[0], right[1] * nx + up[1] * ny + ahead[1], right[2] * nx + up[2] * ny + ahead[2]]]
+        hands = '{"hand": "right", "device": "pointer", "origin": [0, `high`, 0], "direction": `encode[way]`, "matrix": [], "buttons": [], "axes": []}'
+    events = join[told, ', ']
+    json['{"t": `0.0 + frame.t`, "width": `w`, "height": `h`, "ratio": 1, "xr": true, "views": [{"eye": "none", "x": 0, "y": 0, "width": `w`, "height": `h`, "projection": `encode[projection]`, "camera": `encode[camera]`}], "input": [`events`], "pointers": [], "controllers": [`hands`], "said": `encode[frame.said]`}']
+
+--- ---- the reader ----
+
+--- whether the frame is drawn in a headset
+fn in_headset[c]
+    c.xr
+
+--- where the reader's head is and how it is turned: its place (x, y, z,
+--- in metres), its turn to the right and its nod up (radians) — the
+--- middle of a headset's eyes, or the one eye a room on a screen is seen
+--- through (a frame that says no view: a seated reader looking ahead)
+fn head[c]
+    n = 0.0
+    x = 0.0
+    y = 0.0
+    z = 0.0
+    fx = 0.0
+    fy = 0.0
+    fz = 0.0
+    for v in c.frame.views
+        cam = lory._numbers[v.camera]
+        if len[cam] gte 16
+            at = lory._position_of[cam]
+            x = x + at[0]
+            y = y + at[1]
+            z = z + at[2]
+            fx = fx - cam[2]
+            fy = fy - cam[6]
+            fz = fz - cam[10]
+            n = n + 1.0
+    if n lt 1.0
+        return [0.0, 1.25, 0.0, 0.0, 0.0]
+    level = sqrt[fx * fx + fz * fz]
+    [x / n, y / n, z / n, atan2[fx, 0.0 - fz], atan2[fy, level]]
+
+--- a headset's controller: whether it is there, where its ray leaves
+--- from and the way it goes, how far its trigger and its grip are pulled
+--- (0 to 1), its two buttons (A and B, or X and Y), and its stick's push
+--- sideways and forward (-1 to 1)
+struct Hand [there, from, way, trigger, grip, first, second, across, along]
+
+--- the controller of a hand (`left`, `right`); on a screen the pointer is
+--- the right one, its ray leaving the eye
+fn hand[c, name]
+    for ctl in c.frame.controllers
+        if '`ctl.hand`' eq name
+            b = lory._numbers[ctl.buttons]
+            ax = lory._numbers[ctl.axes]
+            pulled = 0.0
+            gripped = 0.0
+            one = 0.0
+            two = 0.0
+            if len[b] gt 0
+                pulled = b[0]
+            if len[b] gt 1
+                gripped = b[1]
+            if len[b] gt 4
+                one = b[4]
+            if len[b] gt 5
+                two = b[5]
+            sx = 0.0
+            sy = 0.0
+            if len[ax] gte 4
+                sx = ax[2]
+                sy = ax[3]
+            else
+                if len[ax] gte 2
+                    sx = ax[0]
+                    sy = ax[1]
+            return Hand[true, lory._numbers[ctl.origin], lory._numbers[ctl.direction], pulled, gripped, one, two, sx, sy]
+    Hand[false, [0.0, 0.0, 0.0], [0.0, 0.0, -1.0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+--- a headset controller's thumbstick, by hand (`left`, `right`): its
+--- sideways and forward push, each -1 to 1 (none: 0, 0)
+fn stick[c, hand]
+    for ctl in c.frame.controllers
+        if '`ctl.hand`' eq hand
+            axes = lory._numbers[ctl.axes]
+            if len[axes] gte 4
+                return [axes[2], axes[3]]
+            if len[axes] gte 2
+                return [axes[0], axes[1]]
+    [0.0, 0.0]
+
+--- ---- tests ----
+
+fn _flat_frame[]
+    json['{"t": 0, "width": 1200, "height": 800, "ratio": 2, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1200, "height": 800, "projection": [], "camera": []}], "input": [{"type": "down", "device": "mouse", "id": 1, "x": 600, "y": 400, "button": 0}], "pointers": [], "controllers": [], "said": []}']
+
+--- a room's panels stand around the reader: the one in front straight
+--- ahead and `away` off, a ray along the view meeting its middle, a ray
+--- turned by the panels' angle meeting the next one's, and a ray away
+--- from every panel meeting none
+test a_rooms_panels_stand_around_the_reader[]
+    r = room[3, 1000.0, 800.0]
+    r.front = 1.0
+    hit = lory._room_hit[r, [0.0, 1.25, 0.0], [0.0, 0.0, -1.0]]
+    abs[hit[0] - 1500.0] lt 0.001
+    f = lory._facet[r, 1]
+    abs[f[0] * 1500.0 + f[12]] lt 0.000001
+    abs[f[2] * 1500.0 + f[14] + r.away] lt 0.000001
+    a = lory._fold_angle[r]
+    side = lory._room_hit[r, [0.0, 1.25, 0.0], [sin[a], 0.0, 0.0 - cos[a]]]
+    abs[side[0] - 2500.0] lt 0.001
+    lory._room_hit[r, [0.0, 1.25, 0.0], [0.0, 0.0, 1.0]] eq [-1.0, -1.0]
+    _panel_of[r, 2500.0] eq 2
+    --- (the wall turned by a panel's angle brings the next panel in front)
+    r.turn = 0.0 - a
+    turned = lory._room_hit[r, [0.0, 1.25, 0.0], [0.0, 0.0, -1.0]]
+    abs[turned[0] - 2500.0] lt 0.001
+
+--- on a screen a room is seen through one eye: the frame is a headset's
+--- of one view, its page the panels side by side whatever the screen's
+--- pixels, and a press in the middle of the screen a ray's press on the
+--- panel in front, where the eye looks
+test on_a_screen_a_room_is_seen_through_one_eye[]
+    r = room[3, 1000.0, 800.0]
+    r.front = 1.0
+    c = begin_room[_flat_frame[], r]
+    in_headset[c] eq true
+    lory.width[c] eq 3000.0
+    lory.height[c] eq 800.0
+    lory.px[c] eq 1.0
+    lory.pointing[c] eq true
+    abs[lory.pointer_x[c] - 1500.0] lt 0.5
+    lory.pressed[c] eq true
+    len[lory.events[c]] eq 1
+    lory.events[c][0].device eq 'ray'
+    --- (a thing stood at the middle of the panel in front is straight ahead)
+    m = spot[c, 1500.0, 400.0]
+    abs[m[12]] lt 0.000001
+    abs[m[14] + r.away] lt 0.000001
+    abs[m[13] - (r.top - 400.0 * r.mm)] lt 0.000001
+    --- (and a page that is not a room is as it was: no panels)
+    plain = lory.begin[_flat_frame[]]
+    in_headset[plain] eq false
+    room_of[plain].cols eq 0
+    lory.width[plain] eq 1200.0
+
+--- a panel stood freely is met where it stands: a window 1.75 m ahead, a
+--- near panel leaned back under it. Only the part of a panel that is
+--- shown is met, so a tall page seen through a window is met at the row
+--- its scrolling has brought there; a thing stood at a point of it is
+--- there, and the window's edges keep what is inside them
+test a_panel_stood_freely_is_met_where_it_stands[]
+    r = room[2, 1000.0, 3000.0]
+    r.placed = [pane[[0.0, 1.1, -1.75], 0.0, 0.0, 0.002, 400.0, 1300.0], pane[[0.0, 0.8, -0.6], 0.0, 0.6, 0.001, 1500.0, 200.0]]
+    r.live = [[0.0, 1000.0, 800.0, 1600.0], [1000.0, 0.0, 2000.0, 400.0]]
+    hit = lory._room_hit[r, [0.0, 1.1, 0.0], [0.0, 0.0, -1.0]]
+    abs[hit[0] - 400.0] lt 0.001
+    abs[hit[1] - 1300.0] lt 0.001
+    --- (a ray 0.2 m higher meets the page 100 pixels further up it)
+    higher = lory._room_hit[r, [0.0, 1.3, 0.0], [0.0, 0.0, -1.0]]
+    abs[higher[1] - 1200.0] lt 0.001
+    --- (0.7 m higher is over the top of what is shown: nothing is met)
+    lory._room_hit[r, [0.0, 1.8, 0.0], [0.0, 0.0, -1.0]] eq [-1.0, -1.0]
+    --- (the near panel, leaned back, is met by a ray down at its middle)
+    low = lory._room_hit[r, [0.0, 1.3, 0.0], _unit3[[0.0, -0.5, -0.6]]]
+    abs[low[0] - 1500.0] lt 0.001
+    abs[low[1] - 200.0] lt 0.001
+    c = begin_room[_flat_frame[], r]
+    m = spot[c, 400.0, 1300.0]
+    abs[m[12]] lt 0.000001
+    abs[m[13] - 1.1] lt 0.000001
+    abs[m[14] + 1.75] lt 0.000001
+    abs[m[5] - 0.002] lt 0.000001
+    --- (the window's edges: its middle is kept, a point over its top cut)
+    e = edges[c, 0]
+    e[8] * 0.0 + e[9] * 1.1 + e[10] * -1.75 + e[11] gt 0.0
+    e[12] * 0.0 + e[13] * 1.1 + e[14] * -1.75 + e[15] gt 0.0
+    e[0] * 0.0 + e[1] * 1.1 + e[2] * -1.75 + e[3] gt 0.0
+    e[8] * 0.0 + e[9] * 1.8 + e[10] * -1.75 + e[11] lt 0.0
+    --- (the reader's head and hand, as a screen's one eye and pointer give them)
+    at = head[c]
+    abs[at[1] - 1.25] lt 0.000001
+    abs[at[3]] lt 0.000001
+    hand[c, 'right'].there eq true
+    hand[c, 'left'].there eq false
+    --- (a room that draws its own cursor has no dot of Lory's)
+    r.dot = false
+    quiet = begin_room[_flat_frame[], r]
+    len[quiet.verts] eq 0

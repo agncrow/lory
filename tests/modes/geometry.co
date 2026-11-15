@@ -1,0 +1,205 @@
+--- Everything lory.geometry makes, written out, to diff the interpreter's
+--- run against the compiled program's. Each shape is made on fixed
+--- numbers and written as its counts, the sums of its positions, normals
+--- and uvs (plain, and weighted by place so that a reordering shows), the
+--- least and the most of each axis, and the sums of its indices and
+--- groups; each curve as its length, its points and its ways along it and
+--- its frames; a path as its points; and a geometry's lines as what they
+--- add to a drawing. Every number is written to 17 places. From the
+--- repository's root: `bash tests/modes.sh crow tests/modes/geometry.co`.
+use lory
+use lory.space
+use lory.geometry
+
+--- a number to 17 places
+fn _digits[x]
+    fmt[x, decimals = 17]
+
+--- the sum of every `stride`th number from `start`
+fn _sum[numbers, start, stride]
+    total = 0.0
+    k = start
+    while k lt len[numbers]
+        total = total + numbers[k]
+        k = k + stride
+    total
+
+--- the numbers' sum, each weighted by its place (1 to 13, over again)
+fn _weighted[numbers]
+    total = 0.0
+    for k in range[len[numbers]]
+        total = total + numbers[k] * (0.0 + (k % 13 + 1))
+    total
+
+--- the whole numbers' sum, plain and weighted by place as `_weighted`
+fn _wholes[numbers]
+    plain = 0
+    weighted = 0
+    for k in range[len[numbers]]
+        plain = plain + numbers[k]
+        weighted = weighted + numbers[k] * (k % 13 + 1)
+    '`plain` `weighted`'
+
+--- the least and the most of every `stride`th number from `start`
+fn _span[numbers, start, stride]
+    if len[numbers] lte start
+        return 'none'
+    low = numbers[start]
+    high = numbers[start]
+    k = start
+    while k lt len[numbers]
+        low = min[low, numbers[k]]
+        high = max[high, numbers[k]]
+        k = k + stride
+    '`_digits[low]` to `_digits[high]`'
+
+--- three numbers a point: the sums of each of the three
+fn _sums[numbers]
+    '`_digits[_sum[numbers, 0, 3]]` `_digits[_sum[numbers, 1, 3]]` `_digits[_sum[numbers, 2, 3]]`'
+
+--- a point or a way, its three numbers
+fn _point[p]
+    '`_digits[p[0]]` `_digits[p[1]]` `_digits[p[2]]`'
+
+--- a geometry written as four lines
+fn _written[name, g]
+    log['`name`: `geometry.vertex_count[g]` vertices, `len[g.indices]` indices, `len[g.groups] / 3` groups, `geometry.triangle_count[g]` triangles']
+    log['`name` positions `_sums[g.positions]` weighted `_digits[_weighted[g.positions]]`; x `_span[g.positions, 0, 3]`, y `_span[g.positions, 1, 3]`, z `_span[g.positions, 2, 3]`']
+    log['`name` normals `_sums[g.normals]` weighted `_digits[_weighted[g.normals]]`; uvs `_digits[_sum[g.uvs, 0, 2]]` `_digits[_sum[g.uvs, 1, 2]]` weighted `_digits[_weighted[g.uvs]]`']
+    log['`name` indices `_wholes[g.indices]`, groups `_wholes[g.groups]`']
+
+--- a curve written as its length, five points and ways along it, and
+--- its frames at ten steps
+fn _curve_written[name, curve, closed]
+    log['`name` length `_digits[geometry.curve_length[curve]]`']
+    for u in [0.0, 0.3, 0.5, 0.8, 1.0]
+        log['`name` at `_digits[u]`: `_point[geometry.point_at[curve, u]]` going `_point[geometry.tangent_at[curve, u]]`, by its measure `_point[geometry.point_on[curve, u]]`']
+    f = geometry.frenet_frames[curve, 10, closed]
+    log['`name` frames: tangents `_sums[f.tangents]`, normals `_sums[f.normals]`, binormals `_sums[f.binormals]`']
+
+--- a square path `size` across about the point (x, y)
+fn _square[x, y, size]
+    h = size / 2.0
+    geometry.path_through[[x - h, y - h, x + h, y - h, x + h, y + h, x - h, y + h]]
+
+--- a star of `arms` points, its inner corners `inner` of the way in
+fn _star[arms, inner]
+    corners = []
+    for i in range[arms * 2]
+        r = 1.5
+        if i % 2 eq 1
+            r = 1.5 * inner
+        angle = pi / 2.0 + (0.0 + i) * pi / (0.0 + arms)
+        corners = push[push[corners, r * cos[angle]], r * sin[angle]]
+    geometry.path_through[corners]
+
+--- a path of every kind of piece
+fn _every_piece[]
+    p = geometry.path_from[0.0, 0.0]
+    p = geometry.line_to[p, 2.0, 0.0]
+    p = geometry.quadratic_to[p, 3.0, 0.5, 2.5, 1.5]
+    p = geometry.cubic_to[p, 2.0, 2.5, 1.0, 2.5, 0.5, 2.0]
+    p = geometry.spline_to[p, [0.2, 1.6, -0.2, 1.2, 0.0, 0.8]]
+    p = geometry.arc[p, 0.0, -0.4, 0.4, 1.5707963267948966, 4.71238898038469, false]
+    p = geometry.ellipse[p, 0.3, 0.0, 0.3, 0.2, 3.141592653589793, 6.283185307179586, true, 0.4]
+    p
+
+--- the points of the loop the tubes go round
+fn _loop[]
+    [1.0, 0.0, 0.0, 0.0, 0.6, 1.0, -1.2, 0.1, 0.0, 0.0, -0.5, -0.9]
+
+--- the points of the open curves
+fn _taut[]
+    [-1.0, 0.0, 0.0, -0.3, 0.8, 0.4, 0.4, -0.2, 0.9, 1.1, 0.5, -0.3]
+
+--- a vase's outline, from its foot up
+fn _vase[]
+    corners = []
+    for i in range[10]
+        t = (0.0 + i) / 9.0
+        corners = push[push[corners, 0.2 + 0.7 * sin[pi * t] + 0.4 * t * t * t * t], 2.4 * t - 1.2]
+    corners
+
+_written['box', geometry.box[]]
+_written['box 2 1.5 0.5 cut 3 2 4', geometry.box[2.0, 1.5, 0.5, 3, 2, 4]]
+_written['plane', geometry.plane[]]
+_written['plane 3 2 cut 4 3', geometry.plane[3.0, 2.0, 4, 3]]
+_written['circle', geometry.circle[]]
+_written['circle 1.5 of 7 from 0.5 for 4', geometry.circle[1.5, 7, 0.5, 4.0]]
+_written['ring', geometry.ring[]]
+_written['ring 0.3 1.2 cut 9 3 from 0.2 for 5', geometry.ring[0.3, 1.2, 9, 3, 0.2, 5.0]]
+_written['sphere', geometry.sphere[]]
+_written['sphere 1.5 cut 12 7 part', geometry.sphere[1.5, 12, 7, 0.3, 5.0, 0.4, 2.0]]
+_written['cylinder', geometry.cylinder[]]
+_written['cylinder 0.5 1.2 2 cut 9 3 part', geometry.cylinder[0.5, 1.2, 2.0, 9, 3, false, 0.3, 4.0]]
+_written['cylinder to a point, open', geometry.cylinder[0.0, 1.0, 1.0, 8, 2, true]]
+_written['cone', geometry.cone[]]
+_written['cone 1.2 2 cut 7 2 for 5', geometry.cone[1.2, 2.0, 7, 2, false, 0.0, 5.0]]
+_written['torus', geometry.torus[]]
+_written['torus 1.2 0.3 cut 8 20 swept 4', geometry.torus[1.2, 0.3, 8, 20, 4.0]]
+_written['torus knot', geometry.torus_knot[]]
+_written['torus knot 1.2 0.3 cut 50 6 of 3 4', geometry.torus_knot[1.2, 0.3, 50, 6, 3.0, 4.0]]
+_written['capsule', geometry.capsule[]]
+_written['capsule 0.6 1.5 cut 3 7 2', geometry.capsule[0.6, 1.5, 3, 7, 2]]
+_written['lathe', geometry.lathe[_vase[]]]
+_written['lathe of 7 from 0.5 for 4', geometry.lathe[_vase[], 7, 0.5, 4.0]]
+
+curves = [geometry.helix_curve[1.0, 2.0, 2.0], geometry.spline_curve[_loop[], true], geometry.spline_curve[_taut[]], geometry.spline_curve[_taut[], false, 'chordal'], geometry.spline_curve[_taut[], false, 'catmullrom', 0.3], geometry.cubic_curve[-1.0, 0.0, 0.0, -0.5, 1.5, 0.5, 0.5, -1.0, 0.8, 1.0, 0.2, 0.0], geometry.quadratic_curve[-1.0, 0.0, 0.0, 0.0, 1.5, 0.5, 1.0, -0.2, 0.3], geometry.line_curve[-1.0, -0.5, 0.0, 1.0, 0.5, 0.4]]
+names = ['helix', 'closed loop', 'centripetal', 'chordal', 'catmull-rom', 'cubic', 'quadratic', 'line']
+for i in range[len[curves]]
+    closed = i eq 1
+    _curve_written[names[i], curves[i], closed]
+    _written['tube along the `names[i]`', geometry.tube[curves[i], 24, 0.2, 6, closed]]
+
+p = _every_piece[]
+points = geometry.path_points[p, 8]
+log['every piece: `len[points] / 2` points, x `_span[points, 0, 2]`, y `_span[points, 1, 2]`, sums `_digits[_sum[points, 0, 2]]` `_digits[_sum[points, 1, 2]]` weighted `_digits[_weighted[points]]`']
+log['every piece at 3: `len[geometry.path_points[p, 3]] / 2` points, weighted `_digits[_weighted[geometry.path_points[p, 3]]]`']
+
+square = geometry.outline[_square[0.0, 0.0, 1.0]]
+holed_square = geometry.holed[geometry.outline[_square[0.0, 0.0, 2.0]], _square[0.2, 0.1, 0.8]]
+star = geometry.holed[geometry.outline[_star[5, 0.45]], geometry.absolute_arc[geometry.path_from[], 0.0, 0.0, 0.3, 0.0, 6.283185307179586, true]]
+_written['shape: a square', geometry.shape[square]]
+_written['shape: a square with a hole', geometry.shape[holed_square]]
+_written['shape: a star with a round hole', geometry.shape[star]]
+_written['shape: of every piece', geometry.shape[geometry.outline[_every_piece[]], 6]]
+_written['shapes: the square and the star', geometry.shapes[[square, star], 4]]
+_written['extrusion of a square, no bevel', geometry.extrude[[square], 1.0, 1, false]]
+_written['extrusion of a square', geometry.extrude[[square]]]
+_written['extrusion of the star, stepped', geometry.extrude[[star], 0.6, 3, true, 0.15, 0.1, 0.0, 2, 6]]
+_written['extrusion of the holed square, offset', geometry.extrude[[holed_square], 0.5, 2, true, 0.1, 0.05, 0.02, 4, 8]]
+_written['extrusion along the helix', geometry.extrude_along[[geometry.outline[_square[0.0, 0.0, 0.3]]], curves[0], 20]]
+_written['extrusion along the loop', geometry.extrude_along[[geometry.outline[_star[4, 0.5]]], curves[1], 16, 4]]
+
+for detail in [0, 1, 2]
+    _written['tetrahedron of detail `detail`', geometry.tetrahedron[1.0, detail]]
+    _written['octahedron of detail `detail`', geometry.octahedron[1.2, detail]]
+    _written['icosahedron of detail `detail`', geometry.icosahedron[0.8, detail]]
+    _written['dodecahedron of detail `detail`', geometry.dodecahedron[1.0, detail]]
+prism = geometry.polyhedron[[1.0, 0.0, 0.0, -0.5, 0.86, 0.0, -0.5, -0.86, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0, -1.5], [0, 1, 3, 1, 2, 3, 2, 0, 3, 1, 0, 4, 2, 1, 4, 0, 2, 4], 1.0, 1]
+_written['a polyhedron of its own, detail 1', prism]
+
+_written['edges of a box', geometry.edges[geometry.box[]]]
+_written['edges of a sphere at 10', geometry.edges[geometry.sphere[1.0, 12, 8], 10.0]]
+_written['edges of the knot at 20', geometry.edges[geometry.torus_knot[], 20.0]]
+_written['edges of the star stood out', geometry.edges[geometry.extrude[[star], 0.6, 1, true, 0.15, 0.1, 0.0, 2, 6], 20.0]]
+_written['wireframe of a box', geometry.wireframe[geometry.box[2.0, 1.0, 1.0, 2, 1, 1]]]
+_written['wireframe of a sphere', geometry.wireframe[geometry.sphere[1.0, 8, 6]]]
+_written['wireframe of the star stood out', geometry.wireframe[geometry.extrude[[star], 0.6, 1, false]]]
+
+s = geometry.space_shape[geometry.sphere[1.0, 8, 6]]
+log['a sphere held in space: `len[s.at] / 3` corners, at `_sums[s.at]` weighted `_digits[_weighted[s.at]]`, facing `_sums[s.facing]`, uvs `_digits[_weighted[s.uv]]`']
+
+c = lory.begin[json['{"t": 0, "width": 800, "height": 600, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 800, "height": 600, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+c = space.scene[c, space.orbit[c, 'modes.lines', [0.0, 0.0, 0.0], 5.0], space.daylight[]]
+before = len[c.verts]
+c = geometry.lines_drawn[c, geometry.edges[geometry.torus_knot[], 20.0], lory.translation[0.2, -0.1, 0.3], 1.5, lory.white[]]
+drawn = slice[c.verts, before, len[c.verts]]
+log['the edges of the knot drawn: `len[drawn]` numbers, sum `_digits[_sum[drawn, 0, 1]]` weighted `_digits[_weighted[drawn]]`']
+
+--- (an SVG path's pieces, and a field's surface marched)
+for path in geometry.svg_paths['M10,20 L30 20 h10 v-5 l-10-5 Z m50 0 c0 10 20 10 20 0 s20 -10 20 0 q10 5 20 0 t20 0 z M0-1.5e-1L2,3']
+    for piece in path.pieces
+        log['svg `piece.form`: `_sums[piece.numbers]` weighted `_digits[_weighted[piece.numbers]]`']
+blob = geometry.marched[geometry.ball_field[[0.3, 0.0, 0.0, 0.6, -0.4, 0.2, 0.1, 0.5], 10, 3.0], 10, 3.0, 1.0]
+_written['marched', blob]

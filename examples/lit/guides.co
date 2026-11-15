@@ -1,0 +1,172 @@
+--- Lit's documentation, drawn by Lory where its pages show behaviour the
+--- playground does not: events up and properties down between components,
+--- a reactive controller (a clock), changes batched into one update and an
+--- update skipped, a slot's fallback, and a locale switched at run time.
+
+use lory
+use lory.gui
+use shared
+
+--- ---- Events (docs/components/events, composition) ----
+
+--- a child that tells its parent it was pressed (Lit: an event that
+--- bubbles and crosses the shadow root), and the parent that keeps the
+--- count and hands it down to the child's sibling
+fn docs_events_view[s, t]
+    count = int[shared.number_of[s, 'count']]
+    gui.column[[shared.titled[3, 'Events up, properties down', '', ''], gui.text['The button is a child component and the count its sibling: the child tells its parent, and the parent hands the count down.'], gui.row[[gui.button['ev-child', 'Increment'], gui.text['Count: `count`']]]]]
+
+fn docs_events_answered[s, e, t]
+    if e.id eq 'ev-child' and e.act eq 'press'
+        return shared.set_number[s, 'count', shared.number_of[s, 'count'] + 1.0]
+    s
+
+--- ---- Reactive controllers (docs/composition/controllers) ----
+
+--- a clock its controller ticks once a second while it is shown (Lit: an
+--- interval begun when the host connects and cleared when it goes); shown
+--- again it is a new clock, ticking from then
+fn docs_clock_view[s, t]
+    shown = not shared.flag_of[s, 'hidden']
+    words = 'Show clock'
+    rows = [shared.titled[3, 'A clock kept by a controller', '', '']]
+    if shown
+        words = 'Hide clock'
+        since = shared.number_of[s, 'since']
+        ticks = floor[(t - since) / 1000.0]
+        seconds = shared.number_of[s, 'clock-base'] + since / 1000.0 + 0.0 + ticks
+        rows = push[rows, gui.text['Time: `time_of_day[seconds]`']]
+    rows = push[rows, gui.button['clock-toggle', words]]
+    gui.column[rows]
+
+--- a time of day from its seconds since midnight, as an American reader's
+--- browser writes one (`toLocaleTimeString` in en-US: 1:05:09 PM)
+fn time_of_day[seconds]
+    whole = floor[seconds]
+    day = whole % 86400
+    hour = day / 3600
+    minute = (day % 3600) / 60
+    second = day % 60
+    half = 'AM'
+    if hour gte 12
+        half = 'PM'
+    shown = hour % 12
+    if shown eq 0
+        shown = 12
+    '`shown`:`_two[minute]`:`_two[second]` `half`'
+
+fn _two[n]
+    if n lt 10
+        return '0`n`'
+    '`n`'
+
+fn docs_clock_answered[s, e, t]
+    if e.id eq 'clock-toggle' and e.act eq 'press'
+        hidden = shared.flag_of[s, 'hidden']
+        s = shared.set_flag[s, 'hidden', not hidden]
+        if hidden
+            return shared.set_number[s, 'since', t]
+    s
+
+--- ---- Lifecycle (docs/components/lifecycle) ----
+
+--- two properties set by one press are one update (the count of updates
+--- goes up by one); frozen, `shouldUpdate` answers no and what is shown
+--- stays as it was until it thaws
+fn docs_batching_view[s, t]
+    a = int[shared.number_of[s, 'shown-a']]
+    b = int[shared.number_of[s, 'shown-b']]
+    updates = int[shared.number_of[s, 'updates']] + 1
+    words = 'Freeze'
+    if shared.flag_of[s, 'shown-frozen']
+        words = 'Thaw'
+    gui.column[[shared.titled[3, 'Changes batched into one update', '', ''], gui.text['a = `a`, b = `b`'], gui.text['Updates: `updates`'], gui.row[[gui.button['batch-both', 'Set both'], gui.button['batch-freeze', words]]]]]
+
+fn docs_batching_answered[s, e, t]
+    if e.act ne 'press'
+        return s
+    if e.id eq 'batch-both'
+        s = shared.set_number[s, 'a', shared.number_of[s, 'a'] + 1.0]
+        s = shared.set_number[s, 'b', shared.number_of[s, 'b'] + 1.0]
+        return _updated[s]
+    if e.id eq 'batch-freeze'
+        s = shared.set_flag[s, 'frozen', not shared.flag_of[s, 'frozen']]
+        return _updated[s]
+    s
+
+--- one update, as Lit makes one of every change in a turn: none while
+--- frozen (what is shown is left as it was)
+fn _updated[s]
+    if shared.flag_of[s, 'frozen']
+        return s
+    s = shared.set_number[s, 'updates', shared.number_of[s, 'updates'] + 1.0]
+    s = shared.set_number[s, 'shown-a', shared.number_of[s, 'a']]
+    s = shared.set_number[s, 'shown-b', shared.number_of[s, 'b']]
+    shared.set_flag[s, 'shown-frozen', false]
+
+--- ---- Shadow DOM (docs/components/shadow-dom) ----
+
+--- a slot's fallback: shown while nothing is slotted, and gone once a
+--- child is
+fn docs_slots_view[s, t]
+    slotted = not shared.flag_of[s, 'removed']
+    inside = gui.text['Fallback content']
+    words = 'Remove child'
+    if slotted
+        inside = gui.text['Slotted child']
+    else
+        words = 'Add child'
+    gui.column[[shared.titled[3, 'A slot and its fallback', '', ''], gui.panel[[inside]], gui.button['slot-toggle', words]]]
+
+fn docs_slots_answered[s, e, t]
+    if e.id eq 'slot-toggle' and e.act eq 'press'
+        return shared.set_flag[s, 'removed', not shared.flag_of[s, 'removed']]
+    s
+
+--- ---- Localization (docs/localization, runtime mode) ----
+
+--- the example's messages in each locale it has
+fn _message[locale]
+    if locale eq 'es'
+        return '¡Hola, Mundo!'
+    'Hello, World!'
+
+--- a locale switched while the page runs: Spanish is loading for a tenth
+--- of a second each time it is asked for (the old locale is still the
+--- locale meanwhile), then ready, and the messages are its; English, the
+--- source locale, is there at once
+fn docs_localize_view[s, t]
+    locale = shared.words_of[s, 'locale', 'en']
+    status = 'ready'
+    wanted = shared.words_of[s, 'wanted', locale]
+    if wanted ne locale
+        if t lt shared.number_of[s, 'asked-at'] + 100.0
+            status = 'loading `wanted`'
+        else
+            locale = wanted
+    gui.column[[shared.titled[3, _message[locale], '', ''], gui.text['Locale: `locale` (`status`)'], gui.row[[gui.button['loc-en', 'English'], gui.button['loc-es', 'Español']]]]]
+
+--- the locale the example shows at `t`, settled
+fn settled_locale[s, t]
+    locale = shared.words_of[s, 'locale', 'en']
+    wanted = shared.words_of[s, 'wanted', locale]
+    if wanted ne locale and t gte shared.number_of[s, 'asked-at'] + 100.0
+        return wanted
+    locale
+
+fn docs_localize_answered[s, e, t]
+    if e.act ne 'press' or not (e.id eq 'loc-en' or e.id eq 'loc-es')
+        return s
+    wanted = 'en'
+    if e.id eq 'loc-es'
+        wanted = 'es'
+    s = shared.set_words[s, 'locale', settled_locale[s, t]]
+    if wanted eq 'en' or wanted eq shared.words_of[s, 'locale', 'en']
+        s = shared.set_words[s, 'locale', wanted]
+        return shared.set_words[s, 'wanted', wanted]
+    s = shared.set_words[s, 'wanted', wanted]
+    shared.set_number[s, 'asked-at', t]
+
+--- the part's trees shown on a canvas
+fn shown_on[c, s, t]
+    gui.show[c, docs_events_view[s, t]]

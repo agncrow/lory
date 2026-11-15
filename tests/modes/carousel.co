@@ -1,0 +1,157 @@
+--- What lory.carousel works out, written out, to diff the interpreter's
+--- run against the compiled program's: for carousels of several settings,
+--- driven by the same acts at the same times, the slide shown, the track's
+--- offsets, the slides it stands (clones among them), the dots, the
+--- arrows and what it told; then the panes' steps, Vuetify's swipe ways,
+--- the ticker's copies, and a carousel, panes, a slide group and a ticker
+--- drawn by gui over frames of input.
+use lory
+use lory.gui
+use lory.carousel
+
+fn _digits[x]
+    fmt[x, decimals = 17]
+
+fn _b[x]
+    if x
+        return 1
+    0
+
+fn _slots[k]
+    out = slice[[''], 0, 0]
+    for one in carousel.slots_of[k]
+        out = push[out, '`one.index`:`_b[one.active]``_b[one.cloned]``_b[one.current]``_b[one.loaded]`:`_digits[one.alpha]`']
+    join[out, ' ']
+
+fn _told[k]
+    out = slice[[''], 0, 0]
+    for one in carousel.told_of[k]
+        out = push[out, '`one.what`(`one.a`,`one.b`,`one.words`)']
+    join[out, ' ']
+
+fn _written[name, k, at]
+    dots = carousel.dots_of[k]
+    log['`name` @`_digits[at]` current `k.current` target `k.target` left `_digits[carousel.track_left[k]]` drawn `_digits[carousel.track_drawn[k, at]]` moving `carousel.track_moving[k]` height `_digits[carousel.adapted_height[k]]` dots `dots.count`/`dots.active` arrows `_b[carousel.arrows_shown[k]]``_b[carousel.previous_off[k]]``_b[carousel.next_off[k]]`']
+    log['`name` slots `_slots[k]`']
+    log['`name` told `_told[k]`']
+
+struct Act [what, index, at]
+
+--- a carousel of `n` slides mounted at 0 ms and driven by `acts` (what,
+--- index, at), written out after each and at its end
+fn _driven[name, s, n, acts]
+    heights = slice[[0.0], 0, 0]
+    widths = slice[[0.0], 0, 0]
+    i = 0
+    while i lt n
+        heights = push[heights, 100.0 + 17.0 * (i % 3)]
+        widths = push[widths, 120.0 + 31.0 * (i % 4)]
+        i = i + 1
+    k = carousel.mount_at[s, n, 600.0, heights, widths, 0.0]
+    _written[name, k, 0.0]
+    for act in acts
+        at = act.at
+        k = carousel.advanced[k, at]
+        what = act.what
+        if what eq 'down' or what eq 'move' or what eq 'up'
+            k = carousel.pointed[k, what, 'touch', act.index + 0.0, 50.0, at]
+        else if what eq 'resize'
+            k = carousel.resized[k, act.index + 0.0, heights, widths, at]
+        else
+            k = carousel.acted[k, what, act.index, at]
+        _written['`name` `what`', k, at]
+        k = carousel.untold[k]
+    k = carousel.advanced[k, 20000.0]
+    _written['`name` end', k, 20000.0]
+
+acts = [Act['next', 0, 100.0], Act['next', 0, 250.0], Act['next', 0, 900.0], Act['previous', 0, 1600.0], Act['dot', 3, 2400.0], Act['go', 1, 3200.0], Act['go_now', 4, 3300.0], Act['down', 400, 4000.0], Act['move', 380, 4016.0], Act['move', 300, 4032.0], Act['move', 150, 4048.0], Act['up', 150, 4064.0], Act['key', 37, 5000.0], Act['key', 39, 5600.0], Act['hover', 0, 6000.0], Act['unhover', 0, 6500.0], Act['resize', 480, 7000.0], Act['next', 0, 7100.0]]
+looped = carousel.settings[dots = true]
+_driven['loop', looped, 6, acts]
+_driven['three', carousel.settings[show = 3, scroll = 2, dots = true], 7, acts]
+_driven['finite', carousel.settings[infinite = false, show = 2, dots = true], 5, acts]
+_driven['center', carousel.settings[center = true, show = 3, padding = '40px'], 6, acts]
+_driven['fade', carousel.settings[fade = true, dots = true], 4, acts]
+_driven['variable', carousel.settings[variable = true, show = 2], 6, acts]
+_driven['vertical', carousel.settings[vertical = true, show = 2, vertical_swiping = true], 5, acts]
+_driven['rtl', carousel.settings[rtl = true, dots = true], 5, acts]
+_driven['lazy', carousel.settings[lazy = 'ondemand', show = 2], 6, acts]
+_driven['progressive', carousel.settings[lazy = 'progressive', show = 2], 6, acts]
+_driven['adaptive', carousel.settings[adaptive_height = true], 6, acts]
+_driven['autoplay', carousel.settings[autoplay = true, autoplay_speed = 700.0, ease = 'linear'], 4, acts]
+_driven['swipe_to_slide', carousel.settings[swipe_to_slide = true, show = 3], 8, acts]
+_driven['rows', carousel.settings[rows = 2, per_row = 2, show = 1], 9, acts]
+_driven['edge', carousel.settings[infinite = false, edge_friction = 0.5], 3, acts]
+for width in [300.0, 600.0, 1023.0, 1024.0, 1400.0]
+    s = carousel.at_width[carousel.settings[show = 4], [carousel.breakpoint[1024.0, carousel.settings[show = 3]], carousel.breakpoint[600.0, carousel.settings[show = 1, unslick = true]]], width]
+    log['responsive `_digits[width]` show `s.show` unslick `s.unslick` groups `carousel.grouped[s, 10]`']
+
+--- the panes' steps and swipes, and a ticker's copies
+for count in [1, 3, 5]
+    for index in [0, 1, 4]
+        for way in [-1, 1]
+            log['step `count` `index` `way` `carousel.step_to[index, count, way, false]` `carousel.step_to[index, count, way, true]`']
+for move in [[100.0, 100.0, 60.0, 110.0], [100.0, 100.0, 120.0, 100.0], [100.0, 100.0, 100.0, 70.0], [0.0, 0.0, 30.0, 20.0], [0.0, 0.0, -10.0, 0.0]]
+    log['swipe `carousel.swipe_way[move[0], move[1], move[2], move[3]]`']
+for room in [100.0, 852.0, 2000.0]
+    log['copies `_digits[room]` `carousel.ticker_copies[room, 637.0, 180.0, 10.0]` `carousel.ticker_copies[room, 60.0, 60.0, 0.0]`']
+
+--- drawn over frames: a carousel swiped by a touch, panes stepped by their
+--- arrow, a slide group paged and a ticker ticking
+fn _screen[t, given]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _kids[name, n]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, gui.button['`name`:`i`', 'Choice number `i`']]
+        i = i + 1
+    out
+
+--- a mouse's click in the middle of a box
+fn _click_on[box]
+    x = box[0] + box[2] / 2.0
+    y = box[1] + box[3] / 2.0
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _box[boxes, id]
+    if id in boxes
+        return boxes[id]
+    [0.0, 0.0, 0.0, 0.0]
+
+fn _input_at[frame, boxes]
+    if frame eq 60
+        return _click_on[_box[boxes, 'win:next']]
+    if frame eq 80
+        return _click_on[_box[boxes, 'chips:next']]
+    if frame eq 100
+        return _click_on[_box[boxes, 'chip:9']]
+    if frame eq 10
+        return '[{"type": "down", "device": "touch", "id": 1, "x": 600, "y": 40, "button": 0}]'
+    if frame gt 10 and frame lt 20
+        return '[{"type": "move", "device": "touch", "id": 1, "x": `600 - 30 * (frame - 10)`, "y": 40, "button": 0}]'
+    if frame eq 20
+        return '[{"type": "up", "device": "touch", "id": 1, "x": 300, "y": 40, "button": 0}]'
+    '[]'
+
+gui.unfocus[]
+index = 0
+frame = 0
+boxes = gui.show[_screen[0.0, '[]'], gui.space[0.0]].boxes
+while frame lt 120
+    t = 1000.0 + 16.0 * frame
+    c = _screen[t, _input_at[frame, boxes]]
+    tree = gui.column[[carousel.carousel[c, 'hero', _kids['slide', 5], carousel.settings[dots = true]], carousel.panes[c, 'win', _kids['pane', 3], index], carousel.slide_group[c, 'chips', _kids['chip', 12]], carousel.ticker[c, 'tick', _kids['tick', 4]]]]
+    shown = gui.show[c, tree]
+    index = carousel.pane_after[shown, 'win', index]
+    boxes = shown.boxes
+    k = carousel.state_of['hero']
+    events = slice[[''], 0, 0]
+    for ev in shown.events
+        events = push[events, '`ev.id`:`ev.act`:`ev.words`:`_digits[ev.num]`']
+    chosen = carousel.chosen_of['chips']
+    scrolled = _digits[carousel.group_offset['chips', t]]
+    offset = _digits[carousel.ticker_offset['tick']]
+    told = join[events, ' ']
+    log['frame `frame` hero `k.current` `_digits[carousel.track_drawn[k, t]]` win `index` chips `chosen` at `scrolled` tick `offset` told `told`']
+    frame = frame + 1

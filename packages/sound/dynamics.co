@@ -1,0 +1,270 @@
+--- Dynamics: Tone's compressor, limiter and gate, and its compressors of
+--- three bands and of a middle and sides. A compressor turns down what
+--- is louder than its threshold, by its ratio above a soft knee, as the
+--- page's DynamicsCompressorNode does: its curve is the page's (straight
+--- below the threshold, an exponential bend over the knee, then the ratio
+--- in decibels), its makeup gain the page's (the curve's answer to a full
+--- level, inverted, to the power 0.6), and it hears 6 ms ahead of what it
+--- turns down. How fast it turns down and back up is a plain envelope of
+--- this module's own (three quarters of the way in the attack time; back
+--- up with the release time as its time constant), so what is held to the
+--- page is where a steady sound settles, not the shape of the way there.
+---
+---     c = dynamics.compressor[]
+---     out = dynamics.compressed[c, loud]
+---
+--- A gate lets a sound through while a follower of its size (a one-pole
+--- lowpass of it) is above the threshold, and nothing while it is not.
+
+use math
+use sound
+use signal
+use filter
+
+--- a compressor: its threshold (dB), its ratio above the knee, its attack
+--- and release (seconds), and the knee's width (dB)
+struct Compressor [threshold, ratio, attack, release, knee]
+
+--- a gate: its threshold (dB) and how slowly its follower follows
+--- (seconds)
+struct Gate [threshold, smoothing]
+
+--- Tone's compressor: -24 dB, 12 to 1, attack 3 ms, release 0.25 s,
+--- knee 30 dB
+fn compressor[]
+    Compressor[-24.0, 12.0, 0.003, 0.25, 30.0]
+
+--- a compressor of these settings
+fn compressor_of[threshold, ratio, attack, release, knee]
+    Compressor[0.0 + threshold, 0.0 + ratio, 0.0 + attack, 0.0 + release, 0.0 + knee]
+
+--- Tone's limiter: a compressor of 20 to 1 from `threshold` dB (Tone's
+--- default -12), attack 3 ms, release 10 ms
+fn limiter[threshold]
+    Compressor[0.0 + threshold, 20.0, 0.003, 0.01, 30.0]
+
+--- Tone's gate: -40 dB, following over 0.1 s
+fn gate[]
+    Gate[-40.0, 0.1]
+
+--- a gate of this threshold (dB) and smoothing (seconds)
+fn gate_of[threshold, smoothing]
+    Gate[0.0 + threshold, 0.0 + smoothing]
+
+--- ---- the curve ----
+
+fn _db[x]
+    20.0 * log10[x]
+
+--- the knee's bend at a level (linear): the level itself below the
+--- threshold, and above it a curve that leaves the threshold rising as
+--- the level does and bends over by `k`
+fn _bent[c, k, x]
+    t = sound.gain_of[c.threshold]
+    if x lt t
+        return x
+    t + (1.0 - exp[(t - x) * k]) / k
+
+--- how steeply (in decibels out per decibel in) the knee's bend rises at a
+--- level
+fn _slope_at[c, k, x]
+    t = sound.gain_of[c.threshold]
+    if x lt t
+        return 1.0
+    x * exp[(t - x) * k] / _bent[c, k, x]
+
+--- how sharply the knee bends: the `k` at which its end rises as steeply
+--- as the ratio (found by halving its logarithm's range)
+fn sharpness_of[c]
+    if c.knee lte 0.0
+        return 1.0
+    x = sound.gain_of[c.threshold + c.knee]
+    low = 0.1
+    high = 10000.0
+    k = 5.0
+    i = 0
+    while i lt 40
+        if _slope_at[c, k, x] lt 1.0 / c.ratio
+            high = k
+        else
+            low = k
+        k = sqrt[low * high]
+        i = i + 1
+    k
+
+--- what the compressor's curve makes of a level (linear, one number): the
+--- knee's bend up to the knee's end, the ratio in decibels above
+fn curve_at[c, x]
+    k = sharpness_of[c]
+    end_db = c.threshold + c.knee
+    if x lt sound.gain_of[end_db]
+        return _bent[c, k, x]
+    sound.gain_of[_db[_bent[c, k, sound.gain_of[end_db]]] + (_db[x] - end_db) / c.ratio]
+
+--- the curve over levels (a tensor), with its sharpness found once
+fn _curve_over[c, k, given]
+    xs = flatten[given]
+    t = sound.gain_of[c.threshold]
+    end_db = c.threshold + c.knee
+    end = sound.gain_of[end_db]
+    bent = where[xs lt t, xs, t + (1.0 - exp[(t - xs) * k]) / k]
+    end_out_db = _db[_bent[c, k, end]]
+    above = exp[((end_out_db + (20.0 * log10[xs] - end_db) / c.ratio) / 20.0) * ln[10.0]]
+    where[xs lt end, bent, above]
+
+--- the gain the compressor adds back: the curve's answer to a full level
+--- (1), inverted, to the power 0.6 (the page's tuning)
+fn makeup_of[c]
+    (1.0 / curve_at[c, 1.0]) ^ 0.6
+
+--- how much the curve turns a steady level down (dB, a level in dB; 0 at
+--- and below the threshold), before the makeup gain
+fn reduction_at[c, db]
+    x = sound.gain_of[db]
+    _db[curve_at[c, x]] - db
+
+--- ---- compressing ----
+
+--- the gain the compressor sets each sample for levels it hears (each the
+--- loudest channel's size): its detector falls at once to the gain the
+--- curve asks and rises back over 2.5 ms; the gain follows the detector,
+--- three quarters of the way down in the attack time, back up with the
+--- release time as its time constant
+fn _gains[c, heard, rate]
+    levels = flatten[heard]
+    n = len[levels]
+    k = sharpness_of[c]
+    safe = where[levels gt 0.0001, levels, 0.0 * levels + 1.0]
+    shaped = _curve_over[c, k, safe]
+    wanted = where[levels gt 0.0001, shaped ./ safe, 0.0 * levels + 1.0]
+    down = 1.0 - 0.25 ^ (1.0 / (max[0.001, c.attack] * rate))
+    up = 1.0 - exp[-1.0 / (max[0.001, c.release] * rate)]
+    settle = 0.0025 * rate
+    detector = 1.0
+    gain = 1.0
+    out = zeros[n]
+    i = 0
+    while i lt n
+        a = wanted[i]
+        if a lt detector
+            detector = a
+        else
+            step_db = max[2.0, -20.0 * log10[a]] / settle
+            detector = min[1.0, detector + (a - detector) * (10.0 ^ (step_db / 20.0) - 1.0)]
+        if detector lt gain
+            gain = gain + (detector - gain) * down
+        else
+            gain = gain + (detector - gain) * up
+        out[i] = gain
+        i = i + 1
+    out
+
+--- samples later by `count` zeros, as long as they were with the delay's
+--- room added
+fn _later[xs, count]
+    concat[zeros[count], xs]
+
+--- a sound through a compressor: what it hears 6 ms ahead (its loudest
+--- channel) sets a gain it turns the sound down by, times its makeup gain;
+--- the answer is 6 ms longer than the sound
+fn compressed[c, s]
+    rate = s.rate
+    ahead = sound.frames_in[rate, 0.006]
+    levels = abs[s.left]
+    if s.stereo
+        levels = where[abs[s.left] - abs[s.right] gt 0.0, abs[s.left], abs[s.right]]
+    gains = concat[zeros[ahead] + 1.0, _gains[c, levels, rate]] * makeup_of[c]
+    if s.stereo
+        return sound.stereo[rate, _later[s.left, ahead] .* gains, _later[s.right, ahead] .* gains]
+    sound.mono[rate, _later[s.left, ahead] .* gains]
+
+--- a sound through a limiter (a compressor of 20 to 1)
+fn limited[threshold, s]
+    compressed[limiter[threshold], s]
+
+--- a sound split in three bands (Tone's MultibandCompressor splits at
+--- 250 and 2000 Hz), each through its own compressor, and summed: Tone's
+--- bands' compressors are 6 to 1 from -30 dB below (attack 30 ms,
+--- release 0.25 s, knee 10 dB) and 3 to 1 from -24 dB in the middle and
+--- above (attack 20 ms, release 30 ms, knee 16 dB)
+fn multiband_compressed[s, low_frequency, high_frequency, low, middle, high]
+    rate = s.rate
+    one = sound.narrowed[s]
+    parts = filter.bands[one.left, rate, low_frequency, high_frequency, 1.0]
+    a = compressed[low, sound.mono[rate, parts[0]]]
+    b = compressed[middle, sound.mono[rate, parts[1]]]
+    c = compressed[high, sound.mono[rate, parts[2]]]
+    sound.mono[rate, a.left + b.left + c.left]
+
+--- the three compressors Tone's MultibandCompressor starts with
+fn multiband_defaults[]
+    [compressor_of[-30.0, 6.0, 0.03, 0.25, 10.0], compressor_of[-24.0, 3.0, 0.02, 0.03, 16.0], compressor_of[-24.0, 3.0, 0.02, 0.03, 16.0]]
+
+--- a sound's middle and sides compressed apart and joined again (Tone's
+--- MidSideCompressor: the middle 3 to 1 from -24 dB, the sides 6 to 1
+--- from -30 dB); a sound of one channel splits as the left alone
+fn mid_side_compressed[s, middle, sides]
+    rate = s.rate
+    right = zeros[len[s.left]]
+    if s.stereo
+        right = s.right
+    m = compressed[middle, sound.mono[rate, (s.left + right) * sqrt[0.5]]].left
+    d = compressed[sides, sound.mono[rate, (s.left - right) * sqrt[0.5]]].left
+    sound.stereo[rate, (m + d) * sqrt[0.5], (m - d) * sqrt[0.5]]
+
+--- the curve Tone's comparison with nothing lays (127 points: nothing up
+--- to nothing, one beyond), read at ten thousand times a difference
+fn _above_curve[]
+    x = (0.0 + range[127]) / 126.0 * 2.0 - 1.0
+    where[x gt 0.0, 0.0 * x + 1.0, 0.0 * x]
+
+--- one channel's gate: 1 while its follower is above the threshold
+fn _opened[g, xs, rate]
+    size = abs[xs]
+    followed = filter.one_pole['lowpass', 1.0 / g.smoothing, size, rate]
+    signal.waveshaped[(followed - sound.gain_of[g.threshold]) * 10000.0, _above_curve[]]
+
+--- a sound through a gate: heard while its follower is above the
+--- threshold (a sound of two channels opened by the two channels' gates
+--- averaged, as the page folds what sets a gain into one)
+fn gated[g, s]
+    rate = s.rate
+    if not s.stereo
+        return sound.mono[rate, s.left .* _opened[g, s.left, rate]]
+    open_by = (_opened[g, s.left, rate] + _opened[g, s.right, rate]) * 0.5
+    sound.stereo[rate, s.left .* open_by, s.right .* open_by]
+
+--- ---- tests ----
+
+test the_curve_is_straight_below_and_the_ratio_above[]
+    c = compressor[]
+    abs[curve_at[c, 0.01] - 0.01] lt 0.000000001
+    abs[reduction_at[c, -30.0]] lt 0.000000001
+    abs[_slope_at[c, sharpness_of[c], sound.gain_of[c.threshold + c.knee]] - 1.0 / 12.0] lt 0.0001
+    hard = compressor_of[-24.0, 12.0, 0.003, 0.25, 0.0]
+    abs[(reduction_at[hard, 0.0] - reduction_at[hard, -3.0]) - (3.0 / 12.0 - 3.0)] lt 0.000001
+    abs[reduction_at[hard, 0.0] - (24.0 / 12.0 - 24.0)] lt 0.000001
+    makeup_of[c] gt 1.0
+    abs[makeup_of[c] - (1.0 / curve_at[c, 1.0]) ^ 0.6] lt 0.000000001
+
+test a_loud_sine_settles_where_the_curve_says[]
+    rate = 8000.0
+    xs = sin[(0.0 + range[4000]) * (2.0 * pi * 200.0 / rate)] * 0.9
+    c = compressor[]
+    out = compressed[c, sound.mono[rate, xs]].left
+    tail = slice[out, 3000, 4000]
+    peak = max[abs[tail]]
+    abs[peak - curve_at[c, 0.9] * makeup_of[c]] lt 0.01
+    len[out] eq 4000 + 48
+    quiet = compressed[c, sound.mono[rate, xs * 0.01]].left
+    abs[max[abs[slice[quiet, 3000, 4000]]] - 0.009 * makeup_of[c]] lt 0.0001
+
+test a_gate_shuts_on_what_is_quiet[]
+    rate = 8000.0
+    loud = sin[(0.0 + range[800]) * (2.0 * pi * 200.0 / rate)] * 0.5
+    quiet = loud * 0.001
+    out = gated[gate[], sound.mono[rate, concat[loud, quiet]]].left
+    max[abs[slice[out, 400, 800]]] gt 0.49
+    max[abs[slice[out, 1500, 1600]]] eq 0.0
+    l = limited[-12.0, sound.mono[rate, loud]]
+    len[l.left] eq 848

@@ -1,0 +1,355 @@
+--- Solid's Form Validation (solid-site's forms): a sign-up form of an
+--- email, a password and the password again, each checked as the reader
+--- leaves it. A field must be filled; the email must be one, and must not
+--- be an address already taken, which is asked of a pretend server that
+--- answers after 200 ms; the password must be 8 characters or more; the
+--- second must match the first. A field that fails shows why under it and
+--- is marked; typing in it takes both away. Submitting checks every field
+--- in turn (the email's answer awaited), puts the reader in the first that
+--- fails, and, where none does, logs "Done".
+---
+--- The browser's own checks are written here as Chrome words them (a field
+--- left empty, an address without its `@` or a part of it, a password too
+--- short), since the example shows the browser's words. Lory's gui tells
+--- no field's leaving, so the example follows where the reader is from the
+--- presses and Tab it is handed: a press outside the field the reader is
+--- in leaves it.
+use lory
+use lory.gui
+
+--- a field: its name, what it holds, the error it shows ('' for none) and
+--- whether it is marked as failed
+struct Field [name, value, error, glow]
+
+--- an email's check waiting for the server's answer: when it comes, the
+--- address asked about, and whether a submission waits on it
+struct Waiting [due, value, submit]
+
+--- the three fields; the password as the form keeps it (each time it is
+--- typed in); the field or control the reader is in ('' for none); the
+--- checks waiting; and what was logged
+struct State [fields, password, focus, waiting, logged]
+
+fn _names[]
+    ['email', 'password', 'confirmpassword']
+
+fn _no_waiting[]
+    slice[[Waiting[0.0, '', false]], 0, 0]
+
+fn fresh[at]
+    fields = for name in _names[]
+        Field[name, '', '', false]
+    State[fields, '', '', _no_waiting[], slice[[''], 0, 0]]
+
+--- the addresses the pretend server knows as taken (the example's own)
+fn taken[]
+    ['johnsmith@outlook.com', 'mary@gmail.com', 'djacobs@move.org']
+
+--- how long the server takes to answer, ms
+fn answer_ms[]
+    200.0
+
+fn _place[name]
+    i = 0
+    while i lt 3
+        if _names[][i] eq name
+            return i
+        i = i + 1
+    -1
+
+fn _local_chars[]
+    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&\'*+/=?^_\`{|}~.-'
+
+fn _domain_chars[]
+    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-'
+
+--- the first character of `part` not among `allowed`, '' where none is
+fn _odd_one[part, allowed]
+    odd = for ch in split[part, '']
+        if not (ch in allowed)
+            ch
+    if len[odd] eq 0
+        return ''
+    odd[0]
+
+--- whether a domain's labels are each letters, digits and hyphens, not
+--- beginning or ending with a hyphen, at most 63 long
+fn _labels_sound[domain]
+    bad = for label in split[domain, '.']
+        n = len[label]
+        if n eq 0 or n gt 63 or starts[label, '-'] or ends[label, '-']
+            label
+    len[bad] eq 0
+
+--- what the browser says of an address that is not one, '' where it is
+fn email_said[value]
+    if not ('@' in value)
+        return 'Please include an \'@\' in the email address. \'`value`\' is missing an \'@\'.'
+    at = split[value, '@']
+    local = at[0]
+    domain = join[slice[at, 1, len[at]], '@']
+    if local eq ''
+        return 'Please enter a part followed by \'@\'. \'`value`\' is incomplete.'
+    if domain eq ''
+        return 'Please enter a part following \'@\'. \'`value`\' is incomplete.'
+    odd = _odd_one[local, _local_chars[]]
+    if odd ne ''
+        return 'A part followed by \'@\' should not contain the symbol \'`odd`\'.'
+    odd = _odd_one[domain, _domain_chars[]]
+    if odd ne ''
+        return 'A part following \'@\' should not contain the symbol \'`odd`\'.'
+    if starts[domain, '.'] or ends[domain, '.'] or '..' in domain
+        return '\'.\' is used at a wrong position in \'`domain`\'.'
+    if not _labels_sound[domain]
+        return 'Please enter an email address.'
+    ''
+
+--- what the browser's own checks say of a field, '' where it passes: it
+--- must be filled, an email must be an address, and the password must be
+--- 8 characters or more
+fn native[name, value]
+    if name eq 'email'
+        v = trim[value]
+        if v eq ''
+            return 'Please fill out this field.'
+        return email_said[v]
+    if value eq ''
+        return 'Please fill out this field.'
+    if name eq 'password'
+        n = len[split[value, '']]
+        if n lt 8
+            unit = 'characters'
+            if n eq 1
+                unit = 'character'
+            return 'Please lengthen this text to 8 characters or more (you are currently using `n` `unit`).'
+    ''
+
+--- what the server's answer says of an address
+fn answered[value]
+    if trim[value] in taken[]
+        return '`trim[value]` is already being used'
+    ''
+
+--- a field's check come to an end: a message shows, and marks it; none
+--- leaves the field as it was (only typing takes an error away)
+fn _checked[s, name, message]
+    if message ne ''
+        i = _place[name]
+        s.fields[i].error = message
+        s.fields[i].glow = true
+    s
+
+--- what a field's check says at once: the browser's own, then, where it
+--- passes, the second password must match the first ('' where it
+--- passes; an email that passes waits for the server instead)
+fn _said_now[s, name]
+    value = s.fields[_place[name]].value
+    message = native[name, value]
+    if message eq '' and name eq 'confirmpassword' and value ne s.password
+        message = 'Passwords must Match'
+    message
+
+--- a field's check begun at `at` as the reader leaves it: an email the
+--- browser passes waits for the server's answer
+fn _check[s, name, at]
+    message = _said_now[s, name]
+    if message eq '' and name eq 'email'
+        s.waiting = push[s.waiting, Waiting[at + answer_ms[], s.fields[0].value, false]]
+        return s
+    _checked[s, name, message]
+
+--- the reader put in a field, as the submission puts them in the first
+--- that fails (its typing going on from what it holds)
+fn _put_in[s, name, at]
+    gui.focus['forms.`name`', s.fields[_place[name]].value]
+    _moved[s, name, at]
+
+--- a submission's checks from the field `from` on, in turn: the first
+--- that fails is given the reader (`failed`: one before did), an email the
+--- browser passes is waited on, and none failing logs "Done"
+fn _submitted[s, from, failed, at]
+    i = from
+    while i lt 3
+        name = _names[][i]
+        message = _said_now[s, name]
+        if message eq '' and name eq 'email'
+            s.waiting = push[s.waiting, Waiting[at + answer_ms[], s.fields[0].value, true]]
+            return s
+        s = _checked[s, name, message]
+        if not failed and message ne ''
+            s = _put_in[s, name, at]
+            failed = true
+        i = i + 1
+    if not failed
+        s.logged = push[s.logged, 'Done']
+    s
+
+--- the reader moved to the control `id` names ('' for none): a field left
+--- is checked
+fn _moved[s, to, at]
+    if to eq s.focus
+        return s
+    left = s.focus
+    s.focus = to
+    if left in _names[]
+        s = _check[s, left, at]
+    s
+
+--- the checks whose answers have come by `at`, in the order they were
+--- asked: a message shows, and a submission waiting goes on
+fn before[s, at]
+    while len[s.waiting] gt 0 and s.waiting[0].due lte at
+        w = s.waiting[0]
+        s.waiting = slice[s.waiting, 1, len[s.waiting]]
+        message = answered[w.value]
+        if message eq ''
+            message = native['email', s.fields[0].value]
+        s = _checked[s, 'email', message]
+        if w.submit
+            failed = false
+            if message ne ''
+                s = _put_in[s, 'email', w.due]
+                failed = true
+            s = _submitted[s, 1, failed, w.due]
+    s
+
+--- the control at a point of the page (CSS pixels), '' where none is
+fn _control_at[boxes, x, y]
+    ids = push[_names[], 'submit']
+    at = for name in ids
+        id = 'forms.`name`'
+        if id in boxes
+            b = boxes[id]
+            if x gte b[0] and x lt b[0] + b[2] and y gte b[1] and y lt b[1] + b[3]
+                name
+    if len[at] eq 0
+        return ''
+    at[0]
+
+--- the control Tab moves to from `from` (Shift: back), '' past the ends
+fn _tabbed_from[from, back]
+    order = push[_names[], 'submit']
+    i = 0
+    found = -1
+    while i lt len[order]
+        if order[i] eq from
+            found = i
+        i = i + 1
+    if found lt 0
+        return ''
+    next = found + 1
+    if back
+        next = found - 1
+    if next lt 0 or next gte len[order]
+        return ''
+    order[next]
+
+--- a failed field's mark: a line in the look's danger colour under it
+fn marked[d]
+    d.c = lory.rect[d.c, d.x, d.y, d.w, d.h, d.look.danger]
+    d
+
+fn _field_block[s, i]
+    f = s.fields[i]
+    kind = 'password'
+    hint = 'Password'
+    if f.name eq 'email'
+        kind = 'text'
+        hint = 'Email'
+    if f.name eq 'confirmpassword'
+        hint = 'Confirm password'
+    field = gui.sized[gui.field['forms.`f.name`', f.value, kind = kind, hint = hint], 280.0]
+    under = gui.space[2.0]
+    if f.glow
+        under = gui.drawn['', 1.0, 280.0, 2.0, marked]
+    parts = [field, under]
+    if f.error ne ''
+        parts = push[parts, gui.text[f.error, 13.0, tone = 'danger']]
+    gui.column[parts, gap = 2.0]
+
+fn tree[s, at, dark]
+    blocks = for i in range[3]
+        _field_block[s, i]
+    gui.column[concat[[gui.text['Sign up', 26.0]], blocks, [gui.button['forms.submit', 'Submit']]], gap = 12.0]
+
+fn after[s, shown, at]
+    c = shown.canvas
+    k = lory.px[c]
+    for e in lory.events[c]
+        if e.on eq 'down'
+            s = _moved[s, _control_at[shown.boxes, e.x / k, e.y / k], at]
+        if e.on eq 'key' and e.key eq 'Tab'
+            s = _moved[s, _tabbed_from[s.focus, e.shift], at]
+    for e in shown.events
+        i = 0
+        while i lt 3
+            name = _names[][i]
+            if e.id eq 'forms.`name`' and e.act eq 'edit'
+                s.fields[i].value = e.words
+                if name eq 'password'
+                    s.password = e.words
+                if s.fields[i].error ne ''
+                    s.fields[i].error = ''
+                    s.fields[i].glow = false
+            --- (Enter in a field submits the form)
+            if e.id eq 'forms.`name`' and e.act eq 'submit'
+                s = _submitted[s, 0, false, at]
+            i = i + 1
+        if e.id eq 'forms.submit' and e.act eq 'press'
+            s = _submitted[s, 0, false, at]
+    s
+
+--- what the example shows, as tests/solid/reference.json records Solid's
+fn seen[s, at]
+    errors = for f in s.fields
+        '`encode[f.name]`: `encode[f.error]`'
+    glows = for f in s.fields
+        '`encode[f.name]`: `encode[f.glow]`'
+    e = join[errors, ', ']
+    g = join[glows, ', ']
+    '{"t": `encode[at]`, "errors": {`e`}, "glow": {`g`}, "focus": `encode[s.focus]`, "logged": `encode[s.logged]`}'
+
+--- a page 1000 by 900 at `t` ms with no input, as the page hands a frame
+fn _page[t]
+    json['{"t": `t`, "width": 1000, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 900, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+test an_address_is_checked_as_chrome_checks_it[]
+    email_said['abc'] eq 'Please include an \'@\' in the email address. \'abc\' is missing an \'@\'.'
+    email_said['@b.org'] eq 'Please enter a part followed by \'@\'. \'@b.org\' is incomplete.'
+    email_said['abc@'] eq 'Please enter a part following \'@\'. \'abc@\' is incomplete.'
+    email_said['a b@c.org'] eq 'A part followed by \'@\' should not contain the symbol \' \'.'
+    email_said['a@b..org'] eq '\'.\' is used at a wrong position in \'b..org\'.'
+    email_said['mary@gmail.com'] eq ''
+
+test a_password_is_counted_as_chrome_counts_it[]
+    native['password', 'a'] eq 'Please lengthen this text to 8 characters or more (you are currently using 1 character).'
+    native['password', 'abc'] eq 'Please lengthen this text to 8 characters or more (you are currently using 3 characters).'
+    native['password', 'abcdefgh'] eq ''
+    native['confirmpassword', ''] eq 'Please fill out this field.'
+
+test a_taken_address_is_told_when_the_server_answers[]
+    s = fresh[0.0]
+    s.fields[0].value = 'mary@gmail.com'
+    s.focus = 'email'
+    s = _moved[s, 'password', 0.0]
+    before[s, 199.0].fields[0].error eq ''
+    before[s, 200.0].fields[0].error eq 'mary@gmail.com is already being used'
+
+test a_sound_form_logs_done_once_the_server_has_answered[]
+    gui.unfocus[]
+    s = fresh[0.0]
+    s.fields[0].value = 'new@person.org'
+    s.fields[1].value = 'abcdefgh'
+    s.fields[2].value = 'abcdefgh'
+    s.password = 'abcdefgh'
+    s = _submitted[s, 0, false, 10.0]
+    len[before[s, 209.0].logged] eq 0
+    before[s, 210.0].logged eq ['Done']
+
+test its_fields_are_drawn[]
+    s = fresh[0.0]
+    s.fields[1].glow = true
+    s.fields[1].error = 'Please fill out this field.'
+    shown = gui.show[lory.begin[_page[0.0]], tree[s, 0.0, false]]
+    'forms.confirmpassword' in shown.boxes
+    'forms.submit' in shown.boxes

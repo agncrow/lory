@@ -1,0 +1,413 @@
+--- A data table drawn by Lory: three hundred people, their names made up
+--- from syllables, searched as you type, sorted by a press on a column's
+--- button (again to turn it round, a third time to stop), paged ten,
+--- twenty-five or fifty to a page, and grouped by team or by city, each
+--- group showing how many it holds, their mean age and their total score.
+--- Pressing a group's row opens it; pressing a person's row selects them.
+--- Every answer is lory.datatable's; the drawing is gui's table, field,
+--- select and button. The table is kept in process memory between frames,
+--- with the rows it shows, which are worked out again only after a change.
+--- In a headset the page is 560 pixels high, so the table is drawn shorter
+--- there; the ray presses its controls, and the thumbstick scrolls the
+--- table's rows as a wheel does on a screen.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.datatable as dt
+
+--- The program's state: the table, and what it shows (the header, the
+--- page's rows as text and their ids, and the words under it).
+struct App [table, header, rows, ids, words]
+
+fn _syllable[n]
+    ['ka', 'lo', 'mi', 'ra', 'ten', 'vo', 'shi', 'an', 'bel', 'dor', 'el', 'fin', 'gar', 'hal', 'ix', 'jo', 'ny', 'ost', 'pe', 'qui', 'ru', 'sa', 'tor', 'ul', 'ven', 'wy', 'zo'][n % 27]
+
+fn _capital[w]
+    if w eq ''
+        return w
+    letters = split[w, '']
+    letters[0] = upper[letters[0]]
+    join[letters, '']
+
+--- The next draw of a small generator of whole numbers (a linear
+--- congruence), so every run makes the same people.
+fn _drawn[seed]
+    (seed * 1103515245 + 12345) % 2147483648
+
+fn _named[seed, parts]
+    out = ''
+    s = seed
+    for i in range[parts]
+        s = _drawn[s]
+        out = '`out``_syllable[s / 65536]`'
+    _capital[out]
+
+fn people[n]
+    out = []
+    s = 7
+    teams = ['red', 'green', 'blue', 'gold']
+    cities = ['Oslo', 'Lima', 'Kyoto', 'Accra', 'Quito', 'Perth']
+    for i in range[n]
+        s = _drawn[s]
+        first = _named[s, 2]
+        s = _drawn[s]
+        last = _named[s, 2 + i % 2]
+        s = _drawn[s]
+        age = 18 + (s / 65536) % 60
+        s = _drawn[s]
+        score = ((s / 65536) % 1000) / 10.0
+        cells = map[name = dt.words['`first` `last`'], age = dt.number[age], team = dt.words[teams[(s / 7) % 4]], city = dt.words[cities[(s / 11) % 6]]]
+        cells = set[cells, 'score', dt.number[score]]
+        out = push[out, dt.row['p`i`', cells]]
+    out
+
+fn columns[]
+    [dt.column['name', 'Name', aggregate_with = 'count'], dt.column['age', 'Age', aggregate_with = 'mean'], dt.column['team', 'Team'], dt.column['city', 'City'], dt.column['score', 'Score', aggregate_with = 'sum']]
+
+fn _shown_number[v, decimals]
+    if v.is ne 'number'
+        return ''
+    fmt[v.num, decimals = decimals]
+
+--- A row as the table shows it: a person's cells, or a group's name, how
+--- many it holds and its sums.
+fn _cells_of[t, r]
+    if not dt.is_group[r]
+        out = []
+        for c in dt.visible_columns[t]
+            v = dt.value_of[r, c]
+            if c.id eq 'score'
+                out = push[out, _shown_number[v, 1]]
+            else
+                out = push[out, dt.shown[v]]
+        return out
+    sign = '+'
+    if dt.is_expanded[t, r.id]
+        sign = '-'
+    out = []
+    for c in dt.visible_columns[t]
+        if c.id eq 'name'
+            out = push[out, '`sign` `r.group` (`len[r.leaves]`)']
+        else if c.id eq r.column
+            out = push[out, '']
+        else if c.id eq 'age'
+            out = push[out, 'mean `_shown_number[dt.value_of[r, c], 1]`']
+        else if c.id eq 'score'
+            out = push[out, 'total `_shown_number[dt.value_of[r, c], 1]`']
+        else
+            out = push[out, '']
+    out
+
+--- The header's words: each column's, with its direction when it sorts.
+fn _header_of[t]
+    out = []
+    for c in dt.visible_columns[t]
+        way = dt.sort_of[t, c.id]
+        if way eq 'asc'
+            out = push[out, '`c.header` (up)']
+        else if way eq 'desc'
+            out = push[out, '`c.header` (down)']
+        else
+            out = push[out, c.header]
+    out
+
+--- What the table shows, worked out again after a change.
+fn refreshed[a]
+    t = a.table
+    m = dt.models[t]
+    rows = []
+    ids = []
+    for r in m.page.rows
+        rows = push[rows, _cells_of[t, r]]
+        ids = push[ids, r.id]
+    count = dt.row_count[t, m]
+    pages = max[1, dt.page_count[t, m]]
+    selected = len[keys[t.state.selected]]
+    first = t.state.page_index * t.state.page_size + 1
+    last = min[(t.state.page_index + 1) * t.state.page_size, count]
+    shown = 'Rows `first` to `last` of `count`, page `t.state.page_index + 1` of `pages`; `selected` selected.'
+    if count eq 0
+        shown = 'Nobody matches; `selected` selected.'
+    App[t, _header_of[t], rows, ids, shown]
+
+fn fresh[]
+    t = dt.new[columns[], people[300]]
+    refreshed[App[t, [], [], [], '']]
+
+--- The state before the first frame: a table of nobody, cheap to make
+--- (memory's default is made each frame it is asked for).
+fn _unmade[]
+    App[dt.new[columns[], slice[people[1], 0, 0]], [], [], [], '']
+
+fn _grouped_by[a]
+    if len[a.table.state.grouping] eq 0
+        return 'no grouping'
+    'by `a.table.state.grouping[0]`'
+
+fn _search_of[a]
+    v = a.table.state.search
+    if v.is eq 'text'
+        return v.words
+    ''
+
+--- The page: the search, the page size and the grouping above a row of
+--- sort buttons, the table `tall` pixels high, and the pager under it.
+fn page_of[a, tall]
+    t = a.table
+    sorts = []
+    for c in dt.visible_columns[t]
+        sorts = push[sorts, gui.button['sort_`c.id`', 'Sort by `lower[c.header]`']]
+    choices = gui.row[[gui.sized[gui.field['search', _search_of[a], hint = 'Search every column'], 260.0], gui.label['Rows a page'], gui.select['size', ['10', '25', '50'], '`t.state.page_size`'], gui.label['Group'], gui.select['group', ['no grouping', 'by team', 'by city'], _grouped_by[a]]]]
+    paging = gui.row[[gui.button['previous', 'Previous'], gui.button['next', 'Next'], gui.note[a.words]]]
+    gui.panel[[gui.heading['People'], gui.note['Three hundred made-up people. Search, sort, page and group them: every answer is lory.datatable\'s.'], choices, gui.row[sorts], gui.table['people', a.header, a.rows, tall], paging]]
+
+--- How tall the table is drawn: what the frame's page leaves it under the
+--- controls above and over the pager below, from 150 to 420 pixels. A
+--- headset's page is 560 high, so there it is 300, and its last row is
+--- scrolled into view.
+fn _table_height[c]
+    max[150.0, min[420.0, c.height - 260.0]]
+
+--- The page's tree for a frame: the table as tall as the frame leaves it,
+--- the panel 900 pixels wide.
+fn page_tree[a, c]
+    gui.sized[page_of[a, _table_height[c]], 900.0]
+
+--- The state after an event: the table changed as the event asks, and
+--- what it shows worked out again when it changed.
+fn applied[a, e]
+    t = a.table
+    changed = true
+    if e.id eq 'search' and e.act eq 'edit'
+        t = dt.search_set[t, dt.words[e.words]]
+    else if e.id eq 'size' and e.act eq 'choose'
+        t = dt.page_size_set[t, int[e.words]]
+    else if e.id eq 'group' and e.act eq 'choose'
+        if e.words eq 'by team'
+            t = dt.grouping_set[t, ['team']]
+        else if e.words eq 'by city'
+            t = dt.grouping_set[t, ['city']]
+        else
+            t = dt.grouping_set[t, []]
+    else if e.id eq 'previous'
+        t = dt.previous_page[t]
+    else if e.id eq 'next'
+        t = dt.next_page[t]
+    else if e.id eq 'people' and e.act eq 'choose'
+        i = int[e.num]
+        if i gte 0 and i lt len[a.ids]
+            id = a.ids[i]
+            if starts[id, 'team:'] or starts[id, 'city:']
+                t = dt.row_expansion_toggled[t, id]
+            else
+                t = dt.row_selection_toggled[t, id]
+    else if starts[e.id, 'sort_']
+        t = dt.sort_toggled[t, replace[e.id, 'sort_', ''], false]
+    else
+        changed = false
+    if not changed
+        return a
+    a.table = t
+    refreshed[a]
+
+--- The state after a frame's events, each applied in turn.
+fn after_frame[a, shown]
+    for e in shown.events
+        a = applied[a, e]
+    a
+
+--- One frame: the state read back from memory (made on the first), the
+--- page shown, its events applied, and the state kept for the next frame.
+fn framed[frame]
+    a = recall['app', _unmade[]]
+    if len[a.table.rows] eq 0
+        a = fresh[]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    shown = gui.show[c, page_tree[a, c]]
+    a = after_frame[a, shown]
+    remember['app', a]
+    shown
+
+fn draw[frame]
+    shown = framed[frame]
+    --- (a page that drives this example, as tests/datatable/browser.py
+    --- does, asks where its controls are by telling it 'boxes')
+    if asked_where[shown.canvas]
+        log[encode[shown.boxes]]
+    lory.end[shown.canvas]
+
+--- whether the page told the program 'boxes' this frame
+fn asked_where[c]
+    asked = false
+    for ev in lory.events[c]
+        if ev.on eq 'told' and ev.words eq 'boxes'
+            asked = true
+    asked
+
+sys.frames[draw]
+
+fn _event[id, act, words, num]
+    gui.Event[id, act, words, num]
+
+test the_first_page_shows_ten_people_as_they_came[]
+    a = fresh[]
+    len[a.rows] eq 10
+    a.ids[0] eq 'p0'
+    a.words eq 'Rows 1 to 10 of 300, page 1 of 30; 0 selected.'
+
+test a_search_keeps_the_people_it_finds_and_goes_back_to_the_first_page[]
+    a = applied[applied[fresh[], _event['next', 'press', '', 0.0]], _event['search', 'edit', 'oslo', 0.0]]
+    a.table.state.page_index eq 0
+    found = true
+    for row in a.rows
+        if row[3] ne 'Oslo'
+            found = false
+    found
+
+test a_press_on_a_sort_button_sorts_by_its_column_then_turns_it_round[]
+    a = applied[fresh[], _event['sort_age', 'press', '', 0.0]]
+    a.header[1] eq 'Age (down)'
+    a.rows[0][1] eq '77'
+    a = applied[a, _event['sort_age', 'press', '', 0.0]]
+    a.rows[0][1] eq '18'
+
+test grouping_by_team_shows_a_row_for_each_team_that_opens[]
+    a = applied[fresh[], _event['group', 'choose', 'by team', 0.0]]
+    len[a.rows] eq 4
+    a = applied[a, _event['people', 'choose', '', 0.0]]
+    len[a.rows] eq 10
+    a.ids[1] ne ''
+
+test pressing_a_person_selects_them[]
+    a = applied[fresh[], _event['people', 'choose', '', 2.0]]
+    a.table.state.selected['p2']
+    a.words eq 'Rows 1 to 10 of 300, page 1 of 30; 1 selected.'
+
+fn screen[given]
+    json['{"t": 0, "width": 1000, "height": 800, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 800, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+--- a mouse's press and release at a point
+fn _click_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+test a_page_that_asks_is_told_where_the_controls_are[]
+    asked_where[lory.begin[screen['[{"type": "told", "text": "boxes"}]']]]
+    not asked_where[lory.begin[screen['[{"type": "told", "text": "other"}]']]]
+    not asked_where[lory.begin[screen['[]']]]
+
+test a_click_on_next_is_a_press_of_next[]
+    gui.unfocus[]
+    c = lory.begin[screen['[]']]
+    a = fresh[]
+    first = gui.show[c, page_tree[a, c]]
+    b = first.boxes['next']
+    c = lory.begin[screen[_click_at[b[0] + 5.0, b[1] + 5.0]]]
+    second = gui.show[c, page_tree[a, c]]
+    len[second.events] eq 1
+    applied[a, second.events[0]].table.state.page_index eq 1
+
+--- with twenty-five rows a page the table is held short and scrolls; a
+--- click on Next under it turns the page and chooses nobody
+test a_click_on_next_under_a_table_held_short_chooses_nobody[]
+    gui.unfocus[]
+    a = applied[fresh[], _event['size', 'choose', '25', 0.0]]
+    c = lory.begin[screen['[]']]
+    first = gui.show[c, page_tree[a, c]]
+    first.boxes['people'][3] eq 420.0
+    b = first.boxes['next']
+    c = lory.begin[screen[_click_at[b[0] + 5.0, b[1] + 5.0]]]
+    second = gui.show[c, page_tree[a, c]]
+    turned = after_frame[a, second]
+    turned.table.state.page_index eq 1
+    len[keys[turned.table.state.selected]] eq 0
+    turned.words eq 'Rows 26 to 50 of 300, page 2 of 12; 0 selected.'
+
+--- A headset's frame at `ms`, its right hand's ray pointed at the page's
+--- point (x, y) of its 1000 by 560 (the page is a panel 2 m wide, 1.5 m
+--- ahead, its top 1.8 m up), its thumbstick pulled `toward` the reader (1;
+--- -1 pushes it away), with the input given; `behind` is what the headset
+--- shows behind the drawing: its own world ('opaque') or the room
+--- ('alpha-blend').
+fn headset_at[ms, x, y, toward, given, behind]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    way = encode[[(0.002 * x - 1.0) / 1.5, (0.55 - 0.002 * y) / 1.5, -1.0]]
+    json['{"t": `ms`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "blend": "`behind`", "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}, {"eye": "right", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": `way`, "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, `toward`]}], "said": []}']
+
+--- the trigger pulled and let go: a press where the ray points
+fn trigger[]
+    '[{"type": "down", "device": "ray", "id": "right"}, {"type": "up", "device": "ray", "id": "right"}]'
+
+--- the colour a frame's calls clear it to
+fn _cleared[calls]
+    for call in calls
+        if call[0] eq 'clearColor'
+            return call
+    ['none']
+
+--- in a headset the whole page stands on its 560 pixels, and the trigger
+--- with the ray on Next turns the page (and chooses no row: a release
+--- under gui's table chooses none of the rows hidden there)
+test in_a_headset_the_page_fits_and_the_trigger_on_next_turns_the_page[]
+    gui.unfocus[]
+    a = fresh[]
+    --- (the trigger on no control first: the focus another test left goes)
+    c = lory.begin[headset_at[30000.0, 990.0, 550.0, 0.0, trigger[], 'opaque']]
+    first = gui.show[c, page_tree[a, c]]
+    lory.end[first.canvas] gt 0
+    b = first.boxes['next']
+    b[1] + b[3] lte 560.0
+    t = first.boxes['people']
+    t[3] eq 300.0
+    t[1] + t[3] lt b[1]
+    c = lory.begin[headset_at[30100.0, b[0] + b[2] / 2.0, b[1] + b[3] / 2.0, 0.0, trigger[], 'opaque']]
+    pressed = gui.show[c, page_tree[a, c]]
+    lory.end[pressed.canvas] gt 0
+    ids = []
+    for e in pressed.events
+        ids = push[ids, '`e.id` `e.act`']
+    'next press' in ids
+    turned = after_frame[a, pressed]
+    turned.table.state.page_index eq 1
+    len[keys[turned.table.state.selected]] eq 0
+
+--- in a headset the table shows nine of a page's ten rows; the thumbstick
+--- pulled toward the reader scrolls the tenth into view, so the trigger
+--- where the ray rests chooses the row under it then
+test in_a_headset_the_thumbstick_scrolls_the_table_to_its_last_row[]
+    gui.unfocus[]
+    a = fresh[]
+    c = lory.begin[headset_at[40000.0, 990.0, 550.0, 0.0, trigger[], 'opaque']]
+    seen = gui.show[c, page_tree[a, c]]
+    lory.end[seen.canvas] gt 0
+    t = seen.boxes['people']
+    x = t[0] + 100.0
+    y = t[1] + t[3] - 15.0
+    --- (pushed away first: the table stands at its top, whatever was left)
+    up = gui.show[lory.begin[headset_at[40100.0, x, y, -1.0, '[]', 'opaque']], page_tree[a, c]]
+    lory.end[up.canvas] gt 0
+    before = gui.show[lory.begin[headset_at[40200.0, x, y, 0.0, trigger[], 'opaque']], page_tree[a, c]]
+    lory.end[before.canvas] gt 0
+    pulled = gui.show[lory.begin[headset_at[40300.0, x, y, 1.0, '[]', 'opaque']], page_tree[a, c]]
+    lory.end[pulled.canvas] gt 0
+    last = lory.begin[headset_at[40400.0, x, y, 0.0, trigger[], 'opaque']]
+    after = gui.show[last, page_tree[a, c]]
+    lory.end[after.canvas] gt 0
+    len[before.events] eq 1 and len[after.events] eq 1
+    before.events[0].num eq 8.0
+    after.events[0].num eq 9.0
+    after_frame[a, after].table.state.selected['p9']
+
+--- in a headset that shows the room through the drawing, the frame is
+--- cleared to nothing, so only the panel stands in the room; in the
+--- headset's own world, it is cleared to the page's colour
+test in_a_headset_showing_the_room_the_page_has_no_backdrop[]
+    seen = framed[headset_at[50000.0, 500.0, 275.0, 0.0, '[]', 'alpha-blend']]
+    lory.seen_through[seen.canvas]
+    _cleared[lory.batch[seen.canvas]] eq ['clearColor', str[0.0], str[0.0], str[0.0], str[0.0]]
+    len[seen.canvas.verts] gt 0
+    own = framed[headset_at[50100.0, 500.0, 275.0, 0.0, '[]', 'opaque']]
+    not lory.seen_through[own.canvas]
+    page = gui.dark[].page
+    _cleared[lory.batch[own.canvas]] eq ['clearColor', str[page.r], str[page.g], str[page.b], str[page.a]]

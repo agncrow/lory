@@ -1,0 +1,375 @@
+--- Signals: a parameter's value over time, scheduled as Tone's Param and
+--- Signal schedule it, and the arithmetic Tone's signal operators do to
+--- samples. A parameter is a list of changes in time order: a value set at
+--- once, a straight or exponential ramp that ends at a time, an approach
+--- toward a value with a time constant. Its value at any time is answered
+--- as Tone's own `getValueAtTime` answers it (held to it number for
+--- number), and rendered sample by sample as the page's audio thread
+--- renders the same changes.
+---
+---     p = signal.param[1.0]
+---     p = signal.linear_to[p, 0.0, 0.5, 0.25]   (from 1 to 0 over half a second, 0.25 s in)
+---     signal.value_at[p, 0.5]                    (0.5)
+
+use math
+use sound
+
+--- one change of a parameter's value: when it is, how (`set`: at once;
+--- `linear` or `exponential`: a ramp that ends here; `target`: an approach
+--- toward the value from here, with a time constant), the value, and the
+--- approach's time constant
+struct Point [at, how, value, constant]
+
+--- a parameter: its value before any change, its changes in time order,
+--- and the least value an exponential ramp may reach (a ramp to 0 ends
+--- there instead)
+struct Param [initial, points, least]
+
+--- (times within a microsecond are the same time, as Tone's timelines
+--- compare them)
+fn _near[]
+    0.000001
+
+fn _no_points[]
+    slice[[Point[0.0, 'set', 0.0, 0.0]], 0, 0]
+
+--- a parameter that holds `value` until something changes it
+fn param[value]
+    Param[0.0 + value, _no_points[], 0.0000001]
+
+--- the place of the last change at or before `t` (a change within a
+--- microsecond after counts as at it), or -1 where none is
+fn _search[p, t]
+    found = -1
+    i = 0
+    n = len[p.points]
+    while i lt n
+        if p.points[i].at - t lt _near[]
+            found = i
+        else
+            return found
+        i = i + 1
+    found
+
+--- the place of the change before the one at `t`, or -1
+fn _before[p, t]
+    n = len[p.points]
+    if n gt 0
+        if p.points[n - 1].at lt t
+            return n - 1
+    _search[p, t] - 1
+
+--- a change added after every change at or before its time
+fn _added[p, point]
+    i = _search[p, point.at]
+    p.points = concat[push[slice[p.points, 0, i + 1], point], slice[p.points, i + 1, len[p.points]]]
+    p
+
+--- the changes from `t` on taken away (one at `t` too), as Tone's
+--- `cancelScheduledValues` takes them
+fn cancelled[p, t]
+    n = len[p.points]
+    if n eq 1
+        if p.points[0].at - t gt 0.0 - _near[]
+            p.points = _no_points[]
+        return p
+    if n lt 1
+        return p
+    i = _search[p, t]
+    if i lt 0
+        p.points = _no_points[]
+        return p
+    if abs[p.points[i].at - t] lt _near[]
+        while i gt 0 and abs[p.points[i - 1].at - t] lt _near[]
+            i = i - 1
+        p.points = slice[p.points, 0, i]
+        return p
+    p.points = slice[p.points, 0, i + 1]
+    p
+
+fn _approached[t0, v0, v1, constant, t]
+    v1 + (v0 - v1) * exp[0.0 - (t - t0) / constant]
+
+fn _lerp[t0, v0, t1, v1, t]
+    v0 + (v1 - v0) * ((t - t0) / (t1 - t0))
+
+fn _exponential[t0, v0, t1, v1, t]
+    v0 * (v1 / v0) ^ ((t - t0) / (t1 - t0))
+
+--- the value before a change at place `i`: the change before it's, or the
+--- parameter's own before any
+fn _value_before[p, i]
+    if i lt 1
+        return p.initial
+    p.points[i - 1].value
+
+--- the parameter's value at a time (before 0 as at 0), as Tone's
+--- `getValueAtTime` answers it
+fn value_at[p, at_time]
+    t = max[at_time, 0.0]
+    i = _search[p, t]
+    if i lt 0
+        return p.initial
+    before = p.points[i]
+    n = len[p.points]
+    has_after = i + 1 lt n
+    if before.how eq 'target'
+        if not has_after or p.points[i + 1].how eq 'set'
+            j = _before[p, before.at]
+            v0 = p.initial
+            if j gte 0
+                v0 = p.points[j].value
+            return _approached[before.at, v0, before.value, before.constant, t]
+    if not has_after
+        return before.value
+    after = p.points[i + 1]
+    if after.how eq 'linear' or after.how eq 'exponential'
+        v0 = before.value
+        if before.how eq 'target'
+            j = _before[p, before.at]
+            v0 = p.initial
+            if j gte 0
+                v0 = p.points[j].value
+        if after.how eq 'linear'
+            return _lerp[before.at, v0, after.at, after.value, t]
+        return _exponential[before.at, v0, after.at, after.value, t]
+    before.value
+
+--- the value set at a time
+fn set_at[p, value, t]
+    _added[p, Point[0.0 + t, 'set', 0.0 + value, 0.0]]
+
+--- a straight ramp from the change before to `value`, ending at `t`
+fn linear_at[p, value, t]
+    _added[p, Point[0.0 + t, 'linear', 0.0 + value, 0.0]]
+
+--- an exponential ramp from the change before to `value`, ending at `t`
+--- (a ramp to nothing ends at the least value instead)
+fn exponential_at[p, value, t]
+    v = 0.0 + value
+    if abs[v] lt _near[]
+        v = p.least
+    _added[p, Point[0.0 + t, 'exponential', v, 0.0]]
+
+--- from `t` on, an approach toward `value` that closes 63% of the gap in
+--- each `constant` seconds
+fn target_at[p, value, t, constant]
+    _added[p, Point[0.0 + t, 'target', 0.0 + value, 0.0 + constant]]
+
+--- the changes after `t` taken away and the value it had at `t` held from
+--- there, as Tone's `cancelAndHoldAtTime` holds it
+fn held_at[p, t]
+    v = value_at[p, t]
+    i = _search[p, t]
+    has_before = i gte 0
+    has_after = i + 1 lt len[p.points]
+    if has_before and abs[p.points[max[i, 0]].at - t] lt _near[]
+        if has_after
+            p = cancelled[p, p.points[i + 1].at]
+        else
+            p = cancelled[p, t + 0.0000001]
+    else if has_after
+        after = p.points[i + 1]
+        p = cancelled[p, after.at]
+        if after.how eq 'linear'
+            p = linear_at[p, v, t]
+        if after.how eq 'exponential'
+            p = exponential_at[p, v, t]
+    set_at[p, v, t]
+
+--- a ramp's start: the value at `t` held there (the least value where it
+--- is nothing, so an exponential ramp can leave it)
+fn ramp_point[p, t]
+    v = value_at[p, t]
+    p = held_at[p, t]
+    if v eq 0.0
+        v = p.least
+    set_at[p, v, t]
+
+--- a straight ramp to `value` over `ramp` seconds from `t`
+fn linear_to[p, value, ramp, t]
+    linear_at[ramp_point[p, t], value, t + ramp]
+
+--- an exponential ramp to `value` over `ramp` seconds from `t`
+fn exponential_to[p, value, ramp, t]
+    exponential_at[ramp_point[p, t], value, t + ramp]
+
+--- an approach to `value` from `t` that arrives in `ramp` seconds: an
+--- exponential approach for nine tenths of it, a straight line the rest,
+--- as Tone's `exponentialApproachValueAtTime` makes it
+fn approach_at[p, value, t, ramp]
+    constant = ln[ramp + 1.0] / ln[200.0]
+    p = target_at[p, value, t, constant]
+    p = held_at[p, t + ramp * 0.9]
+    linear_at[p, value, t + ramp]
+
+--- an exponential approach to `value` from `t`, arriving in `ramp` seconds
+fn target_to[p, value, ramp, t]
+    approach_at[ramp_point[p, t], value, t, ramp]
+
+--- a ramp to `value` over `ramp` seconds from `t`: exponential for a
+--- frequency, a tempo or a level in decibels, straight for anything else
+fn ramp_to[p, value, ramp, t, units]
+    if units eq 'frequency' or units eq 'bpm' or units eq 'decibels'
+        return exponential_to[p, value, ramp, t]
+    linear_to[p, value, ramp, t]
+
+--- the values of a curve laid from `t` over `duration` seconds, each one
+--- times `scaling`, joined by straight ramps
+fn curve_at[p, levels, t, duration, scaling]
+    p = set_at[p, levels[0] * scaling, t]
+    each = duration / (len[levels] - 1.0)
+    i = 1
+    while i lt len[levels]
+        p = linear_at[p, levels[i] * scaling, t + i * each]
+        i = i + 1
+    p
+
+--- the parameter's value at each of `n` samples from `from` seconds, at
+--- `rate` samples a second, as the page's audio thread renders it: each
+--- stretch between two changes computed at once, as `value_at` computes
+--- each of its samples
+fn rendered[p, rate, from, n]
+    out = zeros[n] + p.initial
+    count = len[p.points]
+    if count eq 0 or n eq 0
+        return out
+    t = from + (0.0 + range[n]) / rate
+    i = 0
+    while i lt count
+        before = p.points[i]
+        first = max[0, ceil[(before.at - _near[] - from) * rate]]
+        last = n
+        if i + 1 lt count
+            last = min[n, max[0, ceil[(p.points[i + 1].at - _near[] - from) * rate]]]
+        if first lt last
+            span = slice[t, first, last]
+            v0 = p.initial
+            if i gt 0
+                v0 = p.points[i - 1].value
+            values_here = 0.0 * span + before.value
+            if before.how eq 'target' and (i + 1 gte count or p.points[min[i + 1, count - 1]].how eq 'set')
+                values_here = before.value + (v0 - before.value) * exp[(before.at - span) / before.constant]
+            else if i + 1 lt count
+                after = p.points[i + 1]
+                start_value = before.value
+                if before.how eq 'target'
+                    start_value = v0
+                if after.how eq 'linear'
+                    values_here = start_value + (after.value - start_value) * ((span - before.at) / (after.at - before.at))
+                if after.how eq 'exponential'
+                    values_here = start_value * exp[ln[after.value / start_value] * ((span - before.at) / (after.at - before.at))]
+            out = concat[concat[slice[out, 0, first], values_here], slice[out, last, n]]
+        i = i + 1
+    out
+
+--- ---- signal arithmetic ----
+
+--- samples from 0 to 1 laid between `low` and `high` (Tone's Scale)
+fn scale[xs, low, high]
+    xs * (high - low) + low
+
+--- each sample's size raised to a power (Tone's Pow, which takes the size)
+fn power[xs, exponent]
+    abs[xs] .^ exponent
+
+--- samples from 0 to 1 bent by a power, then laid between `low` and
+--- `high` (Tone's ScaleExp)
+fn scale_exp[xs, low, high, exponent]
+    scale[power[xs, exponent], low, high]
+
+--- each sample's sign turned over (Tone's Negate)
+fn negated[xs]
+    0.0 - xs
+
+--- the curve Tone's Abs lays (1024 points from -1 to 1):
+--- each point's size, and nothing within a thousandth of nothing
+fn _size_curve[]
+    ramp = abs[(0.0 + range[1024]) / 1023.0 * 2.0 - 1.0]
+    where[ramp lt 0.001, 0.0 * ramp, ramp]
+
+--- each sample's size (Tone's Abs, read through its curve, so what is
+--- near nothing comes out a little small)
+fn size_of[xs]
+    waveshaped[xs, _size_curve[]]
+
+--- 1 where a sample is above `value`, 0 elsewhere (Tone's GreaterThan)
+fn greater_than[xs, value]
+    where[xs gt value, 0.0 * xs + 1.0, 0.0 * xs]
+
+--- samples from -1 to 1 made gains from 0 to 1 (Tone's AudioToGain)
+fn audio_to_gain[xs]
+    (xs + 1.0) * 0.5
+
+--- gains from 0 to 1 made samples from -1 to 1 (Tone's GainToAudio: a
+--- gain's size, doubled, less one)
+fn gain_to_audio[xs]
+    ramp = (0.0 + range[1024]) / 1023.0 * 2.0 - 1.0
+    waveshaped[xs, abs[ramp] * 2.0 - 1.0]
+
+--- each sample looked up in a curve laid evenly from -1 to 1, between its
+--- two nearest points, the ends held beyond them (a WaveShaper's curve)
+fn waveshaped[xs, curve]
+    n = len[curve]
+    if len[xs] eq 0
+        return zeros[0]
+    v = clip[(xs + 1.0) * ((n - 1.0) * 0.5), 0.0, n - 1.0]
+    k = clip[floor[v], 0.0, n - 2.0]
+    f = v - k
+    (1.0 - f) .* curve[k] + f .* curve[k + 1.0]
+
+--- a curve of `n` points from a power of each point's place (a waveshaper
+--- made by a rule: Tone's Pow lays 8192 of them)
+fn power_curve[exponent, n]
+    x = (0.0 + range[n]) / (n - 1.0) * 2.0 - 1.0
+    abs[x] .^ exponent
+
+--- ---- tests ----
+
+test a_ramp_runs_from_the_value_held_at_its_start[]
+    p = param[1.0]
+    p = linear_to[p, 0.0, 0.5, 0.25]
+    value_at[p, 0.0] eq 1.0
+    value_at[p, 0.25] eq 1.0
+    abs[value_at[p, 0.5] - 0.5] lt 0.0000001
+    value_at[p, 0.75] eq 0.0
+    value_at[p, 2.0] eq 0.0
+
+test an_exponential_ramp_doubles_in_equal_steps[]
+    p = exponential_to[param[100.0], 400.0, 1.0, 0.0]
+    abs[value_at[p, 0.5] - 200.0] lt 0.000001
+    abs[value_at[p, 0.25] - 141.4213562373095] lt 0.000001
+
+test an_approach_arrives_when_it_says[]
+    p = target_to[param[0.0], 1.0, 0.1, 0.0]
+    value_at[p, 0.1] eq 1.0
+    value_at[p, 0.05] gt 0.5
+    value_at[p, 0.05] lt 1.0
+
+test cancelling_takes_the_changes_from_a_time[]
+    p = set_at[set_at[set_at[param[0.0], 1.0, 0.1], 2.0, 0.2], 3.0, 0.3]
+    len[cancelled[p, 0.2].points] eq 1
+    len[cancelled[p, 0.25].points] eq 2
+    len[cancelled[p, 0.0].points] eq 0
+
+test a_render_is_the_value_at_each_sample[]
+    p = target_to[linear_to[param[0.2], 1.0, 0.1, 0.05], 0.3, 0.2, 0.3]
+    p = exponential_at[set_at[p, 2.0, 0.6], 8.0, 0.8]
+    xs = rendered[p, 100.0, 0.0, 100]
+    worst = 0.0
+    i = 0
+    while i lt 100
+        worst = max[worst, abs[xs[i] - value_at[p, i / 100.0]]]
+        i = i + 1
+    worst lt 0.000000001
+
+test the_arithmetic_is_tones[]
+    scale[[0.0, 0.5, 1.0], 100.0, 200.0] eq [100.0, 150.0, 200.0]
+    audio_to_gain[[-1.0, 0.0, 1.0]] eq [0.0, 0.5, 1.0]
+    g = gain_to_audio[[0.0, 0.5, 1.0]]
+    abs[g[0] + 0.998045] lt 0.000001
+    slice[g, 1, 3] eq [0.0, 1.0]
+    size_of[[-0.5, 0.0005, 1.0]] eq [0.5, 0.0, 1.0]
+    greater_than[[0.1, 0.5, 0.9], 0.4] eq [0.0, 1.0, 1.0]
+    waveshaped[[-2.0, 0.0, 0.5, 2.0], [0.0, 1.0, 0.0]] eq [0.0, 1.0, 0.5, 0.0]
+    power[[-0.5, 0.5], 2.0] eq [0.25, 0.25]

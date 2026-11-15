@@ -1,0 +1,282 @@
+--- A shape of sides that turns in three dimensions to show the next, as
+--- Semantic UI's Shape does: its sides are gui trees, one shown at a
+--- time; asked to flip up, down, left or right it turns as a cube does
+--- (the side below, above, right or left of the shown one coming to the
+--- front), and over or back as a card does (the next side on its back).
+--- A flip takes 700 milliseconds, eased in and out (CSS's `ease-in-out`,
+--- by lory.motion), seen in perspective; flips asked for while one runs
+--- wait their turn. The next side is the one after the shown one (the
+--- first after the last) unless `set_next_side` names another. The frame
+--- a flip begins says so (Semantic's beforeChange), and the frame it ends
+--- (onChange).
+---
+---     flip.flip['card', 'over']                      --- on a click, say
+---     s = flip.shape[c, 'card', sides, 40.0, 40.0, 300.0, 180.0, gui.dark[]]
+---     c = s.canvas
+---     if s.changed
+---         log['now showing `s.shown`']
+use memory
+use math
+use lory
+use gui
+use motion
+
+--- a shape's state: the side shown, the side named next (-1: the one
+--- after), the flip running (its way, when it began, the side it turns
+--- to) and the flips waiting
+struct Shape [shown, next, flipping, way, began, to, queue]
+
+--- what a frame of the shape gives back: the canvas drawn on, the side
+--- shown (until a flip ends, the one it turns from), whether a flip began
+--- this frame (`changing`) or ended (`changed`) and the sides it turns
+--- from and to, and the shown side's gui events (none while it turns)
+struct Shaped [canvas, shown, changing, changed, from, to, events]
+
+fn _key[id]
+    'lory.flip.`id`'
+
+fn _fresh[]
+    Shape[0, -1, false, '', 0.0, 0, []]
+
+--- how long a flip takes, in milliseconds (Semantic's 700)
+fn duration[]
+    700.0
+
+--- the ways a shape flips
+fn ways[]
+    ['up', 'down', 'left', 'right', 'over', 'back']
+
+--- a flip asked of the shape `id`: one of `ways` (another is let be).
+--- It begins on the shape's next frame, or after the flips before it
+fn flip[id, way]
+    s = recall[_key[id], _fresh[]]
+    if way in ways[]
+        s.queue = push[s.queue, way]
+        remember[_key[id], s]
+    way in ways[]
+
+--- the side the shape's next flip turns to (its index among the sides)
+fn set_next_side[id, k]
+    s = recall[_key[id], _fresh[]]
+    s.next = k
+    remember[_key[id], s]
+    k
+
+--- the side the shape `id` shows now
+fn shown_side[id]
+    recall[_key[id], _fresh[]].shown
+
+--- whether the shape `id` is turning
+fn turning[id]
+    recall[_key[id], _fresh[]].flipping
+
+--- the shape `id` of `sides` (gui trees) drawn in the box at `x`, `y`,
+--- `w` wide and `h` high (CSS pixels) in a gui look: the shown side as
+--- gui draws it, or, while it flips, the side it turns from and the side
+--- it turns to, each on a face of a cube (a card, flipping over or back)
+--- turned as far as the flip has run
+fn shape[c, id, sides, x, y, w, h, look]
+    s = recall[_key[id], _fresh[]]
+    t = lory.time[c]
+    n = len[sides]
+    changed = false
+    changing = false
+    from = s.shown
+    if s.flipping and t - s.began gte duration[]
+        s.shown = s.to
+        s.flipping = false
+        s.next = -1
+        changed = true
+    if not s.flipping and len[s.queue] gt 0 and n gt 0
+        s.way = s.queue[0]
+        s.queue = slice[s.queue, 1, len[s.queue]]
+        s.to = (s.shown + 1) % n
+        if s.next gte 0 and s.next lt n
+            s.to = s.next
+        s.began = t
+        s.flipping = true
+        changing = true
+        from = s.shown
+    remember[_key[id], s]
+    if n eq 0
+        return Shaped[c, 0, false, false, 0, 0, []]
+    if not s.flipping
+        drawn = gui.show_at[c, sides[s.shown], x, y, w, look]
+        return Shaped[drawn.canvas, s.shown, changing, changed, from, s.shown, drawn.events]
+    run = max[0.0, min[1.0, (t - s.began) / duration[]]]
+    c = turned_faces[c, sides[s.shown], sides[s.to], s.way, motion.ease_at['ease-in-out', run], x, y, w, h, look]
+    Shaped[c, s.shown, changing, changed, s.shown, s.to, []]
+
+--- how far round the cube (or the card) the side turned to stands from
+--- the front, and how far the whole has turned at the flip's end
+--- (degrees, about the up axis for left, right, over and back, about the
+--- across axis for up and down)
+fn _turns[way]
+    if way eq 'left'
+        return [90.0, -90.0]
+    if way eq 'right'
+        return [-90.0, 90.0]
+    if way eq 'up'
+        return [-90.0, 90.0]
+    if way eq 'down'
+        return [90.0, -90.0]
+    if way eq 'back'
+        return [-180.0, 180.0]
+    [180.0, -180.0]
+
+--- the two sides drawn on their faces, the whole turned `k` of the way
+--- (0 to 1): the farther face first, a face turned from the eye not drawn
+fn turned_faces[c, from_side, to_side, way, k, x, y, w, h, look]
+    turns = _turns[way]
+    across = way eq 'up' or way eq 'down'
+    flat = way eq 'over' or way eq 'back'
+    s = lory.px[c]
+    depth = w * s / 2.0
+    if across
+        depth = h * s / 2.0
+    if flat
+        depth = 0.0
+    whole = turns[1] * k * pi / 180.0
+    first = whole
+    second = whole + turns[0] * pi / 180.0
+    --- (each face's middle, how near the eye: the nearer drawn last)
+    near_first = depth * cos[first] - depth
+    near_second = depth * cos[second] - depth
+    if near_first lt near_second
+        c = _face[c, from_side, first, across, depth, x, y, w, h, look]
+        return _face[c, to_side, second, across, depth, x, y, w, h, look]
+    c = _face[c, to_side, second, across, depth, x, y, w, h, look]
+    _face[c, from_side, first, across, depth, x, y, w, h, look]
+
+--- a side drawn by gui in the box, then turned `angle` (radians) about
+--- the box's middle `depth` pixels behind it, and seen in perspective
+--- (a face turned from the eye is left out)
+fn _face[c, side, angle, across, depth, x, y, w, h, look]
+    if cos[angle] lt 0.000001
+        return c
+    n0 = len[c.verts]
+    drawn = gui.show_at[c, side, x, y, w, look]
+    c = drawn.canvas
+    s = lory.px[c]
+    cx = (x + w / 2.0) * s
+    cy = (y + h / 2.0) * s
+    sight = 4.0 * max[w, h] * s
+    c.verts = turned_verts[c.verts, n0, cx, cy, angle, across, depth, sight]
+    c
+
+--- the flat drawing's vertices from `n0` on, each point turned about
+--- (cx, cy) as a point of a face `depth` in front of the middle, turned by
+--- `angle` about the up axis (or, `across`, the across one), and seen
+--- from `sight` pixels away (a CSS perspective); what the face is clipped
+--- to is let go, the face being turned out of its box
+fn turned_verts[verts, n0, cx, cy, angle, across, depth, sight]
+    out = slice[verts, 0, n0]
+    co = cos[angle]
+    si = sin[angle]
+    i = n0
+    while i + 15 lt len[verts]
+        u = verts[i] - cx
+        v = verts[i + 1] - cy
+        px = u * co + depth * si
+        py = v
+        pz = 0.0 - u * si + depth * co
+        if across
+            px = u
+            py = v * co + depth * si
+            pz = 0.0 - v * si + depth * co
+        k = sight / (sight - (pz - depth))
+        out = push[push[out, cx + px * k], cy + py * k]
+        j = 2
+        while j lt 12
+            out = push[out, verts[i + j]]
+            j = j + 1
+        out = push[push[push[push[out, -100000.0], -100000.0], 100000.0], 100000.0]
+        i = i + 16
+    out
+
+--- ---- tests ----
+
+fn _frame_at[t]
+    json['{"t": `t`, "width": 400, "height": 300, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 400, "height": 300, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+fn _sides[]
+    [gui.panel[[gui.heading['One']]], gui.panel[[gui.heading['Two']]], gui.panel[[gui.heading['Three']]], gui.panel[[gui.heading['Four']]]]
+
+fn _at[id, t]
+    shape[lory.begin[_frame_at[t]], id, _sides[], 50.0, 50.0, 300.0, 200.0, gui.dark[]]
+
+test after_a_flip_over_the_next_side_shows[]
+    _at['t.over', 0].shown eq 0
+    flip['t.over', 'over']
+    began = _at['t.over', 100]
+    began.changing
+    began.from eq 0
+    began.to eq 1
+    turning['t.over']
+    halfway = _at['t.over', 450]
+    not halfway.changing
+    halfway.shown eq 0
+    ended = _at['t.over', 800]
+    ended.changed
+    ended.shown eq 1
+    shown_side['t.over'] eq 1
+    not turning['t.over']
+    not flip['t.over', 'sideways']
+
+test flips_asked_while_one_runs_wait_their_turn[]
+    flip['t.queue', 'left']
+    flip['t.queue', 'up']
+    a = _at['t.queue', 0]
+    a.changing
+    a.to eq 1
+    b = _at['t.queue', 700]
+    b.changed
+    b.changing
+    b.to eq 2
+    _at['t.queue', 1400].shown eq 2
+    flip['t.queue', 'right']
+    flip['t.queue', 'down']
+    _at['t.queue', 2000].to eq 3
+    _at['t.queue', 2700].to eq 0
+    _at['t.queue', 3400].shown eq 0
+
+test the_next_side_can_be_named[]
+    set_next_side['t.named', 3]
+    flip['t.named', 'back']
+    _at['t.named', 0].to eq 3
+    _at['t.named', 700].shown eq 3
+    flip['t.named', 'down']
+    _at['t.named', 800].to eq 0
+
+test halfway_through_a_flip_both_faces_show_turned_in_perspective[]
+    whole = _at['t.still', 0].canvas.verts
+    flip['t.left', 'left']
+    _at['t.left', 0]
+    mid = _at['t.left', 350].canvas.verts
+    len[mid] gt len[whole]
+    --- (the face turning away and the face coming round, their shared
+    --- edge, nearest the eye, standing out of the box toward it)
+    lo = 1000.0
+    hi = -1000.0
+    i = 0
+    while i lt len[mid]
+        lo = min[lo, mid[i]]
+        hi = max[hi, mid[i]]
+        i = i + 16
+    lo gt 0.0
+    hi lt 400.0
+    lo lt 49.0
+    hi - lo gt 250.0
+    flip['t.card', 'over']
+    _at['t.card', 0]
+    card = _at['t.card', 350].canvas.verts
+    len[card] lt len[mid]
+    --- (the turn's points: a quarter turn puts the face edge on, its left
+    --- edge a hundred pixels nearer the eye, so drawn taller)
+    edge = turned_verts[[100.0, 50.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 0, 200.0, 150.0, pi / 2.0, false, 0.0, 1000.0]
+    abs[edge[0] - 200.0] lt 0.000001
+    abs[edge[1] - (150.0 - 100.0 * 1000.0 / 900.0)] lt 0.000001
+    edge[12] eq -100000.0
+    rest = turned_verts[[100.0, 50.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 0, 200.0, 150.0, 0.0, false, 150.0, 1000.0]
+    rest[0] eq 100.0
+    rest[1] eq 50.0

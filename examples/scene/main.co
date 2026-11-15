@@ -21,7 +21,10 @@ fn picture[c]
     c = space.walk[c, 'reader']
     c = space.scene[c, cam, space.daylight[]]
     turn = lory.time[c] / 2000.0
-    c = space.draw[c, 'ground', lory.translation[0.0, 0.0, -2.0], space.plain[lory.hex['#4f6b3a']]]
+    --- (in a headset that shows the room, the reader's own floor is the
+    --- ground, and the sky is the room's: Lory clears the frame to nothing)
+    if not lory.seen_through[c]
+        c = space.draw[c, 'ground', lory.translation[0.0, 0.0, -2.0], space.plain[lory.hex['#4f6b3a']]]
     --- (the ball lights where the pointer or a controller's ray meets it)
     ball = lory.translation[0.0, 1.0, -2.0]
     color = lory.hex['#3b82f6']
@@ -63,6 +66,23 @@ test the_first_frame_makes_the_program_and_the_meshes_and_draws_them_with_depth[
         if n eq 'drawArrays'
             draws = draws + 1
     draws eq 4
+
+fn _headset[behind]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    json['{"t": 0, "width": 800, "height": 600, "ratio": 1, "xr": true, "blend": "`behind`", "views": [{"eye": "left", "x": 0, "y": 0, "width": 800, "height": 600, "projection": `unit`, "camera": `unit`}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+fn _draws[c]
+    draws = 0
+    for n in _names[lory.batch[c]]
+        if n eq 'drawArrays'
+            draws = draws + 1
+    draws
+
+--- in a headset that shows the room, the reader's own floor is the
+--- ground: the scene's is not drawn, and the rest stands on the floor
+test in_a_headset_that_shows_the_room_no_ground_is_drawn[]
+    _draws[picture[lory.begin[_headset['opaque']]]] eq 4
+    _draws[picture[lory.begin[_headset['alpha-blend']]]] eq 3
 
 test a_sphere_is_closed_and_its_normals_are_of_one_length[]
     s = space.sphere[2.0, 8]

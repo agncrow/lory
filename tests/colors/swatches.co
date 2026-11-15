@@ -1,0 +1,64 @@
+--- Every swatch the colours example draws (examples/colors), as
+--- lory.colors makes it, written as JSON for tests/colors/browser.py, which
+--- holds the example's picture in a browser to it: the scales' names, each
+--- scale's twelve steps in light and in dark, the black and white overlays
+--- (as numbers: they are translucent), and each appearance's page and text.
+---
+---     crow run -i tests/colors/swatches.co
+use lory
+use lory.colors
+
+fn _listed[words]
+    body = join[words, ', ']
+    '[`body`]'
+
+fn _hexes[steps]
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt len[steps]
+        hex = colors.hex_of[steps[i]]
+        out = push[out, '"`hex`"']
+        i = i + 1
+    _listed[out]
+
+fn _numbers[steps]
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt len[steps]
+        x = steps[i]
+        out = push[out, '[`x.r`, `x.g`, `x.b`, `x.a`]']
+        i = i + 1
+    _listed[out]
+
+fn _scales[]
+    names = colors.scale_names[]
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt len[names]
+        name = names[i]
+        light = _hexes[colors.scale[name, 'light']]
+        dark = _hexes[colors.scale[name, 'dark']]
+        out = push[out, '"`name`": {"light": `light`, "dark": `dark`}']
+        i = i + 1
+    body = join[out, ', ']
+    '{`body`}'
+
+fn _names[]
+    names = colors.scale_names[]
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt len[names]
+        name = names[i]
+        out = push[out, '"`name`"']
+        i = i + 1
+    _listed[out]
+
+names = _names[]
+scales = _scales[]
+blacks = _numbers[colors.black_overlay[]]
+whites = _numbers[colors.white_overlay[]]
+light_page = colors.hex_of[colors.page_of['light']]
+dark_page = colors.hex_of[colors.page_of['dark']]
+light_ink = colors.hex_of[colors.step['gray', 'light', 12]]
+dark_ink = colors.hex_of[colors.step['gray', 'dark', 12]]
+log['{"names": `names`, "scales": `scales`, "blacks": `blacks`, "whites": `whites`, "page": {"light": "`light_page`", "dark": "`dark_page`"}, "ink": {"light": "`light_ink`", "dark": "`dark_ink`"}}']

@@ -1,0 +1,107 @@
+--- Form Bindings: each kind of input bound to a value the page shows
+--- under it — a field's text, a checkbox's truth, the names of the boxes
+--- ticked (in the order they were), the radio chosen, a select's choice
+--- and a list's choices (in the list's order).
+use lory
+use lory.gui
+use common
+
+struct Inputs [text, checked, names, picked, selected, multi]
+
+fn fresh[]
+    Inputs['Edit me', true, ['Jack'], 'One', 'A', ['A']]
+
+fn ticked[s, c]
+    s
+
+--- a list as the page writes it: JSON, its spaces run together
+fn _listed[words]
+    common.normalized[join[common.json_lines_of_texts[words], ' ']]
+
+fn _names[]
+    ['Jack', 'John', 'Mike']
+
+fn _options[]
+    ['A', 'B', 'C']
+
+fn controls[s, c, room]
+    ticks = slice[[gui.space[0.0]], 0, 0]
+    for name in _names[]
+        ticks = push[ticks, gui.checkbox['form-bindings:names:`name`', name, name in s.names]]
+    shown = s.selected
+    if shown eq ''
+        shown = 'Please select one'
+    choices = slice[[gui.space[0.0]], 0, 0]
+    for o in _options[]
+        choices = push[choices, gui.item['form-bindings:multi:`o`', [gui.text[o]], chosen = o in s.multi, words = o]]
+    picked_list = gui.sized[gui.panel[choices, gap = 0.0, pad = 2.0], 100.0]
+    text_echo = common.named[gui.text[s.text], 'form-bindings:text_echo']
+    names_echo = common.named[gui.text['Checked names: `_listed[s.names]`'], 'form-bindings:names_echo']
+    picked_echo = common.named[gui.text['Picked: `s.picked`'], 'form-bindings:picked_echo']
+    selected_echo = common.named[gui.text['Selected: `s.selected`'], 'form-bindings:selected_echo']
+    multi_echo = common.named[gui.text['Selected: `_listed[s.multi]`'], 'form-bindings:multi_echo']
+    gui.column[[gui.heading['Text Input'], gui.field['form-bindings:text', s.text], text_echo, gui.heading['Checkbox'], gui.checkbox['form-bindings:checked', 'Checked: `common.yes[s.checked]`', s.checked], gui.heading['Multi Checkbox'], gui.row[ticks, gap = 16.0], names_echo, gui.heading['Radio'], gui.radio['form-bindings:picked', ['One', 'Two'], s.picked], picked_echo, gui.heading['Select'], gui.select['form-bindings:selected', _options[], shown], selected_echo, gui.heading['Multi Select'], picked_list, multi_echo], gap = 10.0]
+
+--- the choices held, in the list's order
+fn _in_order[held]
+    out = slice[[''], 0, 0]
+    for o in _options[]
+        if o in held
+            out = push[out, o]
+    out
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if ev.id eq 'form-bindings:text' and ev.act eq 'edit'
+            s.text = ev.words
+        if ev.id eq 'form-bindings:checked' and ev.act eq 'toggle'
+            s.checked = ev.num gt 0.5
+        for name in _names[]
+            if ev.id eq 'form-bindings:names:`name`' and ev.act eq 'toggle'
+                if ev.num gt 0.5
+                    if not (name in s.names)
+                        s.names = push[s.names, name]
+                else
+                    kept = slice[[''], 0, 0]
+                    for held in s.names
+                        if held ne name
+                            kept = push[kept, held]
+                    s.names = kept
+        if ev.id eq 'form-bindings:picked' and ev.act eq 'choose'
+            s.picked = ev.words
+        if ev.id eq 'form-bindings:selected' and ev.act eq 'choose'
+            s.selected = ev.words
+        for o in _options[]
+            if ev.id eq 'form-bindings:multi:`o`' and ev.act eq 'press'
+                if common.press_adds[c, common.box_of[shown, ev.id]]
+                    if o in s.multi
+                        kept = slice[[''], 0, 0]
+                        for held in s.multi
+                            if held ne o
+                                kept = push[kept, held]
+                        s.multi = kept
+                    else
+                        s.multi = _in_order[push[s.multi, o]]
+                else
+                    s.multi = [o]
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['text'] = common.words_by[tree, 'form-bindings:text']
+    out['text_echo'] = common.words_by[tree, 'form-bindings:text_echo']
+    box = common.node_by[tree, 'form-bindings:checked']
+    out['checked'] = common.yes[box.num gt 0.5]
+    out['checked_echo'] = box.words
+    out['names_echo'] = common.words_by[tree, 'form-bindings:names_echo']
+    out['picked_echo'] = common.words_by[tree, 'form-bindings:picked_echo']
+    out['selected_echo'] = common.words_by[tree, 'form-bindings:selected_echo']
+    out['multi_echo'] = common.words_by[tree, 'form-bindings:multi_echo']
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

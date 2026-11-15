@@ -1,0 +1,688 @@
+--- One of a chart's axes laid in the room it is given, as Chart.js
+--- updates a scale: its ticks chosen and labelled, how much room it takes
+--- beside the chart's area (its labels turned where they would meet, some
+--- left out where they still would, its ends padded for the labels past
+--- them); and a radial axis laid in the chart's area, its centre and
+--- radius, its point labels round it, and where a value and a label's
+--- place stand on it. charts_scales holds the axes themselves, their
+--- ranges, ticks and pixels.
+---
+--- These are Chart.js 4.5.1's rules, read from its scales and written
+--- anew (see charts_model.co).
+use math
+use lory
+use charts_model
+use charts_time
+use charts_scales
+--- ---- one axis laid in the room it is given ----
+
+--- the axis laid as Chart.js updates a scale: given the most room it may
+--- take (`max_width`, `max_height`) and the margins about it, its ticks
+--- chosen and labelled, its labels turned and thinned, and its own size
+--- fitted (`chart_w`, `chart_h`: the whole chart's)
+fn updated[sc0, a, ch, ps, max_width, max_height, margins, pen, chart_w, chart_h]
+    sc = sc0
+    sc.max_width = max_width
+    sc.max_height = max_height
+    sc.margins = margins
+    if sc.horizontal
+        sc.width = max_width
+        sc.left = 0.0
+        sc.right = max_width
+    else
+        sc.height = max_height
+        sc.top = 0.0
+        sc.bottom = max_height
+    sc.padding = [0.0, 0.0, 0.0, 0.0]
+    if sc.horizontal
+        sc.max_length = sc.width + margins[0] + margins[2]
+    else
+        sc.max_length = sc.height + margins[1] + margins[3]
+    sc = ticked[sc, a, ch, ps, pen]
+    sc = charts_scales.configured[sc, a]
+    sc = _turned[sc, a, pen, chart_w]
+    if a.ticks_shown and (a.auto_skip or ((sc.form eq 'time' or sc.form eq 'timeseries') and a.source eq 'auto'))
+        sc = _skipped[sc, a, pen]
+    _fitted[sc, a, pen, chart_w, chart_h]
+
+--- the axis's ticks chosen and labelled, as its kind chooses them
+fn ticked[sc0, a, ch, ps, pen]
+    sc = sc0
+    form = sc.form
+    if form eq 'category'
+        vals = charts_model.no_numbers[]
+        texts = slice[[''], 0, 0]
+        majors = slice[[false], 0, 0]
+        v = sc.min
+        while v lte sc.max
+            vals = push[vals, v]
+            texts = push[texts, _category_text[sc, v]]
+            majors = push[majors, false]
+            v = v + 1.0
+        shown = sc.max - sc.min + 1.0
+        sc.start_value = sc.min
+        sc.value_range = max[shown - 1.0, 1.0]
+        if a.offset
+            sc.start_value = sc.min - 0.5
+            sc.value_range = max[shown, 1.0]
+        sc.ticks = vals
+        sc.texts = texts
+        sc.majors = majors
+        return sc
+    if form eq 'logarithmic'
+        both = charts_scales.log_ticks[sc.user_min, sc.user_max, sc.min, sc.max]
+        vals = both.values
+        sigs = both.significands
+        if a.bounds eq 'ticks'
+            sc = _ends_widened[sc, vals]
+        texts = slice[[''], 0, 0]
+        majors = slice[[false], 0, 0]
+        i = 0
+        while i lt len[vals]
+            texts = push[texts, charts_scales.log_label[vals, sigs, i]]
+            majors = push[majors, charts_scales.log_major[vals[i]]]
+            i = i + 1
+        if a.reverse
+            vals = charts_scales._reversed_numbers[vals]
+            texts = _reversed_texts[texts]
+            majors = _reversed_flags[majors]
+        sc.ticks = vals
+        sc.texts = texts
+        sc.majors = majors
+        return sc
+    if form eq 'time' or form eq 'timeseries'
+        return charts_scales._time_ticked[sc, a, ch, ps, pen]
+    max_ticks = max[2.0, _tick_limit[sc, a]]
+    digits = _max_digits[sc, a]
+    vals = charts_scales.numeric_ticks[a.bounds, a.step, sc.user_min, sc.user_max, a.precision, a.count, max_ticks, digits, sc.horizontal, a.min_rotation, a.include_bounds, sc.lo, sc.hi]
+    if a.bounds eq 'ticks'
+        sc = _ends_widened[sc, vals]
+    texts = slice[[''], 0, 0]
+    majors = slice[[false], 0, 0]
+    i = 0
+    while i lt len[vals]
+        texts = push[texts, charts_scales.numeric_label[vals, i]]
+        majors = push[majors, false]
+        i = i + 1
+    if a.reverse
+        vals = charts_scales._reversed_numbers[vals]
+        texts = _reversed_texts[texts]
+    sc.ticks = vals
+    sc.texts = texts
+    sc.majors = majors
+    if form eq 'radialLinear'
+        sc.point_labels = _point_labels[ch, sc]
+    sc
+
+fn _category_text[sc, v]
+    k = int[v]
+    if v gte 0.0 and k lt len[sc.labels]
+        return sc.labels[k]
+    str[v]
+
+--- the labels a radial axis writes round itself: the chart's, those
+--- hidden by its legend left out
+fn _point_labels[ch, sc]
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt len[sc.labels]
+        if not charts_model.point_hidden[ch, i]
+            out = push[out, sc.labels[i]]
+        i = i + 1
+    out
+
+--- the range widened to take in every tick
+fn _ends_widened[sc0, vals]
+    sc = sc0
+    i = 0
+    while i lt len[vals]
+        v = vals[i]
+        if v eq v
+            sc.min = min[sc.min, v]
+            sc.max = max[sc.max, v]
+        i = i + 1
+    sc
+
+fn _reversed_texts[vs]
+    out = slice[[''], 0, 0]
+    i = len[vs] - 1
+    while i gte 0
+        out = push[out, vs[i]]
+        i = i - 1
+    out
+
+fn _reversed_flags[vs]
+    out = slice[[false], 0, 0]
+    i = len[vs] - 1
+    while i gte 0
+        out = push[out, vs[i]]
+        i = i - 1
+    out
+
+--- the most ticks a numeric axis takes: by its step where it has one,
+--- else by its length (a label's line of height per tick up and down,
+--- one per 40 pixels across), never more than its `most` (11 unless set)
+fn _tick_limit[sc, a]
+    most = a.most
+    limit = inf
+    if a.step eq a.step and a.step ne 0.0
+        limit = (0.0 + ceil[sc.max / a.step]) - floor[sc.min / a.step] + 1.0
+        if limit gt 1000.0
+            limit = 1000.0
+    else
+        limit = _length_limit[sc, a]
+        if most ne most
+            most = 11.0
+    if most eq most
+        limit = min[most, limit]
+    limit
+
+fn _length_limit[sc, a]
+    if sc.form eq 'radialLinear'
+        room = backdrop_height[a]
+        return 0.0 + ceil[sc.drawing_area / room]
+    rad = charts_model.radians[a.min_rotation]
+    ratio = cos[rad]
+    length = sc.height
+    if sc.horizontal
+        ratio = sin[rad]
+        length = sc.width
+    if ratio eq 0.0
+        ratio = 0.001
+    line = charts_model.line_of[a.tick_size]
+    0.0 + ceil[length / min[40.0, line / ratio]]
+
+fn _max_digits[sc, a]
+    length = sc.height
+    if sc.horizontal
+        length = sc.width
+    length / charts_model.line_of[a.tick_size]
+
+--- the height a radial axis's tick label takes on its backdrop
+fn backdrop_height[a]
+    if a.ticks_shown and a.display
+        return a.tick_size + 2.0 * a.backdrop_padding
+    0.0
+
+--- ---- turning, thinning and fitting the labels ----
+
+--- the sizes of the axis's labels: the first's, the last's, the widest's
+--- and the highest's (width, height each), measured every `n`th where it
+--- shows at most `most`
+fn label_sizes[sc, a, pen]
+    n = len[sc.texts]
+    if n eq 0
+        return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    limit = n
+    if a.most eq a.most
+        limit = min[0 + int[a.most], n]
+    every = max[1, n / max[limit, 1]]
+    line = charts_model.line_of[a.tick_size]
+    ws = charts_model.no_numbers[]
+    i = 0
+    while i lt n
+        ws = push[ws, charts_model.wide[pen, a.tick_size, a.tick_bold, sc.texts[i]]]
+        i = i + every
+    widest = 0
+    k = 0
+    while k lt len[ws]
+        if ws[k] gt ws[widest]
+            widest = k
+        k = k + 1
+    last_w = 0.0
+    last_h = 0.0
+    if n - 1 lt len[ws]
+        last_w = ws[n - 1]
+        last_h = line
+    [ws[0], line, last_w, last_h, ws[widest], line, ws[0], line]
+
+--- how far the axis's labels are turned: none up and down; across, as far
+--- as needed (within its least and most turn) for the widest label to
+--- fit the room between ticks
+fn _turned[sc0, a, pen, chart_w]
+    sc = sc0
+    n = len[sc.ticks]
+    if a.most eq a.most
+        n = min[n, 0 + int[a.most]]
+    least = a.min_rotation
+    sc.rotation = least
+    if not sc.shown or not a.ticks_shown or least gte a.max_rotation or n lte 1 or not sc.horizontal
+        return sc
+    sizes = label_sizes[sc, a, pen]
+    widest = sizes[4]
+    highest = sizes[7]
+    room = charts_model.limited[chart_w - widest, 0.0, sc.max_width]
+    tick_width = room / (0.0 + n - 1)
+    if a.offset
+        tick_width = sc.max_width / (0.0 + n)
+    if widest + 6.0 gt tick_width
+        tick_width = room / (0.0 + n - 1)
+        if a.offset
+            tick_width = room / (0.0 + n - 0.5)
+        tall = sc.max_height - mark_length[a] - a.tick_padding - title_height[a]
+        diagonal = sqrt[widest * widest + highest * highest]
+        one = asin[charts_model.limited[(highest + 6.0) / tick_width, -1.0, 1.0]]
+        two = asin[charts_model.limited[tall / diagonal, -1.0, 1.0]] - asin[charts_model.limited[highest / diagonal, -1.0, 1.0]]
+        turn = charts_model.degrees[min[one, two]]
+        sc.rotation = max[least, min[a.max_rotation, turn]]
+    sc
+
+--- the length of the axis's tick marks
+fn mark_length[a]
+    if a.grid_ticks
+        return a.tick_length
+    0.0
+
+--- the room the axis's title takes
+fn title_height[a]
+    if not a.title_shown
+        return 0.0
+    charts_model.line_of[a.title_size] + a.title_top + a.title_bottom
+
+--- the room one label takes along the axis, its turn counted
+fn _tick_size[sc, a, pen]
+    rot = charts_model.radians[sc.rotation]
+    c = abs[cos[rot]]
+    s = abs[sin[rot]]
+    sizes = label_sizes[sc, a, pen]
+    w = sizes[4] + a.skip_padding
+    h = sizes[7] + a.skip_padding
+    if sc.horizontal
+        if h * c gt w * s
+            return w / c
+        return h / s
+    if h * s lt w * c
+        return h / c
+    w / s
+
+--- the axis's ticks thinned as Chart.js skips them: as many as their
+--- labels leave room for (major ticks kept first where the axis has them)
+fn _skipped[sc0, a, pen]
+    sc = sc0
+    n = len[sc.ticks]
+    if n eq 0
+        return sc
+    size = _tick_size[sc, a, pen]
+    off = 1.0
+    if a.offset
+        off = 0.0
+    most_here = 0.0 + floor[min[sc.length / size + off, sc.max_length / size]]
+    limit = most_here
+    if a.most eq a.most
+        limit = min[a.most, most_here]
+    majors = charts_model.no_numbers[]
+    if a.major
+        i = 0
+        while i lt n
+            if sc.majors[i]
+                majors = push[majors, 0.0 + i]
+            i = i + 1
+    nm = len[majors]
+    keep = charts_model.no_numbers[]
+    if 0.0 + nm gt limit
+        keep = _majors_kept[n, majors, (0.0 + nm) / limit]
+    else
+        spacing = _spacing_of[majors, n, limit]
+        if nm gt 0
+            first = majors[0]
+            last = majors[nm - 1]
+            average = -1.0
+            if nm gt 1
+                average = charts_model.js_round[(last - first) / (0.0 + nm - 1)]
+            before = 0.0
+            if average gte 0.0
+                before = first - average
+            keep = _kept_between[keep, n, spacing, before, first, true]
+            i = 0
+            while i lt nm - 1
+                keep = _kept_between[keep, n, spacing, majors[i], majors[i + 1], true]
+                i = i + 1
+            after = 0.0 + n
+            if average gte 0.0
+                after = last + average
+            keep = _kept_between[keep, n, spacing, last, after, true]
+        else
+            keep = _kept_between[keep, n, spacing, 0.0, 0.0 + n, false]
+    vals = charts_model.no_numbers[]
+    texts = slice[[''], 0, 0]
+    flags = slice[[false], 0, 0]
+    i = 0
+    while i lt len[keep]
+        k = int[keep[i]]
+        vals = push[vals, sc.ticks[k]]
+        texts = push[texts, sc.texts[k]]
+        flags = push[flags, sc.majors[k]]
+        i = i + 1
+    sc.ticks = vals
+    sc.texts = texts
+    sc.majors = flags
+    sc
+
+fn _majors_kept[n, majors, spacing0]
+    keep = charts_model.no_numbers[]
+    spacing = 0 + ceil[spacing0]
+    count = 0
+    next = majors[0]
+    i = 0
+    while i lt n
+        if 0.0 + i eq next
+            keep = push[keep, 0.0 + i]
+            count = count + 1
+            next = -1.0
+            if count * spacing lt len[majors]
+                next = majors[count * spacing]
+        i = i + 1
+    keep
+
+--- how far apart the kept ticks stand: a factor of the major ticks'
+--- even spacing where they have one and it is wider than they need,
+--- else as far as the limit needs
+fn _spacing_of[majors, n, limit]
+    even = _even_spacing[majors]
+    spacing = (0.0 + n) / limit
+    if even eq 0.0
+        return max[spacing, 1.0]
+    factors = _factors_of[even]
+    i = 0
+    while i lt len[factors] - 1
+        if factors[i] gt spacing
+            return factors[i]
+        i = i + 1
+    max[spacing, 1.0]
+
+--- the whole numbers that divide `v`, least first, `v` itself left out
+fn _factors_of[v]
+    out = charts_model.no_numbers[]
+    root = sqrt[v]
+    i = 1.0
+    while i lt root
+        k = v / i
+        if k eq 0.0 + floor[k]
+            out = push[out, i]
+            out = push[out, k]
+        i = i + 1.0
+    if root eq 0.0 + floor[root]
+        out = push[out, root]
+    s = sort[out]
+    slice[s, 0, len[s] - 1]
+
+--- the spacing of the major ticks where they stand evenly from the
+--- first (as far apart as the first is from naught), 0 where they do not
+fn _even_spacing[majors]
+    if len[majors] lt 2
+        return 0.0
+    diff = majors[0]
+    i = 1
+    while i lt len[majors]
+        if majors[i] - majors[i - 1] ne diff
+            return 0.0
+        i = i + 1
+    diff
+
+--- the ticks kept from `start` to `end`, one every `spacing` (spread
+--- evenly between two major ticks where `between_majors`)
+fn _kept_between[keep0, n, spacing0, start, end, between_majors]
+    keep = keep0
+    spacing = 0.0 + ceil[spacing0]
+    if between_majors and end ne 0.0
+        length = end - start
+        spacing = length / floor[length / spacing]
+    stop = min[end, 0.0 + n]
+    count = 0.0
+    next = start
+    while next lt 0.0
+        count = count + 1.0
+        next = charts_model.js_round[start + count * spacing]
+    i = max[start, 0.0]
+    while i lt stop
+        if i eq next
+            keep = push[keep, i]
+            count = count + 1.0
+            next = charts_model.js_round[start + count * spacing]
+        i = i + 1.0
+    keep
+
+--- the axis's own size fitted: across, its height (tick marks, labels as
+--- turned, title) and the room its end labels want past its ends; up and
+--- down, its width
+fn _fitted[sc0, a, pen, chart_w, chart_h]
+    sc = sc0
+    w = 0.0
+    h = 0.0
+    if sc.shown
+        tall = title_height[a]
+        if sc.horizontal
+            w = sc.max_width
+            h = mark_length[a] + tall
+        else
+            h = sc.max_height
+            w = mark_length[a] + tall
+        if a.ticks_shown and len[sc.ticks] gt 0
+            sizes = label_sizes[sc, a, pen]
+            rad = charts_model.radians[sc.rotation]
+            c = cos[rad]
+            s = sin[rad]
+            if sc.horizontal
+                labels_h = s * sizes[4] + c * sizes[7]
+                if a.mirror
+                    labels_h = 0.0
+                h = min[sc.max_height, h + labels_h + a.tick_padding * 2.0]
+            else
+                labels_w = c * sizes[4] + s * sizes[7]
+                if a.mirror
+                    labels_w = 0.0
+                w = min[sc.max_width, w + labels_w + a.tick_padding * 2.0]
+            sc = _padded_ends[sc, a, sizes, s, c]
+    m = sc.margins
+    p = sc.padding
+    margins = [max[p[0], m[0]], max[p[1], m[1]], max[p[2], m[2]], max[p[3], m[3]]]
+    sc.margins = margins
+    if sc.horizontal
+        sc.width = chart_w - margins[0] - margins[2]
+        sc.length = sc.width
+        sc.height = h
+    else
+        sc.width = w
+        sc.height = chart_h - margins[1] - margins[3]
+        sc.length = sc.height
+    sc
+
+fn _padded_ends[sc0, a, sizes, s, c]
+    sc = sc0
+    turned = sc.rotation ne 0.0
+    below = sc.position ne 'top' and sc.axis eq 'x'
+    if sc.horizontal
+        n = len[sc.ticks]
+        off_left = charts_scales.tick_pixel[sc, 0] - sc.left
+        off_right = sc.right - charts_scales.tick_pixel[sc, n - 1]
+        pad_left = sizes[0] / 2.0
+        pad_right = sizes[2] / 2.0
+        if turned
+            if below
+                pad_left = c * sizes[0]
+                pad_right = s * sizes[3]
+            else
+                pad_left = s * sizes[1]
+                pad_right = c * sizes[2]
+        left = max[(pad_left - off_left + a.tick_padding) * sc.width / (sc.width - off_left), 0.0]
+        right = max[(pad_right - off_right + a.tick_padding) * sc.width / (sc.width - off_right), 0.0]
+        --- (the padding is a row of plain numbers, so what may have failed
+        --- is ruled out first)
+        if not left.ok
+            return sc
+        if not right.ok
+            return sc
+        sc.padding = [left, 0.0, right, 0.0]
+    else
+        top = sizes[3] / 2.0 + a.tick_padding
+        bottom = sizes[1] / 2.0 + a.tick_padding
+        sc.padding = [0.0, top, 0.0, bottom]
+    sc
+
+--- ---- a radial axis ----
+
+--- a radial axis laid in the chart's area (left, top, right, bottom): its
+--- centre and radius, its ticks, and its point labels kept inside
+fn radial_updated[sc0, a, ch, ps, area, pen]
+    sc = sc0
+    sc.left = area[0]
+    sc.top = area[1]
+    sc.right = area[2]
+    sc.bottom = area[3]
+    sc.max_width = area[2] - area[0]
+    sc.max_height = area[3] - area[1]
+    sc.margins = [0.0, 0.0, 0.0, 0.0]
+    half = backdrop_height[a] / 2.0
+    w = sc.max_width - 2.0 * half
+    h = sc.max_height - 2.0 * half
+    sc.width = w
+    sc.height = h
+    sc.x_center = 0.0 + floor[sc.left + w / 2.0 + half]
+    sc.y_center = 0.0 + floor[sc.top + h / 2.0 + half]
+    sc.drawing_area = 0.0 + floor[min[w, h] / 2.0]
+    sc.max_length = h
+    sc = ticked[sc, a, ch, ps, pen]
+    sc = charts_scales.configured[sc, a]
+    sc.rotation = 0.0
+    if a.ticks_shown and a.auto_skip
+        sc = _skipped[sc, a, pen]
+    if a.display and a.point_labels_shown
+        sc = _fitted_with_point_labels[sc, a, pen, half]
+    sc
+
+--- the angle (radians) of the radial axis's `i`th spoke, from straight up
+--- turning clockwise
+fn index_angle[sc, a, i]
+    n = len[sc.point_labels]
+    if n eq 0
+        n = 1
+    charts_model.normal_angle[(0.0 + i) * (pi * 2.0 / (0.0 + n)) + charts_model.radians[a.start_angle]]
+
+--- where the `i`th spoke is `distance` from the centre: x, y and the
+--- angle from the right (radians)
+fn point_at[sc, a, i, distance, extra]
+    angle = index_angle[sc, a, i] - pi / 2.0 + extra
+    [cos[angle] * distance + sc.x_center, sin[angle] * distance + sc.y_center, angle]
+
+--- how far from the centre a value stands
+fn distance_of[sc, a, v]
+    if v ne v
+        return nan
+    factor = sc.drawing_area / (sc.max - sc.min)
+    if a.reverse
+        return (sc.max - v) * factor
+    (v - sc.min) * factor
+
+fn _fitted_with_point_labels[sc0, a, pen, half]
+    sc = sc0
+    l0 = sc.left + half
+    r0 = sc.right - half
+    t0 = sc.top + half
+    b0 = sc.bottom - half
+    lims = [l0, t0, r0, b0]
+    n = len[sc.point_labels]
+    extra = 0.0
+    if a.center_point_labels and n gt 0
+        extra = pi / (0.0 + n)
+    sizes = slice[[[0.0, 0.0]], 0, 0]
+    i = 0
+    while i lt n
+        pos = point_at[sc, a, i, sc.drawing_area + a.point_label_padding, extra]
+        words = sc.point_labels[i]
+        size = [charts_model.wide[pen, a.point_label_size, false, words], charts_model.line_of[a.point_label_size]]
+        sizes = push[sizes, size]
+        rad = charts_model.normal_angle[index_angle[sc, a, i] + extra]
+        angle = charts_model.js_round[charts_model.degrees[rad]]
+        hl = _limits_of[angle, pos[0], size[0], 0.0, 180.0]
+        vl = _limits_of[angle, pos[1], size[1], 90.0, 270.0]
+        si = abs[sin[rad]]
+        co = abs[cos[rad]]
+        if hl[0] lt l0
+            lims[0] = min[lims[0], l0 - (l0 - hl[0]) / si]
+        else if hl[1] gt r0
+            lims[2] = max[lims[2], r0 + (hl[1] - r0) / si]
+        if vl[0] lt t0
+            lims[1] = min[lims[1], t0 - (t0 - vl[0]) / co]
+        else if vl[1] gt b0
+            lims[3] = max[lims[3], b0 + (vl[1] - b0) / co]
+        i = i + 1
+    left_move = l0 - lims[0]
+    right_move = lims[2] - r0
+    top_move = t0 - lims[1]
+    bottom_move = lims[3] - b0
+    sc.x_center = sc.x_center + floor[(left_move - right_move) / 2.0]
+    sc.y_center = sc.y_center + floor[(top_move - bottom_move) / 2.0]
+    most_move = max[max[left_move, right_move], max[top_move, bottom_move]]
+    sc.drawing_area = sc.drawing_area - min[sc.drawing_area / 2.0, most_move]
+    _point_label_items[sc, a, sizes, extra, half]
+
+fn _limits_of[angle, pos, size, lo, hi]
+    if angle eq lo or angle eq hi
+        return [pos - size / 2.0, pos + size / 2.0]
+    if angle lt lo or angle gt hi
+        return [pos - size, pos]
+    [pos, pos + size]
+
+fn _point_label_items[sc0, a, sizes, extra, half]
+    sc = sc0
+    items = slice[[[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], 0, 0]
+    aligns = slice[[''], 0, 0]
+    shown = slice[[false], 0, 0]
+    i = 0
+    while i lt len[sc.point_labels]
+        size = sizes[i]
+        pos = point_at[sc, a, i, sc.drawing_area + half + a.point_label_padding, extra]
+        angle = charts_model.js_round[charts_model.degrees[charts_model.normal_angle[pos[2] + pi / 2.0]]]
+        y = pos[1]
+        if angle eq 90.0 or angle eq 270.0
+            y = y - size[1] / 2.0
+        else if angle gt 270.0 or angle lt 90.0
+            y = y - size[1]
+        align = 'right'
+        if angle eq 0.0 or angle eq 180.0
+            align = 'center'
+        else if angle lt 180.0
+            align = 'left'
+        left = pos[0]
+        if align eq 'right'
+            left = left - size[0]
+        if align eq 'center'
+            left = left - size[0] / 2.0
+        items = push[items, [pos[0], y, left, y, left + size[0], y + size[1]]]
+        aligns = push[aligns, align]
+        shown = push[shown, true]
+        i = i + 1
+    sc.label_items = items
+    sc.label_aligns = aligns
+    sc.label_shown = shown
+    sc
+
+--- ---- tests ----
+
+test an_axis_takes_room_for_its_marks_and_its_title[]
+    a = charts_model.axis_of['y', 'linear', 'y', 'left']
+    mark_length[a] eq a.tick_length
+    a.grid_ticks = false
+    mark_length[a] eq 0.0
+    a.title_shown = false
+    title_height[a] eq 0.0
+    a.title_shown = true
+    title_height[a] eq charts_model.line_of[a.title_size] + a.title_top + a.title_bottom
+
+test a_radial_axis_runs_out_from_its_centre_clockwise_from_straight_up[]
+    ch = charts_model.chart_of['r', 'radar', ['a', 'b', 'c', 'd']]
+    ch.sets = [charts_model.dataset['radar', 'x', [1.0, 2.0, 3.0, 4.0]]]
+    scales = charts_scales.scales_of[ch]
+    ps = charts_scales.parsed_of[ch, scales]
+    scales = charts_scales.ranged[ch, ps, scales]
+    a = ch.axes[0]
+    sc = radial_updated[scales[0], a, ch, ps, [0.0, 0.0, 300.0, 300.0], charts_model.plain_pen[]]
+    sc.x_center gt 100.0
+    sc.x_center lt 200.0
+    distance_of[sc, a, sc.min] eq 0.0
+    abs[distance_of[sc, a, sc.max] - sc.drawing_area] lt 0.000001
+    index_angle[sc, a, 0] eq 0.0
+    abs[index_angle[sc, a, 1] - pi / 2.0] lt 0.000001
+    up = point_at[sc, a, 0, 10.0, 0.0]
+    abs[up[0] - sc.x_center] lt 0.000001
+    abs[up[1] - (sc.y_center - 10.0)] lt 0.000001

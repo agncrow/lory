@@ -1,0 +1,89 @@
+--- Everything lory.models reads, writes and draws, written out, to diff
+--- the interpreter's run against the compiled program's. Each file in
+--- tests/models/files/ is read and written as its parts: their names,
+--- forms and counts, every number they hold (the bits of its double, as
+--- a digest a list), their indices and groups, and their materials'
+--- numbers; then the model written as OBJ, STL (text and bytes), PLY
+--- (text and both byte orders) and glTF, each as its length and a digest
+--- of it; then the pieces and strands it is drawn in. What a file Lory
+--- cannot read says is written too, and a few models made in Lory's
+--- geometry are written the same way. From the repository's root:
+--- `bash tests/modes.sh crow tests/modes/models.co`.
+use sys
+use lory.models
+use lory.geometry
+
+--- a digest of bytes, short: the first 16 characters of its base64
+fn _digest[data]
+    d = sys.hmac[sys.bytes['lory models'], data, 'sha256']
+    slice[sys.base64[d], 0, 16]
+
+--- every double of a list, as a digest of their bits
+fn _numbers[xs]
+    if len[xs] eq 0
+        return 'none'
+    b = sys.float_bytes[xs, 8, true]
+    if not b.ok
+        return 'no bytes'
+    '`len[xs]` `_digest[b]`'
+
+--- whole numbers, joined
+fn _wholes[xs]
+    words = slice[[''], 0, 0]
+    for x in xs
+        words = push[words, '`x`']
+    join[words, ' ']
+
+--- a material's numbers and words
+fn _material_words[m]
+    numbers = concat[concat[m.color, m.specular], m.emissive]
+    numbers = push[push[numbers, m.shininess], m.opacity]
+    '`m.name` `_numbers[numbers]` `m.transparent` `m.smooth` \'`m.texture`\''
+
+--- a model written out: its parts, its writings, its pieces
+fn written[name, m]
+    if not models.readable[m]
+        log['`name`: cannot be read: `m.failure`']
+        return 0
+    log['`name`: `len[m.parts]` parts, libraries `join[m.libraries, \', \']`']
+    for p in m.parts
+        g = p.geometry
+        log['  part \'`p.name`\' `p.form`: positions `_numbers[g.positions]`; normals `_numbers[g.normals]`; uvs `_numbers[g.uvs]`; colours `_numbers[p.colors]`']
+        log['    indices `len[g.indices]`: `_digest[sys.bytes[_wholes[g.indices]]]`; groups `_wholes[g.groups]`']
+        for mat in p.materials
+            log['    material `_material_words[mat]`']
+    obj = sys.bytes[models.obj_text[m]]
+    stl = sys.bytes[models.stl_text[m]]
+    stl_bytes = models.stl_bytes[m]
+    ply = sys.bytes[models.ply_text[m]]
+    big = models.ply_bytes[m]
+    little = models.ply_bytes[m, little = true]
+    gltf = sys.bytes[models.gltf_text[m]]
+    log['  obj `len[obj]` `_digest[obj]`; stl `len[stl]` `_digest[stl]`, bytes `len[stl_bytes]` `_digest[stl_bytes]`']
+    log['  ply `len[ply]` `_digest[ply]`, big `len[big]` `_digest[big]`, little `len[little]` `_digest[little]`; gltf `len[gltf]` `_digest[gltf]`']
+    pieces = models.pieces_of[m]
+    for piece in pieces
+        c = piece.color
+        log['  piece `c.r` `c.g` `c.b`: at `_numbers[piece.shape.at]`, facing `_numbers[piece.shape.facing]`, uv `_numbers[piece.shape.uv]`']
+    for s in models.strands_of[m]
+        log['  strand `_numbers[s.lines.positions]`']
+    b = models.bounds_of[m]
+    log['  bounds `_numbers[concat[b[0], b[1]]]`, size `models.number_text[models.size_of[m]]`']
+    1
+
+for name in ['house.obj', 'quirks.obj', 'cloud.obj', 'prism.stl', 'wedge.stl', 'solid_binary.stl', 'painted.stl', 'short.stl', 'cube.ply', 'faces.ply', 'points.ply', 'cube_le.ply', 'cube_be.ply', 'bytes.ply', 'short.ply', 'misordered.ply', 'cloud.xyz', 'cloud_ascii.pcd', 'cloud_unsigned.pcd', 'cloud_binary.pcd', 'cloud_compressed.pcd', 'short.pcd', 'mesh.vtk', 'strips.vtk', 'quirks.vtk']
+    data = sys.file['tests/models/files/`name`']
+    if data.ok
+        written[name, models.model_of[name, data]]
+    else
+        log['`name`: no such file']
+
+mtl = read['tests/models/files/house.mtl']
+obj = read['tests/models/files/house.obj']
+written['house.obj with house.mtl', models.read_obj['`obj`', '`mtl`']]
+for mat in models.read_mtl['`mtl`']
+    log['house.mtl: `_material_words[mat]`']
+written['an OFF with face colours', models.read_off['COFF\n4 2 0\n0 0 0 1 0 0\n1 0 0 0 1 0\n1 1 0 0 0 1\n0 1 0 1 1 1\n3 0 1 2 255 128 0\n4 0 2 3 1 0.5 0\n']]
+written['a box', models.mesh_model[geometry.box[1.0, 2.0, 3.0, 2, 1, 1], 'box']]
+written['a sphere', models.mesh_model[geometry.sphere[1.0, 12, 8]]]
+written['a torus knot', models.mesh_model[geometry.torus_knot[1.0, 0.3, 64, 8, 2.0, 3.0], 'knot']]

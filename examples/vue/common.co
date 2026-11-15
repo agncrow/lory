@@ -1,0 +1,721 @@
+--- What the Vue examples share: JavaScript's ways with numbers and text
+--- (each example's code is JavaScript, and what it shows is what
+--- JavaScript makes of its numbers: `String(x)`, `Number(text)`,
+--- `toFixed`, `Math.round`, `%`), the seeded random numbers a run draws
+--- and lodash's shuffle over them, the words and links several examples
+--- draw, an alert drawn as a layer, and the reading of a shown tree that
+--- the tests hold to Vue's pages.
+use bits
+use math
+use memory
+use lory
+use lory.gui
+
+--- ---- numbers as JavaScript writes them ----
+
+--- a finite number's digits without its minus or zeros at either end, and
+--- where its point stands: the number is 0.d1d2… × 10 ^ point
+struct Digits [digits, point]
+
+fn _digits_of[x]
+    plain = str[abs[x]]
+    parts = split[plain, '.']
+    whole = parts[0]
+    after = ''
+    if len[parts] gt 1
+        after = parts[1]
+    chars = split['`whole``after`', '']
+    lead = 0
+    while lead lt len[chars] and chars[lead] eq '0'
+        lead = lead + 1
+    last = len[chars]
+    while last gt lead and chars[last - 1] eq '0'
+        last = last - 1
+    Digits[join[slice[chars, lead, last], ''], len[split[whole, '']] - lead]
+
+fn _zeros[n]
+    out = ''
+    i = 0
+    while i lt n
+        out = '`out`0'
+        i = i + 1
+    out
+
+--- `String(x)` of a number, as ECMAScript's Number::toString writes it:
+--- the fewest digits that read back as the same float, in plain
+--- notation from 10^-7 to 10^21 and with an exponent outside it
+fn js_number[x]
+    if x ne x
+        return 'NaN'
+    if x eq inf
+        return 'Infinity'
+    if x eq 0.0 - inf
+        return '-Infinity'
+    if x eq 0.0
+        return '0'
+    d = _digits_of[x]
+    ds = d.digits
+    k = len[ds]
+    n = d.point
+    minus = ''
+    if x lt 0.0
+        minus = '-'
+    if k lte n and n lte 21
+        return '`minus``ds``_zeros[n - k]`'
+    if 0 lt n and n lte 21
+        return '`minus``slice[ds, 0, n]`.`slice[ds, n, k]`'
+    if -6 lt n and n lte 0
+        return '`minus`0.`_zeros[0 - n]``ds`'
+    power = n - 1
+    mark = '+'
+    if power lt 0
+        mark = '-'
+    if k eq 1
+        return '`minus``ds`e`mark``abs[power]`'
+    '`minus``slice[ds, 0, 1]`.`slice[ds, 1, k]`e`mark``abs[power]`'
+
+--- 10^21, past which `toFixed` writes a number as `String` does
+fn _e21[]
+    got = float['1e21']
+    if not got.ok
+        return inf
+    0.0 + got
+
+--- `x.toFixed(places)` for 0 or 1 places: the nearest number of that
+--- many decimals, the larger of two as near (Rust's formatting takes the
+--- even one: 0.25 is 0.3 here, as JavaScript writes it)
+fn fixed[x, places]
+    if x ne x
+        return 'NaN'
+    if abs[x] gte _e21[]
+        return js_number[x]
+    a = abs[x]
+    minus = ''
+    if x lt 0.0
+        minus = '-'
+    --- (a tie is exact only where the number is a quarter, for one place,
+    --- or a half, for none: then it is rounded up)
+    unit = 2.0
+    if places eq 1
+        unit = 4.0
+    times = a * unit
+    tie = times eq float[floor[times]] and floor[times] % 2 eq 1
+    if not tie
+        return '`minus``fmt[a, decimals = places]`'
+    if places eq 0
+        return '`minus``floor[a + 0.5]`'
+    tenths = floor[a * 10.0 + 0.5]
+    whole = tenths / 10
+    '`minus``whole`.`tenths - whole * 10`'
+
+--- `Math.round(x)`: the nearest whole number, a half rounded up
+fn js_round[x]
+    down = float[floor[x]]
+    if x - down gte 0.5
+        return down + 1.0
+    down
+
+--- JavaScript's `a % b` of numbers: what is left of `a` past the most
+--- whole times `b` goes into it, with `a`'s minus, found exactly (each
+--- step takes `b` doubled away, which a float does without rounding)
+fn js_remainder[a, b]
+    if a ne a or b ne b or abs[a] eq inf or b eq 0.0
+        return nan
+    if abs[b] eq inf or a eq 0.0
+        return a
+    left = abs[a]
+    unit = abs[b]
+    if left lt unit
+        return a
+    step = unit
+    while step * 2.0 lte left and step * 2.0 lt inf
+        step = step * 2.0
+    while step gte unit
+        if left gte step
+            left = left - step
+        step = step / 2.0
+    if a lt 0.0
+        return 0.0 - left
+    left
+
+--- ---- numbers as JavaScript reads them ----
+
+fn _digit_value[ch]
+    if ch in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+        return code[ch] - 48
+    low = lower[ch]
+    if low in ['a', 'b', 'c', 'd', 'e', 'f']
+        return code[low] - 87
+    -1
+
+--- whether every character is a decimal digit (and there is one)
+fn _all_digits[chars]
+    if len[chars] eq 0
+        return false
+    for ch in chars
+        if not (ch in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
+            return false
+    true
+
+--- `Number(text)`: the text without the space around it read as a
+--- decimal number (a minus, digits, a point, an exponent), as
+--- `Infinity`, or as `0x`, `0o` or `0b` digits; nothing is 0, and what
+--- is none of these is NaN
+fn js_parse[words]
+    t = trim[words]
+    if t eq ''
+        return 0.0
+    chars = split[t, '']
+    k = len[chars]
+    if k gt 2 and chars[0] eq '0' and lower[chars[1]] in ['x', 'o', 'b']
+        radix = 16
+        if lower[chars[1]] eq 'o'
+            radix = 8
+        if lower[chars[1]] eq 'b'
+            radix = 2
+        total = 0.0
+        i = 2
+        while i lt k
+            v = _digit_value[chars[i]]
+            if v lt 0 or v gte radix
+                return nan
+            total = total * float[radix] + float[v]
+            i = i + 1
+        return total
+    at = 0
+    minus = ''
+    if chars[0] eq '+' or chars[0] eq '-'
+        minus = chars[0]
+        at = 1
+    rest = join[slice[chars, at, k], '']
+    if rest eq 'Infinity'
+        if minus eq '-'
+            return 0.0 - inf
+        return inf
+    whole = ''
+    while at lt k and _digit_value[chars[at]] gte 0 and _digit_value[chars[at]] lt 10
+        whole = '`whole``chars[at]`'
+        at = at + 1
+    after = ''
+    if at lt k and chars[at] eq '.'
+        at = at + 1
+        while at lt k and _digit_value[chars[at]] gte 0 and _digit_value[chars[at]] lt 10
+            after = '`after``chars[at]`'
+            at = at + 1
+    if whole eq '' and after eq ''
+        return nan
+    power = '0'
+    if at lt k and lower[chars[at]] eq 'e'
+        at = at + 1
+        mark = ''
+        if at lt k and (chars[at] eq '+' or chars[at] eq '-')
+            mark = chars[at]
+            at = at + 1
+        digits = slice[chars, at, k]
+        if not _all_digits[digits]
+            return nan
+        joined = join[digits, '']
+        power = '`mark``joined`'
+        at = k
+    if at ne k
+        return nan
+    if whole eq ''
+        whole = '0'
+    if after eq ''
+        after = '0'
+    got = float['`minus``whole`.`after`e`power`']
+    if not got.ok
+        return nan
+    0.0 + got
+
+--- whether the text is a valid floating-point number as HTML reads an
+--- `<input type="number">`'s value: a minus, digits and a point with
+--- digits after it, an exponent (a field holding anything else holds '')
+fn html_valid[words]
+    chars = split[words, '']
+    k = len[chars]
+    at = 0
+    if at lt k and chars[at] eq '-'
+        at = at + 1
+    whole = 0
+    while at lt k and _all_digits[[chars[at]]]
+        whole = whole + 1
+        at = at + 1
+    after = 0
+    if at lt k and chars[at] eq '.'
+        at = at + 1
+        while at lt k and _all_digits[[chars[at]]]
+            after = after + 1
+            at = at + 1
+        if after eq 0
+            return false
+    if whole eq 0 and after eq 0
+        return false
+    if at lt k and lower[chars[at]] eq 'e'
+        at = at + 1
+        if at lt k and (chars[at] eq '-' or chars[at] eq '+')
+            at = at + 1
+        power = 0
+        while at lt k and _all_digits[[chars[at]]]
+            power = power + 1
+            at = at + 1
+        if power eq 0
+            return false
+    at eq k
+
+--- `+input.value` of an `<input type="number">` holding the text: the
+--- number it reads, or 0 where the field holds no valid number
+fn html_number[words]
+    if not html_valid[words]
+        return 0.0
+    js_parse[words]
+
+--- ---- text as JavaScript writes it ----
+
+--- the text as JSON writes a string: quoted, its quotes, backslashes and
+--- control characters escaped
+fn json_quoted[words]
+    out = ''
+    for ch in split[words, '']
+        piece = ch
+        if ch eq '"'
+            piece = '\\"'
+        if ch eq '\\'
+            piece = '\\\\'
+        if ch eq '\n'
+            piece = '\\n'
+        if ch eq '\t'
+            piece = '\\t'
+        if ch eq '\r'
+            piece = '\\r'
+        out = '`out``piece`'
+    '"`out`"'
+
+--- an array of texts as `JSON.stringify(list, null, 2)` writes it (Vue's
+--- `{{ list }}`), a line each
+fn json_lines_of_texts[words]
+    if len[words] eq 0
+        return ['[]']
+    out = ['[']
+    i = 0
+    while i lt len[words]
+        comma = ','
+        if i eq len[words] - 1
+            comma = ''
+        out = push[out, '  `json_quoted[words[i]]``comma`']
+        i = i + 1
+    push[out, ']']
+
+--- the text with each run of white space made one space, and none at its
+--- ends (how a page's text reads: `textContent`, its spaces collapsed)
+fn normalized[words]
+    out = ''
+    gap = false
+    for ch in split[words, '']
+        if ch eq ' ' or ch eq '\n' or ch eq '\t' or ch eq '\r'
+            gap = true
+        else
+            if gap and out ne ''
+                out = '`out` '
+            gap = false
+            out = '`out``ch`'
+    out
+
+--- the characters of the text the other way round (`split('')`,
+--- `reverse()`, `join('')`)
+fn reversed_text[words]
+    join[reverse[split[words, '']], '']
+
+--- ---- random numbers, seeded ----
+
+--- a run of random numbers from a seed: the Park–Miller generator, the
+--- state times 16807 modulo 2^31 - 1, read as a fraction of 2^31 - 1 (the
+--- reference script draws Vue's `Math.random()` from the same, seeded 42)
+struct Seeded [state, value]
+
+fn seeded[n]
+    Seeded[n, 0.0]
+
+fn drawn_after[r]
+    r.state = (r.state * 16807) % 2147483647
+    r.value = float[r.state] / 2147483647.0
+    r
+
+--- whole numbers shuffled and the random numbers left
+struct Shuffled [items, random]
+
+--- lodash's `shuffle`: from the first place on, each place swapped with
+--- one drawn from it to the last (`lower + floor(random() * (upper -
+--- lower + 1))`), a random number drawn for every place
+fn shuffled[xs, r]
+    out = xs
+    k = len[out]
+    i = 0
+    while i lt k
+        r = drawn_after[r]
+        pick = i + floor[r.value * float[k - i]]
+        held = out[pick]
+        out[pick] = out[i]
+        out[i] = held
+        i = i + 1
+    Shuffled[out, r]
+
+--- ---- words drawn in colours and styles of their own ----
+
+--- the colours words are drawn in, by number: the look's ink, its muted
+--- words, its accent (a link), and the CSS colours the examples name
+fn ink_of[look, which]
+    if which eq 1
+        return look.muted
+    if which eq 2
+        return look.accent
+    if which eq 3
+        return lory.hex['#ff0000']
+    if which eq 4
+        return lory.hex['#008000']
+    if which eq 5
+        return lory.hex['#0000ff']
+    if which eq 6
+        return lory.hex['#42b983']
+    if which eq 7
+        return lory.white[]
+    if which eq 8
+        return lory.hex['#666666']
+    look.ink
+
+--- the colours by name, as the drawn words take them
+fn ink_ink[]
+    0
+
+fn ink_muted[]
+    1
+
+fn ink_link[]
+    2
+
+fn ink_red[]
+    3
+
+fn ink_green[]
+    4
+
+fn ink_blue[]
+    5
+
+fn ink_vue[]
+    6
+
+fn ink_white[]
+    7
+
+fn ink_grey[]
+    8
+
+--- the styles, added together
+fn bold[]
+    1
+
+fn italic[]
+    2
+
+fn underlined[]
+    4
+
+fn struck[]
+    8
+
+fn _has[style, flag]
+    (style / flag) % 2 eq 1
+
+--- how wide the words are, in CSS pixels, at `size`
+fn words_wide[c, words, size]
+    lory.measure[c, words, size]
+
+--- words drawn `size` CSS pixels high in a colour (`ink_of`'s number)
+--- and a style, as wide as they are: with an id they are pressed as a
+--- control is (a link, a paragraph to click), telling `press`
+fn styled[id, words, size, which, style, c]
+    w = words_wide[c, words, size]
+    if _has[style, bold[]]
+        w = w + 1.0
+    if _has[style, italic[]]
+        w = w + size * 0.2
+    gui.drawn[id, float[which], w, size * 1.4, _styled_painter, lo = float[style], hi = size, words = words]
+
+fn _styled_painter[d]
+    color = ink_of[d.look, int[d.num]]
+    style = int[d.lo]
+    size = d.hi * d.s
+    if d.pressed
+        d = gui.tell[d, 'press', d.words, 0.0]
+    d.c = drawn_words[d.c, d.x, d.y, d.words, size, color, style, d.s]
+    d
+--- the words drawn with their line's top left at (x, y), `size` drawing
+--- pixels high, in a style: bold drawn twice a little apart, italic
+--- leaned (its letters' corners slid along their height), underlined and
+--- struck by rules
+fn drawn_words[c, x, y, words, size, color, style, s]
+    from = len[c.verts]
+    top = y + 0.2 * size
+    c = lory.text[c, x, top, words, size, color]
+    if _has[style, bold[]]
+        c = lory.text[c, x + 0.6 * s, top, words, size, color]
+    if _has[style, italic[]]
+        c = _leaned[c, from, top + size]
+    wide = lory.measure[c, words, size]
+    rule = max[1.0 * s, size / 14.0]
+    if _has[style, underlined[]]
+        c = lory.rect[c, x, top + size * 1.05, wide, rule, color]
+    if _has[style, struck[]]
+        c = lory.rect[c, x, top + size * 0.55, wide, rule, color]
+    c
+
+--- the vertices drawn from `from` on leaned to the right above `foot`
+fn _leaned[c, from, foot]
+    vs = c.verts
+    i = from
+    while i lt len[vs]
+        vs[i] = vs[i] + (foot - vs[i + 1]) * 0.2
+        i = i + 16
+    c.verts = vs
+    c
+
+--- a link: accent words underlined, pressed as a control, its address
+--- shown in its tip (Lory opens no other page: a press copies it)
+fn link_to[id, words, address, c]
+    gui.tip[styled[id, words, 15.0, ink_link[], underlined[], c], address]
+
+--- a heading's words, bold, `size` CSS pixels high
+fn titled[id, words, size, c]
+    styled[id, words, size, ink_ink[], bold[], c]
+
+--- the node given an id of its own, so that its box is kept (a text's, a
+--- heading's: they are pressed by nothing)
+fn with_id[n, id]
+    n.id = id
+    n
+
+--- the node given a name the tests read it by, its id left as it is (a
+--- drawn control of no id only draws, and stays so)
+fn named[n, name]
+    n.opts['name'] = name
+    n
+
+fn _name_of[n]
+    if 'name' in n.opts
+        return n.opts['name']
+    ''
+
+--- the room an example is given beside the menu, in CSS pixels
+struct Room [wide, tall]
+
+--- ---- an alert, drawn as a dialog ----
+
+--- the browser's `alert(words)`: a dialog over the dimmed page, its OK
+--- the one control the page has while it stands
+fn alert_of[slug, words]
+    said = named[gui.text[words], '`slug`:alert:words']
+    gui.layer['`slug`:alert', [said, gui.row[[gui.button['`slug`:alert:ok', 'OK']], justify = 'end']], place = 'center', modal = true, scrim = true, dismiss = false, wide = 360.0, pad = 20.0]
+
+--- whether the frame closed the alert: its OK pressed (Enter or space
+--- while it has the focus), or Escape typed
+fn alert_closed[shown, slug]
+    for ev in shown.events
+        if ev.id eq '`slug`:alert:ok' and ev.act eq 'press'
+            return true
+    for ev in lory.events[shown.canvas]
+        if ev.on eq 'key' and ev.key eq 'Escape'
+            return true
+    false
+
+--- ---- the frame's own input ----
+
+--- whether a press began in the box (x, y, width, height) this frame
+fn pressed_in[c, box]
+    if len[box] lt 4
+        return false
+    for ev in lory.events[c]
+        if ev.on eq 'down' and ev.x gte box[0] and ev.y gte box[1] and ev.x lt box[0] + box[2] and ev.y lt box[1] + box[3]
+            return true
+    false
+
+--- whether a press began outside the box this frame (the focus leaves a
+--- field so), or Tab was typed
+fn left_box[c, box]
+    for ev in lory.events[c]
+        if ev.on eq 'down'
+            if len[box] lt 4
+                return true
+            if not (ev.x gte box[0] and ev.y gte box[1] and ev.x lt box[0] + box[2] and ev.y lt box[1] + box[3])
+                return true
+        if ev.on eq 'key' and ev.key eq 'Tab'
+            return true
+    false
+
+--- the box of the control of that id, as the frame showed it, or none
+fn box_of[shown, id]
+    if id in shown.boxes
+        return shown.boxes[id]
+    [0.0]
+
+--- whether an event of that id and act is among the frame's
+fn told[shown, id, act]
+    for ev in shown.events
+        if ev.id eq id and ev.act eq act
+            return true
+    false
+
+--- ---- a shown tree, read ----
+
+--- every node of the tree, each before the nodes inside it
+fn nodes_of[tree]
+    out = [tree]
+    waiting = [tree]
+    out = slice[out, 0, 0]
+    while len[waiting] gt 0
+        n = waiting[len[waiting] - 1]
+        waiting = slice[waiting, 0, len[waiting] - 1]
+        out = push[out, n]
+        i = len[n.kids] - 1
+        while i gte 0
+            waiting = push[waiting, n.kids[i]]
+            i = i - 1
+    out
+
+--- the node of that id, or a space of no id where there is none
+fn node_by[tree, id]
+    for n in nodes_of[tree]
+        if n.id eq id or _name_of[n] eq id
+            return n
+    gui.space[0.0]
+
+--- whether the tree holds a node of that id or name
+fn holds[tree, id]
+    n = node_by[tree, id]
+    n.id eq id or _name_of[n] eq id
+
+--- the words of the node of that id ('' where there is none)
+fn words_by[tree, id]
+    node_by[tree, id].words
+
+--- the words of every node inside the node of that id that shows words
+--- (words, a heading, a label, a note, a button, a field, drawn words),
+--- one after another with a space between, as a page's text reads
+fn words_under[tree, id]
+    top = node_by[tree, id]
+    if not holds[tree, id]
+        return ''
+    out = slice[[''], 0, 0]
+    for n in nodes_of[top]
+        if n.tag in ['text', 'heading', 'label', 'note', 'button', 'field', 'drawn', 'item'] and n.words ne ''
+            out = push[out, n.words]
+    normalized[join[out, ' ']]
+
+--- the tip of the node of that id ('' where it has none)
+fn tip_by[tree, id]
+    n = node_by[tree, id]
+    if 'tip' in n.opts
+        return n.opts['tip']
+    ''
+
+--- whether the node of that id is set aside (`gui.disabled`)
+fn off_by[tree, id]
+    n = node_by[tree, id]
+    if 'off' in n.nums
+        return n.nums['off'] gt 0.5
+    false
+
+--- 'true' or 'false', as JavaScript writes a bool
+fn yes[b]
+    if b
+        return 'true'
+    'false'
+
+--- ---- tests ----
+
+test numbers_are_written_as_javascript_writes_them[]
+    js_number[100.0] eq '100'
+    js_number[0.1] eq '0.1'
+    js_number[-17.77777777777778] eq '-17.77777777777778'
+    js_number[_e21[]] eq '1e+21'
+    js_number[123456789012345680000.0] eq '123456789012345680000'
+    js_number[0.000001] eq '0.000001'
+    js_number[0.0000001] eq '1e-7'
+    js_number[0.00000015] eq '1.5e-7'
+    js_number[-0.0] eq '0'
+    js_number[nan] eq 'NaN'
+    js_number[0.0 - inf] eq '-Infinity'
+    js_number[1.0 / 3.0] eq '0.3333333333333333'
+    js_number[2.5] eq '2.5'
+
+test numbers_are_read_as_javascript_reads_them[]
+    js_parse[''] eq 0.0
+    js_parse['  12  '] eq 12.0
+    js_parse['2.50'] eq 2.5
+    js_parse['.5'] eq 0.5
+    js_parse['5.'] eq 5.0
+    js_parse['-1e3'] eq -1000.0
+    js_parse['0x1F'] eq 31.0
+    js_parse['Infinity'] eq inf
+    v = js_parse['inf']
+    v ne v
+    w = js_parse['12abc']
+    w ne w
+    html_number[''] eq 0.0
+    html_number['1.'] eq 0.0
+    html_number['-40'] eq -40.0
+    html_number['37.5'] eq 37.5
+    html_number['+5'] eq 0.0
+
+test to_fixed_rounds_a_tie_up_as_javascript_does[]
+    fixed[0.25, 1] eq '0.3'
+    fixed[1.25, 1] eq '1.3'
+    fixed[0.35, 1] eq '0.3'
+    fixed[2.5, 1] eq '2.5'
+    fixed[15.0, 1] eq '15.0'
+    fixed[0.0, 1] eq '0.0'
+    fixed[2.5, 0] eq '3'
+    fixed[1.1, 1] eq '1.1'
+
+test the_remainder_is_exact_and_keeps_the_sign_of_what_is_divided[]
+    js_remainder[5.0, 3.0] eq 2.0
+    js_remainder[-5.0, 3.0] eq -2.0
+    js_remainder[10.0, 3.0] eq 1.0
+    js_remainder[10000000000000000.0, 3.0] eq 1.0
+    js_remainder[5.5, 2.0] eq 1.5
+    r = js_remainder[1.0, 0.0]
+    r ne r
+
+test the_seeded_random_numbers_are_park_and_millers[]
+    r = drawn_after[seeded[42]]
+    r.state eq 705894
+    r = drawn_after[r]
+    r.state eq 1126542223
+    js_round[2.5] eq 3.0
+    js_round[0.49999999999999994] eq 0.0
+    js_round[-2.5] eq -2.0
+
+test words_are_collapsed_and_quoted_as_a_page_and_json_write_them[]
+    normalized['  a \n  b  '] eq 'a b'
+    json_lines_of_texts[['Jack']] eq ['[', '  "Jack"', ']']
+    json_quoted['say "hi"'] eq '"say \\"hi\\""'
+    reversed_text['Hello World!'] eq '!dlroW olleH'
+
+--- whether a press began in the box with Ctrl or Cmd held, or from a
+--- headset's ray or a touch (where a list of many choices is pressed one
+--- choice at a time, each press adding or taking away)
+fn press_adds[c, box]
+    if len[box] lt 4
+        return false
+    for ev in lory.events[c]
+        if ev.on eq 'down' and ev.x gte box[0] and ev.y gte box[1] and ev.x lt box[0] + box[2] and ev.y lt box[1] + box[3]
+            if ev.ctrl or ev.meta or ev.device eq 'ray' or ev.device eq 'touch'
+                return true
+    false
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

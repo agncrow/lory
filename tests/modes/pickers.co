@@ -1,0 +1,146 @@
+--- What lory.calendar and lory.pickers compute on fixed days, written
+--- out, to diff the interpreter's run against the compiled program's:
+--- months' grids, weeks of the year, days added, dates written and read
+--- in five locales, days in zones, the keys' moves, choices, a day's list
+--- of times, the years paged, and a scheduler's entries laid side by
+--- side. No clock is read: every day is given.
+use lory.calendar
+use lory.pickers
+
+fn _m_day[t]
+    calendar.format[t, 'yyyy-MM-dd', calendar.locale['en-US']]
+
+fn _m_stamp[t]
+    calendar.format[t, 'yyyy-MM-dd HH:mm:ss', calendar.locale['en-US']]
+
+fn _m_days[days]
+    out = slice[[''], 0, 0]
+    for t in days
+        out = push[out, _m_day[t]]
+    join[out, ' ']
+
+fn _m_grids[]
+    for y in [2023, 2024, 2026]
+        for m in [1, 2, 3, 9, 12]
+            for from_day in [0, 1, 6]
+                g = calendar.month_days[y, m, from_day, false]
+                n = len[g]
+                log['grid `y`-`m` from `from_day`: `_m_day[g[0]]` to `_m_day[g[n - 1]]`, `n` days']
+
+fn _m_weeks[]
+    for t in [calendar.day[2020, 12, 31], calendar.day[2021, 1, 3], calendar.day[2024, 12, 30], calendar.day[2026, 1, 1], calendar.day[2027, 1, 1]]
+        a = calendar.week[t, 0, 1]
+        b = calendar.week[t, 1, 4]
+        log['week `_m_day[t]`: iso `calendar.iso_week[t]` of `calendar.iso_week_year[t]`, us `a` of `calendar.week_year[t, 0, 1]`, eu `b`']
+
+fn _m_added[]
+    for t in [calendar.day[2024, 1, 31], calendar.day[2024, 2, 29], calendar.day[2023, 10, 31]]
+        for n in [-13, -1, 1, 3, 12]
+            log['added `_m_day[t]` `n`: months `_m_day[calendar.add_months[t, n]]`, years `_m_day[calendar.add_years[t, n]]`, days `_m_day[calendar.add_days[t, n]]`']
+    log['between: `calendar.days_between[calendar.day[2024, 3, 1], calendar.day[2023, 3, 1]]` days, `calendar.months_between[calendar.day[2024, 3, 1], calendar.day[2022, 12, 31]]` months, `calendar.years_between[calendar.day[2024, 3, 1], calendar.day[2020, 3, 2]]` years']
+
+fn _m_formats[]
+    at = moment[2024, 3, 5, 14, 7, 9]
+    patterns = ['MM/dd/yyyy', 'EEEE, MMMM do yyyy', 'EEE d MMM', 'h:mm aa', 'HH:mm:ss', 'QQQ yyyy', 'I/R', 'eeee', 'LLLL', 'dd.MM.yy']
+    for name in calendar.locales[]
+        loc = calendar.locale[name]
+        for pat in patterns
+            log['format `name` `pat`: `calendar.format[at, pat, loc]`']
+
+fn _m_parses[]
+    en = calendar.locale['en-US']
+    base = calendar.day[2024, 3, 5]
+    cases = [['03/20/2024', 'MM/dd/yyyy'], ['3/2/24', 'M/d/yy'], ['2:30 PM', 'h:mm aa'], ['13/40/2024', 'MM/dd/yyyy'], ['March 5th 2024', 'MMMM do yyyy'], ['2024, Q3', 'yyyy, QQQ'], ['10/2024', 'I/R'], ['', 'MM/dd/yyyy']]
+    for k in cases
+        got = calendar.parse[k[0], k[1], en, base, 'UTC']
+        if got.ok
+            log['parse \'`k[0]`\' by `k[1]`: `_m_stamp[got]`']
+        else
+            log['parse \'`k[0]`\' by `k[1]`: refused']
+    fr = calendar.parse['5 mars 2024', 'd MMMM yyyy', calendar.locale['fr'], base, 'UTC']
+    if fr.ok
+        log['parse fr: `_m_stamp[fr]`']
+
+fn _m_zones[]
+    for zone in ['UTC', 'America/New_York', 'Europe/Paris', 'Asia/Kolkata', 'Australia/Lord_Howe']
+        for t in [calendar.day[2024, 3, 10], calendar.day[2024, 3, 31], calendar.day[2024, 4, 7], calendar.day[2024, 11, 3]]
+            log['zone `zone` `_m_day[t]`: begins `str[calendar.day_start[t, zone]]`, `calendar.hours_in_day[t, zone]` hours, 9:00 at `str[calendar.at_clock[t, 9 * 3600, zone]]`']
+
+fn _m_keys[]
+    r = calendar.excluding[calendar.bounded[calendar.rules[], calendar.day[2024, 3, 3], calendar.day[2024, 4, 27]], [calendar.day[2024, 3, 14], calendar.day[2024, 3, 20]]]
+    for key in ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End']
+        for t in [calendar.day[2024, 3, 13], calendar.day[2024, 3, 4], calendar.day[2024, 4, 26]]
+            plain = calendar.key_moved[t, key, false, r, 0, false]
+            shifted = calendar.key_moved[t, key, true, calendar.rules[], 1, false]
+            log['key `key` from `_m_day[t]`: `_m_day[plain]`, unruled with shift from Monday `_m_day[shifted]`']
+
+fn _m_choices[]
+    r = calendar.rules[]
+    chosen = calendar.no_days[]
+    for t in [calendar.day[2024, 3, 10], calendar.day[2024, 3, 6], calendar.day[2024, 3, 12], calendar.day[2024, 3, 20], calendar.day[2024, 3, 20]]
+        whole = calendar.choice_ends[chosen, t, 'range', false]
+        chosen = calendar.chosen_by[chosen, t, 'range', false, r, 0]
+        log['range after `_m_day[t]`: `_m_days[chosen]` (ends `whole`)']
+    many = calendar.no_days[]
+    for t in [calendar.day[2024, 3, 5], calendar.day[2024, 3, 1], calendar.day[2024, 3, 5], calendar.day[2024, 3, 9]]
+        many = calendar.chosen_by[many, t, 'days', false, r, 0]
+        log['days after `_m_day[t]`: `_m_days[many]`']
+
+fn _m_times[]
+    p = pickers.time_picker['t']
+    d = calendar.day[2024, 3, 5]
+    for minutes in [30, 15, 45, 60, 90]
+        times = pickers.times_of[pickers.timed[p, minutes], d]
+        log['times every `minutes`: `len[times]`, the fourth `_m_stamp[times[3]]`, the last `_m_stamp[times[len[times] - 1]]`']
+    ruled = pickers.times_excluding[pickers.times_bounded[p, 9 * 3600, 17 * 3600], [12 * 3600]]
+    open_times = slice[[''], 0, 0]
+    for t in pickers.times_of[ruled, d]
+        if not pickers.time_off[ruled, t]
+            open_times = push[open_times, calendar.format[t, 'HH:mm', calendar.locale['en-US']]]
+    listed = join[open_times, ' ']
+    log['open times: `listed`']
+    ny = pickers.zoned[p, 'America/New_York']
+    for t in [calendar.day[2024, 3, 10], calendar.day[2024, 11, 3]]
+        times = pickers.times_of[ny, t]
+        log['new york `_m_day[t]`: `len[times]` times, the sixth written `pickers.written[ny, [times[5]]]`']
+
+fn _m_tiles[]
+    m = pickers.month_picker['m']
+    q = pickers.quarter_picker['q']
+    y = pickers.year_picker['y']
+    for key in ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']
+        log['tiles `key`: month `_m_day[pickers.tile_moved[m, calendar.day[2024, 1, 1], key]]`, quarter `_m_day[pickers.tile_moved[q, calendar.day[2024, 1, 1], key]]`, year `_m_day[pickers.tile_moved[y, calendar.day[2017, 1, 1], key]]`']
+    for year in [1, 12, 13, 2016, 2017, 2024, 2028, 2029]
+        page = pickers.years_page[year]
+        log['years page `year`: `page[0]` to `page[1]`']
+
+fn _m_words[]
+    a = calendar.day[2024, 3, 10]
+    b = calendar.day[2024, 3, 14]
+    for p in [pickers.date_picker['a'], pickers.range_picker['b'], pickers.dates_picker['c'], pickers.week_picker['d'], pickers.month_picker['e'], pickers.quarter_picker['f'], pickers.year_picker['g'], pickers.localized[pickers.date_picker['h'], 'de']]
+        log['written `p.mode` `p.format`: \'`pickers.written[p, [a]]`\' \'`pickers.written[p, [a, b]]`\'']
+    r = pickers.range_picker['r']
+    for words in ['03/10/2024 - 03/14/2024', '03/10/2024', '3/4/2024 - ', 'soon']
+        got = pickers.read_words[r, words, calendar.day[2000, 1, 1]]
+        log['read \'`words`\': fits `got.fits`, `_m_days[got.chosen]`']
+
+fn _m_schedule[]
+    t = calendar.day[2024, 3, 4]
+    es = [calendar.entry['a', 'Stand-up', t + 9 * 3600, t + 10 * 3600], calendar.entry['b', 'Review', t + 9 * 3600 + 1800, t + 11 * 3600], calendar.entry['c', 'Call', t + 10 * 3600, t + 10 * 3600 + 1800], calendar.entry['d', 'Lunch', t + 12 * 3600, t + 13 * 3600], calendar.whole_days['e', 'Trip', t, calendar.add_days[t, 2]], calendar.whole_days['f', 'Fair', calendar.add_days[t, 1], calendar.add_days[t, 3]]]
+    for k in calendar.side_by_side[es, t, 'UTC']
+        log['laid `k.entry.id`: column `k.column` of `k.columns`, `fmt[k.top, decimals = 3]` to `fmt[k.bottom, decimals = 3]`']
+    for k in calendar.lanes[es, t, 7, 'UTC', true]
+        log['lane `k.entry.id`: lane `k.lane`, days `k.from` to `k.to`']
+
+_m_grids[]
+_m_weeks[]
+_m_added[]
+_m_formats[]
+_m_parses[]
+_m_zones[]
+_m_keys[]
+_m_choices[]
+_m_times[]
+_m_tiles[]
+_m_words[]
+_m_schedule[]

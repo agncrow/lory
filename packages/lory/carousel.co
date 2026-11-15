@@ -1,0 +1,3615 @@
+--- Lory's carousels (docs/components/carousel.md): slides moved by arrows,
+--- dots, keys, swipes and autoplay, one at a time or several, wrapping or
+--- not, centred, of their own widths, faded, vertical, right to left,
+--- loaded lazily, in rows, by the page's width (breakpoints), and two moving
+--- together; panes swapped one for another (a window); a strip of items
+--- scrolled and chosen (a slide group); and a strip that never stops (a
+--- ticker).
+---
+--- What react-slick 0.31.0 does is re-implemented here, and
+--- tests/carousel/reference.co holds it to react-slick's own numbers: the
+--- slide shown and aimed at after every press, swipe and tick, where the
+--- track stands, which slides are cloned, active, centred and loaded, the
+--- dots and arrows, and when each hook is told. None of its source is
+--- included: what its components and functions do was read from that
+--- version and written anew, in the same order, so that the numbers come
+--- out the same. A move is eased by its CSS timing function (react-slick's
+--- `cssEase`, 'ease' at first) as `lory.motion` eases one, and the test
+--- holds those curves to Chrome's own progress at fixed times too.
+---
+--- The panes follow Vuetify 4.3.3's v-window, the slide group its
+--- v-slide-group, and the ticker Motion's Ticker (motion-plus-react
+--- 1.5.4): their curves, timings and arithmetic were read from those
+--- versions and written anew, and the same test holds the slide group's
+--- scroll targets and eased positions, the swipes Vuetify's touch hears
+--- and the ticker's copies and wrap to the libraries' own functions.
+---
+---     s = carousel.settings[show = 3, scroll = 3, dots = true]
+---     tree = carousel.carousel[c, 'hero', slides, s]
+---     shown = gui.show[c, gui.column[[tree, …]]]
+---     for ev in shown.events
+---         if ev.id eq 'hero' and ev.act eq 'change' …   --- a move began: ev.num the slide
+---
+--- What a carousel holds between frames (the slide shown, a move under
+--- way, a swipe, autoplay's clock, the slides loaded, the sizes measured)
+--- is Lory's, in `use memory` under 'lory.carousel/' and its id (the
+--- panes', the group's and the ticker's beside it); the slides and
+--- settings are the program's, handed to it again each frame. Sizes are
+--- measured as a frame is drawn, by marks the painters read, and used
+--- from the next frame on.
+
+use math
+use memory
+use lory
+use gui
+use motion
+
+--- ---- settings ----
+
+--- what a carousel is asked to be, by react-slick's settings (its names
+--- spelt Lory's way, its defaults kept):
+---   show, scroll       slides shown at once, and moved by a press (1, 1)
+---   infinite           whether it wraps (true)
+---   center, padding    the slide shown centred, its neighbours peeking by
+---                      `padding` each side: CSS pixels ('50px') or a share
+---                      of the width ('10%')
+---   variable           each slide its own width (`wide` of its `slide`)
+---   fade, speed, ease  a cross-fade instead of a slide; a move's time in
+---                      ms (500) and its CSS timing function ('ease')
+---   autoplay, autoplay_speed, pause_on_hover, pause_on_dots_hover,
+---   pause_on_focus     moved on by itself every `autoplay_speed` ms
+---                      (3000), held while the pointer rests on it (true)
+---                      or on its dots, or while it has the focus
+---   dots, arrows       its dots (false) and arrows (true); arrows shown
+---                      only while the pointer is over it (`arrows_on_hover`)
+---   initial            the slide it starts on (0)
+---   rtl, vertical, vertical_swiping
+---                      right to left; slides one above another; swiped up
+---                      and down
+---   adaptive_height    as tall as the slide shown
+---   lazy               slides drawn only once near: 'ondemand', or one more
+---                      a second outwards too: 'progressive' ('': all)
+---   swipe, draggable, touch_move, touch_threshold, swipe_to_slide,
+---   edge_friction      swiped (by touch and the ray; by a mouse where
+---                      `draggable`), a swipe past a `touch_threshold`th of
+---                      the width moving it, to the slide it reached where
+---                      `swipe_to_slide`, dragged at `edge_friction` of the
+---                      pointer past an end that does not wrap (0.35)
+---   focus_on_select    a slide pressed made the one shown
+---   wait_for_animate   a press during a move waits for it (true)
+---   accessibility      moved by the arrow keys while it has the focus (true)
+---   unslick            its slides only stood side by side, never moved
+---   rows, per_row      slides grouped into a grid of `rows` rows of
+---                      `per_row` each, the group moved as one slide
+---   nav_for            the id of a carousel that moves with this one
+---   wide, tall         its width (0: its column's) and its slides'
+---                      height in CSS pixels (0: their own, measured)
+--- and `plain`: its slides one under another, as react-slick's 'unslick'
+--- breakpoint leaves them.
+struct Settings [show, scroll, infinite, center, padding, variable, fade, speed, ease, autoplay, autoplay_speed, pause_on_hover, pause_on_dots_hover, pause_on_focus, dots, arrows, initial, rtl, vertical, vertical_swiping, adaptive_height, lazy, swipe, draggable, touch_move, touch_threshold, swipe_to_slide, focus_on_select, wait_for_animate, edge_friction, accessibility, unslick, rows, per_row, nav_for, plain, wide, tall, arrows_on_hover]
+
+--- the settings, react-slick's defaults where none is given
+fn settings[show = 1, scroll = 1, infinite = true, center = false, padding = '50px', variable = false, fade = false, speed = 500.0, ease = 'ease', autoplay = false, autoplay_speed = 3000.0, pause_on_hover = true, pause_on_dots_hover = false, pause_on_focus = false, dots = false, arrows = true, initial = 0, rtl = false, vertical = false, vertical_swiping = false, adaptive_height = false, lazy = '', swipe = true, draggable = true, touch_move = true, touch_threshold = 5.0, swipe_to_slide = false, focus_on_select = false, wait_for_animate = true, edge_friction = 0.35, accessibility = true, unslick = false, rows = 1, per_row = 1, nav_for = '', wide = 0.0, tall = 0.0, arrows_on_hover = false]
+    Settings[show, scroll, infinite, center, padding, variable, fade, speed, ease, autoplay, autoplay_speed, pause_on_hover, pause_on_dots_hover, pause_on_focus, dots, arrows, initial, rtl, vertical, vertical_swiping, adaptive_height, lazy, swipe, draggable, touch_move, touch_threshold, swipe_to_slide, focus_on_select, wait_for_animate, edge_friction, accessibility, unslick, rows, per_row, nav_for, false, wide, tall, arrows_on_hover]
+
+--- the settings a carousel of `count` slides (its groups, where in rows)
+--- runs by, as react-slick's Slider hands them on: a centred one moves by
+--- one, a fade shows one and moves by one, slides in rows keep no widths
+--- of their own, and too few slides to move are only stood side by side
+fn _resolved[s, count]
+    if s.center
+        s.scroll = 1
+    if s.fade
+        s.show = 1
+        s.scroll = 1
+    if s.variable and (s.rows gt 1 or s.per_row gt 1)
+        s.variable = false
+    s.show = max[1, s.show]
+    s.scroll = max[1, s.scroll]
+    s.rows = max[1, s.rows]
+    s.per_row = max[1, s.per_row]
+    if count lte s.show
+        s.unslick = true
+    s
+
+--- how many slides the track holds of the `count` given: in rows, the
+--- groups they make, `rows` rows of `per_row` each (the last group as full
+--- as the slides left make it)
+fn grouped[s, count]
+    per = max[1, s.rows] * max[1, s.per_row]
+    (count + per - 1) / per
+
+--- settings for page widths up to `width` CSS pixels (react-slick's
+--- `responsive`): whole settings, made from the carousel's own
+--- (`b = base` then `b.show = 2`), or none at all (`unslicked`: the
+--- slides one under another)
+struct Breakpoint [width, s]
+
+fn breakpoint[width, s]
+    Breakpoint[width, s]
+
+fn unslicked[width]
+    s = settings[]
+    s.plain = true
+    Breakpoint[width, s]
+
+--- the settings a page `width` CSS pixels wide is given: those of the
+--- narrowest breakpoint it is within, or the base where it is wider than
+--- every one (react-slick's media queries, as they answer once the window
+--- is resized to that width)
+fn at_width[base, points, width]
+    out = base
+    best = -1.0
+    for b in points
+        if width lte b.width and (best lt 0.0 or b.width lt best)
+            best = b.width
+    if best lt 0.0
+        return base
+    i = 0
+    while i lt len[points]
+        if points[i].width eq best
+            out = points[i].s
+        i = i + 1
+    out
+
+--- the settings the frame's page width is given
+fn responsive[c, base, points]
+    at_width[base, points, lory.width[c] / lory.px[c]]
+
+--- ---- what a carousel holds ----
+
+--- a timer, as react-slick sets them: due `at` ms (`every` again, for an
+--- interval), fired in the order set where two are due at once (`order`);
+--- `what` it does: 'end' a move (its slide, track offset, target, how it
+--- moved: 'slide', 'fade' or 'still', and the slide its `after` hook tells),
+--- 'unanimate' (the move over 10 ms later), 'autoplay' or 'lazy' (a slide
+--- more loaded, progressively)
+struct Timer [id, at, every, order, what, slide, left, target, mode, after]
+
+--- what is done once a change is committed, as react-slick's setState
+--- callbacks: 'mounted', 'resized', 'changed' (its slides or settings),
+--- 'slid' (a move begun: link the carousel it navigates, set its end) and
+--- 'ended' (a move ended: tell `after`)
+struct Callback [what, index, mode, slide, left, target, after]
+
+--- an event told: at `t` ms, `what` ('before': from slide `a` to `b`;
+--- 'after': at slide `a`; 'swipe' and 'edge': a direction in `words`;
+--- 'lazy': the `slides` loaded)
+struct Told [t, what, a, b, words, slides]
+
+--- a slide as the track stands it: its index (a clone's below 0 or past the
+--- last), whether it is active (shown), centred, a clone, the current one,
+--- loaded, and its opacity (a fade's)
+struct Slot [index, active, center, cloned, current, loaded, alpha]
+
+--- the dots: how many, and which is active (-1: none, or no dots)
+struct Dots [count, active]
+
+--- a carousel's state (react-slick's InnerSlider's, and what it keeps
+--- beside it): its settings and slides; the slide shown and aimed at,
+--- whether a move animates, autoplay's state ('' none, 'playing',
+--- 'hovered', 'focused', 'paused'); a swipe (dragging, a page's scroll
+--- instead, swiping, an end dragged, where the track was dragged to and
+--- where the drag began and stands, its length); the track (its offset,
+--- whether it moves to it, whether it has one: a fade has none); the
+--- sizes (a slide's width and height, the list's width and height, the
+--- height adapted to the slide shown, -1 none); the slides loaded;
+--- whether a press is a click (none after a swipe), as of the last
+--- drawing too; the index last sent to the carousel it navigates; the
+--- timers and the last timer's number, the move's end, autoplay's and the
+--- progressive loader's; whether a change awaits its commit and what then;
+--- what it told; what it sends the carousel it navigates; each slide's
+--- width and height; the time; whether it is mounted, and whether its
+--- settings or slides changed; where the track was and when it began to
+--- move (to draw it between); each slide's opacity as its fade began and
+--- when; the pointer that drags it and what it pressed; whether the
+--- pointer is over the track and over the dots
+struct Slick [s, count, current, target, animating, autoplaying, dragging, scrolling, swiping, swiped, edge_dragged, swipe_left, has_swipe_left, start_x, start_y, cur_x, cur_y, swipe_length, has_length, left, moving, transform, slide_width, slide_height, list_width, list_height, adapted, loaded, clickable, drawn_clickable, nav_index, timers, made, end_id, autoplay_id, lazy_id, dirty, callbacks, told, links, widths, heights, now, mounted, changed, from_left, moved_at, alpha_from, alpha_at, device, press, hovered, dots_hovered]
+
+fn _no_ints[]
+    out = []
+    for i in range[0]
+        out = push[out, 0]
+    out
+
+fn _no_floats[]
+    out = []
+    for i in range[0]
+        out = push[out, 0.0]
+    out
+
+fn _no_timers[]
+    slice[[Timer[0, 0.0, 0.0, 0, '', 0, 0.0, 0, '', 0]], 0, 0]
+
+fn _no_callbacks[]
+    slice[[Callback['', 0, '', 0, 0.0, 0, 0]], 0, 0]
+
+fn _no_told[]
+    slice[[Told[0.0, '', 0, 0, '', _no_ints[]]], 0, 0]
+
+fn _no_slots[]
+    slice[[Slot[0, false, false, false, false, false, 1.0]], 0, 0]
+
+--- (index the carousel never sent: react-slick's asNavForIndex unset)
+fn _unsent[]
+    -1000000000
+
+--- ---- react-slick's arithmetic ----
+
+fn _one_if[b]
+    if b
+        return 1
+    0
+
+fn _clamp[x, lo, hi]
+    max[lo, min[x, hi]]
+
+--- JavaScript's Math.round: halves up
+fn _js_round[x]
+    floor[x + 0.5]
+
+--- JavaScript's parseInt of a CSS length: its leading digits ('60px' 60,
+--- '10%' 10; none 0)
+fn _int_of[t]
+    digits = split['0123456789', '']
+    chars = split[t, '']
+    n = 0
+    minus = false
+    i = 0
+    while i lt len[chars] and chars[i] eq ' '
+        i = i + 1
+    if i lt len[chars] and (chars[i] eq '-' or chars[i] eq '+')
+        minus = chars[i] eq '-'
+        i = i + 1
+    going = true
+    while going and i lt len[chars]
+        d = -1
+        j = 0
+        while j lt 10
+            if digits[j] eq chars[i]
+                d = j
+            j = j + 1
+        if d lt 0
+            going = false
+        else
+            n = n * 10 + d
+            i = i + 1
+    if minus
+        return 0 - n
+    n
+
+--- a CSS length's number, its fraction too ('12.5px' 12.5)
+fn _number_of[t]
+    chars = split[trim[t], '']
+    kept = ''
+    i = 0
+    going = true
+    while going and i lt len[chars]
+        if chars[i] in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '-', '+']
+            kept = concat[kept, chars[i]]
+            i = i + 1
+        else
+            going = false
+    n = float[kept]
+    if not n.ok
+        return 0.0
+    0.0 + n
+
+--- whether a CSS length is a share of the width ('10%')
+fn _share[t]
+    chars = split[t, '']
+    len[chars] gt 0 and chars[len[chars] - 1] eq '%'
+
+--- the clones before the slides and after them (getPreClones,
+--- getPostClones), and all the track holds (getTotalSlides)
+fn _pre[k]
+    s = k.s
+    if s.unslick or not s.infinite
+        return 0
+    if s.variable
+        return k.count
+    s.show + _one_if[s.center]
+
+fn _total[k]
+    if k.count eq 1
+        return 1
+    _pre[k] + k.count + _pre[k]
+
+--- whether the carousel may move on from `current` (canGoNext)
+fn _can_go_next[k, current]
+    s = k.s
+    if s.infinite
+        return true
+    if s.center and current gte k.count - 1
+        return false
+    if k.count lte s.show or current gte k.count - s.show
+        return false
+    true
+
+--- the slides before and after the one shown that are loaded with it
+--- (lazySlidesOnLeft, lazySlidesOnRight)
+fn _lazy_left[k]
+    s = k.s
+    if s.center
+        return s.show / 2 + _one_if[_int_of[s.padding] gt 0]
+    0
+
+fn _lazy_right[k]
+    s = k.s
+    if s.center
+        return (s.show - 1) / 2 + 1 + _one_if[_int_of[s.padding] gt 0]
+    s.show
+
+--- the slides near `current` not yet loaded (getOnDemandLazySlides)
+fn _on_demand[k, current, loaded]
+    out = _no_ints[]
+    i = current - _lazy_left[k]
+    last = current + _lazy_right[k]
+    while i lt last
+        if not (i in loaded)
+            out = push[out, i]
+        i = i + 1
+    out
+
+fn _joined[xs, ys]
+    out = xs
+    for y in ys
+        out = push[out, y]
+    out
+
+--- the slides to the right of the shown one and to its left
+--- (slidesOnRight, slidesOnLeft)
+fn _on_right[k]
+    s = k.s
+    if s.center
+        right = (s.show - 1.0) / 2.0 + 1.0
+        if _int_of[s.padding] gt 0
+            right = right + 1.0
+        if s.rtl and s.show % 2 eq 0
+            right = right + 1.0
+        return right
+    if s.rtl
+        return 0.0
+    s.show - 1.0
+
+fn _on_left[k]
+    s = k.s
+    if s.center
+        left = (s.show - 1.0) / 2.0 + 1.0
+        if _int_of[s.padding] gt 0
+            left = left + 1.0
+        if not s.rtl and s.show % 2 eq 0
+            left = left + 1.0
+        return left
+    if s.rtl
+        return s.show - 1.0
+    0.0
+
+--- which way a slide lies from the one shown, the short way round
+--- (siblingDirection)
+fn _sibling[k, target, current]
+    if target gt current
+        if target + 0.0 gt current + _on_right[k]
+            return 'left'
+        return 'right'
+    if target + 0.0 lt current - _on_left[k]
+        return 'right'
+    'left'
+
+--- the track's slides in the order they stand, by index (a clone's below 0
+--- or past the last), reversed right to left
+fn _order[k]
+    s = k.s
+    n = k.count
+    pre = _no_ints[]
+    post = _no_ints[]
+    cloned = s.infinite and n gt 1 and not s.fade and not s.unslick
+    i = 0
+    while i lt n
+        if cloned
+            if n - i lte _pre[k]
+                pre = push[pre, 0 - (n - i)]
+            if i lt _pre[k]
+                post = push[post, n + i]
+        i = i + 1
+    out = pre
+    i = 0
+    while i lt n
+        out = push[out, i]
+        i = i + 1
+    out = _joined[out, post]
+    if s.rtl
+        back = _no_ints[]
+        i = len[out] - 1
+        while i gte 0
+            back = push[back, out[i]]
+            i = i - 1
+        return back
+    out
+
+--- a slide's own width and height, by its index (a clone's are its slide's)
+fn _own[xs, index, n]
+    if n eq 0 or len[xs] eq 0
+        return 0.0
+    i = ((index % n) + n) % n
+    if i lt len[xs]
+        return xs[i]
+    0.0
+
+--- how wide a slot of the track stands, by its index
+fn _slot_wide[k, index]
+    if k.s.vertical
+        return k.list_width
+    if k.s.variable
+        return _own[k.widths, index, k.count]
+    k.slide_width
+
+--- where the track's slide `at` (its place in the order) begins along the
+--- track, and how long it is: widths across, heights down
+fn _along[k, order, at]
+    x = 0.0
+    i = 0
+    while i lt at
+        if k.s.vertical
+            x = x + _own[k.heights, order[i], k.count]
+        else
+            x = x + _slot_wide[k, order[i]]
+        i = i + 1
+    x
+
+--- the offset of the track that shows slide `index` (getTrackLeft)
+fn _track_left[k, index]
+    s = k.s
+    if s.unslick
+        return 0.0
+    if s.fade or k.count eq 1
+        return 0.0
+    n = k.count
+    by = 0
+    if s.infinite
+        by = 0 - _pre[k]
+        if n % s.scroll ne 0 and index + s.scroll gt n
+            if index gt n
+                by = 0 - (s.show - (index - n))
+            else
+                by = 0 - n % s.scroll
+        if s.center
+            by = by + s.show / 2
+    else
+        if n % s.scroll ne 0 and index + s.scroll gt n
+            by = s.show - n % s.scroll
+        if s.center
+            by = s.show / 2
+    left = 0.0
+    if not s.vertical
+        left = (index + 0.0) * k.slide_width * -1.0 + (by + 0.0) * k.slide_width
+    else
+        left = (index + 0.0) * k.slide_height * -1.0 + (by + 0.0) * k.slide_height
+    if s.variable
+        order = _order[k]
+        at = index + _pre[k]
+        if not s.center
+            left = 0.0
+            if at gte 0 and at lt len[order]
+                left = 0.0 - _along[k, order, at]
+        else
+            if not s.infinite
+                at = index
+            left = 0.0
+            --- (a slide past the track's end is no number: JavaScript's
+            --- undefined subtracted)
+            if at gt len[order] or at lt 0
+                return nan
+            left = 0.0 - _along[k, order, at]
+            left = left - _int_of[s.padding]
+            if at gte len[order]
+                return nan
+            left = left + (k.list_width - _slot_wide[k, order[at]]) / 2.0
+    left
+
+--- the direction of the drag so far (getSwipeDirection): 'left', 'right',
+--- 'up', 'down', or 'vertical' (a scroll of the page) where it does not
+--- swipe up and down
+fn _swipe_direction[k]
+    dx = k.start_x - k.cur_x
+    dy = k.start_y - k.cur_y
+    r = atan2[dy, dx]
+    angle = _js_round[r * 180.0 / pi]
+    if angle lt 0.0
+        angle = 360.0 - abs[angle]
+    if (angle lte 45.0 and angle gte 0.0) or (angle lte 360.0 and angle gte 315.0)
+        return 'left'
+    if angle gte 135.0 and angle lte 225.0
+        return 'right'
+    if k.s.vertical_swiping
+        if angle gte 35.0 and angle lte 135.0
+            return 'up'
+        return 'down'
+    'vertical'
+
+--- the slides a swipe may stop at (getNavigableIndexes), and the one a
+--- swipe to `index` stops at (checkNavigable)
+fn _navigable_indexes[k]
+    s = k.s
+    most = k.count
+    at = 0
+    counter = 0
+    if s.infinite
+        most = k.count * 2
+        at = 0 - s.show
+        counter = 0 - s.show
+    out = _no_ints[]
+    while at lt most
+        out = push[out, at]
+        at = counter + s.scroll
+        counter = counter + min[s.scroll, s.show]
+    out
+
+fn _navigable[k, index]
+    stops = _navigable_indexes[k]
+    if len[stops] eq 0
+        return index
+    if index gt stops[len[stops] - 1]
+        return stops[len[stops] - 1]
+    before = 0
+    i = 0
+    while i lt len[stops]
+        if index lt stops[i]
+            return before
+        before = stops[i]
+        i = i + 1
+    index
+
+--- how many slides a swipe crossed (getSlideCount): to the slide it reached
+--- where it swipes to a slide, else a move's worth
+fn _swiped_count[k]
+    s = k.s
+    if not s.swipe_to_slide
+        return s.scroll
+    center_offset = 0.0
+    if s.center
+        center_offset = k.slide_width * (s.show / 2)
+    order = _order[k]
+    reached = -1
+    found = false
+    i = 0
+    while i lt len[order] and not found
+        index = order[i]
+        if not s.vertical
+            if _along[k, order, i] - center_offset + _slot_wide[k, index] / 2.0 gt k.swipe_left * -1.0
+                reached = index
+                found = true
+        else
+            if _along[k, order, i] + _own[k.heights, index, k.count] / 2.0 gt k.swipe_left * -1.0
+                reached = index
+                found = true
+        i = i + 1
+    if not found
+        return 0
+    from = k.current
+    if s.rtl
+        from = k.count - k.current
+    crossed = abs[reached - from]
+    if crossed eq 0
+        return 1
+    crossed
+
+--- ---- the carousel's state, made and changed ----
+
+fn _fresh[s, count, wide, heights, widths, at]
+    Slick[_resolved[s, count], count, s.initial, s.initial, false, '', false, false, false, false, false, 0.0, false, 0.0, 0.0, 0.0, 0.0, 0.0, false, 0.0, false, true, 0.0, 0.0, wide, 0.0, -1.0, _no_ints[], true, true, _unsent[], _no_timers[], 0, 0, 0, 0, false, _no_callbacks[], _no_told[], _no_ints[], widths, heights, at, false, false, 0.0, at, _no_floats[], at, '', '', false, false]
+
+--- something told at the carousel's time
+fn _tell[k, what, a, b]
+    k.told = push[k.told, Told[k.now, what, a, b, '', _no_ints[]]]
+    k
+
+fn _tell_words[k, what, words]
+    k.told = push[k.told, Told[k.now, what, 0, 0, words, _no_ints[]]]
+    k
+
+--- the slides of `loaded` not loaded before, told as loaded
+fn _tell_loaded[k, loaded]
+    fresh = _no_ints[]
+    for i in loaded
+        if not (i in k.loaded)
+            fresh = push[fresh, i]
+    if len[fresh] gt 0
+        k.told = push[k.told, Told[k.now, 'lazy', 0, 0, '', fresh]]
+    k
+
+--- ---- the clock: react-slick's timers ----
+
+fn _timeout[k, at, what, slide, left, target, mode, after]
+    k.made = k.made + 1
+    k.timers = push[k.timers, Timer[k.made, at, 0.0, k.made, what, slide, left, target, mode, after]]
+    k
+
+fn _interval[k, what, every]
+    k.made = k.made + 1
+    k.timers = push[k.timers, Timer[k.made, k.now + every, every, k.made, what, 0, 0.0, 0, '', 0]]
+    k
+
+fn _cleared[k, id]
+    kept = _no_timers[]
+    for t in k.timers
+        if t.id ne id
+            kept = push[kept, t]
+    k.timers = kept
+    k
+
+--- the timer due first by `to` (-1: none), earliest first and in the order
+--- set where two are due at once
+fn _due[k, to]
+    best = -1
+    i = 0
+    while i lt len[k.timers]
+        t = k.timers[i]
+        if t.at lte to
+            if best lt 0
+                best = i
+            else
+                b = k.timers[best]
+                if t.at lt b.at or (t.at eq b.at and t.order lt b.order)
+                    best = i
+        i = i + 1
+    best
+
+--- the carousel's clock moved on to `to` ms: each timer due by then fired
+--- at its own time, and what it changed committed
+fn advanced[k, to]
+    going = true
+    while going
+        i = _due[k, to]
+        if i lt 0
+            going = false
+        else
+            t = k.timers[i]
+            k.now = t.at
+            if t.every gt 0.0
+                ts = k.timers
+                one = ts[i]
+                one.at = one.at + one.every
+                k.made = k.made + 1
+                one.order = k.made
+                ts[i] = one
+                k.timers = ts
+            else
+                k = _cleared[k, t.id]
+            k = _fired[k, t]
+            k = _committed[k]
+    if to gt k.now
+        k.now = to
+    k
+
+fn _fired[k, t]
+    if t.what eq 'end'
+        --- (the move's end: the slide, the track at rest, the target; a
+        --- fade's only its target; a move made at once, nothing)
+        if t.mode eq 'slide'
+            k.current = t.slide
+            k = _tracked[k, t.left, false]
+            k.has_swipe_left = false
+            k.target = t.target
+        if t.mode eq 'fade'
+            k.target = t.target
+        k.dirty = true
+        k.callbacks = push[k.callbacks, Callback['ended', 0, t.mode, t.slide, t.left, t.target, t.after]]
+        return k
+    if t.what eq 'unanimate'
+        k.animating = false
+        k.dirty = true
+        return k
+    if t.what eq 'autoplay'
+        return _played[k]
+    if t.what eq 'lazy'
+        return _progressive[k]
+    k
+
+--- ---- committing: react-slick's componentDidUpdate and callbacks ----
+
+--- what a change set off, once it is committed: componentDidUpdate (a
+--- slide near loaded, the height adapted, the settings or slides changed),
+--- then what was to follow it, round after round while anything changed
+fn _committed[k]
+    while k.dirty
+        k.dirty = false
+        k.drawn_clickable = k.clickable
+        pending = k.callbacks
+        k.callbacks = _no_callbacks[]
+        k = _did_update[k]
+        i = 0
+        while i lt len[pending]
+            k = _called_back[k, pending[i]]
+            i = i + 1
+    k
+
+fn _did_update[k]
+    if k.s.lazy ne ''
+        near = _on_demand[k, k.current, k.loaded]
+        if len[near] gt 0
+            k = _tell_loaded[k, near]
+            k.loaded = _joined[k.loaded, near]
+            k.dirty = true
+    k = _adapted[k]
+    if k.changed
+        k.changed = false
+        k = _updated[k, true, 'changed', false]
+    k
+
+--- the list as tall as the slide shown (adaptHeight)
+fn _adapted[k]
+    if k.s.adaptive_height
+        order = _order[k]
+        h = 0.0
+        if k.current in order
+            h = _own[k.heights, k.current, k.count]
+        k.adapted = h
+    k
+
+fn _called_back[k, cb]
+    s = k.s
+    if cb.what eq 'mounted'
+        k = _adapted[k]
+        if s.autoplay
+            k = _autoplay[k, 'update']
+        return k
+    if cb.what eq 'resized'
+        if s.autoplay
+            return _autoplay[k, 'update']
+        return _paused[k, 'paused']
+    if cb.what eq 'changed'
+        if k.current gte k.count
+            k = _changed_by[k, 'index', k.count - s.show, false]
+        if s.autoplay
+            return _autoplay[k, 'update']
+        return _paused[k, 'paused']
+    if cb.what eq 'slid'
+        if s.nav_for ne '' and k.nav_index ne cb.index
+            k.nav_index = cb.index
+            k.links = push[k.links, cb.index]
+        k = _timeout[k, k.now + s.speed, 'end', cb.slide, cb.left, cb.target, cb.mode, cb.after]
+        k.end_id = k.made
+        return k
+    if cb.what eq 'ended'
+        k = _timeout[k, k.now + 10.0, 'unanimate', 0, 0.0, 0, '', 0]
+        k = _tell[k, 'after', cb.after, 0]
+        k.end_id = 0
+        return k
+    k
+
+--- the sizes measured afresh, the slide shown kept and its slides near
+--- loaded, the track set there where `track` (updateState with
+--- initializedState); `mount`: as the carousel is first drawn, at its
+--- initial slide
+fn _updated[k, track, after_it, mount]
+    s = k.s
+    k.list_width = 0.0 + ceil[k.list_width]
+    if not s.vertical
+        adj = 0.0
+        if s.center
+            adj = _int_of[s.padding] * 2.0
+            if _share[s.padding]
+                adj = adj * (k.list_width / 100.0)
+        k.slide_width = 0.0 + ceil[(k.list_width - adj) / s.show]
+    else
+        k.slide_width = k.list_width
+    k.slide_height = 0.0
+    if k.count gt 0
+        k.slide_height = _own[k.heights, 0, k.count]
+    k.list_height = k.slide_height * s.show
+    if mount
+        k.current = s.initial
+        if s.rtl
+            k.current = k.count - 1 - s.initial
+        k.loaded = _no_ints[]
+    k.loaded = _joined[k.loaded, _on_demand[k, k.current, k.loaded]]
+    if k.autoplaying eq '' and s.autoplay and not mount
+        k.autoplaying = 'playing'
+    if track
+        k = _tracked[k, _track_left[k, k.current], false]
+    k.dirty = true
+    k.callbacks = push[k.callbacks, Callback[after_it, 0, '', 0, 0.0, 0, 0]]
+    k
+
+--- the carousel of `count` slides as first drawn, `wide` CSS pixels wide,
+--- each slide `heights` tall (and `widths` wide, where each has its own),
+--- at `at` ms (componentDidMount)
+fn mount_at[s, count, wide, heights, widths, at]
+    k = _fresh[s, count, wide, heights, widths, at]
+    if k.s.lazy ne ''
+        near = _on_demand[k, k.current, k.loaded]
+        if len[near] gt 0
+            k.loaded = near
+            k = _tell_loaded_all[k, near]
+            k.dirty = true
+    k = _updated[k, true, 'mounted', true]
+    if k.s.lazy eq 'progressive'
+        k = _interval[k, 'lazy', 1000.0]
+        k.lazy_id = k.made
+    k.mounted = true
+    k.alpha_from = _alphas[k, k.now]
+    _committed[k]
+
+fn _tell_loaded_all[k, near]
+    k.told = push[k.told, Told[k.now, 'lazy', 0, 0, '', near]]
+    k
+
+--- ---- the track ----
+
+--- the track set to `left`, moving there over the move's time where
+--- `moving` (a CSS transition from where it stands now), at once where not;
+--- a fade's track has no offset of its own
+fn _tracked[k, left, moving]
+    k.from_left = track_drawn[k, k.now]
+    k.moved_at = k.now
+    k.left = left
+    k.moving = moving
+    k.transform = not k.s.fade
+    k
+
+--- where the track stands at `at` ms: on its way from where it was to its
+--- offset, eased by the carousel's timing function, while it moves
+fn _track_at[k, at]
+    if not k.transform
+        return 0.0
+    if not k.moving
+        return k.left
+    speed = k.s.speed
+    if speed lte 0.0 or at gte k.moved_at + speed
+        return k.left
+    if at lte k.moved_at
+        return k.from_left
+    k.from_left + (k.left - k.from_left) * motion.ease_at[k.s.ease, (at - k.moved_at) / speed]
+
+--- each slide's opacity at `at` ms: a fade's slides cross-fading, the
+--- slide shown coming to 1 and the rest to 0
+fn _alphas[k, at]
+    out = _no_floats[]
+    i = 0
+    while i lt k.count
+        out = push[out, _alpha_at[k, i, at]]
+        i = i + 1
+    out
+
+fn _alpha_at[k, i, at]
+    goal = 0.0
+    if i eq k.current
+        goal = 1.0
+    if not k.s.fade
+        return 1.0
+    from = goal
+    if i lt len[k.alpha_from]
+        from = k.alpha_from[i]
+    speed = k.s.speed
+    if speed lte 0.0 or at gte k.alpha_at + speed
+        return goal
+    if at lte k.alpha_at
+        return from
+    from + (goal - from) * motion.ease_at[k.s.ease, (at - k.alpha_at) / speed]
+
+--- a fade to slide `slide`: each slide from the opacity it stands at now
+fn _faded_to[k, slide]
+    k.alpha_from = _alphas[k, k.now]
+    k.alpha_at = k.now
+    k.current = slide
+    k
+
+--- ---- moving ----
+
+--- the not-waiting move's end: a press during a move that does not wait
+--- ends it at once, its `after` told
+fn _unwaited[k, was]
+    if not k.s.wait_for_animate and k.end_id ne 0
+        k = _cleared[k, k.end_id]
+        k = _tell[k, 'after', was, 0]
+        k.end_id = 0
+    k
+
+--- a move to slide `index` (a clone's index for the way round), at once
+--- where `still` (react-slick's slideHandler)
+fn _slide_to[k, index, still]
+    s = k.s
+    was = k.current
+    if s.wait_for_animate and k.animating
+        return k
+    n = k.count
+    animation = index
+    target = index
+    if not s.infinite
+        target = _clamp[index, 0, n - 1]
+    if s.fade
+        if not s.infinite and (index lt 0 or index gte n)
+            return k
+        if index lt 0
+            animation = index + n
+        else if index gte n
+            animation = index - n
+        loaded = k.loaded
+        if s.lazy ne '' and not (animation in loaded)
+            loaded = push[loaded, animation]
+        k = _tell[k, 'before', was, animation]
+        k = _tell_loaded[k, loaded]
+        k = _unwaited[k, was]
+        k.animating = true
+        k = _faded_to[k, animation]
+        k.loaded = loaded
+        k.target = animation
+        k.dirty = true
+        k.callbacks = push[k.callbacks, Callback['slid', index, 'fade', animation, 0.0, animation, animation]]
+        return k
+    final = animation
+    if animation lt 0
+        final = animation + n
+        if not s.infinite
+            final = 0
+        else if n % s.scroll ne 0
+            final = n - n % s.scroll
+    else if not _can_go_next[k, k.current] and animation gt k.current
+        animation = k.current
+        final = k.current
+    else if s.center and animation gte n
+        if s.infinite
+            animation = n
+            final = 0
+        else
+            animation = n - 1
+            final = n - 1
+    else if animation gte n
+        final = animation - n
+        if not s.infinite
+            final = n - s.show
+        else if n % s.scroll ne 0
+            final = 0
+    if not s.infinite and animation + s.show gte n
+        final = n - s.show
+    animation_left = _track_left[k, animation]
+    final_left = _track_left[k, final]
+    if not s.infinite
+        if animation_left eq final_left
+            animation = final
+        animation_left = final_left
+    loaded = k.loaded
+    if s.lazy ne ''
+        loaded = _joined[loaded, _on_demand[k, animation, k.loaded]]
+    k = _tell[k, 'before', was, final]
+    k = _tell_loaded[k, loaded]
+    k = _unwaited[k, was]
+    mode = 'slide'
+    if still
+        mode = 'still'
+        k.current = final
+        k = _tracked[k, final_left, false]
+    else
+        k.animating = true
+        k.current = final
+        k = _tracked[k, animation_left, true]
+    k.loaded = loaded
+    k.target = target
+    k.dirty = true
+    k.callbacks = push[k.callbacks, Callback['slid', index, mode, final, final_left, target, final]]
+    k
+
+--- the slide a press aims at (react-slick's changeSlide): 'previous',
+--- 'next', 'dots' (dot `index`), 'children' (slide `index` pressed) or
+--- 'index' (slide `index`)
+fn _aimed[k, message, index]
+    s = k.s
+    n = k.count
+    current = k.current
+    uneven = n % s.scroll ne 0
+    offset = 0
+    if not uneven
+        offset = (n - current) % s.scroll
+    target = current
+    if message eq 'previous'
+        by = s.show - offset
+        if offset eq 0
+            by = s.scroll
+        target = current - by
+        if s.lazy ne '' and not s.infinite
+            back = current - by
+            target = back
+            if back eq -1
+                target = n - 1
+        if not s.infinite
+            target = k.target - s.scroll
+    if message eq 'next'
+        by = offset
+        if offset eq 0
+            by = s.scroll
+        target = current + by
+        if s.lazy ne '' and not s.infinite
+            target = (current + s.scroll) % n + offset
+        if not s.infinite
+            target = k.target + s.scroll
+    if message eq 'dots'
+        target = index * s.scroll
+    if message eq 'children'
+        target = index
+        if s.infinite
+            way = _sibling[k, target, current]
+            if target gt current and way eq 'left'
+                target = target - n
+            else if target lt current and way eq 'right'
+                target = target + n
+    if message eq 'index'
+        target = index
+    target
+
+--- a press's move: to the slide it aims at, autoplay's count begun again
+fn _changed_by[k, message, index, still]
+    k = _slide_to[k, _aimed[k, message, index], still]
+    if k.s.autoplay
+        k = _autoplay[k, 'update']
+    k
+
+--- ---- autoplay ----
+
+--- autoplay begun again (react-slick's autoPlay: 'update' after a move,
+--- 'leave' as the pointer leaves, 'blur' as the focus leaves, 'play' asked)
+fn _autoplay[k, how]
+    if k.autoplay_id ne 0
+        k = _cleared[k, k.autoplay_id]
+    playing = k.autoplaying
+    if how eq 'update'
+        if playing eq 'hovered' or playing eq 'focused' or playing eq 'paused'
+            return k
+    if how eq 'leave'
+        if playing eq 'paused' or playing eq 'focused'
+            return k
+    if how eq 'blur'
+        if playing eq 'paused' or playing eq 'hovered'
+            return k
+    k = _interval[k, 'autoplay', k.s.autoplay_speed + 50.0]
+    k.autoplay_id = k.made
+    k.autoplaying = 'playing'
+    k.dirty = true
+    k
+
+--- autoplay held ('paused' asked, 'focused', 'hovered')
+fn _paused[k, how]
+    if k.autoplay_id ne 0
+        k = _cleared[k, k.autoplay_id]
+        k.autoplay_id = 0
+    playing = k.autoplaying
+    if how eq 'paused'
+        k.autoplaying = 'paused'
+        k.dirty = true
+    else if how eq 'focused'
+        if playing eq 'hovered' or playing eq 'playing'
+            k.autoplaying = 'focused'
+            k.dirty = true
+    else
+        if playing eq 'playing'
+            k.autoplaying = 'hovered'
+            k.dirty = true
+    k
+
+--- autoplay's tick: a move on, the other way right to left; none at the end
+--- of a carousel that does not wrap
+fn _played[k]
+    s = k.s
+    if s.rtl
+        return _slide_to[k, k.current - s.scroll, false]
+    if _can_go_next[k, k.current]
+        return _slide_to[k, k.current + s.scroll, false]
+    k
+
+--- one more slide loaded each way from the one shown, each second, until
+--- all are (progressiveLazyLoad)
+fn _progressive[k]
+    more = _no_ints[]
+    i = k.current
+    going = true
+    while going and i lt k.count + _pre[k]
+        if not (i in k.loaded)
+            more = push[more, i]
+            going = false
+        i = i + 1
+    i = k.current - 1
+    going = true
+    while going and i gte 0 - _pre[k]
+        if not (i in k.loaded)
+            more = push[more, i]
+            going = false
+        i = i - 1
+    if len[more] gt 0
+        k.loaded = _joined[k.loaded, more]
+        k.dirty = true
+        k = _tell_loaded_all[k, more]
+        return k
+    if k.lazy_id ne 0
+        k = _cleared[k, k.lazy_id]
+        k.lazy_id = 0
+    k
+
+--- ---- swipes ----
+
+--- a press on the list: a drag begun (react-slick's swipeStart), unless it
+--- is not swiped, or is a mouse's and not dragged
+fn _swipe_start[k, device, x, y]
+    s = k.s
+    if s.unslick or not s.touch_move
+        return k
+    if not s.swipe or (not s.draggable and device eq 'mouse')
+        return k
+    k.dragging = true
+    k.start_x = x
+    k.start_y = y
+    k.cur_x = x
+    k.cur_y = y
+    k.has_length = false
+    k.swipe_length = 0.0
+    k.device = device
+    k.dirty = true
+    k
+
+--- the drag moved (swipeMove): the track follows the pointer, past an end
+--- that does not wrap at its friction; mostly up and down, it is the
+--- page's scroll and no swipe
+fn _swipe_move[k, x, y]
+    s = k.s
+    if s.unslick or not s.touch_move or not k.dragging
+        return k
+    if k.scrolling or k.animating
+        return k
+    from = _track_left[k, k.current]
+    k.cur_x = x
+    k.cur_y = y
+    k.swipe_length = _js_round[sqrt[(x - k.start_x) * (x - k.start_x)]]
+    k.has_length = true
+    upward = _js_round[sqrt[(y - k.start_y) * (y - k.start_y)]]
+    if not s.vertical_swiping and not k.swiping and upward gt 10.0
+        k.scrolling = true
+        k.dirty = true
+        return k
+    if s.vertical_swiping
+        k.swipe_length = upward
+    way = -1.0
+    if x gt k.start_x
+        way = 1.0
+    if s.rtl
+        way = 0.0 - way
+    if s.vertical_swiping
+        way = -1.0
+        if y gt k.start_y
+            way = 1.0
+    dot_count = ceil[(k.count + 0.0) / s.scroll]
+    direction = _swipe_direction[k]
+    length = k.swipe_length
+    if not s.infinite
+        back = direction eq 'right' or direction eq 'down'
+        on = direction eq 'left' or direction eq 'up'
+        if (k.current eq 0 and back) or (k.current + 1 gte dot_count and on) or (not _can_go_next[k, k.current] and on)
+            length = k.swipe_length * s.edge_friction
+            if not k.edge_dragged
+                k = _tell_words[k, 'edge', direction]
+                k.edge_dragged = true
+    dragged = from + length * way
+    if not s.vertical and s.rtl
+        dragged = from - length * way
+    if s.vertical
+        dragged = from + length * (k.list_height / k.list_width) * way
+    if s.vertical_swiping
+        dragged = from + length * way
+    k.swipe_left = dragged
+    k.has_swipe_left = true
+    k = _tracked[k, dragged, false]
+    k.dirty = true
+    if abs[x - k.start_x] lt abs[y - k.start_y] * 0.8
+        return k
+    if k.swipe_length gt 10.0
+        k.swiping = true
+        k.clickable = false
+    k
+
+--- the drag let go (swipeEnd): far enough, a move the way it went (to the
+--- slide it reached, swiping to a slide); not, the track back where it was
+fn _swipe_end[k]
+    s = k.s
+    if s.unslick or not s.touch_move
+        return k
+    if not k.dragging
+        k.dirty = true
+        return k
+    least = k.list_width / s.touch_threshold
+    if s.vertical_swiping
+        least = k.list_height / s.touch_threshold
+    direction = _swipe_direction[k]
+    was_scrolling = k.scrolling
+    had = k.has_length
+    length = k.swipe_length
+    --- (where it moves to is read before the drag is let go)
+    trigger = 0
+    moves = false
+    told = false
+    if not was_scrolling and had and length ne 0.0 and length gt least
+        told = true
+        active = k.target
+        if s.infinite
+            active = k.current
+        if direction eq 'left' or direction eq 'up'
+            trigger = active + _swiped_count[k]
+            if s.swipe_to_slide
+                trigger = _navigable[k, trigger]
+        else if direction eq 'right' or direction eq 'down'
+            trigger = active - _swiped_count[k]
+            if s.swipe_to_slide
+                trigger = _navigable[k, trigger]
+        else
+            trigger = active
+        moves = true
+    k.dragging = false
+    k.edge_dragged = false
+    k.scrolling = false
+    k.swiping = false
+    k.swiped = false
+    k.has_swipe_left = false
+    k.has_length = false
+    k.dirty = true
+    if was_scrolling or not had or length eq 0.0
+        return k
+    if told
+        k = _tell_words[k, 'swipe', direction]
+    if moves
+        return _slide_to[k, trigger, false]
+    k = _tracked[k, _track_left[k, k.current], true]
+    k
+
+--- ---- what the reader and the program do ----
+
+--- one act at `at` ms, after the timers due by then, and what it set off
+--- committed: 'next' and 'previous' (its arrows), 'dot' `index`, 'slide'
+--- `index` pressed (a clone's index where a clone was), 'key' `index` (a
+--- key's code: 37 left, 39 right), 'go' to slide `index` and 'go_now' at
+--- once, 'step_next' and 'step_previous' (the program's), 'play' and
+--- 'pause', 'hover' and 'unhover' (the pointer on the track and off),
+--- 'dots_hover' and 'dots_unhover', 'focus' and 'blur', 'click' (a press
+--- let go on the list: a click, unless it swiped)
+fn acted[k, what, index, at]
+    k = advanced[k, at]
+    s = k.s
+    if s.plain
+        return k
+    if what eq 'next' or what eq 'previous'
+        --- (no arrow where they are off or it stands still; none to press
+        --- where it may go no further)
+        if s.arrows and not s.unslick
+            if what eq 'next' and _can_go_next[k, k.current]
+                k = _changed_by[k, 'next', 0, false]
+            if what eq 'previous' and not _prev_disabled[k]
+                k = _changed_by[k, 'previous', 0, false]
+    if what eq 'dot'
+        if _dots_shown[k]
+            k = _changed_by[k, 'dots', index, false]
+    if what eq 'slide'
+        if s.focus_on_select and k.drawn_clickable
+            n = k.count
+            k = _changed_by[k, 'children', ((index % n) + n) % n, false]
+        k = _clicked[k]
+    if what eq 'key'
+        if s.accessibility and not s.unslick
+            if index eq 37
+                if s.rtl
+                    k = _changed_by[k, 'next', 0, false]
+                else
+                    k = _changed_by[k, 'previous', 0, false]
+            if index eq 39
+                if s.rtl
+                    k = _changed_by[k, 'previous', 0, false]
+                else
+                    k = _changed_by[k, 'next', 0, false]
+    if what eq 'go'
+        k = _changed_by[k, 'index', index, false]
+    if what eq 'go_now'
+        k = _changed_by[k, 'index', index, true]
+    if what eq 'step_next'
+        k = _changed_by[k, 'next', 0, false]
+    if what eq 'step_previous'
+        k = _changed_by[k, 'previous', 0, false]
+    if what eq 'pause'
+        k = _paused[k, 'paused']
+    if what eq 'play'
+        k = _autoplay[k, 'play']
+    if what eq 'hover' and s.pause_on_hover and s.autoplay
+        k = _paused[k, 'hovered']
+    if what eq 'unhover' and s.pause_on_hover and s.autoplay and k.autoplaying eq 'hovered'
+        k = _autoplay[k, 'leave']
+    if what eq 'dots_hover' and s.pause_on_dots_hover and s.autoplay
+        k = _paused[k, 'hovered']
+    if what eq 'dots_unhover' and s.pause_on_dots_hover and s.autoplay and k.autoplaying eq 'hovered'
+        k = _autoplay[k, 'leave']
+    if what eq 'focus' and s.pause_on_focus and s.autoplay
+        k = _paused[k, 'focused']
+    if what eq 'blur' and s.pause_on_focus and s.autoplay and k.autoplaying eq 'focused'
+        k = _autoplay[k, 'blur']
+    if what eq 'click'
+        k = _clicked[k]
+    _committed[k]
+
+--- a click on the list: a press after a swipe is none, and clicks again
+fn _clicked[k]
+    k.clickable = true
+    k
+
+--- a pointer's act on the list at `at` ms: 'down', 'move', 'up' (a touch
+--- lifted, a mouse let go: on the list, a click too) and 'leave' (a mouse
+--- leaving the list mid-drag ends it), at (x, y) in CSS pixels
+fn pointed[k, what, device, x, y, at]
+    k = advanced[k, at]
+    s = k.s
+    if s.plain or s.unslick or not s.touch_move
+        return _committed[k]
+    if what eq 'down'
+        k = _swipe_start[k, device, x, y]
+    if what eq 'move'
+        k = _swipe_move[k, x, y]
+    if what eq 'up'
+        k = _swipe_end[k]
+        k.clickable = true
+    if what eq 'leave' and device eq 'mouse' and k.dragging
+        k = _swipe_end[k]
+    _committed[k]
+
+--- the list now `wide` CSS pixels (its slides `heights` tall and `widths`
+--- wide), at `at` ms: the sizes measured again, the track set, a move under
+--- way cut short (resizeWindow)
+fn resized[k, wide, heights, widths, at]
+    k = advanced[k, at]
+    if k.s.plain
+        k.list_width = wide
+        return k
+    k.list_width = wide
+    k.heights = heights
+    k.widths = widths
+    k = _updated[k, true, 'resized', false]
+    k.animating = false
+    if k.end_id ne 0
+        k = _cleared[k, k.end_id]
+        k.end_id = 0
+    _committed[k]
+
+--- the carousel handed other settings or another number of slides at `at`
+--- ms (react-slick's componentDidUpdate with props changed): its sizes
+--- measured again, the slide shown kept, or the last there is where it is
+--- past the end
+fn reslid[k, s, count, heights, widths, at]
+    k = advanced[k, at]
+    k.s = _resolved[s, count]
+    k.count = count
+    k.heights = heights
+    k.widths = widths
+    k.changed = true
+    k.dirty = true
+    _committed[k]
+
+--- the slide the carousel it navigates is sent, for each move it made
+--- (asNavFor): taken from it, to be sent
+fn links_of[k]
+    k.links
+
+fn unlinked[k]
+    k.links = _no_ints[]
+    k
+
+--- the carousel moved to `index` because the one it is linked to moved
+--- there, at `at` ms
+fn linked_to[k, index, at]
+    k = advanced[k, at]
+    k = _slide_to[k, index, false]
+    _committed[k]
+
+--- what it told, taken
+fn told_of[k]
+    k.told
+
+fn untold[k]
+    k.told = _no_told[]
+    k
+
+--- ---- what a carousel shows ----
+
+fn _prev_disabled[k]
+    not k.s.infinite and (k.current eq 0 or k.count lte k.s.show)
+
+fn _dots_shown[k]
+    k.s.dots and k.count gte k.s.show and not k.s.unslick
+
+--- how many dots, and which is active (getDotCount and the Dots' classes)
+fn dots_of[k]
+    s = k.s
+    if not _dots_shown[k]
+        return Dots[0, -1]
+    n = k.count
+    count = 0
+    if s.infinite
+        count = 0 + ceil[(n + 0.0) / s.scroll]
+    else
+        count = 0 + ceil[(n - s.show + 0.0) / s.scroll] + 1
+    active = -1
+    i = 0
+    while i lt count
+        right = (i + 1) * s.scroll - 1
+        if not s.infinite
+            right = _clamp[right, 0, n - 1]
+        left = right - (s.scroll - 1)
+        if not s.infinite
+            left = _clamp[left, 0, n - 1]
+        on = k.current eq left
+        if s.infinite
+            on = k.current gte left and k.current lte right
+        if on and active lt 0
+            active = i
+        i = i + 1
+    Dots[count, active]
+
+--- whether the arrows are shown, and each is pressable
+fn arrows_shown[k]
+    k.s.arrows and not k.s.unslick and not k.s.plain
+
+fn previous_off[k]
+    _prev_disabled[k]
+
+fn next_off[k]
+    not _can_go_next[k, k.current]
+
+--- the slide a slot shows as react-slick's track classes it
+fn _slot_of[k, index, loaded]
+    s = k.s
+    n = k.count
+    at = index
+    if s.rtl
+        at = n - 1 - index
+    cloned = at lt 0 or at gte n
+    active = false
+    center = false
+    if s.center
+        half = s.show / 2
+        center = (at - k.current) % n eq 0
+        active = at gt k.current - half - 1 and at lte k.current + half
+    else
+        active = k.current lte at and at lt k.current + s.show
+    focused = k.target
+    if k.target lt 0
+        focused = k.target + n
+    else if k.target gte n
+        focused = k.target - n
+    alpha = 1.0
+    if s.fade
+        alpha = 0.0
+        if k.current eq index
+            alpha = 1.0
+    Slot[index, active, center, cloned, at eq focused, loaded, alpha]
+
+--- the track's slides, in the order they stand (renderSlides)
+fn slots_of[k]
+    s = k.s
+    n = k.count
+    first = k.current - _lazy_left[k]
+    last = k.current + _lazy_right[k]
+    lazy = s.lazy ne ''
+    pre = _no_slots[]
+    mid = _no_slots[]
+    post = _no_slots[]
+    cloned = s.infinite and n gt 1 and not s.fade and not s.unslick
+    i = 0
+    while i lt n
+        loaded = not lazy or i in k.loaded
+        mid = push[mid, _slot_of[k, i, loaded]]
+        if cloned
+            if n - i lte _pre[k]
+                key = 0 - (n - i)
+                if key gte first
+                    loaded = true
+                pre = push[pre, _slot_of[k, key, loaded]]
+            if i lt _pre[k]
+                key = n + i
+                if key lt last
+                    loaded = true
+                post = push[post, _slot_of[k, key, loaded]]
+        i = i + 1
+    out = pre
+    for one in mid
+        out = push[out, one]
+    for one in post
+        out = push[out, one]
+    if s.rtl
+        back = _no_slots[]
+        i = len[out] - 1
+        while i gte 0
+            back = push[back, out[i]]
+            i = i - 1
+        return back
+    out
+
+--- where the track stands, as react-slick's track style says it (0 for a
+--- fade's, which has none), and whether it moves there; an offset that is
+--- no number (a centred slide of its own width past the track's end) is
+--- a transform the browser ignores, so the track stands at 0
+fn track_left[k]
+    if not k.transform or k.left ne k.left
+        return 0.0
+    k.left
+
+fn track_moving[k]
+    k.moving
+
+--- where the track is drawn at `at` ms, between where it was and its offset
+fn track_drawn[k, at]
+    x = _track_at[k, at]
+    if x ne x
+        return 0.0
+    x
+
+--- the list's height as the slide shown makes it (-1: as its slides are)
+fn adapted_height[k]
+    k.adapted
+
+--- ---- the carousel drawn: a tree of gui's controls ----
+---
+--- A carousel is drawn as gui draws any control: a list of slides clipped
+--- to its box (a scroll area that never scrolls), its track moved as the
+--- state says it stands (eased between frames while it moves), the arrows
+--- over the list's ends and the dots under it. Under the list, a control
+--- of its own (drawn, of the carousel's id) takes what the reader does to
+--- the list: a press and a drag (a swipe), the pointer resting on it, the
+--- focus and the arrow keys. It stands where the list stands without
+--- taking room of its own (the two share a column whose gap is the list's
+--- height taken back), and it reads the frame's input itself, as the list
+--- of a page hears what its slides are pressed with: so the slides'
+--- own controls are pressed too. What the painters do is done at the
+--- frame's time and shown the next frame; what was measured (the list's
+--- width, each slide's height) is read the frame after it was drawn.
+
+--- what Lory keeps of a carousel between frames, under 'lory.carousel/'
+--- and its id: whether it is made, the settings it was handed and how
+--- many slides, its state, and what the reader is doing to it (whether the
+--- pointer rests on its list and on its dots, whether it has the focus, a
+--- press held on its list and by which device, where the pointer was)
+struct Kept [made, given, slides, k, hovered, dots_hovered, focused, down, device, last_x, last_y]
+
+--- what its painters measured as the last frame was drawn, under
+--- 'lory.carousel.sizes/' and its id: the list's width (CSS pixels) and
+--- top (the drawing's), the track's height, and by each slide's index
+--- where its top was drawn and its height
+struct Sizes [wide, top, tall, tops, heights]
+
+fn _no_sizes[]
+    Sizes[0.0, 0.0, 0.0, map['' = 0.0], map['' = 0.0]]
+
+fn _no_kept[]
+    s = settings[]
+    Kept[false, s, 0, _fresh[s, 1, 0.0, _no_floats[], _no_floats[], 0.0], false, false, false, false, '', 0.0, 0.0]
+
+fn _kept_key[id]
+    'lory.carousel/`id`'
+
+fn _sizes_key[id]
+    'lory.carousel.sizes/`id`'
+
+fn _kept_of[id]
+    recall[_kept_key[id], _no_kept[]]
+
+--- the arrows' side, in CSS pixels
+fn _arrow_size[]
+    40.0
+
+--- the room either side of the list its arrows stand in (none where they
+--- show only while the pointer rests on it, over the slides)
+fn _gutter[s]
+    if s.arrows and not s.arrows_on_hover and not s.unslick
+        return _arrow_size[] + 4.0
+    0.0
+
+--- the dots' row: each dot's side, and the room above it
+fn _dot_size[]
+    20.0
+
+fn _dots_gap[]
+    6.0
+
+--- the carousel `id` of `slides` (gui controls, each a slide), run by
+--- settings `s` (`settings`; `at_width` or `responsive` for breakpoints).
+--- What the reader does to it is told in `Shown.events` under its id:
+--- `change` as a move begins (`num` the slide it goes to, `words` the one
+--- it leaves), `settle` as it ends (`num` the slide shown), `swipe` and
+--- `edge` (a swipe let go, an end dragged: `words` its direction), `load`
+--- (slides drawn for the first time, as react-slick's lazy loading loads
+--- them: `words` their indices, `num` how many)
+fn carousel[c, id, slides, s]
+    at = _now[c]
+    remember['lory.carousel.input', _input_of[c, at]]
+    if s.plain
+        kept = _kept_of[id]
+        kept.made = false
+        remember[_kept_key[id], kept]
+        return gui.column[slides, gap = 0.0]
+    count = grouped[s, len[slides]]
+    kept = _kept_of[id]
+    sizes = recall[_sizes_key[id], _no_sizes[]]
+    wide = s.wide
+    if wide lte 0.0
+        wide = sizes.wide
+    if wide lte 0.0
+        wide = max[1.0, lory.width[c] / lory.px[c] - 48.0]
+    --- (the list narrowed by its arrows' room: react-slick's stand outside
+    --- it)
+    wide = max[1.0, wide - 2.0 * _gutter[s]]
+    heights = _heights_of[sizes, s, count]
+    widths = _widths_of[slides, s, count]
+    if not kept.made
+        kept = Kept[true, s, count, mount_at[s, count, wide, heights, widths, at], false, false, false, false, '', 0.0, 0.0]
+    else
+        k = advanced[kept.k, at]
+        if kept.given ne s or kept.slides ne count
+            k = reslid[k, s, count, heights, widths, at]
+            kept.given = s
+            kept.slides = count
+        if 0.0 + ceil[wide] ne k.list_width or (k.s.vertical and _own[heights, 0, count] ne k.slide_height)
+            k = resized[k, wide, heights, widths, at]
+        else
+            k.heights = heights
+            k.widths = widths
+        kept.k = _carried[k, at]
+    remember[_kept_key[id], kept]
+    tree = _drawn_carousel[c, id, slides, kept, sizes, at]
+    if s.wide gt 0.0
+        return gui.row[[gui.sized[tree, s.wide]], gap = 0.0]
+    tree
+
+--- each slide's height as last measured (the settings' `tall` where it
+--- gives one)
+fn _heights_of[sizes, s, count]
+    out = _no_floats[]
+    i = 0
+    while i lt count
+        h = s.tall
+        key = '`i`'
+        if h lte 0.0 and key in sizes.heights
+            h = sizes.heights[key]
+        out = push[out, max[0.0, h]]
+        i = i + 1
+    out
+
+--- each slide's own width (its control's `wide`, gui.sized), where each
+--- has its own: a group's is its last slide's, as react-slick takes it
+fn _widths_of[slides, s, count]
+    out = _no_floats[]
+    if not s.variable
+        return out
+    per = max[1, s.rows] * max[1, s.per_row]
+    i = 0
+    while i lt count
+        w = 0.0
+        j = i * per
+        while j lt min[len[slides], (i + 1) * per]
+            if slides[j].wide gt 0.0
+                w = slides[j].wide
+            j = j + 1
+        out = push[out, w]
+        i = i + 1
+    out
+
+--- the links a move sent the carousel it navigates (react-slick's
+--- asNavFor), carried to it, and what it sends back, until neither sends
+fn _carried[k, at]
+    other = k.s.nav_for
+    if other eq '' or len[k.links] eq 0
+        return k
+    rounds = 0
+    while len[k.links] gt 0 and rounds lt 4
+        sent = k.links
+        k = unlinked[k]
+        theirs = _kept_of[other]
+        if theirs.made
+            t = advanced[theirs.k, at]
+            i = 0
+            while i lt len[sent]
+                t = linked_to[t, sent[i], at]
+                i = i + 1
+            back = t.links
+            t = unlinked[t]
+            if t.s.nav_for ne ''
+                i = 0
+                while i lt len[back]
+                    k = linked_to[k, back[i], at]
+                    i = i + 1
+            theirs.k = t
+            remember[_kept_key[other], theirs]
+        rounds = rounds + 1
+    k
+
+--- the hooks a carousel told, as the program's events under its id
+fn _told_out[d, id, k]
+    told = told_of[k]
+    i = 0
+    while i lt len[told]
+        one = told[i]
+        if one.what eq 'before'
+            d.told = push[d.told, gui.Event[id, 'change', '`one.a`', one.b + 0.0]]
+        if one.what eq 'after'
+            d.told = push[d.told, gui.Event[id, 'settle', '', one.a + 0.0]]
+        if one.what eq 'swipe' or one.what eq 'edge'
+            d.told = push[d.told, gui.Event[id, one.what, one.words, 0.0]]
+        if one.what eq 'lazy'
+            d.told = push[d.told, gui.Event[id, 'load', _listed[one.slides], len[one.slides] + 0.0]]
+        i = i + 1
+    d
+
+--- whole numbers as words, a space apart
+fn _listed[xs]
+    words = ''
+    i = 0
+    while i lt len[xs]
+        if i gt 0
+            words = concat[words, ' ']
+        words = concat[words, '`xs[i]`']
+        i = i + 1
+    words
+
+--- the center padding in CSS pixels, of a list `wide`
+fn _padding_px[s, wide]
+    if not s.center
+        return 0.0
+    if _share[s.padding]
+        return _number_of[s.padding] * wide / 100.0
+    _number_of[s.padding]
+
+--- how tall the list is drawn
+fn _list_tall[k, s, sizes]
+    if s.vertical
+        tall = k.slide_height * s.show
+        if s.tall gt 0.0
+            tall = s.tall * s.show
+        return tall + 2.0 * _padding_px[s, k.list_width]
+    if s.tall gt 0.0
+        return s.tall
+    if s.adaptive_height and not s.unslick
+        return _own[k.heights, k.current, k.count]
+    if s.fade
+        most = 0.0
+        for h in k.heights
+            most = max[most, h]
+        return most
+    sizes.tall
+
+--- the carousel's tree, as its state stands at `at`
+fn _drawn_carousel[c, id, slides, kept, sizes, at]
+    k = kept.k
+    s = k.s
+    tall = _list_tall[k, s, sizes]
+    track = _track_node[k, slides, id, at]
+    --- (the track over a stretched ground: an overlay as wide as its base,
+    --- a space's none, is culled inside the scroll's clip)
+    ground = gui.column[[gui.space[tall]], gap = 0.0]
+    block = gui.scroll['`id`:list', tall, [gui.overlay[ground, track, anchor = 'top_left']]]
+    gutter = _gutter[s]
+    if gutter gt 0.0
+        --- (sized in the middle of a column: a row would measure it with
+        --- no room)
+        block = gui.column[[gui.sized[block, k.list_width]], gap = 0.0, align = 'center']
+    if arrows_shown[k] and (not s.arrows_on_hover or kept.hovered or kept.focused)
+        previous = gui.drawn['`id`:previous', 0.0, _arrow_size[], _arrow_size[], _arrow_painted, words = id]
+        next_one = gui.drawn['`id`:next', 1.0, _arrow_size[], _arrow_size[], _arrow_painted, words = id]
+        block = gui.overlay[gui.overlay[block, previous, anchor = 'left'], next_one, anchor = 'right']
+    catcher = gui.drawn[id, k.current + 0.0, 0.0, tall, _caught, words = id]
+    shown = gui.column[[catcher, block], gap = 0.0 - tall]
+    dots = dots_of[k]
+    if dots.count eq 0
+        return shown
+    marks = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt dots.count
+        marks = push[marks, gui.drawn['`id`:dot:`i`', i + 0.0, _dot_size[], _dot_size[], _dot_painted, lo = _one_if[i eq dots.active] + 0.0, words = id]]
+        i = i + 1
+    gui.column[[shown, gui.row[marks, gap = 0.0, justify = 'center']], gap = _dots_gap[]]
+
+--- the slides the track stands, each its slide (a group's slides in rows,
+--- where it has rows), nothing where it is not loaded yet, a measure of
+--- its top and its foot either side
+fn _slot_node[k, slides, id, slot, measured]
+    s = k.s
+    n = k.count
+    index = ((slot.index % n) + n) % n
+    content = gui.space[0.0]
+    if slot.loaded
+        content = _group_node[slides, s, index]
+    if not measured
+        return content
+    top = gui.drawn['', index + 0.0, 1.0, 0.0, _probed, lo = 0.0, words = id]
+    foot = gui.drawn['', index + 0.0, 1.0, 0.0, _probed, lo = 1.0, words = id]
+    gui.column[[top, content, foot], gap = 0.0]
+
+fn _group_node[slides, s, index]
+    per_row = max[1, s.per_row]
+    per = max[1, s.rows] * per_row
+    if per eq 1
+        if index lt len[slides]
+            return slides[index]
+        return gui.space[0.0]
+    rows = slice[[gui.space[0.0]], 0, 0]
+    first = index * per
+    r = 0
+    while r lt max[1, s.rows]
+        cells = slice[[gui.space[0.0]], 0, 0]
+        j = first + r * per_row
+        while j lt min[len[slides], first + (r + 1) * per_row]
+            cells = push[cells, slides[j]]
+            j = j + 1
+        if len[cells] gt 0
+            rows = push[rows, gui.grid[cells, columns = per_row, gap = 0.0]]
+        r = r + 1
+    gui.column[rows, gap = 0.0]
+
+--- the track: slides side by side (each as wide as a slide, or its own
+--- width), one above another (vertical), or one over another (a fade,
+--- the slide shown last, each at its opacity), moved to where it is drawn
+fn _track_node[k, slides, id, at]
+    s = k.s
+    slots = slots_of[k]
+    pad = _padding_px[s, k.list_width]
+    offset = track_drawn[k, at]
+    if s.fade
+        return _faded_track[k, slides, id, slots, at]
+    cells = slice[[gui.space[0.0]], 0, 0]
+    measured = s.vertical or s.adaptive_height or s.variable
+    i = 0
+    while i lt len[slots]
+        cell = _slot_node[k, slides, id, slots[i], measured]
+        if s.variable and not s.vertical
+            cell = gui.sized[gui.column[[cell], gap = 0.0], _slot_wide[k, slots[i].index]]
+        cells = push[cells, cell]
+        i = i + 1
+    if s.vertical
+        return gui.moved[gui.sized[gui.column[cells, gap = 0.0], k.list_width], 0.0, pad + offset]
+    dx = pad + offset
+    foot = gui.moved[gui.drawn['', -1.0, 1.0, 0.0, _probed, words = id], 0.0 - dx, 0.0]
+    if s.variable
+        wide = 0.0
+        for one in slots
+            wide = wide + _slot_wide[k, one.index]
+        strip = gui.sized[gui.column[[gui.row[cells, gap = 0.0, align = 'start'], foot], gap = 0.0], max[1.0, wide]]
+        return gui.moved[strip, dx, 0.0]
+    wide = max[1.0, len[slots] * k.slide_width]
+    strip = gui.sized[gui.column[[gui.grid[cells, columns = max[1, len[cells]], gap = 0.0], foot], gap = 0.0], wide]
+    gui.moved[strip, dx, 0.0]
+
+--- a fade's slides one over another, those it shows at all: each at its
+--- opacity now, the slide shown over the rest
+fn _faded_track[k, slides, id, slots, at]
+    wide = k.list_width
+    --- (each over a ground as wide as the list: an overlay is as wide as
+    --- its ground, and one with none is culled inside the list's clip)
+    shown = gui.sized[gui.column[[gui.space[0.0]], gap = 0.0], wide]
+    alphas = _alphas[k, at]
+    i = 0
+    while i lt len[slots]
+        one = slots[i]
+        a = 1.0
+        if one.index lt len[alphas]
+            a = alphas[one.index]
+        if one.index ne k.current and a gt 0.0
+            shown = gui.overlay[shown, gui.faded[gui.sized[gui.column[[_slot_node[k, slides, id, one, true]], gap = 0.0], wide], a], anchor = 'top_left']
+        i = i + 1
+    i = 0
+    while i lt len[slots]
+        one = slots[i]
+        if one.index eq k.current
+            a = 1.0
+            if one.index lt len[alphas]
+                a = alphas[one.index]
+            shown = gui.overlay[shown, gui.faded[gui.sized[gui.column[[_slot_node[k, slides, id, one, true]], gap = 0.0], wide], a], anchor = 'top_left']
+        i = i + 1
+    shown
+
+--- ---- the painters ----
+
+--- a measure: where a slide's top (`lo` 0) or foot (`lo` 1) was drawn,
+--- or the track's foot (`num` -1), kept for the next frame
+fn _probed[d]
+    key = _sizes_key[d.words]
+    sizes = recall[key, _no_sizes[]]
+    index = '`_counted[d.num]`'
+    if d.num lt 0.0
+        sizes.tall = max[0.0, (d.y - sizes.top) / d.s]
+    else if d.lo lt 0.5
+        sizes.tops[index] = d.y
+    else if index in sizes.tops
+        top = sizes.tops[index]
+        sizes.heights[index] = max[0.0, (d.y - top) / d.s]
+    remember[key, sizes]
+    d
+
+--- the list's own control: the list's width and top measured; then, at the
+--- frame's time, a press, a drag and its release on the list (a swipe; a
+--- release that did not swipe is a click, on the slide under it), the
+--- pointer resting on the list and on its dots, the focus and the arrow
+--- keys; the carousel it navigates moved with it, and what it told handed
+--- to the program
+fn _caught[d]
+    id = d.words
+    kept = _kept_of[id]
+    if not kept.made
+        return d
+    key = _sizes_key[id]
+    sizes = recall[key, _no_sizes[]]
+    sizes.wide = d.w / d.s
+    sizes.top = d.y
+    remember[key, sizes]
+    c = d.c
+    px = d.s
+    at = _now_drawn[]
+    k = advanced[kept.k, at]
+    s = k.s
+    side = _arrow_size[] * px
+    list_x = d.x + _gutter[s] * px
+    list_w = max[0.0, d.w - 2.0 * _gutter[s] * px]
+    shows = arrows_shown[k] and (not s.arrows_on_hover or kept.hovered or kept.focused)
+    seen = recall['lory.carousel.input', _no_input[]]
+    given = seen.presses
+    i = 0
+    while i lt len[given]
+        got = given[i]
+        on_list = _within[got.x, got.y, list_x, d.y, list_w, d.h]
+        on_arrow = shows and (_within[got.x, got.y, d.x, d.y + (d.h - side) / 2.0, side, side] or _within[got.x, got.y, d.x + d.w - side, d.y + (d.h - side) / 2.0, side, side])
+        device = _swiped_by[got.device]
+        if got.on eq 'down' and on_list and not on_arrow and not kept.down
+            kept.down = true
+            kept.device = got.device
+            k = pointed[k, 'down', device, got.x / px, got.y / px, at]
+        else if got.on eq 'move' and kept.down
+            if device eq 'mouse' and not on_list
+                k = pointed[k, 'leave', device, got.x / px, got.y / px, at]
+                kept.down = false
+            else
+                k = pointed[k, 'move', device, got.x / px, got.y / px, at]
+        else if got.on eq 'up' and kept.down
+            clicked = k.clickable and on_list
+            k = pointed[k, 'up', device, got.x / px, got.y / px, at]
+            kept.down = false
+            if clicked
+                slot = _slot_at[k, (got.x - list_x) / px - _padding_px[s, k.list_width], (got.y - d.y) / px - _padding_px[s, k.list_width], at]
+                if slot gt -1000000
+                    k = acted[k, 'slide', slot, at]
+        if got.on eq 'down' or got.on eq 'move' or got.on eq 'up'
+            --- (where the pointer is: an event's own place is a fallible kind)
+            kept.last_x = seen.x
+            kept.last_y = seen.y
+        i = i + 1
+    --- (a ray sends no moves: where it points, each frame, is its move)
+    if kept.down and kept.device eq 'ray'
+        x = seen.x
+        y = seen.y
+        if x ne kept.last_x or y ne kept.last_y
+            k = pointed[k, 'move', 'touch', x / px, y / px, at]
+            kept.last_x = x
+            kept.last_y = y
+    over = seen.there and _within[seen.x, seen.y, d.x, d.y, d.w, d.h]
+    if over and not kept.hovered
+        k = acted[k, 'hover', 0, at]
+    if kept.hovered and not over
+        k = acted[k, 'unhover', 0, at]
+    kept.hovered = over
+    if s.dots
+        dots_over = seen.there and _within[seen.x, seen.y, d.x, d.y + d.h + _dots_gap[] * px, d.w, _dot_size[] * px]
+        if dots_over and not kept.dots_hovered
+            k = acted[k, 'dots_hover', 0, at]
+        if kept.dots_hovered and not dots_over
+            k = acted[k, 'dots_unhover', 0, at]
+        kept.dots_hovered = dots_over
+    if d.focused and not kept.focused
+        k = acted[k, 'focus', 0, at]
+    if kept.focused and not d.focused
+        k = acted[k, 'blur', 0, at]
+    kept.focused = d.focused
+    i = 0
+    while i lt len[d.keys]
+        if d.keys[i] eq 'ArrowLeft'
+            k = acted[k, 'key', 37, at]
+        if d.keys[i] eq 'ArrowRight'
+            k = acted[k, 'key', 39, at]
+        i = i + 1
+    k = _carried[k, at]
+    d = _told_out[d, id, k]
+    kept.k = untold[k]
+    remember[_kept_key[id], kept]
+    d
+
+--- a control's index, handed as its number (counted up to: an int[] of
+--- a number is fallible, and a painter's answer may not be)
+fn _counted[x]
+    n = 0
+    while n + 0.5 lt x
+        n = n + 1
+    n
+
+--- the frame's time (a frame read from the page holds a fallible kind,
+--- and a painter's answer may not be one)
+fn _now[c]
+    t = lory.time[c]
+    if not t.ok
+        return 0.0
+    t
+
+--- the frame's presses, moves and releases (what happened, the device,
+--- where), where the pointer stands and the frame's time, as `carousel`
+--- read them for its painters (what a frame read from the page holds is a
+--- fallible kind, and a painter's answer may not be one)
+struct Press [on, device, x, y]
+struct Input [presses, x, y, there, at]
+
+fn _no_input[]
+    Input[slice[[Press['', '', 0.0, 0.0]], 0, 0], -1.0, -1.0, false, 0.0]
+
+fn _input_of[c, at]
+    out = _no_input[]
+    out.at = at
+    given = lory.events[c]
+    if not given.ok
+        return out
+    i = 0
+    while i lt len[given]
+        got = given[i]
+        if got.on eq 'down' or got.on eq 'move' or got.on eq 'up'
+            out.presses = push[out.presses, Press['`got.on`', '`got.device`', 0.0 + got.x, 0.0 + got.y]]
+        i = i + 1
+    out.x = 0.0 + lory.pointer_x[c]
+    out.y = 0.0 + lory.pointer_y[c]
+    out.there = lory.pointing[c] eq true
+    out
+
+fn _now_drawn[]
+    recall['lory.carousel.input', _no_input[]].at
+
+fn _within[x, y, bx, by, bw, bh]
+    x gte bx and y gte by and x lt bx + bw and y lt by + bh
+
+--- the device react-slick hears a press as: a mouse's events (a pen's
+--- too, as a browser sends them) are dragged only where `draggable`; a
+--- touch's and a headset's ray are always swiped
+fn _swiped_by[device]
+    if device eq 'mouse' or device eq 'pen'
+        return 'mouse'
+    'touch'
+
+--- the slide (its index on the track, a clone's too) under a point of the
+--- list (CSS pixels from the list's content box), -1000000000 where none
+fn _slot_at[k, x, y, at]
+    order = _order[k]
+    offset = track_drawn[k, at]
+    i = 0
+    while i lt len[order]
+        if k.s.fade
+            if order[i] eq k.current
+                return order[i]
+        else if k.s.vertical
+            from = offset + _along[k, order, i]
+            if y gte from and y lt from + _own[k.heights, order[i], k.count]
+                return order[i]
+        else
+            from = offset + _along[k, order, i]
+            if x gte from and x lt from + _slot_wide[k, order[i]]
+                return order[i]
+        i = i + 1
+    _unsent[]
+
+--- a round button with a chevron pointing on (`forward`) or back, across
+--- or (`upright`) down and up, faint where it may not be pressed (`off`)
+fn _chevron_drawn[d, forward, off, upright]
+    look = d.look
+    px = d.s
+    r = 16.0 * px
+    cx = d.x + d.w / 2.0
+    cy = d.y + d.h / 2.0
+    ground = look.panel
+    if d.hover and not off
+        ground = look.hover
+    if d.down and not off
+        ground = look.press
+    alpha = 1.0
+    if off
+        alpha = 0.35
+    d.c = lory.circle[d.c, cx, cy, r, lory.fade[ground, 0.92 * alpha]]
+    d.c = lory.ring[d.c, cx, cy, r, 1.0 * px, lory.fade[look.edge, alpha]]
+    way = 1.0
+    if not forward
+        way = -1.0
+    ink = lory.fade[look.ink, alpha]
+    if upright
+        d.c = lory.line[d.c, cx - 6.0 * px, cy - 3.0 * px * way, cx, cy + 3.0 * px * way, 2.0 * px, ink]
+        d.c = lory.line[d.c, cx, cy + 3.0 * px * way, cx + 6.0 * px, cy - 3.0 * px * way, 2.0 * px, ink]
+    else
+        d.c = lory.line[d.c, cx - 3.0 * px * way, cy - 6.0 * px, cx + 3.0 * px * way, cy, 2.0 * px, ink]
+        d.c = lory.line[d.c, cx + 3.0 * px * way, cy, cx - 3.0 * px * way, cy + 6.0 * px, 2.0 * px, ink]
+    d
+
+--- a drawn button pressed: let go on, or Enter or space typed while it
+--- has the focus
+fn _chosen_here[d]
+    d.pressed or (d.focused and ('Enter' in d.keys or ' ' in d.keys))
+
+--- an arrow: a round button with a chevron, faint where it may not be
+--- pressed; pressed (or Enter or space while it has the focus) the
+--- carousel moves the way it points
+fn _arrow_painted[d]
+    id = d.words
+    kept = _kept_of[id]
+    if not kept.made
+        return d
+    k = kept.k
+    forward = d.num gt 0.5
+    off = (forward and next_off[k]) or (not forward and previous_off[k])
+    d = _chevron_drawn[d, forward, off, false]
+    if _chosen_here[d] and not off
+        at = _now_drawn[]
+        k = advanced[k, at]
+        what = 'previous'
+        if forward
+            what = 'next'
+        k = acted[k, what, 0, at]
+        k = _carried[k, at]
+        d = _told_out[d, id, k]
+        kept.k = untold[k]
+        remember[_kept_key[id], kept]
+    d
+
+--- a dot: faint, stronger where it is the slide shown (`lo` 1) or the
+--- pointer is over it; pressed (or Enter or space with the focus) the
+--- carousel moves to its slides
+fn _dot_painted[d]
+    id = d.words
+    kept = _kept_of[id]
+    if not kept.made
+        return d
+    alpha = 0.25
+    if d.hover
+        alpha = 0.5
+    if d.lo gt 0.5
+        alpha = 0.75
+    d.c = lory.circle[d.c, d.x + d.w / 2.0, d.y + d.h / 2.0, 4.0 * d.s, lory.fade[d.look.ink, alpha]]
+    if _chosen_here[d]
+        at = _now_drawn[]
+        k = advanced[kept.k, at]
+        k = acted[k, 'dot', _counted[d.num], at]
+        k = _carried[k, at]
+        d = _told_out[d, id, k]
+        kept.k = untold[k]
+        remember[_kept_key[id], kept]
+    d
+
+--- ---- the program's calls (react-slick's slickNext, slickPrev,
+--- slickGoTo, slickPlay and slickPause) ----
+
+fn _called_on[id, what, index]
+    kept = _kept_of[id]
+    if kept.made
+        k = acted[kept.k, what, index, kept.k.now]
+        kept.k = _carried[k, kept.k.now]
+        remember[_kept_key[id], kept]
+    id
+
+--- the carousel moved on a move's worth, or back
+fn next_slide[id]
+    _called_on[id, 'step_next', 0]
+
+fn previous_slide[id]
+    _called_on[id, 'step_previous', 0]
+
+--- the carousel moved to slide `index`, at once where `at_once`
+fn go_to[id, index, at_once = false]
+    if at_once
+        return _called_on[id, 'go_now', index]
+    _called_on[id, 'go', index]
+
+--- autoplay begun again, or held until it is played
+fn play[id]
+    _called_on[id, 'play', 0]
+
+fn pause[id]
+    _called_on[id, 'pause', 0]
+
+--- the slide the carousel shows (0 before it is drawn)
+fn slide_of[id]
+    kept = _kept_of[id]
+    if not kept.made
+        return 0
+    kept.k.current
+
+--- the carousel's state, as `carousel` keeps it (`Slick`)
+fn state_of[id]
+    _kept_of[id].k
+
+--- (each painter called once by name, as gui calls its own, so that Crow
+--- knows what it takes where it is handed as a value)
+fn _painters[d]
+    d = _probed[d]
+    d = _caught[d]
+    d = _arrow_painted[d]
+    d = _dot_painted[d]
+    d = _marked[d]
+    d = _panes_caught[d]
+    d = _pane_arrow[d]
+    d = _group_caught[d]
+    d = _group_arrow[d]
+    _ticker_caught[d]
+
+--- ---- measures: where a mark was drawn ----
+
+--- what marks measured as the last frame was drawn, under
+--- 'lory.carousel.marks/' and the words they carry: by each mark's index,
+--- where it was drawn (CSS pixels)
+struct Marks [xs, ys]
+
+fn _no_marks[]
+    Marks[map['' = 0.0], map['' = 0.0]]
+
+fn _marks_key[words]
+    'lory.carousel.marks/`words`'
+
+fn _marks_of[words]
+    recall[_marks_key[words], _no_marks[]]
+
+--- a mark: drawn one pixel wide and none high, where it stands it tells
+--- (a frame late) where that is, less what it was moved (`lo`, `hi`: the
+--- x and y it was drawn moved by, CSS pixels)
+fn _marked[d]
+    key = _marks_key[d.words]
+    marks = recall[key, _no_marks[]]
+    index = '`_counted[d.num]`'
+    marks.xs[index] = d.x / d.s - d.lo
+    marks.ys[index] = d.y / d.s - d.hi
+    remember[key, marks]
+    d
+
+fn _mark[words, index]
+    gui.drawn['', index + 0.0, 1.0, 0.0, _marked, lo = 0.0, hi = 0.0, words = words]
+
+fn _mark_moved[words, index, dx, dy]
+    gui.drawn['', index + 0.0, 1.0, 0.0, _marked, lo = dx, hi = dy, words = words]
+
+--- where mark `index` was drawn, along x or (`down`) y, -1 where it has
+--- not been
+fn _mark_at[marks, index, down]
+    key = '`index`'
+    if down
+        if not (key in marks.ys)
+            return -1.0
+        y = marks.ys[key]
+        return y
+    if not (key in marks.xs)
+        return -1.0
+    x = marks.xs[key]
+    x
+
+--- each control's size laid out in a row (as a row measures its own, with
+--- no room), measured: drawn unseen, untouched, one under another, three
+--- marks round each (its top left, its right, its foot)
+fn _measuring[words, kids]
+    rows = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt len[kids]
+        rows = push[rows, gui.column[[gui.row[[_mark[words, 3 * i], kids[i], _mark[words, 3 * i + 1]], gap = 0.0, align = 'start'], _mark[words, 3 * i + 2]], gap = 0.0]]
+        i = i + 1
+    gui.faded[gui.disabled[gui.column[rows, gap = 0.0]], 0.0]
+
+--- the sizes `_measuring` found: each control's width and height, -1
+--- where it is not measured yet
+struct Measured [wides, talls, done]
+
+fn _measured[words, count]
+    marks = _marks_of[words]
+    wides = _no_floats[]
+    talls = _no_floats[]
+    done = true
+    i = 0
+    while i lt count
+        x0 = _mark_at[marks, 3 * i, false]
+        x1 = _mark_at[marks, 3 * i + 1, false]
+        y0 = _mark_at[marks, 3 * i, true]
+        y2 = _mark_at[marks, 3 * i + 2, true]
+        if x0 lt 0.0 or x1 lt 0.0 or y2 lt 0.0
+            done = false
+            wides = push[wides, -1.0]
+            talls = push[talls, -1.0]
+        else
+            wides = push[wides, max[0.0, x1 - x0 - 1.0]]
+            talls = push[talls, max[0.0, y2 - y0]]
+        i = i + 1
+    Measured[wides, talls, done]
+
+--- a box's room measured by the control that catches its input: its
+--- width and height and where it was drawn, CSS pixels
+struct Room [x, y, wide, tall]
+
+fn _room_key[id]
+    'lory.carousel.room/`id`'
+
+fn _room_of[id]
+    recall[_room_key[id], Room[0.0, 0.0, 0.0, 0.0]]
+
+fn _roomed[d]
+    remember[_room_key[d.id], Room[d.x / d.s, d.y / d.s, d.w / d.s, d.h / d.s]]
+    d
+
+--- a swipe's way, as Vuetify's touch hears one (its `v-touch`): more than
+--- 16 pixels along an axis, and more than twice as far along it as across
+--- ('left', 'right', 'up', 'down', or '' for none)
+fn swipe_way[x0, y0, x1, y1]
+    dx = x1 - x0
+    dy = y1 - y0
+    if abs[dy] lt 0.5 * abs[dx]
+        if x1 lt x0 - 16.0
+            return 'left'
+        if x1 gt x0 + 16.0
+            return 'right'
+    if abs[dx] lt 0.5 * abs[dy]
+        if y1 lt y0 - 16.0
+            return 'up'
+        if y1 gt y0 + 16.0
+            return 'down'
+    ''
+
+--- ---- panes: Vuetify's v-window ----
+
+--- One pane of several shown at a time, the program's `index` choosing it
+--- (Vuetify's v-window and its v-model). When the index changes the new
+--- pane slides in over 300 ms (Vuetify's `cubic-bezier(0.25, 0.8, 0.5,
+--- 1)`), from the right (below where `vertical`) as the index goes up and
+--- from the left as it goes down, the old one sliding out the other way;
+--- `backward` turns that round (as right to left does across, `rtl`), and
+--- the height moves from the old pane's to the new one's on the same
+--- curve. Its arrows (`arrows`: 'always', 'hover' or 'never') are shown
+--- only where there is a pane that way (`continuous`: round from the last
+--- to the first); they, the arrow keys while it was_chosen the focus, and a
+--- touch's or a headset ray's swipe (as Vuetify's `v-touch` hears one)
+--- tell `change` under its id, `num` the pane asked for: the program sets
+--- the index to it (`step` names it from the index and a way)
+struct Panes [made, shown, from, began, back, heights, way, down, device, start_x, start_y, count, continuous, rtl, vertical, backward]
+
+fn _no_panes[]
+    Panes[false, 0, 0, -1000000.0, false, map['' = 0.0], 0, false, '', 0.0, 0.0, 0, false, false, false, false]
+
+fn _panes_key[id]
+    'lory.carousel.panes/`id`'
+
+fn _panes_of[id]
+    recall[_panes_key[id], _no_panes[]]
+
+--- the pane a step from `index` of `count` takes (1 on, -1 back), round
+--- the finishes where `continuous`, and where none, `index`
+fn step_to[index, count, way, continuous]
+    to = index + way
+    if to lt 0
+        if not continuous
+            return index
+        return count - 1
+    if to gte count
+        if not continuous
+            return index
+        return 0
+    to
+
+fn _pane_way[p, back]
+    --- (1: it comes from the right or below; -1 from the left or above)
+    axis_reversed = p.backward
+    if not p.vertical
+        axis_reversed = p.backward ne p.rtl
+    reversed = back
+    if axis_reversed
+        reversed = not back
+    if reversed
+        return -1.0
+    1.0
+
+fn panes[c, id, slides, index, backward = false, vertical = false, continuous = false, arrows = 'always', rtl = false, duration = 300.0]
+    at = _now[c]
+    remember['lory.carousel.input', _input_of[c, at]]
+    count = len[slides]
+    if count eq 0
+        return gui.space[0.0]
+    p = _panes_of[id]
+    shown = max[0, min[count - 1, index]]
+    if not p.made
+        p.made = true
+        p.shown = shown
+        p.from = shown
+    if shown ne p.shown
+        p.from = p.shown
+        p.began = at
+        --- (a step's own way, where an arrow, a key or a swipe asked one:
+        --- round the end it still goes on)
+        p.back = shown lt p.shown
+        if p.way ne 0
+            p.back = p.way lt 0
+        p.shown = shown
+    p.way = 0
+    p.count = count
+    p.continuous = continuous
+    p.rtl = rtl
+    p.vertical = vertical
+    p.backward = backward
+    remember[_panes_key[id], p]
+    room = _room_of[id]
+    wide = room.wide
+    turn = 1.0
+    if duration gt 0.0
+        turn = max[0.0, min[1.0, (at - p.began) / duration]]
+    eased = motion.ease_at['cubic-bezier(0.25, 0.8, 0.5, 1)', turn]
+    marks = _marks_of['`id`:panes']
+    tall_new = _mark_at[marks, shown, true]
+    tall_old = _mark_at[marks, p.from, true]
+    top = _mark_at[marks, 1000000, true]
+    moving = turn lt 1.0 and p.from ne shown and p.from lt count and wide gt 0.0
+    tall = 0.0
+    block = gui.space[0.0]
+    if not moving
+        block = gui.column[[slides[shown], _mark['`id`:panes', shown]], gap = 0.0]
+        if tall_new gte 0.0 and top gte 0.0 and wide gt 0.0
+            tall = tall_new - top
+            block = gui.scroll['`id`:panes', tall, [block]]
+    else
+        way = _pane_way[p, p.back]
+        length = wide
+        if vertical
+            length = max[1.0, max[tall_new - top, tall_old - top]]
+        ahead = way * (1.0 - eased) * length
+        behind = 0.0 - way * eased * length
+        incoming = gui.space[0.0]
+        leaving = gui.space[0.0]
+        if vertical
+            incoming = gui.moved[gui.column[[slides[shown], _mark_moved['`id`:panes', shown, 0.0, ahead]], gap = 0.0], 0.0, ahead]
+            leaving = gui.moved[gui.sized[gui.column[[slides[p.from], _mark_moved['`id`:panes', p.from, 0.0, behind]], gap = 0.0], wide], 0.0, behind]
+        else
+            incoming = gui.moved[gui.column[[slides[shown], _mark_moved['`id`:panes', shown, ahead, 0.0]], gap = 0.0], ahead, 0.0]
+            leaving = gui.moved[gui.sized[gui.column[[slides[p.from], _mark_moved['`id`:panes', p.from, behind, 0.0]], gap = 0.0], wide], behind, 0.0]
+        pair = gui.overlay[incoming, leaving, anchor = 'top_left']
+        --- (the height moves from the old pane's to the new one's; a pane
+        --- not measured yet stands at the other's)
+        old_tall = tall_old - top
+        new_tall = tall_new - top
+        if tall_old lt 0.0
+            old_tall = new_tall
+        if tall_new lt 0.0
+            new_tall = old_tall
+        tall = max[1.0, old_tall + (new_tall - old_tall) * eased]
+        if top lt 0.0
+            tall = 1.0
+        block = gui.scroll['`id`:panes', tall, [pair]]
+    --- (the mark at the panes' top: each pane's foot is measured from it)
+    block = gui.column[[_mark['`id`:panes', 1000000], block], gap = 0.0]
+    shows = arrows eq 'always' or (arrows eq 'hover' and kept_hovered[id])
+    if shows and count gt 1
+        back_shown = continuous or shown gt 0
+        on_shown = continuous or shown lt count - 1
+        if back_shown
+            block = gui.overlay[block, gui.drawn['`id`:previous', 0.0, _arrow_size[], _arrow_size[], _pane_arrow, words = id], anchor = _panes_anchor[vertical, false]]
+        if on_shown
+            block = gui.overlay[block, gui.drawn['`id`:next', 1.0, _arrow_size[], _arrow_size[], _pane_arrow, words = id], anchor = _panes_anchor[vertical, true]]
+    --- (its own control, under the panes and as tall: a negative gap sets
+    --- them over it)
+    catcher = gui.drawn[id, shown + 0.0, 0.0, tall, _panes_caught, words = id]
+    gui.column[[catcher, block], gap = 0.0 - tall]
+
+fn _panes_anchor[vertical, forward]
+    if vertical
+        if forward
+            return 'bottom'
+        return 'top'
+    if forward
+        return 'right'
+    'left'
+
+--- whether the pointer rests on the control `id` catches for (its room
+--- as last measured)
+fn kept_hovered[id]
+    seen = recall['lory.carousel.input', _no_input[]]
+    room = _room_of[id]
+    seen.there and _within[seen.x, seen.y, room.x, room.y, room.wide, room.tall]
+
+--- the panes' own control, as wide as they are and drawn above them: their
+--- width measured; a touch's or a ray's swipe across them and the arrow
+--- keys while it was_chosen the focus told as the pane they ask for
+fn _panes_caught[d]
+    d = _roomed[d]
+    id = d.words
+    p = _panes_of[id]
+    if not p.made
+        return d
+    seen = recall['lory.carousel.input', _no_input[]]
+    asked = 0
+    i = 0
+    while i lt len[seen.presses]
+        got = seen.presses[i]
+        inside = _within[got.x, got.y, d.x, d.y, d.w, d.h]
+        if got.on eq 'down' and inside and got.device ne 'mouse' and got.device ne 'pen'
+            p.down = true
+            p.device = got.device
+            p.start_x = got.x / d.s
+            p.start_y = got.y / d.s
+        else if got.on eq 'up' and p.down
+            p.down = false
+            way = swipe_way[p.start_x, p.start_y, got.x / d.s, got.y / d.s]
+            --- (a swipe left asks the next pane, right the one before: the
+            --- other way round where they are reversed across)
+            across_reversed = p.backward ne p.rtl
+            if way eq 'left'
+                asked = 1
+                if across_reversed
+                    asked = -1
+            if way eq 'right'
+                asked = -1
+                if across_reversed
+                    asked = 1
+        i = i + 1
+    i = 0
+    while i lt len[d.keys]
+        back_key = 'ArrowLeft'
+        on_key = 'ArrowRight'
+        if p.rtl
+            back_key = 'ArrowRight'
+            on_key = 'ArrowLeft'
+        if p.vertical
+            back_key = 'ArrowUp'
+            on_key = 'ArrowDown'
+        if d.keys[i] eq back_key
+            asked = -1
+        if d.keys[i] eq on_key
+            asked = 1
+        i = i + 1
+    if asked ne 0
+        to = step_to[p.shown, p.count, asked, p.continuous]
+        if to ne p.shown
+            p.way = asked
+            d.told = push[d.told, gui.Event[id, 'change', '`p.shown`', to + 0.0]]
+    remember[_panes_key[id], p]
+    d
+
+--- a pane's arrow: pressed, it tells the pane it asks for
+fn _pane_arrow[d]
+    id = d.words
+    p = _panes_of[id]
+    if not p.made
+        return d
+    forward = d.num gt 0.5
+    d = _chevron_drawn[d, forward, false, p.vertical]
+    if _chosen_here[d]
+        asked = -1
+        if forward
+            asked = 1
+        to = step_to[p.shown, p.count, asked, p.continuous]
+        if to ne p.shown
+            p.way = asked
+            remember[_panes_key[id], p]
+            d.told = push[d.told, gui.Event[id, 'change', '`p.shown`', to + 0.0]]
+    d
+
+--- the pane shown, after what a frame told: its `change` under `id`, or
+--- `index` where it told none
+fn pane_after[shown, id, index]
+    out = index
+    for ev in shown.events
+        if ev.id eq id and ev.act eq 'change'
+            out = 0 + floor[ev.num]
+    out
+
+--- ---- a slide group: Vuetify's v-slide-group ----
+
+--- A row of the program's controls wider than its room, scrolled along it
+--- (Vuetify's v-slide-group). Pressing one chooses it (`multiple`: as
+--- many as are pressed, at most `most` where that is over 0; `mandatory`:
+--- one stays chosen) and tells `change` under its id, `words` the chosen
+--- indices with commas between; a choice scrolls into view (`center`:
+--- into the middle) as Vuetify scrolls one, 0.4 of its width past the
+--- edge. Its arrows (`arrows`: 'auto' while it overflows or is scrolled,
+--- 'always', 'never'), 52 pixels wide either side and faint at an end,
+--- scroll it a room's width (`distance` pixels where over 0) over 200 ms
+--- (Vuetify's easeOutQuart, at whole pixels); `snap` ('start', 'center',
+--- 'end' or '' for none) stops each scroll where a control's start,
+--- middle or end lines up as a scroll-snap does. A touch or a headset's
+--- ray drags it along.
+struct Group [made, chosen, at_px, from_px, to_px, began, down, start_x, start_px, dragged, count, room, content, begins, finishes, mandatory, multiple, most, center, snap, distance]
+
+fn _no_group[]
+    Group[false, slice[[0], 0, 0], 0.0, 0.0, 0.0, -1000000.0, false, 0.0, 0.0, false, 0, 0.0, 0.0, _no_floats[], _no_floats[], false, false, 0, false, '', 0.0]
+
+fn _group_key[id]
+    'lory.carousel.group/`id`'
+
+fn _group_of[id]
+    recall[_group_key[id], _no_group[]]
+
+--- the indices chosen in the slide group `id`
+fn chosen_of[id]
+    _group_of[id].chosen
+
+--- where the slide group `id` is scrolled to at `at` ms (pixels)
+fn group_offset[id, at]
+    _group_px[_group_of[id], at]
+
+--- where a slide group's scroll from `from` to `to` stands `turn` of the
+--- way through its 200 ms: Vuetify's easeOutQuart, at whole pixels as its
+--- goTo writes them
+fn group_eased[from, to, turn]
+    floor[from + (to - from) * motion.ease_at['outQuart', max[0.0, min[1.0, turn]]]]
+
+--- where the group is scrolled to at `at`: its last scroll eased on
+fn _group_px[g, at]
+    group_eased[g.from_px, g.to_px, (at - g.began) / 200.0]
+
+--- the furthest it scrolls
+fn _group_most[g]
+    max[0.0, g.content - g.room]
+
+--- a scroll begun at `at` to `target`, held between its finishes (none where
+--- it moves a pixel or less)
+fn _group_scrolled[g, target, at]
+    target = max[0.0, min[_group_most[g], target]]
+    here = _group_px[g, at]
+    if abs[target - here] lte 1.0
+        return g
+    g.from_px = here
+    g.to_px = target
+    g.began = at
+    g
+
+--- where a scroll stops to show control `i`, as Vuetify scrolls to a
+--- choice: its middle at the room's (`center`), or past the edge it was
+--- hidden behind by 0.4 of its width
+fn _group_target[g, i, at]
+    here = _group_px[g, at]
+    if g.snap ne ''
+        return _snap_showing[g, i, here]
+    group_target[g.room, here, g.begins[i], g.finishes[i] - g.begins[i], g.center]
+
+--- where a slide group scrolled to `here` in its `room` scrolls to show a
+--- control at `start` `size` wide, as Vuetify's scroll to a choice finds it
+--- (before it is held between the group's ends): its middle at the room's
+--- (`center`), or past the edge it was hidden behind by 0.4 of its width,
+--- or where it is if it is not hidden
+fn group_target[room, here, start, size, center]
+    if center
+        return start - room / 2.0 + size / 2.0
+    if here gt start
+        return start - size * 0.4
+    if here + room lt start + size
+        return start - room + size + size * 0.4
+    here
+
+--- the snap position of control `i` (`snap` 'start', 'center' or 'end')
+fn _snap_of[g, i]
+    if g.snap eq 'end'
+        return g.finishes[i] - g.room
+    if g.snap eq 'center'
+        return (g.begins[i] + g.finishes[i] - g.room) / 2.0
+    g.begins[i]
+
+--- whether scrolled to `px` the room shows all of control `i`
+fn _reveals[g, i, px]
+    px lte g.begins[i] + 1.0 and px + g.room gte g.finishes[i] - 1.0
+
+--- the snap position nearest the ideal that shows control `i`
+fn _snap_showing[g, i, here]
+    ideal = here
+    if g.center
+        ideal = (g.begins[i] + g.finishes[i] - g.room) / 2.0
+    best = _snap_of[g, i]
+    j = 0
+    while j lt g.count
+        sp = _snap_of[g, j]
+        if _reveals[g, i, sp] and abs[sp - ideal] lt abs[best - ideal]
+            best = sp
+        j = j + 1
+    best
+
+--- a page's scroll where `snap` is set, as Vuetify finds one: the furthest
+--- snap position that way within the page (one showing the control cut at
+--- the edge where there is one), else the nearest beyond
+fn _snapped_page[g, from, way]
+    forward = way gt 0.0
+    goal = from + way
+    candidates = _no_floats[]
+    j = 0
+    while j lt g.count
+        sp = _snap_of[g, j]
+        if (forward and sp gt from + 1.0) or (not forward and sp lt from - 1.0)
+            candidates = push[candidates, sp]
+        j = j + 1
+    edge = from
+    if forward
+        edge = goal
+    cut = -1
+    j = 0
+    while j lt g.count
+        if cut lt 0 and g.begins[j] lt edge - 1.0 and g.finishes[j] gt edge + 1.0
+            cut = j
+        j = j + 1
+    options = candidates
+    if cut gte 0
+        revealing = _no_floats[]
+        for sp in candidates
+            if _reveals[g, cut, sp]
+                revealing = push[revealing, sp]
+        if len[revealing] gt 0
+            options = revealing
+    if len[options] eq 0
+        return goal
+    if forward
+        found = -1.0
+        got_one = false
+        for sp in options
+            if sp lte goal
+                found = sp
+                got_one = true
+        if got_one
+            return found
+        return options[0]
+    j = 0
+    while j lt len[options]
+        if options[j] gte goal
+            return options[j]
+        j = j + 1
+    options[len[options] - 1]
+
+--- a press on control `i`, as a group takes one
+fn _group_chose[g, i]
+    was_chosen = i in g.chosen
+    if g.multiple
+        if was_chosen
+            if g.mandatory and len[g.chosen] lte 1
+                return g
+            kept = slice[[0], 0, 0]
+            for one in g.chosen
+                if one ne i
+                    kept = push[kept, one]
+            g.chosen = kept
+            return g
+        if g.most gt 0 and len[g.chosen] + 1 gt g.most
+            return g
+        g.chosen = push[g.chosen, i]
+        return g
+    if was_chosen
+        if g.mandatory
+            return g
+        g.chosen = slice[[0], 0, 0]
+        return g
+    g.chosen = [i]
+    g
+
+fn _listed_ints[xs]
+    words = ''
+    i = 0
+    while i lt len[xs]
+        if i gt 0
+            words = '`words`,'
+        words = '`words``xs[i]`'
+        i = i + 1
+    words
+
+fn slide_group[c, id, items, mandatory = false, multiple = false, most = 0, center = false, arrows = 'auto', snap = '', distance = 0.0]
+    at = _now[c]
+    remember['lory.carousel.input', _input_of[c, at]]
+    count = len[items]
+    g = _group_of[id]
+    g.mandatory = mandatory
+    g.multiple = multiple
+    g.most = most
+    g.center = center
+    g.snap = snap
+    g.distance = distance
+    sized = _measured['`id`:group', count]
+    begins = _no_floats[]
+    finishes = _no_floats[]
+    along = 0.0
+    tallest = 0.0
+    i = 0
+    while i lt count
+        w = max[0.0, sized.wides[i]]
+        begins = push[begins, along]
+        finishes = push[finishes, along + w]
+        along = along + w
+        tallest = max[tallest, sized.talls[i]]
+        i = i + 1
+    g.begins = begins
+    g.finishes = finishes
+    g.content = along
+    g.count = count
+    if not g.made
+        g.made = true
+        if mandatory and count gt 0
+            g.chosen = [0]
+    room = _room_of[id]
+    overflowing = room.wide + 1.0 lt g.content
+    px = _group_px[g, at]
+    scrolled = abs[px] gt 0.0
+    shows = arrows eq 'always' or (arrows eq 'auto' and (overflowing or scrolled))
+    side = 0.0
+    if shows
+        side = 52.0
+    g.room = max[0.0, room.wide - 2.0 * side]
+    remember[_group_key[id], g]
+    cells = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt count
+        cells = push[cells, items[i]]
+        i = i + 1
+    strip = gui.moved[gui.row[cells, gap = 0.0, align = 'start'], 0.0 - px, 0.0]
+    tall = max[1.0, tallest]
+    block = gui.scroll['`id`:group', tall, [strip]]
+    if shows and room.wide gt 2.0 * side
+        --- (the scroll narrowed by the arrows' room, in the middle of a
+        --- column: a row would measure it with no room)
+        block = gui.column[[gui.sized[block, room.wide - 2.0 * side]], gap = 0.0, align = 'center']
+        block = gui.overlay[block, gui.drawn['`id`:previous', 0.0, side, tall, _group_arrow, words = id], anchor = 'left']
+        block = gui.overlay[block, gui.drawn['`id`:next', 1.0, side, tall, _group_arrow, words = id], anchor = 'right']
+    --- (each control measured unseen while one is not yet)
+    if not sized.done
+        block = gui.overlay[block, _measuring['`id`:group', items], anchor = 'top_left']
+    catcher = gui.drawn[id, 0.0, 0.0, tall, _group_caught, words = id]
+    gui.column[[catcher, block], gap = 0.0 - tall]
+
+--- the group's own control: its room measured; a press and release on a
+--- control (not a drag) chooses it; a touch's or a ray's drag scrolls it
+fn _group_caught[d]
+    d = _roomed[d]
+    id = d.words
+    g = _group_of[id]
+    if not g.made
+        return d
+    seen = recall['lory.carousel.input', _no_input[]]
+    at = seen.at
+    side = (d.w / d.s - g.room) / 2.0
+    i = 0
+    while i lt len[seen.presses]
+        got = seen.presses[i]
+        x = got.x / d.s - d.x / d.s - side
+        inside = _within[got.x, got.y, d.x + side * d.s, d.y, g.room * d.s, d.h]
+        if got.on eq 'down' and inside
+            g.down = true
+            g.dragged = false
+            g.start_x = x
+            g.start_px = _group_px[g, at]
+        else if got.on eq 'move' and g.down and got.device ne 'mouse' and got.device ne 'pen'
+            if abs[x - g.start_x] gt 4.0
+                g.dragged = true
+            if g.dragged
+                target = max[0.0, min[_group_most[g], g.start_px - (x - g.start_x)]]
+                g.from_px = target
+                g.to_px = target
+                g.began = at - 1000.0
+        else if got.on eq 'up' and g.down
+            g.down = false
+            if g.dragged and g.snap ne ''
+                g = _group_scrolled[g, _snap_near[g, _group_px[g, at]], at]
+            if not g.dragged and inside
+                along = x + _group_px[g, at]
+                j = 0
+                while j lt g.count
+                    if along gte g.begins[j] and along lt g.finishes[j]
+                        before = g.chosen
+                        g = _group_chose[g, j]
+                        if g.chosen ne before
+                            d.told = push[d.told, gui.Event[id, 'change', _listed_ints[g.chosen], len[g.chosen] + 0.0]]
+                        g = _group_scrolled[g, _group_target[g, j, at], at]
+                    j = j + 1
+        i = i + 1
+    remember[_group_key[id], g]
+    d
+
+--- the snap position nearest `px`
+fn _snap_near[g, px]
+    best = px
+    found = false
+    j = 0
+    while j lt g.count
+        sp = _snap_of[g, j]
+        if not found or abs[sp - px] lt abs[best - px]
+            best = sp
+            found = true
+        j = j + 1
+    best
+
+--- a group's arrow: faint at its end; pressed, it scrolls a page that way
+fn _group_arrow[d]
+    id = d.words
+    g = _group_of[id]
+    if not g.made
+        return d
+    at = _now_drawn[]
+    px = _group_px[g, at]
+    forward = d.num gt 0.5
+    off = (not forward and abs[px] lte 1.0) or (forward and _group_most[g] - abs[px] lte 1.0)
+    d = _chevron_drawn[d, forward, off, false]
+    if _chosen_here[d] and not off
+        page = g.room
+        if g.distance gt 0.0
+            page = g.distance
+        way = page
+        if not forward
+            way = 0.0 - page
+        target = px + way
+        if g.snap ne ''
+            target = _snapped_page[g, px, way]
+        g = _group_scrolled[g, target, at]
+        remember[_group_key[id], g]
+    d
+
+--- ---- a ticker: Motion's Ticker ----
+
+--- The program's controls in an endless line moving at `velocity` pixels a
+--- second (Motion's Ticker: leftward, or upward where `vertical`; a
+--- negative velocity, or `rtl`, the other way), `gap` pixels apart,
+--- copies of them following so that the room never shows an end: each
+--- control is drawn again a whole line on once it was_chosen left the room.
+--- While the pointer rests on it its speed is `hover_factor` of itself
+--- (eased there over 300 ms as Motion eases a value, its
+--- `cubic-bezier(0.25, 0.1, 0.35, 1)`). `draggable`: a press drags it, and
+--- let go it is thrown on (Motion's inertia, `lory.motion`'s `glide`)
+--- before it ticks on again.
+struct Ticker [made, offset, last, factor_from, factor_to, factor_began, hovered, down, start, start_offset, last_x, last_at, speed, thrown, throw_at, glide, inertia, measured, total, room, vertical, draggable]
+
+fn _no_ticker[]
+    thrown = motion.inertia[0.0, 0.0]
+    Ticker[false, 0.0, -1.0, 1.0, 1.0, -1000000.0, false, false, 0.0, 0.0, 0.0, 0.0, 0.0, false, 0.0, motion.glide[thrown], thrown, false, 0.0, 0.0, false, false]
+
+fn _ticker_key[id]
+    'lory.carousel.ticker/`id`'
+
+fn _ticker_of[id]
+    recall[_ticker_key[id], _no_ticker[]]
+
+--- the speed factor at `at`: eased from where it was toward where hovering
+--- set it
+fn _factor_at[k, at]
+    turn = max[0.0, min[1.0, (at - k.factor_began) / 300.0]]
+    k.factor_from + (k.factor_to - k.factor_from) * motion.ease_at['cubic-bezier(0.25, 0.1, 0.35, 1)', turn]
+
+--- Motion's wrap: `v` brought into [low, high)
+fn ticker_wrapped[low, high, v]
+    size = high - low
+    if size lte 0.0
+        return low
+    r = (v - low) - size * floor[(v - low) / size]
+    r + low
+
+--- how many copies of the line follow it, as Motion counts them: enough
+--- that the room is filled with its largest control out of it
+fn ticker_copies[room, total, largest, gap]
+    copies = 0
+    filled = 0.0
+    while filled lt room
+        filled = (total + gap) * (copies + 1) - largest
+        copies = copies + 1
+        if copies gt 1000
+            return 1000
+    max[0, copies - 1]
+
+--- where the ticker `id` stands: its offset (pixels its line is moved)
+fn ticker_offset[id]
+    _ticker_of[id].offset
+
+fn ticker[c, id, items, velocity = 50.0, hover_factor = 1.0, gap = 10.0, vertical = false, rtl = false, draggable = false]
+    at = _now[c]
+    remember['lory.carousel.input', _input_of[c, at]]
+    count = len[items]
+    if count eq 0
+        return gui.space[0.0]
+    k = _ticker_of[id]
+    sized = _measured['`id`:ticker', count]
+    begins = _no_floats[]
+    finishes = _no_floats[]
+    along = 0.0
+    largest = 0.0
+    tallest = 0.0
+    widest = 0.0
+    i = 0
+    while i lt count
+        size = max[0.0, sized.wides[i]]
+        if vertical
+            size = max[0.0, sized.talls[i]]
+        if i gt 0
+            along = along + gap
+        begins = push[begins, along]
+        finishes = push[finishes, along + size]
+        along = along + size
+        largest = max[largest, size]
+        tallest = max[tallest, sized.talls[i]]
+        widest = max[widest, sized.wides[i]]
+        i = i + 1
+    total = along
+    room = _room_of[id]
+    visible = room.wide
+    if vertical
+        visible = room.tall
+    k.made = true
+    k.measured = sized.done and total gt 0.0
+    k.total = total
+    k.vertical = vertical
+    k.draggable = draggable
+    speed = velocity
+    if rtl
+        speed = 0.0 - velocity
+    --- (it ticks while measured, not held and not thrown)
+    if k.last gte 0.0 and k.measured and not k.down
+        if k.thrown
+            g = motion.glided[k.inertia, k.glide, at - k.throw_at]
+            k.glide = g
+            k.offset = g.value
+            if g.done
+                k.thrown = false
+        else
+            k.offset = k.offset - (at - k.last) / 1000.0 * (speed * _factor_at[k, at])
+    k.last = at
+    remember[_ticker_key[id], k]
+    copies = ticker_copies[visible, total, largest, gap]
+    line = (total + gap) * (copies + 1)
+    shown_at = ticker_wrapped[0.0 - total - gap, 0.0, k.offset]
+    cells = slice[[gui.space[0.0]], 0, 0]
+    copy = 0
+    while copy lte copies
+        i = 0
+        while i lt count
+            start = begins[i] + (total + gap) * copy
+            stop = finishes[i] + (total + gap) * copy
+            shift = 0.0
+            if shown_at + stop lte 0.0
+                shift = line
+            if vertical
+                cells = push[cells, gui.moved[items[i], 0.0, shift]]
+            else
+                cells = push[cells, gui.moved[items[i], shift, 0.0]]
+            i = i + 1
+        copy = copy + 1
+    strip = gui.space[0.0]
+    tall = 1.0
+    if vertical
+        strip = gui.moved[gui.column[cells, gap = gap], 0.0, shown_at]
+        tall = max[1.0, room.tall]
+        if tall lte 1.0
+            tall = max[1.0, tallest]
+    else
+        strip = gui.moved[gui.row[cells, gap = gap, align = 'center'], shown_at, 0.0]
+        tall = max[1.0, tallest]
+    block = gui.scroll['`id`:ticker', tall, [strip]]
+    if not sized.done
+        block = gui.overlay[block, _measuring['`id`:ticker', items], anchor = 'top_left']
+    catcher = gui.drawn[id, k.offset, 0.0, tall, _ticker_caught, lo = hover_factor, words = id]
+    gui.column[[catcher, block], gap = 0.0 - tall]
+
+--- the ticker's own control: its room measured; the pointer resting on it
+--- eases its speed to `hover_factor` (its `lo`) and back; a drag moves it
+--- and its release throws it
+fn _ticker_caught[d]
+    d = _roomed[d]
+    id = d.words
+    k = _ticker_of[id]
+    if not k.made
+        return d
+    seen = recall['lory.carousel.input', _no_input[]]
+    at = seen.at
+    over = seen.there and _within[seen.x, seen.y, d.x, d.y, d.w, d.h]
+    if over ne k.hovered
+        k.factor_from = _factor_at[k, at]
+        k.factor_to = 1.0
+        if over
+            k.factor_to = d.lo
+        k.factor_began = at
+        k.hovered = over
+    if k.draggable
+        i = 0
+        while i lt len[seen.presses]
+            got = seen.presses[i]
+            along = got.x / d.s
+            if k.vertical
+                along = got.y / d.s
+            if got.on eq 'down' and _within[got.x, got.y, d.x, d.y, d.w, d.h]
+                k.down = true
+                k.thrown = false
+                k.start = along
+                k.start_offset = k.offset
+                k.last_x = along
+                k.last_at = at
+                k.speed = 0.0
+            else if got.on eq 'move' and k.down
+                if at gt k.last_at
+                    k.speed = (along - k.last_x) / ((at - k.last_at) / 1000.0)
+                k.last_x = along
+                k.last_at = at
+                k.offset = k.start_offset + (along - k.start)
+            else if got.on eq 'up' and k.down
+                k.down = false
+                k.offset = k.start_offset + (along - k.start)
+                k.inertia = motion.inertia[k.offset, k.speed]
+                k.glide = motion.glide[k.inertia]
+                k.thrown = true
+                k.throw_at = at
+            i = i + 1
+        --- (a ray sends no moves: where it points is its move)
+        if k.down and len[seen.presses] eq 0
+            along = seen.x / d.s
+            if k.vertical
+                along = seen.y / d.s
+            if along ne k.last_x
+                if at gt k.last_at
+                    k.speed = (along - k.last_x) / ((at - k.last_at) / 1000.0)
+                k.last_x = along
+                k.last_at = at
+                k.offset = k.start_offset + (along - k.start)
+    remember[_ticker_key[id], k]
+    d
+
+--- ---- what it does, tested ----
+
+--- a frame on a screen 900 by 700 at `t` ms, with the page's input and
+--- where the pointer stands
+fn _screen[t, given, pointers]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": `pointers`, "controllers": [], "said": []}']]
+
+--- a frame in a headset at `t` ms, its right controller's ray pointed
+--- along (dx, dy, -1) from 1.25 m up: it meets the page at x 500 + 750 dx,
+--- y 275 - 750 dy
+fn _headset[t, dx, dy, given]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": `t`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": [`dx`, `dy`, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']]
+
+--- a pointer's event (`on`: down, move or up) by a device at a place
+fn _pointer[on, device, x, y]
+    '{"type": "`on`", "device": "`device`", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+--- one event, the frame's input
+fn _one_event[ev]
+    '[`ev`]'
+
+--- a mouse's press and release at a place, in one frame
+fn _click[x, y]
+    down = _pointer['down', 'mouse', x, y]
+    up = _pointer['up', 'mouse', x, y]
+    '[`down`, `up`]'
+
+fn _ray[on]
+    '{"type": "`on`", "device": "ray", "id": "right", "hand": "right"}'
+
+fn _key[name]
+    '[{"type": "key", "key": "`name`", "code": "`name`"}]'
+
+--- slides for the tests: each a panel of a heading and words
+fn _panels[n]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, gui.panel[[gui.heading['Slide `i`'], gui.text['the words of slide `i`']]]]
+        i = i + 1
+    out
+
+--- the carousel `id` of `n` slides drawn alone on a frame
+fn _shown[c, id, n, s]
+    gui.show[c, gui.column[[carousel[c, id, _panels[n], s]]]]
+
+--- the box drawn for a control, by id: x, y, width, height
+fn _box_of[shown, id]
+    if id in shown.boxes
+        return shown.boxes[id]
+    [0.0, 0.0, 0.0, 0.0]
+
+--- frames 16 ms apart from `from` up to `upto`, nothing done in them
+fn _waited[id, n, s, from, upto]
+    t = from
+    shown = _shown[_screen[t, '[]', '[]'], id, n, s]
+    while t lt upto
+        t = t + 16.0
+        shown = _shown[_screen[t, '[]', '[]'], id, n, s]
+    shown
+
+--- the arrow keys move it a slide each way once it has the focus (a click
+--- on the list gives it), each move animated over `speed` ms
+test the_arrow_keys_move_it_a_slide_each_way_once_it_has_the_focus[]
+    gui.unfocus[]
+    s = settings[dots = true]
+    shown = _waited['keys', 4, s, 1000.0, 1032.0]
+    list = _box_of[shown, 'keys:list']
+    x = list[0] + list[2] / 2.0
+    y = list[1] + list[3] / 2.0
+    shown = _shown[_screen[1048.0, _click[x, y], '[]'], 'keys', 4, s]
+    shown = _shown[_screen[1064.0, _key['ArrowRight'], '[]'], 'keys', 4, s]
+    moving = track_moving[state_of['keys']]
+    shown = _waited['keys', 4, s, 1080.0, 1700.0]
+    first = slide_of['keys']
+    shown = _shown[_screen[1716.0, _key['ArrowRight'], '[]'], 'keys', 4, s]
+    shown = _waited['keys', 4, s, 1732.0, 2400.0]
+    second = slide_of['keys']
+    shown = _shown[_screen[2416.0, _key['ArrowLeft'], '[]'], 'keys', 4, s]
+    shown = _waited['keys', 4, s, 2432.0, 3100.0]
+    back = slide_of['keys']
+    --- (a key while it moves is not heard; from the first, the left arrow
+    --- goes round to the last)
+    shown = _shown[_screen[3116.0, _key['ArrowLeft'], '[]'], 'keys', 4, s]
+    shown = _shown[_screen[3132.0, _key['ArrowLeft'], '[]'], 'keys', 4, s]
+    shown = _waited['keys', 4, s, 3148.0, 3800.0]
+    first_again = slide_of['keys']
+    shown = _shown[_screen[3816.0, _key['ArrowLeft'], '[]'], 'keys', 4, s]
+    shown = _waited['keys', 4, s, 3832.0, 4500.0]
+    last = slide_of['keys']
+    log['keys: moving `moving`, then `first`, `second`, `back`, `first_again`, `last`']
+    moving and first eq 1 and second eq 2 and back eq 1 and first_again eq 0 and last eq 3
+
+--- a dot pressed moves it to that dot's slides, the dot then marked; the
+--- program hears the move begin (`change`) and end (`settle`)
+test a_dot_pressed_moves_it_to_its_slides_and_the_program_hears_it[]
+    gui.unfocus[]
+    s = settings[dots = true, show = 2, scroll = 2]
+    shown = _waited['dots', 6, s, 1000.0, 1032.0]
+    dot = _box_of[shown, 'dots:dot:2']
+    shown = _shown[_screen[1048.0, _click[dot[0] + 10.0, dot[1] + 10.0], '[]'], 'dots', 6, s]
+    began = false
+    for ev in shown.events
+        if ev.id eq 'dots' and ev.act eq 'change' and ev.num eq 4.0 and ev.words eq '0'
+            began = true
+    settled = false
+    t = 1048.0
+    while t lt 1700.0
+        t = t + 16.0
+        shown = _shown[_screen[t, '[]', '[]'], 'dots', 6, s]
+        for ev in shown.events
+            if ev.id eq 'dots' and ev.act eq 'settle' and ev.num eq 4.0
+                settled = true
+    marks = dots_of[state_of['dots']]
+    shown_slide = slide_of['dots']
+    log['dots: count `marks.count`, began `began`, settled `settled`, slide `shown_slide`, marked `marks.active`']
+    began and settled and shown_slide eq 4 and marks.active eq 2 and marks.count eq 3
+
+--- autoplay moves it on by the frames' clock, `autoplay_speed` ms after it
+--- was shown and after each move (react-slick's interval, 50 ms on), and
+--- holds still while the pointer rests on it
+test autoplay_moves_it_on_by_the_frames_clock_and_holds_while_hovered[]
+    gui.unfocus[]
+    s = settings[autoplay = true, autoplay_speed = 1000.0, speed = 300.0]
+    seen = slice[[0], 0, 0]
+    ms = 0
+    while ms lte 4000
+        shown = _shown[_screen[1000.0 + ms, '[]', '[]'], 'auto', 4, s]
+        if ms % 500 eq 0
+            seen = push[seen, slide_of['auto']]
+        ms = ms + 10
+    t = 1000.0 + ms
+    --- (the pointer resting on the list from 4 s, before the next move was
+    --- due: still, 3 s on)
+    held = slide_of['auto']
+    while t lte 8000.0
+        shown = _shown[_screen[t, '[]', '[{"x": 300, "y": 40, "down": false}]'], 'auto', 4, s]
+        t = t + 10.0
+    still = slide_of['auto']
+    --- (and moving again once it leaves)
+    while t lte 9500.0
+        shown = _shown[_screen[t, '[]', '[]'], 'auto', 4, s]
+        t = t + 10.0
+    left = slide_of['auto']
+    log['autoplay: every 500 ms `seen`; hovered `held` -> `still`; left `left`']
+    seen eq [0, 0, 0, 1, 1, 2, 2, 3, 3] and still eq 3 and left eq 0
+
+--- a drag from `x0` to `x1` across the list by a device, a frame each 30
+--- pixels, let go at its end; the slide it shows once the move ends, and
+--- whether the track followed the drag on the way
+fn _dragged[id, s, device, x0, x1]
+    shown = _waited[id, 4, s, 1000.0, 1032.0]
+    list = _box_of[shown, '`id`:list']
+    y = list[1] + list[3] / 2.0
+    t = 1048.0
+    shown = _shown[_screen[t, _one_event[_pointer['down', device, x0, y]], '[]'], id, 4, s]
+    way = 1.0
+    if x1 lt x0
+        way = -1.0
+    x = x0
+    followed = false
+    while (x1 - x) * way gt 0.0
+        x = x + 30.0 * way
+        if (x1 - x) * way lt 0.0
+            x = x1
+        t = t + 16.0
+        shown = _shown[_screen[t, _one_event[_pointer['move', device, x, y]], '[]'], id, 4, s]
+        k = state_of[id]
+        if k.has_swipe_left
+            followed = true
+    t = t + 16.0
+    shown = _shown[_screen[t, _one_event[_pointer['up', device, x1, y]], '[]'], id, 4, s]
+    shown = _waited[id, 4, s, t + 16.0, t + 800.0]
+    [slide_of[id] + 0.0, _one_if[followed] + 0.0]
+
+--- a mouse's drag and a touch's swipe move it a slide the way they went,
+--- the track following on the way; a short one goes back; a mouse does not
+--- drag it where `draggable` is off, though a touch still swipes it
+test a_swipe_by_mouse_or_touch_moves_it_the_way_it_went[]
+    gui.unfocus[]
+    s = settings[]
+    mouse = _dragged['mouse', s, 'mouse', 700.0, 300.0]
+    touch = _dragged['touch', s, 'touch', 300.0, 700.0]
+    short = _dragged['short', s, 'touch', 500.0, 420.0]
+    off = settings[draggable = false]
+    undragged = _dragged['undragged', off, 'mouse', 700.0, 300.0]
+    swiped = _dragged['swiped', off, 'touch', 700.0, 300.0]
+    log['swipe: mouse `mouse`, touch `touch`, short `short`, not draggable: mouse `undragged`, touch `swiped`']
+    mouse eq [1.0, 1.0] and touch eq [3.0, 1.0] and short eq [0.0, 1.0] and undragged eq [0.0, 0.0] and swiped eq [1.0, 1.0]
+
+--- in a headset: the frames' ray aimed at a point of the page, and the
+--- trigger's press and release as its input
+fn _ray_at[t, id, s, x, y, given]
+    _shown[_headset[t, (x - 500.0) / 750.0, (275.0 - y) / 750.0, given], id, 4, s]
+
+fn _ray_pressed[t, id, s, x, y]
+    shown = _ray_at[t, id, s, x, y, _one_event[_ray['down']]]
+    _ray_at[t + 16.0, id, s, x, y, _one_event[_ray['up']]]
+
+fn _ray_waited[id, s, x, y, from, upto]
+    t = from
+    shown = _ray_at[t, id, s, x, y, '[]']
+    while t lt upto
+        t = t + 16.0
+        shown = _ray_at[t, id, s, x, y, '[]']
+    shown
+
+--- in a headset the ray swipes it: the trigger held while the ray moves
+--- across the list drags it, as a touch does; and its arrows, pressed with
+--- the ray, move it
+test in_a_headset_the_ray_swipes_it_and_presses_its_arrows[]
+    gui.unfocus[]
+    s = settings[]
+    shown = _ray_waited['ray', s, 899.0, 540.0, 1000.0, 1032.0]
+    list = _box_of[shown, 'ray:list']
+    y = list[1] + list[3] / 2.0
+    t = 1048.0
+    shown = _ray_at[t, 'ray', s, 700.0, y, _one_event[_ray['down']]]
+    x = 700.0
+    followed = false
+    while x gt 300.0
+        x = x - 30.0
+        t = t + 16.0
+        shown = _ray_at[t, 'ray', s, x, y, '[]']
+        if state_of['ray'].has_swipe_left
+            followed = true
+    t = t + 16.0
+    shown = _ray_at[t, 'ray', s, x, y, _one_event[_ray['up']]]
+    shown = _ray_waited['ray', s, x, y, t + 16.0, t + 800.0]
+    swiped = slide_of['ray']
+    t = t + 816.0
+    next_box = _box_of[shown, 'ray:next']
+    shown = _ray_pressed[t, 'ray', s, next_box[0] + next_box[2] / 2.0, next_box[1] + next_box[3] / 2.0]
+    shown = _ray_waited['ray', s, 899.0, 540.0, t + 32.0, t + 800.0]
+    pressed_next = slide_of['ray']
+    t = t + 816.0
+    previous_box = _box_of[shown, 'ray:previous']
+    shown = _ray_pressed[t, 'ray', s, previous_box[0] + previous_box[2] / 2.0, previous_box[1] + previous_box[3] / 2.0]
+    shown = _ray_waited['ray', s, 899.0, 540.0, t + 32.0, t + 800.0]
+    pressed_previous = slide_of['ray']
+    log['headset: list `list`; followed `followed`, swiped to `swiped`; next `next_box` -> `pressed_next`; previous -> `pressed_previous`']
+    followed and swiped eq 1 and pressed_next eq 2 and pressed_previous eq 1
+
+--- a fade stands as tall as its tallest slide, the one shown drawn over
+--- the rest; moving on, the next fades in over `speed` ms
+test a_fade_stands_its_slides_one_over_another_and_fades_the_next_in[]
+    gui.unfocus[]
+    s = settings[fade = true, dots = true]
+    shown = _waited['fade', 3, s, 1000.0, 1032.0]
+    list = _box_of[shown, 'fade:list']
+    arrow = _box_of[shown, 'fade:next']
+    shown = _shown[_screen[1048.0, _click[arrow[0] + 20.0, arrow[1] + 20.0], '[]'], 'fade', 3, s]
+    k = state_of['fade']
+    halfway = _alphas[k, 1048.0 + 250.0]
+    shown = _waited['fade', 3, s, 1064.0, 1700.0]
+    settled = slide_of['fade']
+    log['fade: list `list`, halfway `halfway`, then `settled`']
+    list[3] gt 40.0 and halfway[1] gt 0.0 and halfway[1] lt 1.0 and settled eq 1
+
+--- ---- panes, a slide group and a ticker, tested ----
+
+--- panes for the tests: each a button, so that where it is drawn is told
+fn _pane_kids[n]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, gui.panel[[gui.heading['Pane `i`'], gui.button['pane:`i`', 'Pane `i`']]]]
+        i = i + 1
+    out
+
+--- a program of panes: the index it keeps, moved by what they tell
+struct Paned [index, shown]
+
+fn _paned[c, p, continuous]
+    tree = gui.column[[panes[c, 'win', _pane_kids[3], p.index, continuous = continuous]]]
+    shown = gui.show[c, tree]
+    Paned[pane_after[shown, 'win', p.index], shown]
+
+--- the panes' arrows ask the next pane and the one before; the new one
+--- slides in from the way it comes (from the right going on, from the left
+--- going back), the old one out the other way, and only where there is a
+--- pane that way is there an arrow (round the ends where `continuous`)
+test panes_slide_in_from_the_way_they_come_and_their_arrows_ask_for_them[]
+    gui.unfocus[]
+    p = Paned[0, gui.show[_screen[0.0, '[]', '[]'], gui.space[0.0]]]
+    t = 1000.0
+    while t lt 1050.0
+        p = _paned[_screen[t, '[]', '[]'], p, false]
+        t = t + 16.0
+    no_previous = not ('win:previous' in p.shown.boxes)
+    resting = _box_of[p.shown, 'pane:0']
+    arrow = _box_of[p.shown, 'win:next']
+    p = _paned[_screen[t, _click[arrow[0] + 20.0, arrow[1] + 20.0], '[]'], p, false]
+    asked = p.index
+    --- (150 ms into the move: the new pane right of where it rests, the
+    --- old one left of where it was)
+    t = t + 16.0
+    began = t
+    while t lt began + 150.0
+        p = _paned[_screen[t, '[]', '[]'], p, false]
+        t = t + 16.0
+    coming = _box_of[p.shown, 'pane:1']
+    going = _box_of[p.shown, 'pane:0']
+    while t lt began + 400.0
+        p = _paned[_screen[t, '[]', '[]'], p, false]
+        t = t + 16.0
+    rested = _box_of[p.shown, 'pane:1']
+    gone = not ('pane:0' in p.shown.boxes)
+    arrow = _box_of[p.shown, 'win:previous']
+    p = _paned[_screen[t, _click[arrow[0] + 20.0, arrow[1] + 20.0], '[]'], p, false]
+    t = t + 16.0
+    began = t
+    while t lt began + 150.0
+        p = _paned[_screen[t, '[]', '[]'], p, false]
+        t = t + 16.0
+    back_coming = _box_of[p.shown, 'pane:0']
+    log['panes: asked `asked`, at 150 ms coming `coming[0]` going `going[0]` (resting `resting[0]`), rested `rested[0]`, old gone `gone`, back coming `back_coming[0]`, index `p.index`']
+    no_previous and asked eq 1 and coming[0] gt resting[0] + 100.0 and going[0] lt resting[0] - 100.0 and rested[0] eq resting[0] and gone and back_coming[0] lt resting[0] - 100.0 and p.index eq 0
+
+--- round the ends where `continuous`: the arrow before the first asks the
+--- last; a touch's swipe left asks the next, right the one before; the
+--- arrow keys, once a press gave them the focus, ask them too
+test panes_go_round_where_continuous_and_hear_swipes_and_keys[]
+    gui.unfocus[]
+    p = Paned[0, gui.show[_screen[0.0, '[]', '[]'], gui.space[0.0]]]
+    t = 2000.0
+    while t lt 2050.0
+        p = _paned[_screen[t, '[]', '[]'], p, true]
+        t = t + 16.0
+    arrow = _box_of[p.shown, 'win:previous']
+    p = _paned[_screen[t, _click[arrow[0] + 20.0, arrow[1] + 20.0], '[]'], p, true]
+    round = p.index
+    t = t + 16.0
+    while t lt 2500.0
+        p = _paned[_screen[t, '[]', '[]'], p, true]
+        t = t + 16.0
+    box = _box_of[p.shown, 'win']
+    y = box[1] + box[3] / 2.0
+    p = _paned[_screen[t, _one_event[_pointer['down', 'touch', 600.0, y]], '[]'], p, true]
+    p = _paned[_screen[t + 16.0, _one_event[_pointer['move', 'touch', 450.0, y]], '[]'], p, true]
+    p = _paned[_screen[t + 32.0, _one_event[_pointer['up', 'touch', 300.0, y]], '[]'], p, true]
+    swiped = p.index
+    t = t + 48.0
+    while t lt 3000.0
+        p = _paned[_screen[t, '[]', '[]'], p, true]
+        t = t + 16.0
+    p = _paned[_screen[t, _click[box[0] + 300.0, y], '[]'], p, true]
+    p = _paned[_screen[t + 16.0, _key['ArrowRight'], '[]'], p, true]
+    keyed = p.index
+    log['panes round: before the first `round`, swiped left `swiped`, ArrowRight `keyed`']
+    round eq 2 and swiped eq 0 and keyed eq 1
+
+--- chips for the tests: buttons of words
+fn _chips[n]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, gui.button['chip:`i`', 'Choice number `i`']]
+        i = i + 1
+    out
+
+fn _grouped[t, given, multiple, mandatory, center]
+    tree = gui.column[[slide_group[_screen[t, given, '[]'], 'chips', _chips[12], multiple = multiple, mandatory = mandatory, center = center]]]
+    gui.show[_screen[t, given, '[]'], tree]
+
+--- a slide group wider than its room shows its arrows, the one back
+--- faint at the start; the one on scrolls it a room's width over 200 ms,
+--- eased and at whole pixels; a control pressed is chosen and told, and
+--- scrolled into view
+test a_slide_group_pages_with_its_arrows_and_chooses_what_is_pressed[]
+    gui.unfocus[]
+    t = 1000.0
+    shown = _grouped[t, '[]', false, false, false]
+    while t lt 1050.0
+        t = t + 16.0
+        shown = _grouped[t, '[]', false, false, false]
+    g = _group_of['chips']
+    arrows = ('chips:previous' in shown.boxes) and ('chips:next' in shown.boxes)
+    back = _box_of[shown, 'chips:previous']
+    shown = _grouped[t + 16.0, _click[back[0] + 26.0, back[1] + 10.0], false, false, false]
+    unmoved = _group_px[_group_of['chips'], t + 300.0]
+    t = t + 32.0
+    on = _box_of[shown, 'chips:next']
+    shown = _grouped[t, _click[on[0] + 26.0, on[1] + 10.0], false, false, false]
+    pressed_at = t
+    g = _group_of['chips']
+    halfway = _group_px[g, pressed_at + 100.0]
+    paged = _group_px[g, pressed_at + 200.0]
+    while t lt pressed_at + 300.0
+        t = t + 16.0
+        shown = _grouped[t, '[]', false, false, false]
+    --- (a press on the chip shown first in the room: chosen, told)
+    room = _room_of['chips']
+    x = room.x + 52.0 + 5.0
+    shown = _grouped[t + 16.0, _click[x, room.y + 10.0], false, false, false]
+    told = ''
+    for ev in shown.events
+        if ev.id eq 'chips' and ev.act eq 'change'
+            told = ev.words
+    chosen = chosen_of['chips']
+    g = _group_of['chips']
+    log['slide group: room `g.room`, content `g.content`, arrows `arrows`, back at the start `unmoved`, paged `halfway` at 100 ms, `paged` at 200 ms; chose `chosen` told `told`, scrolled to `_group_px[g, t + 300.0]`']
+    arrows and unmoved eq 0.0 and paged eq g.room and halfway eq floor[g.room * motion.ease_at['outQuart', 0.5]] and len[chosen] eq 1 and told eq '`chosen[0]`' and _group_px[g, t + 300.0] lt paged
+
+--- a group's choices, as Vuetify's group takes presses: one at a time
+--- (pressed again, let go, but not where `mandatory`), or `multiple`, at
+--- most `most`, one kept where `mandatory`
+test a_slide_group_chooses_as_vuetify_s_group_does[]
+    g = _no_group[]
+    one = _group_chose[g, 2]
+    again = _group_chose[one, 2]
+    g.mandatory = true
+    kept = _group_chose[_group_chose[g, 2], 2]
+    g = _no_group[]
+    g.multiple = true
+    g.most = 2
+    many = _group_chose[_group_chose[_group_chose[g, 1], 3], 5]
+    fewer = _group_chose[many, 1]
+    g.mandatory = true
+    last_kept = _group_chose[_group_chose[g, 4], 4]
+    one.chosen eq [2] and len[again.chosen] eq 0 and kept.chosen eq [2] and many.chosen eq [1, 3] and fewer.chosen eq [3] and last_kept.chosen eq [4]
+
+--- a ticker moves on at its velocity by the frames' clock, wrapping round
+--- within a line and its gap, slows to `hover_factor` while the pointer
+--- rests on it, and dragged where `draggable`, moves with the drag and is
+--- thrown on as it is let go
+test a_ticker_moves_at_its_velocity_slows_when_hovered_and_follows_a_drag[]
+    gui.unfocus[]
+    items = _chips[4]
+    t = 1000.0
+    while t lte 3000.0
+        c = _screen[t, '[]', '[]']
+        shown = gui.show[c, gui.column[[ticker[c, 'tick', items, hover_factor = 0.0, draggable = true]]]]
+        t = t + 10.0
+    k = _ticker_of['tick']
+    --- (its first frames measure it: it moves once measured)
+    moved = k.offset
+    copies = ticker_copies[852.0, k.total, 1.0, 10.0]
+    room = _room_of['tick']
+    over = '[{"x": `room.x + 100.0`, "y": `room.y + 10.0`, "down": false}]'
+    while t lte 4000.0
+        c = _screen[t, '[]', over]
+        shown = gui.show[c, gui.column[[ticker[c, 'tick', items, hover_factor = 0.0, draggable = true]]]]
+        t = t + 10.0
+    slowed = _ticker_of['tick'].offset
+    while t lte 5000.0
+        c = _screen[t, '[]', over]
+        shown = gui.show[c, gui.column[[ticker[c, 'tick', items, hover_factor = 0.0, draggable = true]]]]
+        t = t + 10.0
+    stopped = _ticker_of['tick'].offset
+    --- (dragged 200 pixels right, slowly)
+    y = room.y + 10.0
+    c = _screen[t, _one_event[_pointer['down', 'mouse', 300.0, y]], over]
+    shown = gui.show[c, gui.column[[ticker[c, 'tick', items, hover_factor = 0.0, draggable = true]]]]
+    x = 300.0
+    while x lt 500.0
+        x = x + 10.0
+        t = t + 100.0
+        c = _screen[t, _one_event[_pointer['move', 'mouse', x, y]], over]
+        shown = gui.show[c, gui.column[[ticker[c, 'tick', items, hover_factor = 0.0, draggable = true]]]]
+    dragged = _ticker_of['tick'].offset
+    --- (let go moving 100 pixels a second: thrown on 0.8 of that, as
+    --- Motion's inertia throws, and resting there while hovered)
+    t = t + 16.0
+    c = _screen[t, _one_event[_pointer['up', 'mouse', x, y]], over]
+    shown = gui.show[c, gui.column[[ticker[c, 'tick', items, hover_factor = 0.0, draggable = true]]]]
+    let_go = t
+    while t lt let_go + 3000.0
+        t = t + 16.0
+        c = _screen[t, '[]', over]
+        shown = gui.show[c, gui.column[[ticker[c, 'tick', items, hover_factor = 0.0, draggable = true]]]]
+    thrown = _ticker_of['tick'].offset
+    log['ticker: total `k.total`, copies `copies`, moved `moved` by 3 s, hovered: `slowed` then `stopped`, dragged to `dragged`, thrown to `thrown`']
+    moved lte -90.0 and moved gte -100.0 and copies eq 1 and slowed lt moved and slowed eq stopped and abs[dragged - (stopped + 200.0)] lt 0.000001 and abs[thrown - (dragged + 80.0)] lt 0.5

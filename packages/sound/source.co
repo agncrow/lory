@@ -1,0 +1,560 @@
+--- Sources: the sounds every patch starts from, rendered as the page's
+--- own audio thread renders them. An oscillator is band-limited as the
+--- page's OscillatorNode limits it: a wave is a sum of partials (a
+--- square's odd ones at 4/(nπ), a sawtooth's every one at 2/(nπ), …),
+--- the partials kept at a pitch are those its wavetable keeps there — a
+--- third of an octave's tables, the next table's partials faded in as the
+--- pitch falls toward it — and the whole is scaled so the full wave's peak
+--- is 1. So an oscillator here is Tone's, sample for sample, for every
+--- type Tone names: `sine`, `square`, `sawtooth`, `triangle`, a partial
+--- count (`square8`), custom partials, a starting phase, `pulse` (its
+--- width), `pwm`, `am…`, `fm…` and `fat…` (Tone's OmniOscillator's names).
+---
+---     o = source.oscillator['sawtooth']
+---     xs = source.steady[o, 220.0, 0.5, 22050.0]
+---
+--- Noise is white, pink (Paul Kellet's filter of white noise) or brown (a
+--- leaky sum of it), from a seeded generator, so a render is the same each
+--- run; a player reads a buffer at a rate, looped or reversed, faded in
+--- and out; a grain player plays a buffer as overlapping grains, its pace
+--- and its pitch apart; an LFO is a slow sine laid between two values.
+
+use math
+use sound
+use signal
+
+--- one period's partials: the amount of each cosine and each sine (place
+--- n is partial n; place 0, the constant, is never heard)
+struct Wave [cosines, sines]
+
+--- an oscillator: its wave (`sine`, `square`, `sawtooth`, `triangle` or
+--- `custom`; `pulse`; `pwm`), its variant (`` alone, `am`, `fm`, `fat`),
+--- how many partials it keeps (0 all), its own partials (`custom`), the
+--- phase it starts at (degrees), its detune (cents), a pulse's width (-1
+--- to 1), a PWM's modulation rate, an AM or FM modulator's ratio to the
+--- pitch, an FM's depth, the modulator's wave, and a fat one's count of
+--- voices and their spread (cents)
+struct Oscillator [wave, variant, partial_count, partials, phase, detune, width, modulation_frequency, harmonicity, modulation_index, modulation_wave, count, spread]
+
+--- a buffer player: the samples it reads and their rate, its pace (1 as
+--- recorded), whether it loops and between which times, whether it plays
+--- backwards, and its fades in and out (seconds)
+struct Player [samples, buffer_rate, playback_rate, loop, loop_start, loop_end, reverse, fade_in, fade_out]
+
+--- ---- waves ----
+
+--- the length of the page's wavetables at a rate (2048 up to 24 kHz)
+fn _table_size[rate]
+    if rate lte 24000.0
+        return 2048
+    if rate lte 88200.0
+        return 4096
+    16384
+
+--- the partials of one of the four named waves, `count` of them (all a
+--- table of `size` holds where count is 0), turned to start `turn`
+--- radians on: Tone's and the page's coefficients
+fn _named_wave[name, count, turn, size]
+    top = size / 2
+    if count gt 0
+        top = max[count + 1, 2]
+    cosines = zeros[top]
+    sines = zeros[top]
+    n = 1
+    while n lt top
+        factor = 2.0 / (n * pi)
+        b = 0.0
+        if name eq 'sine'
+            if n eq 1
+                b = 1.0
+        if name eq 'square'
+            if n % 2 eq 1
+                b = 2.0 * factor
+        if name eq 'sawtooth'
+            b = factor
+            if n % 2 eq 0
+                b = 0.0 - factor
+        if name eq 'triangle'
+            if n % 2 eq 1
+                b = 2.0 * factor * factor
+                if ((n - 1) / 2) % 2 eq 1
+                    b = 0.0 - b
+        if b ne 0.0
+            cosines[n] = 0.0 - b * sin[turn * n]
+            sines[n] = b * cos[turn * n]
+        n = n + 1
+    Wave[cosines, sines]
+
+--- a wave of the partials given (the first the fundamental's amount),
+--- turned to start `turn` radians on
+fn _custom_wave[partials, turn]
+    top = len[partials] + 1
+    cosines = zeros[top]
+    sines = zeros[top]
+    n = 1
+    while n lt top
+        b = 0.0 + partials[n - 1]
+        if b ne 0.0
+            cosines[n] = 0.0 - b * sin[turn * n]
+            sines[n] = b * cos[turn * n]
+        n = n + 1
+    Wave[cosines, sines]
+
+--- the wave an oscillator's settings name, at a rate's table size
+fn wave_of[o, rate]
+    turn = o.phase * pi / 180.0
+    if o.wave eq 'custom'
+        return _custom_wave[o.partials, turn]
+    _named_wave[o.wave, o.partial_count, turn, _table_size[rate]]
+
+--- the peak of a wave's full table (every partial kept), which the page
+--- scales each of its tables by so the full wave peaks at 1
+fn _peak[w, size]
+    re = zeros[size]
+    im = zeros[size]
+    half = size / 2
+    n = 1
+    while n lt min[len[w.sines], half]
+        re[n] = w.cosines[n] * half
+        im[n] = 0.0 - w.sines[n] * half
+        re[size - n] = re[n]
+        im[size - n] = 0.0 - im[n]
+        n = n + 1
+    table = ifft[re, im]
+    top = max[abs[table]]
+    if top lte 0.0
+        return 1.0
+    top
+
+--- each sample's phase (in cycles, 0 to 1) for frequencies a sample: the
+--- first at 0, each after it on by its predecessor's frequency
+fn phases_of[freqs, rate]
+    n = len[freqs]
+    if n eq 0
+        return zeros[0]
+    steps = cumsum[freqs / rate]
+    theta = concat[zeros[1], slice[steps, 0, n - 1]]
+    theta - floor[theta]
+
+--- the samples of a wave at frequencies a sample (Hz, one per sample),
+--- band-limited as the page's wavetables limit it: at each pitch the
+--- partials its table keeps, the next table's faded in between
+fn band_limited[w, freqs, rate]
+    _band_limited_from[w, freqs, rate, 0.0]
+
+--- a band-limited wave `cycles` of its turns already gone by at the first
+--- sample (the same wave as the page's, its tables scaled as at its start,
+--- only later in time)
+fn _band_limited_from[w, freqs, rate, cycles]
+    n = len[freqs]
+    out = zeros[n]
+    if n eq 0
+        return out
+    size = _table_size[rate]
+    half = size / 2
+    lowest = rate / size
+    top_range = 0.0 + round[3.0 * log2[0.0 + size]] - 1.0
+    sizes = abs[freqs]
+    ratio = where[sizes gt 0.0, sizes / lowest, 0.0 * sizes + 0.5]
+    pitch = clip[1.0 + 3.0 * log2[ratio], 0.0, top_range]
+    below = 0.0 + floor[pitch]
+    fade = pitch - below
+    above = clip[below + 1.0, 0.0, top_range]
+    kept = 0.0 + floor[exp[(0.0 - below / 3.0) * ln[2.0]] * half]
+    kept_above = 0.0 + floor[exp[(0.0 - above / 3.0) * ln[2.0]] * half]
+    most = max[kept]
+    steady = max[sizes] - min[sizes] lte 0.0
+    theta = (phases_of[freqs, rate] + (cycles - floor[cycles])) * (2.0 * pi)
+    first_kept_above = flatten[kept_above][0]
+    first_kept = flatten[kept][0]
+    first_fade = flatten[fade][0]
+    k = 1
+    while k lt min[len[w.sines], half] and k lte most
+        a = w.cosines[k]
+        b = w.sines[k]
+        if a ne 0.0 or b ne 0.0
+            part = b * sin[theta * k]
+            if a ne 0.0
+                part = part + a * cos[theta * k]
+            if steady
+                weight = 0.0
+                if k lte first_kept_above
+                    weight = 1.0
+                else if k lte first_kept
+                    weight = 1.0 - first_fade
+                if weight gt 0.0
+                    out = out + part * weight
+            else
+                weight = where[kept_above gte k, 0.0 * sizes + 1.0, where[kept gte k, 1.0 - fade, 0.0 * sizes]]
+                out = out + part .* weight
+        k = k + 1
+    out / _peak[w, size]
+
+--- ---- oscillators ----
+
+--- an oscillator of Tone's type names: `sine`, `square`, `sawtooth`,
+--- `triangle`, each with a partial count (`sine4`) or a variant before it
+--- (`amsine`, `fmsquare`, `fatsawtooth`); `pulse`, `pwm`; `custom`
+--- (partials set by `with_partials`). Each variant has Tone's defaults
+fn oscillator[name]
+    o = Oscillator['sine', '', 0, [1.0], 0.0, 0.0, 0.2, 0.4, 1.0, 2.0, 'square', 3, 20.0]
+    w = lower[trim[name]]
+    if w eq 'pulse' or w eq 'pwm'
+        o.wave = w
+        return o
+    m = find[w, '^(am|fm|fat)?(sine|square|sawtooth|triangle|custom)(\d*)$']
+    if not m.ok
+        return o
+    o.variant = m.groups[1]
+    o.wave = m.groups[2]
+    if m.groups[3] ne ''
+        o.partial_count = int[m.groups[3]]
+    o
+
+--- an oscillator of these partials (the fundamental's amount first)
+fn with_partials[o, partials]
+    o.wave = 'custom'
+    o.partials = partials
+    o
+
+--- an oscillator starting `degrees` into its wave
+fn with_phase[o, degrees]
+    o.phase = 0.0 + degrees
+    o
+
+--- an oscillator detuned by `cents`
+fn with_detune[o, cents]
+    o.detune = 0.0 + cents
+    o
+
+--- a pulse oscillator of this width (-1 to 1; 0 is a square)
+fn with_width[o, width]
+    o.width = 0.0 + width
+    o
+
+--- an AM or FM oscillator whose modulator runs at `harmonicity` times the
+--- pitch, of this wave, an FM one `index` deep
+fn with_modulation[o, harmonicity, index, wave]
+    o.harmonicity = 0.0 + harmonicity
+    o.modulation_index = 0.0 + index
+    o.modulation_wave = wave
+    o
+
+--- a fat oscillator of `count` voices spread over `spread` cents
+fn with_spread[o, count, spread]
+    o.count = count
+    o.spread = 0.0 + spread
+    o
+
+--- the curve a pulse is cut by: below nothing -1, above it 1 (1024 points
+--- from -1 to 1)
+fn _pulse_curve[]
+    x = (0.0 + range[1024]) / 1023.0 * 2.0 - 1.0
+    where[x gt 0.0, 0.0 * x + 1.0, 0.0 * x - 1.0]
+
+--- an oscillator's samples at frequencies a sample (Hz)
+fn rendered[o, freqs, rate]
+    f = freqs * 2.0 ^ (o.detune / 1200.0)
+    if o.wave eq 'pulse'
+        triangle = band_limited[_named_wave['triangle', 0, o.phase * pi / 180.0, _table_size[rate]], f, rate]
+        return signal.waveshaped[triangle + o.width, _pulse_curve[]]
+    if o.wave eq 'pwm'
+        slow = band_limited[_named_wave['sine', 0, 0.0, _table_size[rate]], 0.0 * f + o.modulation_frequency, rate]
+        fast = band_limited[_named_wave['sine', 0, o.phase * pi / 180.0, _table_size[rate]], f, rate]
+        return signal.waveshaped[slow + 2.0 * fast, _pulse_curve[]]
+    plain = o
+    plain.variant = ''
+    plain.detune = 0.0
+    if o.variant eq 'am'
+        carrier = band_limited[wave_of[plain, rate], f, rate]
+        modulator = rendered[_modulator_of[o], f * o.harmonicity, rate]
+        return carrier .* ((modulator + 1.0) * 0.5)
+    if o.variant eq 'fm'
+        modulator = rendered[_modulator_of[o], f * o.harmonicity, rate]
+        return band_limited[wave_of[plain, rate], f + (f * o.modulation_index) .* modulator, rate]
+    if o.variant eq 'fat'
+        out = zeros[len[f]]
+        gain = sound.gain_of[-6.0 - o.count * 1.1]
+        i = 0
+        while i lt o.count
+            voice = plain
+            voice.phase = o.phase + i / (0.0 + o.count) * 360.0
+            cents = 0.0
+            if o.count gt 1
+                cents = 0.0 - o.spread / 2.0 + o.spread / (o.count - 1.0) * i
+            out = out + band_limited[wave_of[voice, rate], f * 2.0 ^ (cents / 1200.0), rate] * gain
+            i = i + 1
+        return out
+    band_limited[wave_of[o, rate], f, rate]
+
+--- an oscillator's samples as `rendered` makes them, but started
+--- `cycles` of its wave before the first sample: a wave that has run a
+--- while (a slow oscillator heard from a later time). Plain waves only
+--- (named or custom); the others are turned on instead
+fn rendered_after[o, freqs, rate, cycles]
+    if o.variant eq '' and o.wave ne 'pulse' and o.wave ne 'pwm'
+        return _band_limited_from[wave_of[o, rate], freqs * 2.0 ^ (o.detune / 1200.0), rate, cycles]
+    turned = o
+    turned.phase = o.phase + 360.0 * cycles
+    rendered[turned, freqs, rate]
+
+--- an AM or FM oscillator's modulator: its wave, the carrier's phase
+fn _modulator_of[o]
+    m = oscillator[o.modulation_wave]
+    m.phase = o.phase
+    m
+
+--- an oscillator's samples at one pitch for `seconds`
+fn steady[o, hz, seconds, rate]
+    rendered[o, zeros[sound.frames_in[rate, seconds]] + hz, rate]
+
+--- a low-frequency oscillator's samples: a sine of `hz` laid between
+--- `low` and `high` (starting halfway, rising), `degrees` on, as
+--- Tone's LFO lays it
+fn lfo[hz, low, high, degrees, seconds, rate]
+    o = with_phase[oscillator['sine'], degrees]
+    wave = steady[o, hz, seconds, rate]
+    low + (high - low) * ((wave + 1.0) * 0.5)
+
+--- ---- noise ----
+
+--- `n` numbers from 0 to 1, the same for the same start (a linear
+--- congruential generator's, each step its state over 2^32)
+fn uniforms[n, start]
+    out = zeros[n]
+    x = (start * 2654435761 + 12345) % 4294967296
+    i = 0
+    while i lt n
+        x = (x * 1664525 + 1013904223) % 4294967296
+        out[i] = x / 4294967296.0
+        i = i + 1
+    out
+
+--- `n` samples of noise: `white` (each sample from -1 to 1), `pink`
+--- (Paul Kellet's filter of white noise: a falling third of an octave's
+--- power, -3 dB an octave) or `brown` (a leaky sum of white noise: -6 dB
+--- an octave), scaled as Tone scales each. Tone reads its noise from a
+--- random place in a long buffer, where the filters have long settled, so
+--- the filters here run first over white noise that is then let go (4096
+--- samples for pink, whose slowest part falls by 1/e in 877, 256 for
+--- brown)
+fn noise[kind, n, start]
+    if kind eq 'white'
+        return uniforms[n, start] * 2.0 - 1.0
+    settle = 4096
+    if kind eq 'brown'
+        settle = 256
+    settled = _filtered_noise[kind, n + settle, start]
+    slice[settled, settle, n + settle]
+
+fn _filtered_noise[kind, n, start]
+    white = uniforms[n, start] * 2.0 - 1.0
+    out = zeros[n]
+    if kind eq 'brown'
+        last_out = 0.0
+        i = 0
+        while i lt n
+            last_out = (last_out + 0.02 * white[i]) / 1.02
+            out[i] = last_out * 3.5
+            i = i + 1
+        return out
+    b0 = 0.0
+    b1 = 0.0
+    b2 = 0.0
+    b3 = 0.0
+    b4 = 0.0
+    b5 = 0.0
+    b6 = 0.0
+    i = 0
+    while i lt n
+        w = white[i]
+        b0 = 0.99886 * b0 + w * 0.0555179
+        b1 = 0.99332 * b1 + w * 0.0750759
+        b2 = 0.969 * b2 + w * 0.153852
+        b3 = 0.8665 * b3 + w * 0.3104856
+        b4 = 0.55 * b4 + w * 0.5329522
+        b5 = -0.7616 * b5 - w * 0.016898
+        out[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11
+        b6 = w * 0.115926
+        i = i + 1
+    out
+
+--- noise as one channel hears Tone's Noise: Tone's noise is of two
+--- channels, each its own, so a channel of one hears the two averaged
+--- (their power halved: white noise's RMS 0.41, not 0.58)
+fn noise_heard[kind, n, start]
+    (noise[kind, n, start] + noise[kind, n, start + 1000003]) * 0.5
+
+--- ---- players ----
+
+--- a player of a sound's samples (its left channel's), at its own pace,
+--- not looping, forwards, unfaded
+fn player[s]
+    Player[s.left, s.rate, 1.0, false, 0.0, 0.0, false, 0.0, 0.0]
+
+--- a player at `rate` times its pace
+fn at_pace[p, rate]
+    p.playback_rate = 0.0 + rate
+    p
+
+--- a player looping from `start` to `end` seconds of its buffer (0 and 0
+--- for the whole)
+fn looped_between[p, start, end]
+    p.loop = true
+    p.loop_start = 0.0 + start
+    p.loop_end = 0.0 + end
+    p
+
+--- a player playing its buffer backwards
+fn backwards[p]
+    p.reverse = true
+    p
+
+--- a player faded in and out over these seconds
+fn with_fades[p, fade_in, fade_out]
+    p.fade_in = 0.0 + fade_in
+    p.fade_out = 0.0 + fade_out
+    p
+
+--- the samples a player sounds at `rate`, started `offset` seconds into its
+--- buffer and playing `duration` seconds of it (so for `duration` over its
+--- pace), its fade out ending where it stops, as Tone's Player plays
+fn played[p, offset, duration, rate]
+    _sounded[p, offset, duration / p.playback_rate - p.fade_out, rate]
+
+--- the samples a player sounds started `offset` seconds into its buffer and
+--- stopped `seconds` later, its fade out after that (as Tone's buffer
+--- source sounds), read between samples along a straight line as the
+--- page's buffer source reads them, and past the last sample along the
+--- line of the last two
+fn _sounded[p, offset, seconds, rate]
+    duration = max[0.0, seconds]
+    data = p.samples
+    if p.reverse
+        data = reverse[data]
+    length = len[data]
+    total = sound.frames_in[rate, duration + p.fade_out]
+    out = zeros[total]
+    step = p.playback_rate * p.buffer_rate / rate
+    loop_from = p.loop_start * p.buffer_rate
+    loop_to = p.loop_end * p.buffer_rate
+    if loop_to lte 0.0 or loop_to gt length
+        loop_to = 0.0 + length
+    at = offset * p.buffer_rate
+    i = 0
+    while i lt total
+        if p.loop
+            while at gte loop_to
+                at = at - (loop_to - loop_from)
+        if at gte length or at lt 0.0
+            if not p.loop
+                return _faded_player[p, out, duration, rate]
+        k = floor[at]
+        f = at - k
+        v = data[min[k, length - 1]]
+        if k + 1 lt length
+            v = v + (data[k + 1] - v) * f
+        else if p.loop
+            v = v + (data[floor[loop_from]] - v) * f
+        else if k gte 1
+            v = v + (v - data[k - 1]) * f
+        out[i] = v
+        at = at + step
+        i = i + 1
+    _faded_player[p, out, duration, rate]
+
+--- a player's samples under its fades: a straight rise over its fade in,
+--- a straight fall over its fade out from where it stops
+fn _faded_player[p, xs, duration, rate]
+    n = len[xs]
+    gain = zeros[n] + 1.0
+    t = (0.0 + range[n]) / rate
+    if p.fade_in gt 0.0
+        gain = gain .* clip[t / p.fade_in, 0.0, 1.0]
+    if p.fade_out gt 0.0
+        gain = gain .* clip[1.0 - (t - duration) / p.fade_out, 0.0, 1.0]
+    else
+        gain = gain .* where[t lt duration, 0.0 * t + 1.0, 0.0 * t]
+    xs .* gain
+
+--- the samples a grain player sounds (Tone's GrainPlayer): grains of
+--- `grain` seconds read from ever later in the buffer, one each
+--- `grain / pace` seconds (so `pace` stretches time and keeps the pitch),
+--- each played at `detune` cents and overlapping the next by `overlap`
+--- seconds of straight fades
+fn grains[p, grain, overlap, pace, detune, duration, rate]
+    total = sound.frames_in[rate, duration]
+    out = zeros[total]
+    every_seconds = grain / pace
+    k = 0
+    while k * every_seconds lt duration
+        start = k * every_seconds
+        from = k * grain
+        if not p.loop and from gt len[p.samples] / p.buffer_rate
+            return out
+        g = p
+        g.playback_rate = 2.0 ^ (detune / 1200.0)
+        g.fade_in = overlap
+        if from lt overlap
+            g.fade_in = 0.0
+        g.fade_out = overlap
+        piece = _sounded[g, from, every_seconds, rate]
+        at = sound.frames_in[rate, start]
+        n = min[len[piece], total - at]
+        if n gt 0
+            out = concat[concat[slice[out, 0, at], slice[out, at, at + n] + slice[piece, 0, n]], slice[out, at + n, total]]
+        k = k + 1
+    out
+
+--- ---- tests ----
+
+test a_sine_is_one_partial_and_peaks_at_one[]
+    xs = steady[oscillator['sine'], 1000.0, 0.01, 8000.0]
+    len[xs] eq 80
+    abs[xs[2] - 1.0] lt 0.000001
+    abs[xs[0]] lt 0.000001
+
+test a_square_keeps_the_partials_its_table_keeps[]
+    w = wave_of[oscillator['square'], 16000.0]
+    w.sines[1] gt 1.27
+    w.sines[2] eq 0.0
+    xs = steady[oscillator['square'], 500.0, 0.02, 16000.0]
+    max[abs[xs]] lte 1.0
+    max[xs] gt 0.8
+    low = steady[oscillator['square4'], 500.0, 0.02, 16000.0]
+    abs[low[4] - (4.0 / pi * (sin[pi / 4.0] + sin[3.0 * pi / 4.0] / 3.0)) / _peak[wave_of[oscillator['square4'], 16000.0], 2048]] lt 0.000001
+
+test the_variants_have_tones_names[]
+    o = oscillator['fmsquare']
+    o.variant eq 'fm'
+    o.wave eq 'square'
+    oscillator['sine8'].partial_count eq 8
+    oscillator['pwm'].wave eq 'pwm'
+    len[steady[oscillator['fatsawtooth'], 220.0, 0.01, 8000.0]] eq 80
+    p = steady[oscillator['pulse'], 200.0, 0.02, 8000.0]
+    max[p] eq 1.0
+    min[p] eq -1.0
+
+test an_lfo_lies_between_its_values[]
+    xs = lfo[2.0, 100.0, 300.0, 0.0, 0.5, 1000.0]
+    abs[xs[0] - 200.0] lt 0.000001
+    abs[xs[125] - 300.0] lt 0.001
+    abs[xs[375] - 100.0] lt 0.001
+
+test noise_is_the_same_for_a_seed[]
+    a = noise['white', 1000, 7]
+    b = noise['white', 1000, 7]
+    a eq b
+    max[a] lte 1.0
+    abs[sqrt[sum[a .* a] / 1000.0] - 0.577] lt 0.05
+    len[noise['pink', 100, 1]] eq 100
+    len[noise['brown', 100, 1]] eq 100
+
+test a_player_reads_its_buffer_at_its_pace[]
+    s = sound.mono[10.0, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]]
+    p = player[s]
+    played[p, 0.0, 0.4, 10.0] eq [0.0, 1.0, 2.0, 3.0]
+    played[at_pace[p, 0.5], 0.0, 0.4, 10.0] eq [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
+    played[backwards[p], 0.0, 0.3, 10.0] eq [5.0, 4.0, 3.0]
+    played[looped_between[p, 0.2, 0.4], 0.0, 0.6, 10.0] eq [0.0, 1.0, 2.0, 3.0, 2.0, 3.0]
+    played[p, 0.0, 1.0, 10.0] eq [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 0.0, 0.0, 0.0, 0.0]

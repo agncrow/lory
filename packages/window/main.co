@@ -1,0 +1,1400 @@
+--- Lory's window: any page of a site before its reader in a headset — and
+--- on a screen, through one eye, the same room. The page itself is not
+--- drawn here twice: the window's host page (web/room.js) keeps the real
+--- page open beside the canvas, pictures its main column in tiles, and does
+--- on the real page what the reader does in the room — so every page of a
+--- site has its room, with nothing written for it.
+---
+--- The room is windows, sized and stood as a headset's guidelines ask:
+---
+---   the window    the page, seen through a frame 1024 dp across and 720
+---                 tall (a dp is 1.15 mm seen from a metre), 1.75 m before
+---                 the reader's head and 5 degrees under their eyes, a
+---                 pixel of the page 1.3 dp (the bar's A- and A+: 1 or
+---                 1.6). A thumbstick, a wheel, or a press on the
+---                 page's ground carried up or down, scrolls the page
+---                 through it: the tiles and what an app draws over them
+---                 are cut at its edges, not laid out again.
+---   the bar       under it: a handle to hold (the trigger; or a grip
+---                 squeezed anywhere) and move the window by — it keeps
+---                 its size to the eye, turned to its reader, a stick
+---                 bringing it nearer or further — and Pages, A-, A+,
+---                 Centre (so does a controller's B or Y).
+---   what is       before the window, the rest dimmed: the Pages menu (what
+---   raised        can be pressed in the page's side, as buttons), and a
+---                 list's choices.
+---   the keyboard  near the reader and leaned back, when a field is typed
+---                 in: its label, its words, the keys.
+---
+--- A ray is drawn from each controller and a ring where it meets a panel;
+--- what can be pressed under it is outlined, and a press is felt.
+---
+--- What a page holds that a program of its own draws — a widget, as Crow
+--- mounts one: an element marked `data-crow-widget` — is pictured as
+--- nothing. The host tells where each lies, its kind and its props
+--- (`widgets`), and an app that draws its widgets draws them in the window
+--- itself: between the page and what stands over it, answering the height
+--- each needs (`@sized`), and handing a widget what its reader did to it
+--- (`@widget`: the host gives the words to what the widget's module put on
+--- its element, `el.__room.told(words)`; what else the module put there,
+--- words and numbers, the host tells with the widget as its `room`).
+---
+--- What the host gives (JSON, as text) and what the program prints, places
+--- in the page's own pixels (x from the main column's left, y from the
+--- page's top):
+---
+---   the host gives                      the program prints
+---   {"t": "page", wide, tall, tile,     @at x y     where the pointer is on
+---     tiles, title, path, v, zoom}:                 the page
+---     the page as laid, its tiles       @away       it left the page
+---     pictured in texture unit 8 on     @down x y   a press began there
+---   {"t": "menu", names, current}:      @up x y     and ended
+---     what the page's side offers       @wheel x y dx dy   a stick or a wheel
+---   {"t": "hover", x, y, w, h, way,                 turned over a thing of
+---     sx, sy}: what the pointer is                  the page that scrolls
+---     over that can be pressed (w 0:    @scroll top tall   what the window
+---     nothing), how (`press`, `slide`,              shows now
+---     `choose`, `type`), and whether    @menu i     thing i of the side
+---     what is there scrolls             @zoom z     the page laid out for
+---   {"t": "widgets", list}: each                    letters that size
+---     widget of the page: `n`, its      @pulse hand strength ms   a pulse
+---     `kind`, its box (x, y, w, h),                 in a controller
+---     its `props` and its `room`        @sized n h  widget n made h tall
+---   {"t": "ask", kind, label, words,    @widget n words   words for widget
+---     choices, chosen, type}: a choice              n's module
+---     to make or words to type          @chose i    choice i taken
+---   {"t": "more", dy}: scrolling a      @typed words   the words typed so
+---     thing of the page could not                   far (JSON text)
+---     take: the page's own              @entered    Enter typed: done
+---   {"t": "mode", ar}: the reader's     @done       the typing done
+---     own room is in sight about the    @closed     the asking put away
+---     window                            @parts {"main": [...], "side":
+---                                         [...]}    where a page's main
+---                                         column and its side are, as
+---                                         selectors (the first found is
+---                                         taken; `main` and `aside` or
+---                                         `nav` where none is said)
+---                                       @panels cols wide tall, then nine
+---                                         numbers a panel: where it hangs
+---                                       @chrome standing [...]   the
+---                                         room's own controls, each a
+---                                         name and a box, and how it
+---                                         stands (bar, raised, typing)
+---
+--- A program that shows its site's pages, and draws none of their widgets,
+--- is this — built for the web (`crow build --target web`) and served by
+--- its site at /room-build/, with this package's web/ at /room/:
+---
+---     use sys
+---     use lory.xr
+---     use window
+---
+---     fn draw[frame]
+---         a = window.held[]
+---         window.end[window.step[xr.begin_room[frame, window.room_of[a]], a]]
+---
+---     sys.frames[draw]
+---
+--- One that draws them takes its frame through the window's own steps, its
+--- widgets drawn between `page_drawn` and `over_drawn` (cut at the
+--- window's edges, where `in_view` says the page stands this frame and
+--- `xr.spot` a place on it), and its lines for the host pushed onto
+--- `a.lines` before `hold`:
+---
+---     a = window.begun[a, c]        what the host said; the window stood
+---                                   and moved, the page scrolled and
+---                                   pointed at
+---     c = window.barred[c, a]       the bar (first: Lory's controls copy
+---     a = window.bar_done[a]          the canvas they are laid on)
+---     c = window.page_drawn[c, a]   the page
+---     ...                           the app's widgets
+---     c = window.over_drawn[c, a]   what is pointed at, what is raised,
+---     a = window.asked_done[a]        the keyboard
+---     c = window.rays[c, a]         the rays and the cursor
+---     a = window.hold[a, c]         what is held kept for the next frame
+---     window.end[c]                 the lines printed, the frame ended
+---
+--- The window makes two shapes on the canvas: `sheet`, a tile's square,
+--- and `unit`, a block a pixel each way, which what is drawn over the page
+--- may use.
+use math
+use memory
+use lory
+use lory.gui
+use lory.space
+use lory.xr
+use lory.solid
+
+--- the page as the host last laid it: its main column's width and its
+--- height in its own pixels, a tile's height and how many tiles picture
+--- it, its title and address, the laying's number, and the dp a pixel of
+--- it is given
+struct Page [wide, tall, tile, tiles, title, path, v, zoom]
+
+--- what is asked of the reader for a control of the page: a choice among
+--- `choices` (`what` is `choice`) or words to type (`words`; `form` the
+--- field's kind: `text`, `number`, `date`, `time`); `open` while it is
+--- asked
+struct Ask [open, what, label, words, choices, chosen, form]
+
+--- what the pointer is over that can be pressed: its box on the page (no
+--- width for nothing), how it is used (`press`, `slide`, `choose`,
+--- `type`), and whether what lies there scrolls across or down
+struct Over [x, y, w, h, way, sx, sy]
+
+--- the window: its middle in the room, how it is turned and leaned to
+--- face its reader, how far from the reader's head it stands (its size
+--- goes with that, so it is one size to the eye), whether it has been
+--- stood, how many eyes it was stood for (a screen's one, a headset's
+--- two: it is stood again when that changes), and the seconds it still
+--- follows the head after that (`settle`: a headset's first frames may
+--- say where the head is before it is sure)
+struct Win [x, y, z, turn, lean, far, stood, eyes, settle]
+
+--- the window in a hand: the hand ('' for none), and the window's way
+--- from the head less the hand's ray's, as a turn and a nod
+struct Grab [hand, yaw, pitch]
+
+--- where the keyboard stands, by its reader
+struct Board [x, y, z, turn]
+
+--- what the window holds between frames: the page, the window, how far
+--- the page is scrolled, what the pointer is over, where the pointer was
+--- last told and whether it was on the page, what is asked of the reader,
+--- the Pages menu (its names, the one the reader is on, whether it is
+--- raised), the window in a hand, the bar's handle (its box), the
+--- keyboard's place, whether the reader's own room is in sight, whether a
+--- press began on the page, the scrolling owed to a thing of the page
+--- (across, down, when last told), whether a new thing came under the
+--- pointer (a tick is owed), what of the window was last told the host
+--- (its top, when, its height), and the page in a press (`drag`: where in
+--- the window the press began, the scroll then, whether a press is on,
+--- whether it has moved enough to be a drag), and the lines this frame
+--- has for the host (`lines`).
+---
+--- A frame's functions each take the canvas or what is held and give the
+--- one back: a function that drew and changed what is held would hand
+--- both back in a record, and taking them out of it again copies each —
+--- the whole frame drawn so far — which costs more than the drawing. So
+--- what draws gives the canvas back, and leaves what it found (a press on
+--- the bar, a choice made) in the program's memory for the function after
+--- it, which changes what is held.
+struct Held [page, win, scroll, over, told_x, told_y, told_there, ask, menu, current, menu_open, grab, handle, board, ar, on_page, wheeled, tick, sent, drag, lines]
+
+--- what the bar's laying found: its handle's box and its controls as the
+--- host is told of them (what was pressed on it this frame is kept apart,
+--- `window.did.pressed`: the bar is not laid every frame)
+struct Barred [handle, pressed, found]
+
+--- a list of names a frame leaves for the function after it: the bar's
+--- controls pressed
+struct Keys [list]
+
+--- what the drawing of what is asked found: how the room stood (`raised`,
+--- `typing`, or '' for neither), the lines for the host, whether the
+--- asking ended, the words typed so far, whether the field is to be given
+--- the focus again, and the controls as the host is told of them
+struct Asked [standing, lines, closing, words, again, found]
+
+fn _no_texts[]
+    slice[[''], 0, 0]
+
+fn _no_numbers[]
+    slice[[0.0], 0, 0]
+
+fn _no_ask[]
+    Ask[false, '', '', '', _no_texts[], -1, '']
+
+fn _no_over[]
+    Over[0.0, 0.0, 0.0, 0.0, '', false, false]
+
+fn _no_grab[]
+    Grab['', 0.0, 0.0]
+
+--- what the window holds before the host has said anything
+fn fresh[]
+    Held[Page[788.0, 554.0, 800.0, 0, 'Room', '', 0, 1.3], Win[0.0, 1.0975, -1.7433, 0.0, 0.0873, 1.75, false, 0, 0.0], 0.0, _no_over[], -1.0, -1.0, false, _no_ask[], _no_texts[], -1, false, _no_grab[], [0.0, 0.0, 0.0, 0.0], Board[0.0, 0.83, -0.62, 0.0], false, false, [0.0, 0.0, 0.0], false, [-1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], _no_texts[]]
+
+--- ---- where things stand ----
+
+--- a dp where the window first stands, 1.75 m off, in metres: a
+--- headset's guidelines count sizes in dp, 0.868 of them to a millimetre
+--- seen from a metre
+fn _dp[]
+    0.002016
+
+--- a panel's width of the room's own page (Lory folds by it): the page
+--- in the first, the bar in the second, what is raised before the window
+--- in the third, the keyboard in the fourth
+fn _cell[]
+    1100.0
+
+--- the bar, what is raised and the keyboard, in their own pixels (1.5 dp
+--- each: Lory's controls are 34 of them tall, 51 dp)
+fn _bar_w[]
+    684.0
+
+fn _bar_h[]
+    66.0
+
+fn _raised_h[]
+    480.0
+
+fn _keys_w[]
+    520.0
+
+fn _keys_h[]
+    370.0
+
+--- how tall the window is, in the page's pixels: 720 dp
+fn view_tall[p]
+    floor[720.0 / p.zoom + 0.5]
+
+--- how far the page can be scrolled
+fn _most[p]
+    max[0.0, p.tall - view_tall[p]]
+
+--- whether something is raised before the window, and whether words are
+--- being typed
+fn _raised[a]
+    a.menu_open or (a.ask.open and a.ask.what eq 'choice')
+
+fn _typing[a]
+    a.ask.open and a.ask.what ne 'choice'
+
+--- a panel turned and leaned: its right, its up and the way it faces
+fn _axes[turn, lean]
+    co = cos[turn]
+    si = sin[turn]
+    cl = cos[lean]
+    sl = sin[lean]
+    [co, 0.0, si, si * sl, cl, 0.0 - co * sl, 0.0 - si * cl, sl, co * cl]
+
+--- the room: the window on the page (the part of the page it shows is
+--- the part met and drawn — scrolling stands the page higher behind it),
+--- the bar under it, a little raised; the panel raised before it; and
+--- the keyboard by the reader. What is not in use shows nothing and is
+--- not met.
+fn room_of[a]
+    p = a.page
+    w = a.win
+    k = w.far / 1.75
+    tall = view_tall[p]
+    mm0 = p.zoom * _dp[] * k
+    mm1 = 1.5 * _dp[] * k
+    ax = _axes[w.turn, w.lean]
+    under = tall / 2.0 * mm0 + 0.05 * k + _bar_h[] / 2.0 * mm1
+    lift = 0.03 * k
+    near = 0.22 * k
+    bar_at = [w.x - ax[3] * under + ax[6] * lift, w.y - ax[4] * under + ax[7] * lift, w.z - ax[5] * under + ax[8] * lift]
+    raised_at = [w.x + ax[6] * near, w.y + ax[7] * near, w.z + ax[8] * near]
+    b = a.board
+    cell = _cell[]
+    r = xr.room[4, cell, max[900.0, p.tall]]
+    r.placed = [xr.pane[[w.x, w.y, w.z], w.turn, w.lean, mm0, p.wide / 2.0, a.scroll + tall / 2.0], xr.pane[bar_at, w.turn, w.lean, mm1, cell + _bar_w[] / 2.0, _bar_h[] / 2.0], xr.pane[raised_at, w.turn, w.lean, mm1, 2.0 * cell + _bar_w[] / 2.0, _raised_h[] / 2.0], xr.pane[[b.x, b.y, b.z], b.turn, 0.6, 0.001296, 3.0 * cell + _keys_w[] / 2.0, _keys_h[] / 2.0]]
+    bar = [cell, 0.0, cell + _bar_w[], _bar_h[]]
+    if _raised[a] or _typing[a]
+        bar = [cell, 0.0, cell, 0.0]
+    raised = [2.0 * cell, 0.0, 2.0 * cell, 0.0]
+    if _raised[a]
+        raised = [2.0 * cell, 0.0, 2.0 * cell + _bar_w[], _raised_h[]]
+    board = [3.0 * cell, 0.0, 3.0 * cell, 0.0]
+    if _typing[a]
+        board = [3.0 * cell, 0.0, 3.0 * cell + _keys_w[], _keys_h[]]
+    r.live = [[0.0, a.scroll, p.wide, a.scroll + tall], bar, raised, board]
+    r.dot = false
+    --- (on a screen the one eye looks at the window's middle)
+    r.nod = -0.0873
+    r
+
+--- the part of the page the window shows this frame: its top and its foot
+fn in_view[c]
+    r = xr.room_of[c]
+    w = r.live[0]
+    [w[1], w[3]]
+
+--- whether the pointer is on the page, for the page: on the window, and
+--- nothing raised or typed, nor the window in a hand (the pointer is
+--- theirs then)
+fn at_page[c, a]
+    lory.pointing[c] and lory.pointer_x[c] lt _cell[] and not a.ask.open and not a.menu_open and a.grab.hand eq ''
+
+--- ---- what the host says ----
+
+--- a word of the host's JSON, as text (`fallback` where it says none)
+fn text_of[j, name, fallback]
+    v = j[name]
+    if not v.ok
+        return fallback
+    '`v`'
+
+fn flag_of[j, name]
+    v = j[name]
+    if not v.ok
+        return false
+    '`v`' eq 'true'
+
+fn texts_of[j, name]
+    out = _no_texts[]
+    v = j[name]
+    if not v.ok
+        return out
+    for x in v
+        out = push[out, '`x`']
+    out
+
+--- (a number of the host's is read where it stands — `0.0 + j.x` — and
+--- not through a function that looks it up by name: looked up so, it is a
+--- number that may have failed, and handed on to Lory — a place on the
+--- wall, a turn — it is none its calls can hold)
+
+--- an address less what it asks (after its `?`): the page it names
+fn _place_of[path]
+    parts = split[path, '?']
+    if len[parts] lt 1
+        return path
+    parts[0]
+
+--- the keyboard stood by its reader: before them toward the window, low,
+--- within a ray's easy reach
+fn _board_stood[a, c]
+    h = xr.head[c]
+    w = a.win
+    yaw = atan2[w.x - h[0], 0.0 - (w.z - h[2])]
+    a.board = Board[h[0] + sin[yaw] * 0.62, h[1] - 0.42, h[2] - cos[yaw] * 0.62, yaw]
+    a
+
+--- what the host said this frame, taken in (what the window does not
+--- know of — a page's widgets — is an app's to hear)
+fn heard[a, c]
+    for ev in lory.events[c]
+        if ev.on eq 'told'
+            j = json[ev.words]
+            if j.ok
+                what = text_of[j, 't', '']
+                if what eq 'page'
+                    was = a.page
+                    a.page = Page[0.0 + j.wide, 0.0 + j.tall, 0.0 + j.tile, int[0.0 + j.tiles], text_of[j, 'title', 'Room'], text_of[j, 'path', ''], int[0.0 + j.v], 0.0 + j.zoom]
+                    --- (another page is begun at its top; the same page
+                    --- laid for other letters keeps its place)
+                    if _place_of[a.page.path] ne _place_of[was.path]
+                        a.scroll = 0.0
+                    else
+                        if a.page.zoom ne was.zoom and a.page.zoom gt 0.0
+                            a.scroll = a.scroll * was.zoom / a.page.zoom
+                    a.scroll = max[0.0, min[_most[a.page], a.scroll]]
+                if what eq 'menu'
+                    a.menu = texts_of[j, 'names']
+                    a.current = -1
+                    if j.current.ok
+                        a.current = int[0.0 + j.current]
+                if what eq 'hover'
+                    sx = 0.0 + j.sx
+                    sy = 0.0 + j.sy
+                    a.over = Over[0.0 + j.x, 0.0 + j.y, 0.0 + j.w, 0.0 + j.h, text_of[j, 'way', ''], sx gt 0.5, sy gt 0.5]
+                    if a.over.w gt 0.0
+                        a.tick = true
+                if what eq 'ask'
+                    chosen = -1
+                    if j.chosen.ok
+                        chosen = int[0.0 + j.chosen]
+                    a.ask = Ask[true, text_of[j, 'kind', 'words'], text_of[j, 'label', ''], text_of[j, 'words', ''], texts_of[j, 'choices'], chosen, text_of[j, 'type', 'text']]
+                    a.menu_open = false
+                    if a.ask.what ne 'choice'
+                        taken = gui.focus['ask', a.ask.words]
+                        a = _board_stood[a, c]
+                if what eq 'mode'
+                    a.ar = flag_of[j, 'ar']
+                --- (what a thing of the page could not scroll by, at its
+                --- end: the page's own to scroll)
+                if what eq 'more'
+                    a.scroll = max[0.0, min[_most[a.page], a.scroll + (0.0 + j.dy)]]
+    a
+
+--- ---- the window, stood and moved ----
+
+--- the window stood before a head: its own distance off, 5 degrees under
+--- the eyes, turned and leaned to face them
+fn _before[a, h]
+    w = a.win
+    low = 0.0873
+    w.x = h[0] + sin[h[3]] * cos[low] * w.far
+    w.y = h[1] - sin[low] * w.far
+    w.z = h[2] - cos[h[3]] * cos[low] * w.far
+    w.turn = h[3]
+    w.lean = low
+    w.stood = true
+    a.win = w
+    a
+
+--- the window stood where its reader is: the first time, when the room is
+--- entered or left (a headset's two eyes for a screen's one), when the
+--- bar's Centre is pressed, and while a controller's second button (B, Y)
+--- or the C key is held — wherever the reader has turned to, it comes
+fn stood[a, c]
+    eyes = len[c.frame.views]
+    again = not a.win.stood or a.win.eyes ne eyes
+    for name in ['left', 'right']
+        if xr.hand[c, name].second gt 0.5
+            again = true
+    if lory.held_key[c, 'KeyC'] and not a.ask.open
+        again = true
+    w = a.win
+    if w.eyes ne eyes
+        w.far = 1.75
+        w.settle = 0.5
+        w.eyes = eyes
+    if w.settle gt 0.0
+        w.settle = max[0.0, w.settle - lory.dt[c]]
+        again = true
+    a.win = w
+    if again
+        a = _before[a, xr.head[c]]
+    a
+
+fn _level[v]
+    sqrt[v[0] * v[0] + v[2] * v[2]]
+
+--- the window taken in a hand: how its way from the head differs from
+--- the hand's ray's, which it keeps while it is held
+fn _taken[a, c, name]
+    hd = xr.hand[c, name]
+    if not hd.there
+        return _no_grab[]
+    h = xr.head[c]
+    w = a.win
+    to = [w.x - h[0], w.y - h[1], w.z - h[2]]
+    Grab[name, atan2[to[0], 0.0 - to[2]] - atan2[hd.way[0], 0.0 - hd.way[2]], atan2[to[1], _level[to]] - atan2[hd.way[1], _level[hd.way]]]
+
+--- the window moved: a press on the bar's handle, or a controller's grip
+--- squeezed, takes the window in that hand, and it goes where the hand's
+--- ray turns, as far from the head as it was — nearer or further as that
+--- hand's stick is pulled or pushed — turned and leaned to face its
+--- reader; letting go leaves it there
+fn moved[a, c]
+    g = a.grab
+    b = a.handle
+    for ev in lory.events[c]
+        name = 'right'
+        if ev.id eq 'left'
+            name = 'left'
+        if ev.on eq 'down' and g.hand eq '' and b[2] gt 0.0 and ev.x gte b[0] and ev.x lt b[0] + b[2] and ev.y gte b[1] and ev.y lt b[1] + b[3]
+            g = _taken[a, c, name]
+        if ev.on eq 'squeeze' and g.hand eq '' and not a.ask.open
+            g = _taken[a, c, name]
+        if ev.on eq 'up' or ev.on eq 'unsqueeze'
+            g = _no_grab[]
+    if g.hand ne ''
+        hd = xr.hand[c, g.hand]
+        if not hd.there
+            g = _no_grab[]
+        else
+            h = xr.head[c]
+            w = a.win
+            if abs[hd.along] gt 0.2
+                w.far = max[0.75, min[4.0, w.far * (1.0 - hd.along * 0.9 * lory.dt[c])]]
+            yaw = atan2[hd.way[0], 0.0 - hd.way[2]] + g.yaw
+            pitch = max[-1.2, min[1.2, atan2[hd.way[1], _level[hd.way]] + g.pitch]]
+            w.x = h[0] + sin[yaw] * cos[pitch] * w.far
+            w.y = h[1] + sin[pitch] * w.far
+            w.z = h[2] - cos[yaw] * cos[pitch] * w.far
+            w.turn = yaw
+            w.lean = 0.0 - pitch
+            a.win = w
+    a.grab = g
+    a
+
+--- ---- the page, scrolled and pointed at ----
+
+--- the page scrolled through the window: a thumbstick pulled or pushed
+--- (not the hand that holds the window), a wheel, the keys of a desk — and
+--- a press where nothing of the page is pressed, carried up or down: the
+--- page goes with it (a hand with no stick, a mouse; while it does, what
+--- an app drew is not pressed: `drag`'s fourth is 1). Over a thing of the
+--- page that scrolls itself — a table wider than the column, a list — a
+--- stick's and a wheel's scrolling is that thing's, and told the host
+--- (`@wheel`) a few times a second
+fn scrolled[a, c]
+    p = a.page
+    tall = view_tall[p]
+    most = _most[p]
+    along = 0.0
+    across = 0.0
+    for name in ['left', 'right']
+        hd = xr.hand[c, name]
+        if hd.there and a.grab.hand ne name
+            if abs[hd.along] gt 0.2
+                along = hd.along
+            if abs[hd.across] gt 0.3
+                across = hd.across
+    dy = along * 1300.0 * lory.dt[c]
+    dx = across * 900.0 * lory.dt[c]
+    to = a.scroll
+    for ev in lory.events[c]
+        if ev.on eq 'wheel'
+            dy = dy + ev.dy
+            dx = dx + ev.dx
+        if ev.on eq 'key' and not a.ask.open
+            if ev.key eq 'PageDown'
+                dy = dy + tall * 0.85
+            if ev.key eq 'PageUp'
+                dy = dy - tall * 0.85
+            if ev.key eq 'ArrowDown'
+                dy = dy + 60.0
+            if ev.key eq 'ArrowUp'
+                dy = dy - 60.0
+            if ev.key eq 'Home'
+                to = 0.0
+            if ev.key eq 'End'
+                to = most
+    if a.ask.open or a.menu_open
+        return a
+    x = lory.pointer_x[c]
+    y = lory.pointer_y[c]
+    on_page = lory.pointing[c] and x lt _cell[]
+    --- (a press on the page's own ground takes the page: eight pixels on, it is a drag)
+    d = a.drag
+    top = in_view[c][0]
+    for ev in lory.events[c]
+        if ev.on eq 'down' and on_page and a.over.w lte 0.0 and a.grab.hand eq ''
+            d = [y - top, a.scroll, 1.0, 0.0]
+        if ev.on eq 'up'
+            d = [0.0, 0.0, 0.0, 0.0]
+    if d[2] gt 0.5 and on_page
+        by = y - top - d[0]
+        if abs[by] gt 8.0
+            d = [d[0], d[1], 1.0, 1.0]
+        if d[3] gt 0.5
+            to = d[1] - by
+    a.drag = d
+    w = a.wheeled
+    if on_page and a.over.sy and dy ne 0.0
+        w = [w[0], w[1] + dy, w[2]]
+        dy = 0.0
+    if on_page and a.over.sx and dx ne 0.0
+        w = [w[0] + dx, w[1], w[2]]
+    a.scroll = max[0.0, min[most, to + dy]]
+    if (abs[w[0]] gte 1.0 or abs[w[1]] gte 1.0) and lory.time[c] - w[2] gt 90.0
+        a.lines = push[a.lines, '@wheel `round[x]` `round[y]` `round[w[0]]` `round[w[1]]`']
+        w = [0.0, 0.0, lory.time[c]]
+    a.wheeled = w
+    a
+
+--- the lines telling the host where the pointer is on the page and what
+--- it did there (none while something is raised or typed, or the window
+--- is in a hand: the pointer is theirs)
+fn told[a, c]
+    x = lory.pointer_x[c]
+    y = lory.pointer_y[c]
+    there = at_page[c, a]
+    if there
+        if not a.told_there or abs[x - a.told_x] gt 0.5 or abs[y - a.told_y] gt 0.5
+            a.lines = push[a.lines, '@at `round[x]` `round[y]`']
+            a.told_x = x
+            a.told_y = y
+    else
+        if a.told_there
+            a.lines = push[a.lines, '@away']
+            a.over = _no_over[]
+    a.told_there = there
+    for ev in lory.events[c]
+        if ev.on eq 'down' and there
+            a.lines = push[a.lines, '@down `round[x]` `round[y]`']
+            a.on_page = true
+        if ev.on eq 'up' and a.on_page
+            a.lines = push[a.lines, '@up `round[x]` `round[y]`']
+            a.on_page = false
+    a
+
+--- a press felt in the hand that made it, and a new thing under the
+--- pointer a little
+fn felt[a, c]
+    for ev in lory.events[c]
+        if ev.on eq 'down' and lory.pointing[c]
+            name = 'right'
+            if ev.id eq 'left'
+                name = 'left'
+            a.lines = push[a.lines, '@pulse `name` 0.7 22']
+    if a.tick
+        a.lines = push[a.lines, '@pulse right 0.25 10']
+        a.tick = false
+    a
+
+--- a frame begun: no lines for the host yet, what the host said taken in,
+--- the window stood and moved, the page scrolled and pointed at, a press
+--- felt
+fn begun[a, c]
+    a.lines = _no_texts[]
+    a = heard[a, c]
+    a = stood[a, c]
+    a = moved[a, c]
+    a = scrolled[a, c]
+    a = told[a, c]
+    felt[a, c]
+
+--- ---- the window ----
+
+fn _ground[]
+    lory.Color[0.0431, 0.0549, 0.0706, 1.0]
+
+fn _accent[]
+    lory.Color[0.2314, 0.5098, 0.9647, 1.0]
+
+--- the window drawn: a plate behind it, and the tiles of the page's
+--- picture the window shows (each a sheet in the picture the host keeps
+--- in its texture unit), cut at the window's edges — as is what is drawn
+--- after, until `over_drawn`: an app's widgets
+fn page_drawn[c, a]
+    ground = _ground[]
+    if a.ar
+        ground = lory.rgba[0.0, 0.0, 0.0, 0.0]
+    c = lory.clear[c, ground]
+    if not space.made['sheet']
+        c = space.mesh[c, 'sheet', space.sheet[1.0, 1.0]]
+        c = space.mesh[c, 'unit', solid.shape[solid.block[solid.geo[], 0.0, 0.0, 0.0, 1.0, 1.0, 1.0]]]
+    c = space.scene[c, space.Orbit[0.0, 0.0, 3.0, [0.0, 0.0, 0.0], false, 0.0, 0.0, 0.0, 0.0], space.daylight[]]
+    p = a.page
+    shows = in_view[c]
+    tall = shows[1] - shows[0]
+    --- (the plate: a little over the window all round, a little behind it)
+    edge = 10.0
+    plate = lory.mul[xr.spot[c, 0.0 - edge, shows[1] + edge], lory.mul[lory.translation[0.0, 0.0, -6.0], lory.scaling[p.wide + 2.0 * edge, tall + 2.0 * edge, 2.0]]]
+    c = space.draw[c, 'unit', plate, space.shown[lory.Color[0.1059, 0.1333, 0.1686, 1.0]]]
+    if p.tiles lt 1
+        return lory.text[c, 40.0, shows[0] + 80.0, 'Reading the page…', 24.0, lory.Color[0.5412, 0.6078, 0.6784, 1.0]]
+    planes = xr.edges[c, 0]
+    c = space.cut[c, planes]
+    k = max[0, int[floor[shows[0] / p.tile]]]
+    last = min[p.tiles - 1, int[floor[shows[1] / p.tile]]]
+    while k lte last
+        at = lory.mul[xr.spot[c, 0.0, (0.0 + k + 1) * p.tile], lory.scaling[p.wide, p.tile, 1.0]]
+        c = space.draw[c, 'sheet', at, space.pictured[8 + k]]
+        k = k + 1
+    --- (how far down the page the window is: a thumb at its right edge)
+    most = _most[p]
+    if most gt 0.0
+        thumb = max[40.0, tall * tall / p.tall]
+        y = shows[0] + (tall - thumb - 8.0) * (shows[0] / most) + 4.0
+        c = lory.round_rect[c, p.wide - 8.0, y, 4.0, thumb, 2.0, lory.rgba[1.0, 1.0, 1.0, 0.4]]
+    c
+
+--- what the pointer is over that can be pressed, outlined: filled while
+--- it is pressed
+fn ringed[c, a]
+    o = a.over
+    if o.w gt 0.0 and not a.ask.open and not a.menu_open
+        if lory.pressed[c] and a.on_page
+            c = lory.round_rect[c, o.x - 3.0, o.y - 3.0, o.w + 6.0, o.h + 6.0, 7.0, lory.fade[_accent[], 0.35]]
+        c = lory.round_outline[c, o.x - 3.0, o.y - 3.0, o.w + 6.0, o.h + 6.0, 7.0, 2.0, _accent[]]
+    c
+
+--- ---- what a drawing was made from ----
+
+--- (words are laid once and kept by Lory: `lory.keep_words`)
+
+--- what a drawing held between frames was made from, as words. Kept in
+--- the program's memory under the drawing's name, not in what is held: a
+--- frame is drawn by functions that take the canvas and give it back,
+--- and nothing held is handed through them
+struct Built [from]
+
+fn _stale[name, sig]
+    recall['window.built.`name`', Built['']].from ne sig
+
+--- ---- the room's own controls ----
+
+--- a control of the room's, as the host is told of it: its name and its
+--- box, in the room's own page
+fn _named_box[name, b]
+    x = 0.0 + b[0]
+    y = 0.0 + b[1]
+    w = 0.0 + b[2]
+    h = 0.0 + b[3]
+    words = encode[name]
+    '{"name": `words`, "x": `x`, "y": `y`, "w": `w`, "h": `h`}'
+
+--- the room's own controls told the host when they change (`@chrome`),
+--- with how the room stands — its `bar` shown, something `raised` before
+--- the window, or `typing`: what the room is measured by, with the page's
+--- own
+fn _chrome[lines, standing, found]
+    joined = join[found, ', ']
+    said = '@chrome `standing` [`joined`]'
+    if _stale['chrome', said]
+        remember['window.built.chrome', Built[said]]
+        lines = push[lines, said]
+    lines
+
+--- the bar laid by Lory's controls: its handle, Pages, the letters' size,
+--- Centre and the page's title; what was pressed on it is left for
+--- `bar_done`, and its vertices are kept where nothing is pointed at (a
+--- hovered button would stay lit)
+fn _bar_laid[c, a, title, sig, busy]
+    before = len[c.verts]
+    lacking = c.missing
+    tree = gui.panel[[gui.row[[gui.area['grab', 132.0, 34.0], gui.button['menu', 'Pages'], gui.button['smaller', 'A-'], gui.button['bigger', 'A+'], gui.button['centre', 'Centre'], gui.label[title]]]]]
+    shown = gui.show_at[c, tree, _cell[], 0.0, _bar_w[], gui.dark[]]
+    found = _no_texts[]
+    b = [0.0, 0.0, 0.0, 0.0]
+    names = map['menu' = 'Pages', 'smaller' = 'A-', 'bigger' = 'A+', 'centre' = 'Centre']
+    if 'grab' in shown.boxes
+        b = shown.boxes['grab']
+        found = push[found, _named_box['Move', b]]
+    for id in ['menu', 'smaller', 'bigger', 'centre']
+        if id in shown.boxes
+            found = push[found, _named_box[names[id], shown.boxes[id]]]
+    pressed = _no_texts[]
+    for ev in shown.events
+        if ev.act eq 'press'
+            pressed = push[pressed, ev.id]
+    remember['window.did.bar', Barred[[0.0 + b[0], 0.0 + b[1], 0.0 + b[2], 0.0 + b[3]], _no_texts[], found]]
+    --- (and kept for the frames it is put back at: the handle and the controls
+    --- stand where they stood, whatever the title or the hand)
+    remember['window.bar.laid', Barred[[0.0 + b[0], 0.0 + b[1], 0.0 + b[2], 0.0 + b[3]], _no_texts[], found]]
+    remember['window.did.pressed', Keys[pressed]]
+    c = shown.canvas
+    if b[2] gt 0.0
+        fill = lory.Color[0.1647, 0.2039, 0.251, 1.0]
+        if a.grab.hand ne ''
+            fill = _accent[]
+        c = lory.round_rect[c, b[0], b[1], b[2], b[3], 17.0, fill]
+        c = lory.text_centered[c, b[0] + b[2] / 2.0, b[1] + b[3] / 2.0, 'Move', 15.0, lory.Color[0.9098, 0.9294, 0.949, 1.0]]
+    if not busy
+        c = lory.keep_words[c, 'bar', sig, before, lacking]
+    c
+
+--- the bar under the window drawn (not while something is raised or
+--- typed). Lory's controls measure every word and copy the canvas as they
+--- are laid — a tenth of a frame in a headset — so the bar is laid when
+--- it may change: the pointer on its panel, a press, a release or a key
+--- anywhere, its title or the hand on its handle another. At any other
+--- frame the vertices it came to are put back. Drawn first, while the
+--- canvas holds nothing
+fn barred[c, a]
+    if _raised[a] or _typing[a]
+        remember['window.did.bar', Barred[[0.0, 0.0, 0.0, 0.0], _no_texts[], _no_texts[]]]
+        remember['window.did.pressed', Keys[_no_texts[]]]
+        return c
+    title = a.page.title
+    if len[title] gt 26
+        title = slice[title, 0, 26]
+    sig = '`title`|`a.grab.hand`|`lory.lettering[c]`'
+    x = lory.pointer_x[c]
+    busy = lory.pointing[c] and x gte _cell[] and x lt 2.0 * _cell[]
+    for ev in lory.events[c]
+        if ev.on eq 'down' or ev.on eq 'up' or ev.on eq 'key'
+            busy = true
+    had = lory.kept_words['bar', sig]
+    if busy or len[had] lt 1
+        c = _bar_laid[c, a, title, sig, busy]
+    else
+        --- (nothing was pressed on it; its handle and its controls are where they were last laid)
+        remember['window.did.bar', recall['window.bar.laid', Barred[[0.0, 0.0, 0.0, 0.0], _no_texts[], _no_texts[]]]]
+        remember['window.did.pressed', Keys[_no_texts[]]]
+        --- (number by number, each read where it stands: put back whole, as
+        --- kept words are, Crow's own check of the program it lowers fails)
+        for v in had
+            c.verts = push[c.verts, 0.0 + v]
+    c
+
+--- what was pressed on the bar done: the menu raised, the window stood
+--- again, the page asked for in other letters
+fn bar_done[a]
+    did = recall['window.did.bar', Barred[[0.0, 0.0, 0.0, 0.0], _no_texts[], _no_texts[]]]
+    a.handle = did.handle
+    if _raised[a] or _typing[a]
+        return a
+    z = a.page.zoom
+    for id in recall['window.did.pressed', Keys[_no_texts[]]].list
+        if id eq 'menu' and len[a.menu] gt 0
+            a.menu_open = true
+        if id eq 'centre'
+            w = a.win
+            w.stood = false
+            a.win = w
+        if id eq 'smaller'
+            if z gt 1.45
+                a.lines = push[a.lines, '@zoom 1.3']
+            else
+                if z gt 1.15
+                    a.lines = push[a.lines, '@zoom 1']
+        if id eq 'bigger'
+            if z lt 1.15
+                a.lines = push[a.lines, '@zoom 1.3']
+            else
+                if z lt 1.45
+                    a.lines = push[a.lines, '@zoom 1.6']
+    a.lines = _chrome[a.lines, 'bar', did.found]
+    a
+
+fn _no_nodes[]
+    slice[[gui.label['']], 0, 0]
+
+fn _no_asked[]
+    Asked['', _no_texts[], false, '', false, _no_texts[]]
+
+--- what is raised before the window drawn — the Pages menu, or a list's
+--- choices — with the rest dimmed, and the keyboard by the reader when
+--- words are typed; what the reader did with them is left for
+--- `asked_done`
+fn asked[c, a]
+    lines = _no_texts[]
+    q = a.ask
+    cell = _cell[]
+    if _raised[a]
+        x0 = 2.0 * cell
+        c = lory.rect[c, x0, 0.0, _bar_w[], _raised_h[], lory.rgba[0.0, 0.0, 0.0, 0.55]]
+        parts = [gui.heading['Pages']]
+        ids = _no_texts[]
+        said = _no_texts[]
+        count = 0
+        w = 592.0
+        if q.open
+            w = 340.0
+            parts = [gui.heading[q.label]]
+            each = _no_nodes[]
+            for i in range[len[q.choices]]
+                words = q.choices[i]
+                if i eq q.chosen
+                    words = '› `words`'
+                each = push[each, gui.sized[gui.button['choice:`i`', words], 300.0]]
+                ids = push[ids, 'choice:`i`']
+                said = push[said, q.choices[i]]
+            count = len[each]
+            if count gt 8
+                parts = push[parts, gui.scroll['ask:choices', 342.0, each]]
+            else
+                for one in each
+                    parts = push[parts, one]
+            parts = push[parts, gui.button['raised:close', 'Cancel']]
+        else
+            line = _no_nodes[]
+            rows = _no_nodes[]
+            for i in range[len[a.menu]]
+                words = a.menu[i]
+                if i eq a.current
+                    words = '› `words`'
+                line = push[line, gui.sized[gui.button['menu:`i`', words], 180.0]]
+                ids = push[ids, 'menu:`i`']
+                said = push[said, a.menu[i]]
+                if len[line] eq 3
+                    rows = push[rows, gui.row[line]]
+                    line = _no_nodes[]
+            if len[line] gt 0
+                rows = push[rows, gui.row[line]]
+            count = len[rows]
+            if count gt 8
+                parts = push[parts, gui.scroll['menu:rows', 342.0, rows]]
+            else
+                for one in rows
+                    parts = push[parts, one]
+            parts = push[parts, gui.button['raised:close', 'Close']]
+        high = 32.0 + 31.0 + 10.0 + 44.0 * min[8.0, 0.0 + count] + 44.0
+        x = x0 + (_bar_w[] - w) / 2.0
+        y = max[8.0, (_raised_h[] - high) / 2.0]
+        --- (a press on the dimming, away from what is raised, puts it away)
+        away = false
+        for ev in lory.events[c]
+            if ev.on eq 'down' and ev.x gte x0 and ev.x lt x0 + cell
+                if ev.x lt x - 8.0 or ev.x gt x + w + 8.0 or ev.y lt y - 8.0 or ev.y gt y + high + 8.0
+                    away = true
+        shown = gui.show_at[c, gui.panel[parts], x, y, w, gui.dark[]]
+        found = _no_texts[]
+        for i in range[len[ids]]
+            if ids[i] in shown.boxes
+                b = shown.boxes[ids[i]]
+                if b[1] gte y and b[1] + b[3] lte y + high
+                    found = push[found, _named_box[said[i], b]]
+        if 'raised:close' in shown.boxes
+            found = push[found, _named_box['Close', shown.boxes['raised:close']]]
+        closing = away
+        chose = false
+        for ev in shown.events
+            if ev.act eq 'press'
+                if starts[ev.id, 'choice:']
+                    picked_one = slice[ev.id, 7, len[ev.id]]
+                    lines = push[lines, '@chose `picked_one`']
+                    closing = true
+                    chose = true
+                if starts[ev.id, 'menu:']
+                    picked_one = slice[ev.id, 5, len[ev.id]]
+                    lines = push[lines, '@menu `picked_one`']
+                    closing = true
+                if ev.id eq 'raised:close'
+                    closing = true
+        if closing and q.open and not chose
+            lines = push[lines, '@closed']
+        remember['window.did.asked', Asked['raised', lines, closing, q.words, false, found]]
+        return shown.canvas
+    if _typing[a]
+        x0 = 3.0 * cell
+        c = xr.keys_at[c, x0, _keys_h[], _keys_w[]]
+        parts = [gui.label[q.label], gui.sized[gui.field['ask', q.words], 440.0], gui.row[[gui.button['ask:done', 'Done'], gui.button['ask:cancel', 'Cancel']]]]
+        here = false
+        elsewhere = false
+        for ev in lory.events[c]
+            if ev.on eq 'down'
+                if ev.x gte x0 and ev.x lt x0 + cell
+                    here = true
+                else
+                    elsewhere = true
+        found = _no_texts[]
+        for key in gui.keys_of[c, false]
+            face = key.face
+            if face eq ' '
+                face = 'space'
+            found = push[found, _named_box[face, [key.x, key.y, key.w, key.h]]]
+        shown = gui.show_at[c, gui.panel[parts], x0 + 10.0, 6.0, _keys_w[] - 20.0, gui.dark[]]
+        if 'ask:done' in shown.boxes
+            found = push[found, _named_box['Done', shown.boxes['ask:done']]]
+        if 'ask:cancel' in shown.boxes
+            found = push[found, _named_box['Cancel', shown.boxes['ask:cancel']]]
+        closing = false
+        words = q.words
+        for ev in shown.events
+            if ev.id eq 'ask' and ev.act eq 'edit'
+                words = ev.words
+                typed = encode[ev.words]
+                lines = push[lines, '@typed `typed`']
+            if ev.id eq 'ask' and ev.act eq 'submit'
+                lines = push[lines, '@entered']
+                closing = true
+            if ev.id eq 'ask:done'
+                lines = push[lines, '@done']
+                closing = true
+            if ev.id eq 'ask:cancel'
+                lines = push[lines, '@closed']
+                closing = true
+        --- (a press away from the keyboard ends the typing, what was typed kept)
+        if elsewhere and not closing
+            lines = push[lines, '@done']
+            closing = true
+        remember['window.did.asked', Asked['typing', lines, closing, words, here, found]]
+        return shown.canvas
+    remember['window.did.asked', _no_asked[]]
+    c
+
+--- what the reader did with what was asked done: the asking put away, the
+--- words typed held, the field given the focus again after a press on the
+--- keyboard's own ground
+fn asked_done[a]
+    did = recall['window.did.asked', _no_asked[]]
+    if did.standing eq ''
+        return a
+    for one in did.lines
+        a.lines = push[a.lines, one]
+    if did.standing eq 'raised'
+        if did.closing
+            a.ask = _no_ask[]
+            a.menu_open = false
+    else
+        q = a.ask
+        q.words = did.words
+        a.ask = q
+        if did.closing
+            a.ask = _no_ask[]
+            let_go = gui.unfocus[]
+        else
+            if did.again
+                taken = gui.focus['ask', did.words]
+    a.lines = _chrome[a.lines, did.standing, did.found]
+    a
+
+--- what stands over the page drawn, after what an app drew on it: the cut
+--- at the window's edges ended, what the pointer is over outlined, and
+--- what is raised before the window or the keyboard by the reader
+fn over_drawn[c, a]
+    c = space.uncut[c]
+    c = ringed[c, a]
+    asked[c, a]
+
+--- ---- the rays and the cursor ----
+
+--- the matrix of a beam: the unit block `thick` across, `reach` long from
+--- `from` along `way`
+fn _beam[from, way, reach, thick]
+    ux = 0.0
+    uy = 1.0
+    if abs[way[1]] gt 0.99
+        ux = 1.0
+        uy = 0.0
+    xx = uy * way[2]
+    xy = 0.0 - ux * way[2]
+    xz = ux * way[1] - uy * way[0]
+    n = max[0.000001, sqrt[xx * xx + xy * xy + xz * xz]]
+    xx = xx / n
+    xy = xy / n
+    xz = xz / n
+    yx = way[1] * xz - way[2] * xy
+    yy = way[2] * xx - way[0] * xz
+    yz = way[0] * xy - way[1] * xx
+    half = thick / 2.0
+    [xx * thick, xy * thick, xz * thick, 0.0, yx * thick, yy * thick, yz * thick, 0.0, way[0] * reach, way[1] * reach, way[2] * reach, 0.0, from[0] - (xx + yx) * half, from[1] - (xy + yy) * half, from[2] - (xz + yz) * half, 1.0]
+
+--- a ray from each controller of a headset — to where it meets a panel,
+--- or a short one — and a ring where the pointer is, filled while pressed
+fn rays[c, _a]
+    there = lory.pointing[c]
+    x = lory.pointer_x[c]
+    y = lory.pointer_y[c]
+    tip = [0.0, 0.0, 0.0]
+    if there
+        at = xr.spot[c, x, y]
+        tip = [at[12], at[13], at[14]]
+    if len[c.frame.views] gt 1
+        for name in ['right', 'left']
+            hd = xr.hand[c, name]
+            if hd.there
+                reach = 0.3
+                if there
+                    to = [tip[0] - hd.from[0], tip[1] - hd.from[1], tip[2] - hd.from[2]]
+                    far = sqrt[to[0] * to[0] + to[1] * to[1] + to[2] * to[2]]
+                    if far gt 0.01
+                        if (to[0] * hd.way[0] + to[1] * hd.way[1] + to[2] * hd.way[2]) / far gt 0.9995
+                            reach = far
+                color = lory.Color[0.8588, 0.8941, 0.9333, 1.0]
+                if hd.trigger gt 0.5
+                    color = _accent[]
+                c = space.draw[c, 'unit', _beam[hd.from, hd.way, reach, 0.0025], space.shown[color]]
+    if there
+        r = 7.0
+        if x gte _cell[]
+            r = 6.0
+        if lory.pressed[c]
+            c = lory.circle[c, x, y, r, _accent[]]
+            c = lory.ring[c, x, y, r, 1.5, lory.white[]]
+        else
+            c = lory.ring[c, x, y, r, 2.0, lory.rgba[1.0, 1.0, 1.0, 0.95]]
+            c = lory.circle[c, x, y, 2.0, lory.white[]]
+    c
+
+--- ---- a frame ----
+
+--- what the window shows, told the host as it changes: a few times a
+--- second
+fn _scroll_told[a, c]
+    tall = view_tall[a.page]
+    s = a.sent
+    if (abs[a.scroll - s[0]] gte 1.0 or abs[tall - s[2]] gte 1.0) and (s[0] lt 0.0 or lory.time[c] - s[1] gt 120.0)
+        a.lines = push[a.lines, '@scroll `round[a.scroll]` `round[tall]`']
+        a.sent = [a.scroll, lory.time[c], tall]
+    a
+
+--- a frame's lines for the host and the page's title, kept apart from
+--- what is held so that the frame's end reads them without taking all of
+--- it
+struct Told [lines, title]
+
+--- what the window held after the last frame (before the first, `fresh`)
+fn held[]
+    recall['window.held', fresh[]]
+
+--- what the window holds after a frame kept for the next, with the
+--- frame's lines for the host (an app's own pushed onto `a.lines` first):
+--- what the window shows told as it changes, a few times a second
+fn hold[a, c]
+    a = _scroll_told[a, c]
+    remember['window.told', Told[a.lines, a.page.title]]
+    remember['window.held', a]
+    a
+
+--- a frame of the window alone: what is held brought up to it, the room
+--- drawn, and what is held after it kept (`held` gives it back). The bar
+--- is drawn first, while the canvas holds nothing: Lory's controls copy
+--- the canvas as they are laid
+fn step[c, a]
+    a = begun[a, c]
+    c = barred[c, a]
+    a = bar_done[a]
+    c = page_drawn[c, a]
+    c = over_drawn[c, a]
+    a = asked_done[a]
+    c = rays[c, a]
+    a = hold[a, c]
+    c
+
+--- a corner of the wall as the room's metres: three numbers, as words
+fn _corner[c, x, y]
+    at = xr.spot[c, x, y]
+    px = 0.0 + at[12]
+    py = 0.0 + at[13]
+    pz = 0.0 + at[14]
+    '`px` `py` `pz`'
+
+--- where the panels stood and what of each was shown, as last said
+struct Hung [placed, live]
+
+--- where each panel hangs, said to the host when it changes ('' when it
+--- has not): a panel's top left corner, its top right and its bottom
+--- left. Nothing the room draws by: what a measure of it needs (Lory
+--- Studio's sizes: how many degrees a control takes from where its
+--- reader is)
+fn paneled[c]
+    r = xr.room_of[c]
+    was = recall['window.hung', Hung[slice[[[0.0]], 0, 0], slice[[[0.0]], 0, 0]]]
+    if was.placed eq r.placed and was.live eq r.live
+        return ''
+    remember['window.hung', Hung[r.placed, r.live]]
+    parts = []
+    for k in range[r.cols]
+        left = (0.0 + k) * r.wide
+        parts = push[parts, _corner[c, left, 0.0]]
+        parts = push[parts, _corner[c, left + r.wide - 0.001, 0.0]]
+        parts = push[parts, _corner[c, left, r.tall]]
+    joined = join[parts, ' ']
+    said = '@panels `r.cols` `r.wide` `r.tall` `joined`'
+    if not _stale['panels', said]
+        return ''
+    remember['window.built.panels', Built[said]]
+    said
+
+--- a frame's end: its lines for the host printed (`hold` kept them),
+--- where the panels hang said when it changed, and the frame handed to the
+--- page under the page's title
+fn end[c]
+    done = recall['window.told', Told[_no_texts[], 'Room']]
+    for line in done.lines
+        log[line]
+    hung = paneled[c]
+    if hung ne ''
+        log[hung]
+    lory.end[lory.title[c, '`done.title` · room']]
+
+--- ---- tests ----
+
+--- a frame's work, for a test to read: the canvas, what is held after it,
+--- and the lines for the host
+struct Step [c, a, lines]
+
+fn _step[c, a]
+    c = step[c, a]
+    b = held[]
+    Step[c, b, b.lines]
+
+fn _screen[given]
+    json['{"t": 0, "width": 1200, "height": 800, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1200, "height": 800, "projection": [], "camera": []}], "input": [`given`], "pointers": [], "controllers": [], "said": []}']
+
+fn _screen_later[given]
+    json['{"t": 1000, "width": 1200, "height": 800, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1200, "height": 800, "projection": [], "camera": []}], "input": [`given`], "pointers": [], "controllers": [], "said": []}']
+
+fn _given[words]
+    '{"type": "told", "text": `encode[words]`}'
+
+fn _page_said[]
+    '{"t": "page", "wide": 788, "tall": 3000, "tile": 800, "tiles": 4, "title": "Reports", "path": "/reports", "v": 1, "zoom": 1.3}'
+
+--- the host's page is taken in, and the room has its four panels: the
+--- window shows the page's first 554 pixels (720 dp at 1.3 to a pixel),
+--- stood 1.75 m before the reader's eye and 5 degrees under it, 1024 dp
+--- across
+test the_hosts_page_is_seen_through_the_window[]
+    a = fresh[]
+    st = _step[xr.begin_room[_screen[_given[_page_said[]]], room_of[a]], a]
+    st.a.page.tiles eq 4
+    st.a.page.title eq 'Reports'
+    st.a.win.stood eq true
+    --- (and for half a second it follows the head, where a headset is first sure of it)
+    st.a.win.settle eq 0.5
+    view_tall[st.a.page] eq 554.0
+    r = room_of[st.a]
+    r.cols eq 4
+    r.live[0] eq [0.0, 0.0, 788.0, 554.0]
+    c = xr.begin_room[_screen[''], r]
+    in_view[c] eq [0.0, 554.0]
+    mid = xr.spot[c, 394.0, 277.0]
+    abs[mid[12]] lt 0.001
+    abs[mid[13] - 1.0975] lt 0.001
+    abs[mid[14] + 1.7433] lt 0.001
+    left = xr.spot[c, 0.0, 277.0]
+    right = xr.spot[c, 788.0, 277.0]
+    abs[right[12] - left[12] - 788.0 * 1.3 * 0.002016] lt 0.0001
+
+fn _menu_said[]
+    '{"t": "menu", "names": ["Home", "Reports", "Jobs"], "current": 1}'
+
+--- a frame as a headset's, its right controller at the reader's eye and
+--- aimed at the point (x, y) of the room's own page — so what stands there
+--- is what the ray meets — with what happened in it
+fn _aimed[a, x, y, given]
+    c = xr.begin_room[_screen[''], room_of[a]]
+    at = xr.spot[c, x, y]
+    dx = 0.0 + at[12]
+    dy = at[13] - 1.25
+    dz = 0.0 + at[14]
+    n = sqrt[dx * dx + dy * dy + dz * dz]
+    ux = dx / n
+    uy = dy / n
+    uz = dz / n
+    json['{"t": 0, "width": 1000, "height": 1000, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 1000, "projection": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, -1, 0, 0, -0.1, 0], "camera": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1.25, 0, 1]}], "input": [`given`], "pointers": [], "controllers": [{"hand": "right", "device": "controller", "origin": [0, 1.25, 0], "direction": [`ux`, `uy`, `uz`], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']
+
+fn _press[]
+    '{"type": "down", "device": "ray", "id": "right", "hand": "right"}, {"type": "up", "device": "ray", "id": "right", "hand": "right"}'
+
+--- the room with its page laid and its window stood, and settled (the
+--- frames of a test are all of one moment: the half second a window
+--- follows the head after it is stood would never pass)
+fn _begun[]
+    a = fresh[]
+    st = _step[xr.begin_room[_screen[_given[_page_said[]]], room_of[a]], a]
+    b = st.a
+    w = b.win
+    w.settle = 0.0
+    b.win = w
+    b
+
+--- a wheel scrolls the page through the window: the part of the page the
+--- window shows moves down it, no further than the page's foot, and the
+--- host is told what the window shows
+test a_wheel_scrolls_the_page_through_the_window[]
+    a = _begun[]
+    --- (a second on: what the window shows is told a few times a second at most)
+    st = _step[xr.begin_room[_screen_later['{"type": "wheel", "x": 600, "y": 400, "dx": 0, "dy": 200}'], room_of[a]], a]
+    st.a.scroll eq 200.0
+    room_of[st.a].live[0] eq [0.0, 200.0, 788.0, 754.0]
+    '@scroll 200 554' in st.lines
+    --- (the middle of the window is the page's row 477 now)
+    c = xr.begin_room[_screen[''], room_of[st.a]]
+    abs[xr.spot[c, 394.0, 477.0][13] - 1.0975] lt 0.001
+    far = _step[xr.begin_room[_screen['{"type": "wheel", "x": 600, "y": 400, "dx": 0, "dy": 90000}'], room_of[st.a]], st.a]
+    far.a.scroll eq 2446.0
+    --- (another page begins at its top; the same page told again keeps its place)
+    same = _step[xr.begin_room[_screen[_given[_page_said[]]], room_of[far.a]], far.a]
+    same.a.scroll eq 2446.0
+    other = _step[xr.begin_room[_screen[_given['{"t": "page", "wide": 788, "tall": 900, "tile": 800, "tiles": 2, "title": "Jobs", "path": "/jobs", "v": 2, "zoom": 1.3}']], room_of[same.a]], same.a]
+    other.a.scroll eq 0.0
+    --- (what a thing of the page could not scroll by is the page's)
+    handed = _step[xr.begin_room[_screen[_given['{"t": "more", "dy": 120}']], room_of[st.a]], st.a]
+    handed.a.scroll eq 320.0
+    --- (what the window does not know of is left to an app: nothing changes)
+    widgets = _step[xr.begin_room[_screen[_given['{"t": "widgets", "list": [{"n": 0, "kind": "chart", "x": 0, "y": 0, "w": 400, "h": 300, "props": {}, "room": {}}]}']], room_of[st.a]], st.a]
+    widgets.a.scroll eq 200.0
+    widgets.a.page.title eq 'Reports'
+
+--- where a ray meets the window is told the host in the page's own
+--- pixels, a press there with it — and felt in the hand
+test the_pointer_on_the_page_is_told_in_the_pages_pixels[]
+    a = _begun[]
+    a.scroll = 300.0
+    st = _step[xr.begin_room[_aimed[a, 200.0, 500.0, _press[]], room_of[a]], a]
+    '@at 200 500' in st.lines
+    '@down 200 500' in st.lines
+    '@up 200 500' in st.lines
+    '@pulse right 0.7 22' in st.lines
+    --- (what the host says is under it is held, and a new thing there is a tick)
+    over = _step[xr.begin_room[_aimed[st.a, 200.0, 500.0, _given['{"t": "hover", "x": 180, "y": 480, "w": 90, "h": 38, "way": "press", "sx": 0, "sy": 1}']], room_of[st.a]], st.a]
+    over.a.over.w eq 90.0
+    over.a.over.sy eq true
+    '@pulse right 0.25 10' in over.lines
+    --- (off the window nothing of the page is pointed at)
+    off = _step[xr.begin_room[_screen[''], room_of[over.a]], over.a]
+    '@away' in off.lines
+
+--- the bar's Pages raises the menu before the window — what the page's
+--- side offers, as buttons — and a press on one is told and puts it away
+test pages_raises_the_menu_and_a_press_goes_there[]
+    a = _begun[]
+    heard_menu = _step[xr.begin_room[_screen[_given[_menu_said[]]], room_of[a]], a]
+    heard_menu.a.menu eq ['Home', 'Reports', 'Jobs']
+    heard_menu.a.current eq 1
+    up = _step[xr.begin_room[_aimed[heard_menu.a, 1290.0, 33.0, _press[]], room_of[heard_menu.a]], heard_menu.a]
+    up.a.menu_open eq true
+    --- (the raised panel is shown and met now, the bar is not)
+    r = room_of[up.a]
+    r.live[2] eq [2200.0, 0.0, 2884.0, 480.0]
+    r.live[1] eq [1100.0, 0.0, 1100.0, 0.0]
+    went = _step[xr.begin_room[_aimed[up.a, 2542.0, 233.0, _press[]], r], up.a]
+    '@menu 1' in went.lines
+    went.a.menu_open eq false
+
+--- a list's choices are raised before the window, and the one pressed is
+--- told; while they are, the pointer says nothing to the page
+test a_choice_asked_is_raised_and_taken[]
+    a = _begun[]
+    said = '{"t": "ask", "kind": "choice", "label": "Side", "words": "", "choices": ["Both", "Long", "Short"], "chosen": 0, "type": "select"}'
+    st = _step[xr.begin_room[_screen[_given[said]], room_of[a]], a]
+    st.a.ask.open eq true
+    st.a.ask.choices eq ['Both', 'Long', 'Short']
+    again = _step[xr.begin_room[_screen[''], room_of[st.a]], st.a]
+    again.a.ask.open eq true
+    len[told[again.a, xr.begin_room[_screen[''], room_of[again.a]]].lines] eq len[again.a.lines]
+    took = _step[xr.begin_room[_aimed[again.a, 2538.0, 233.0, _press[]], room_of[again.a]], again.a]
+    '@chose 1' in took.lines
+    took.a.ask.open eq false
+
+--- words asked for bring up the keyboard by the reader — a panel of its
+--- own, near and leaned back — with a field that has the focus; typing is
+--- told as it is typed
+test words_asked_are_typed_on_the_keyboard_by_the_reader[]
+    a = _begun[]
+    said = '{"t": "ask", "kind": "words", "label": "Symbol", "words": "AP", "choices": [], "chosen": -1, "type": "text"}'
+    st = _step[xr.begin_room[_screen[_given[said]], room_of[a]], a]
+    st.a.ask.open eq true
+    st.a.ask.what eq 'words'
+    r = room_of[st.a]
+    r.live[3] eq [3300.0, 0.0, 3820.0, 370.0]
+    --- (the keyboard stands under the eyes and nearer than the window)
+    c = xr.begin_room[_screen[''], r]
+    board = xr.spot[c, 3560.0, 185.0]
+    board[13] lt 1.0
+    board[14] gt -0.8
+    typed = _step[xr.begin_room[_screen['{"type": "text", "text": "L"}'], room_of[st.a]], st.a]
+    typed.a.ask.words eq 'APL'
+    '@typed "APL"' in typed.lines
+
+--- the window goes where its handle is taken: held, it turns with the
+--- hand's ray about its reader, as far off as it was and facing them; let
+--- go, it stays
+test the_window_goes_where_its_handle_is_taken[]
+    a = _begun[]
+    --- (a frame for the bar to be laid: its handle's box is held)
+    laid_bar = _step[xr.begin_room[_screen[''], room_of[a]], a]
+    laid_bar.a.handle[2] gt 100.0
+    h = laid_bar.a.handle
+    holding = _step[xr.begin_room[_aimed[laid_bar.a, h[0] + h[2] / 2.0, h[1] + h[3] / 2.0, '{"type": "down", "device": "ray", "id": "right", "hand": "right"}'], room_of[laid_bar.a]], laid_bar.a]
+    holding.a.grab.hand eq 'right'
+    --- (the hand turns to where the page's right edge was: the window comes with it)
+    moved_on = _step[xr.begin_room[_aimed[laid_bar.a, 788.0, 277.0, ''], room_of[holding.a]], holding.a]
+    moved_on.a.win.turn gt 0.3
+    w = moved_on.a.win
+    abs[sqrt[w.x * w.x + (w.y - 1.25) * (w.y - 1.25) + w.z * w.z] - 1.75] lt 0.001
+    let_go = _step[xr.begin_room[_aimed[laid_bar.a, 788.0, 277.0, '{"type": "up", "device": "ray", "id": "right", "hand": "right"}'], room_of[moved_on.a]], moved_on.a]
+    let_go.a.grab.hand eq ''
+    let_go.a.win.turn eq moved_on.a.win.turn
+
+--- a press on the page's own ground, carried up, draws the page up with
+--- it — the window shows what was under it — and a grip squeezed takes
+--- the window as the handle does
+test the_page_is_drawn_by_a_press_and_the_window_by_a_grip[]
+    a = _begun[]
+    took = _step[xr.begin_room[_aimed[a, 200.0, 300.0, '{"type": "down", "device": "ray", "id": "right", "hand": "right"}'], room_of[a]], a]
+    took.a.drag[2] eq 1.0
+    took.a.scroll eq 0.0
+    drawn = _step[xr.begin_room[_aimed[took.a, 200.0, 200.0, ''], room_of[took.a]], took.a]
+    abs[drawn.a.scroll - 100.0] lt 0.001
+    --- (a drag: what an app drew under the pointer is not pressed)
+    drawn.a.drag[3] eq 1.0
+    let_go = _step[xr.begin_room[_aimed[took.a, 200.0, 200.0, '{"type": "up", "device": "ray", "id": "right", "hand": "right"}'], room_of[drawn.a]], drawn.a]
+    let_go.a.drag[2] eq 0.0
+    abs[let_go.a.scroll - 100.0] lt 0.001
+    --- (a thing of the page under the pointer is pressed, not the page drawn)
+    over = let_go.a
+    over.over = Over[150.0, 280.0, 100.0, 40.0, 'press', false, false]
+    pressed = _step[xr.begin_room[_aimed[over, 200.0, 300.0, '{"type": "down", "device": "ray", "id": "right", "hand": "right"}'], room_of[over]], over]
+    pressed.a.drag[2] eq 0.0
+    gripped = _step[xr.begin_room[_aimed[let_go.a, 200.0, 300.0, '{"type": "squeeze", "device": "ray", "id": "right", "hand": "right"}'], room_of[let_go.a]], let_go.a]
+    gripped.a.grab.hand eq 'right'
+    freed = _step[xr.begin_room[_aimed[let_go.a, 200.0, 300.0, '{"type": "unsqueeze", "device": "ray", "id": "right", "hand": "right"}'], room_of[gripped.a]], gripped.a]
+    freed.a.grab.hand eq ''
+
+--- where the panels hang is said when it changes: once as the room
+--- stands, and again when the page is scrolled behind its window
+test where_the_panels_hang_is_said_when_it_changes[]
+    a = _begun[]
+    c = xr.begin_room[_screen[''], room_of[a]]
+    remember['window.built.panels', Built['']]
+    said = paneled[c]
+    starts[said, '@panels 4 ']
+    paneled[c] eq ''
+    a.scroll = 120.0
+    starts[paneled[xr.begin_room[_screen[''], room_of[a]]], '@panels 4 ']
+

@@ -1,0 +1,506 @@
+--- Sound: audio a program makes itself, sample by sample, as Tone.js makes
+--- it, and hands to the page to play. A program renders what it means to
+--- hear — synths (`sound.synth`), their envelopes (`sound.envelope`),
+--- filters (`sound.filter`), effects (`sound.effect`, `sound.dynamics`),
+--- where a sound stands around the listener (`sound.channel`) — into
+--- samples, a transport (`sound.transport`) says which notes fall when,
+--- and `play` hands a frame's page the samples that are due:
+---
+---     c = lory.begin[frame]
+---     tune = synth.played[synth.synth[], [synth.hit[0.0, sound.hz['C4'], 0.5, 1.0]], 22050.0]
+---     c = sound.play[c, tune, 0.0]
+---     lory.end[c]
+---
+--- The page only plays: it makes an AudioBuffer of the samples and starts
+--- it `when` seconds from now on its audio clock (the page's `@sound`
+--- call). What is heard is what the program computed, so a test holds the
+--- samples themselves, and `sound.analysis` measures them as Tone's
+--- Analyser and Meter measure what they are given.
+---
+--- This module holds what every part shares: a sound's samples, the call
+--- that plays them, Tone's notation for time (`4n`, `8t`, `1m`, `2:1:0`,
+--- ticks) and pitch (`C4`, `A4`, MIDI numbers), and levels in decibels.
+
+use sys
+use math
+use lory
+
+--- a sound: `rate` samples a second, its left channel's samples (its only
+--- one's where it is mono), its right channel's, and whether it has two
+struct Sound [rate, left, right, stereo]
+
+--- a tempo: beats a minute, beats a bar (a bar's quarter notes: 4 in 4/4,
+--- 3 in 3/4, 3.5 in 7/8) and ticks a beat (192, as Tone's transport counts)
+struct Tempo [bpm, signature, ppq]
+
+--- ---- sounds ----
+
+--- a sound of one channel, its samples a second and its samples
+fn mono[rate, samples]
+    Sound[0.0 + rate, samples, zeros[0], false]
+
+--- a sound of two channels, left and right, of one length
+fn stereo[rate, left, right]
+    Sound[0.0 + rate, left, right, true]
+
+--- how many samples `seconds` take at `rate` a second (to the nearest)
+fn frames_in[rate, seconds]
+    max[0, round[rate * seconds]]
+
+--- a sound of nothing, `seconds` long
+fn silence[rate, seconds]
+    mono[rate, zeros[frames_in[rate, seconds]]]
+
+--- how many samples each channel holds
+fn length_of[s]
+    len[s.left]
+
+--- how long a sound lasts
+fn duration_of[s]
+    len[s.left] / s.rate
+
+--- the left channel's samples (a mono sound's only channel)
+fn left_of[s]
+    s.left
+
+--- the right channel's samples (a mono sound's only channel)
+fn right_of[s]
+    if s.stereo
+        return s.right
+    s.left
+
+--- a sound made to have two channels: a mono one's channel heard on both
+fn widened[s]
+    if s.stereo
+        return s
+    Sound[s.rate, s.left, s.left, true]
+
+--- a sound made to have one channel, as a page's mixer folds two into one:
+--- half of each
+fn narrowed[s]
+    if not s.stereo
+        return s
+    mono[s.rate, (s.left + s.right) * 0.5]
+
+--- a sound made louder or quieter by a factor
+fn scaled[s, gain]
+    if s.stereo
+        return Sound[s.rate, s.left * gain, s.right * gain, true]
+    Sound[s.rate, s.left * gain, s.right, false]
+
+--- samples longer by zeros, to `n`
+fn _grown[xs, n]
+    if len[xs] gte n
+        return xs
+    concat[xs, zeros[n - len[xs]]]
+
+--- two sounds heard together, the second starting `at` seconds into the
+--- first: as long as the longer, of two channels where either has two
+fn mixed_at[a, b, at]
+    skip = frames_in[a.rate, at]
+    n = max[len[a.left], skip + len[b.left]]
+    later_left = _grown[concat[zeros[skip], b.left], n]
+    if not a.stereo and not b.stereo
+        return mono[a.rate, _grown[a.left, n] + later_left]
+    w = widened[a]
+    v = widened[b]
+    later_right = _grown[concat[zeros[skip], v.right], n]
+    stereo[a.rate, _grown[w.left, n] + later_left, _grown[w.right, n] + later_right]
+
+--- two sounds heard together from their starts
+fn mixed[a, b]
+    mixed_at[a, b, 0.0]
+
+--- a sound from `from` seconds to `to` (each within it)
+fn sliced[s, from, to]
+    i = max[0, min[len[s.left], frames_in[s.rate, from]]]
+    j = max[i, min[len[s.left], frames_in[s.rate, to]]]
+    if s.stereo
+        return stereo[s.rate, slice[s.left, i, j], slice[s.right, i, j]]
+    mono[s.rate, slice[s.left, i, j]]
+
+--- a sound played backwards
+fn reversed[s]
+    if s.stereo
+        return stereo[s.rate, reverse[s.left], reverse[s.right]]
+    mono[s.rate, reverse[s.left]]
+
+--- a sound faded in over its first `fade_in` seconds and out over its last
+--- `fade_out`, each a straight ramp of its gain
+fn faded[s, fade_in, fade_out]
+    n = len[s.left]
+    a = min[n, frames_in[s.rate, fade_in]]
+    b = min[n, frames_in[s.rate, fade_out]]
+    gain = zeros[n] + 1.0
+    i = 0
+    while i lt a
+        gain[i] = i / (0.0 + a)
+        i = i + 1
+    i = 0
+    while i lt b
+        gain[n - 1 - i] = min[gain[n - 1 - i], i / (0.0 + b)]
+        i = i + 1
+    if s.stereo
+        return stereo[s.rate, s.left .* gain, s.right .* gain]
+    mono[s.rate, s.left .* gain]
+
+--- the samples of a sound, each channel's in turn at each instant (left,
+--- right, left, …), as the page reads them
+fn interleaved[s]
+    if not s.stereo
+        return s.left
+    flatten[stack[[s.left, s.right], 1]]
+
+--- numbers as a list (what `sys.float_bytes` packs)
+fn _listed[xs]
+    out = for v in xs
+        0.0 + v
+    out
+
+--- the page's call that plays a sound: its rate, its channels, when it
+--- starts (seconds from now on the page's audio clock) and its samples as
+--- little-endian 32-bit floats in base64
+fn call_of[s, when]
+    channels = 1
+    if s.stereo
+        channels = 2
+    packed = sys.base64[sys.float_bytes[_listed[interleaved[s]], 4, true]]
+    ['@sound', str[s.rate], str[channels], str[max[0.0, when]], 'base64f32:`packed`']
+
+--- a sound handed to the page with this frame's drawing, to start `when`
+--- seconds from now (a sound of no samples asks nothing)
+fn play[c, s, when]
+    if len[s.left] eq 0
+        return c
+    lory.ask[c, call_of[s, when]]
+
+--- ---- levels ----
+
+--- the gain a level in decibels stands for (0 dB is 1, -6 dB about a half)
+fn gain_of[db]
+    10.0 ^ (db / 20.0)
+
+--- a gain's level in decibels (none, 0, is -infinity)
+fn db_of[gain]
+    20.0 * (ln[gain] / ln[10.0])
+
+--- the gain of an equal-power fade `x` of the way in (0 to 1): its square
+--- and the other side's sum to one
+fn equal_power[x]
+    sin[x * pi * 0.5]
+
+--- ---- time ----
+
+--- the tempo of `bpm` beats a minute, four to a bar
+fn tempo[bpm]
+    Tempo[0.0 + bpm, 4.0, 192]
+
+--- the tempo of `bpm` beats a minute, `signature` quarter notes to a bar
+fn metered[bpm, signature]
+    Tempo[0.0 + bpm, 0.0 + signature, 192]
+
+--- a time signature as its top and bottom (6 and 8 for 6/8) made a bar's
+--- quarter notes, as Tone's transport takes `[6, 8]`
+fn signature_of[top, bottom]
+    (0.0 + top) / bottom * 4.0
+
+--- how long `beats` quarter notes last at a tempo
+fn beats_to_seconds[beats, t]
+    60.0 / t.bpm * beats
+
+--- a number written in notation (digits, and a fraction after a point)
+fn _number[words]
+    n = float[words]
+    if not n.ok
+        return nan
+    0.0 + n
+
+--- seconds a quarter note lasts at a tempo
+fn _quarter[t]
+    60.0 / t.bpm
+
+--- what words written in Tone's time notation stand for, and whether they
+--- are notation: `[amount, 1.0]`, or `[0.0, 0.0]` where they are not. The
+--- forms are tried in Tone's order — `4hz` a cycle's time, `48i` ticks,
+--- `2m` bars, `4n` a quarter note (`1n` a whole bar, `8n.` dotted), a bare
+--- number, `1.5s`, `8t` a triplet, `2:1:0` bars, beats and sixteenths —
+--- and `beats` says what a beat is in the answer's units, so one reading
+--- serves both seconds (a beat is `60 / bpm` of them) and Tone's Ticks (a
+--- beat is 192 of them, a bare number is ticks, seconds are cut to the
+--- tick)
+fn _reading[words, t, beat, in_ticks]
+    w = trim[words]
+    m = find[w, '(?i)^(\d+(?:\.\d+)?)hz$']
+    if m.ok
+        return [1.0 / _number[m.groups[1]], 1.0]
+    m = find[w, '(?i)^(\d+)i$']
+    if m.ok
+        if in_ticks
+            return [_number[m.groups[1]], 1.0]
+        return [_number[m.groups[1]] * _quarter[t] / t.ppq, 1.0]
+    m = find[w, '(?i)^(\d+)m$']
+    if m.ok
+        return [beat * (_number[m.groups[1]] * t.signature), 1.0]
+    m = find[w, '(?i)^(\d+)n(\.?)$']
+    if m.ok
+        dotted = 1.0
+        if m.groups[2] eq '.'
+            dotted = 1.5
+        k = _number[m.groups[1]]
+        if k eq 1.0
+            return [beat * t.signature * dotted, 1.0]
+        return [beat * (4.0 / k) * dotted, 1.0]
+    m = find[w, '^(\d+(?:\.\d+)?)$']
+    if m.ok
+        if in_ticks
+            return [_number[find[w, '^(\d+)'].groups[1]], 1.0]
+        return [_number[m.groups[1]], 1.0]
+    m = find[w, '^(\d+(?:\.\d+)?)s$']
+    if m.ok
+        if in_ticks
+            return [0.0 + floor[_number[m.groups[1]] / _quarter[t] * t.ppq], 1.0]
+        return [_number[m.groups[1]], 1.0]
+    m = find[w, '(?i)^(\d+)t$']
+    if m.ok
+        return [beat * (8.0 / (_number[m.groups[1]] * 3.0)), 1.0]
+    m = find[w, '^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?):?(\d+(?:\.\d+)?)?$']
+    if m.ok
+        total = 0.0
+        if m.groups[1] ne '0'
+            total = total + beat * (t.signature * _number[m.groups[1]])
+        if m.groups[2] ne '0'
+            total = total + beat * _number[m.groups[2]]
+        if m.groups[3] ne '' and m.groups[3] ne '0'
+            total = total + beat * (_number[m.groups[3]] / 4.0)
+        return [total, 1.0]
+    [0.0, 0.0]
+
+--- how many quarter notes `seconds` hold at a tempo
+fn beats_of_seconds[seconds_in, t]
+    seconds_in / _quarter[t]
+
+--- whether words are Tone's time notation (`4n`, `1m`, `2:1:0`, `0.5`)
+fn is_time[words]
+    _reading[words, tempo[120.0], 0.5, false][1] gt 0.5
+
+--- Tone's time notation as seconds at a tempo (`4n` is half a second at
+--- 120 beats a minute); words that are no notation are no time (NaN).
+--- `+0.5` is half a second after now, as `seconds_after` reads it
+fn seconds[words, t]
+    r = _reading[words, t, _quarter[t], false]
+    if r[1] lt 0.5
+        return nan
+    r[0]
+
+--- a time in notation read against `now`: `+4n` is a quarter note after
+--- it; anything else is the time itself
+fn seconds_after[words, t, now_at]
+    w = trim[words]
+    if starts[w, '+']
+        return now_at + seconds[slice[w, 1, len[w]], t]
+    seconds[w, t]
+
+--- Tone's time notation as ticks at a tempo (`4n` is 192), the seconds it
+--- stands for counted in ticks
+fn ticks_of[words, t]
+    seconds[words, t] / _quarter[t] * t.ppq
+
+--- words read as Tone's Ticks read them, in ticks: notation as
+--- `ticks_of` reads it, but a bare number is whole ticks (`3` is three,
+--- `0.5` none), seconds are cut down to the tick, and `4hz` is a quarter
+--- of a tick (NaN where the words are no notation)
+fn ticks[words, t]
+    r = _reading[words, t, 0.0 + t.ppq, true]
+    if r[1] lt 0.5
+        return nan
+    r[0]
+
+--- ticks as seconds at a tempo
+fn seconds_of_ticks[count, t]
+    count / t.ppq * _quarter[t]
+
+--- seconds as whole ticks at a tempo, as Tone's Ticks count them (cut
+--- down to the tick)
+fn ticks_of_seconds[seconds_in, t]
+    floor[seconds_in / _quarter[t] * t.ppq]
+
+--- a time written as bars, beats and sixteenths (`1:2:0.5`), as Tone's
+--- transport shows its position: quarters kept to four places, a
+--- sixteenth's fraction to three
+fn bars_beats[seconds_in, t]
+    quarters = beats_of_seconds[seconds_in, t]
+    quarters = round[quarters * 10000.0] / 10000.0
+    bars = floor[quarters / t.signature]
+    sixteenths = (quarters - floor[quarters]) * 4.0
+    sixteenths = round[sixteenths * 1000.0] / 1000.0
+    beat = floor[quarters] - floor[floor[quarters] / t.signature] * t.signature
+    '`bars`:`_shown[beat]`:`_shown[sixteenths]`'
+
+--- a number shown as Tone shows one: a whole number without its point
+fn _shown[x]
+    if x eq floor[x]
+        return str[floor[x]]
+    str[x]
+
+--- the note value nearest a time (`4n`, `8t`, `16n.`, `1m`, or `0`), as
+--- Tone's `toNotation` answers
+fn notation_of[seconds_in, t]
+    names = ['1m']
+    for power in range[1, 9]
+        k = 2 ^ power
+        names = push[names, '`k`n.']
+        names = push[names, '`k`n']
+        names = push[names, '`k`t']
+    names = push[names, '0']
+    best = names[0]
+    gap = abs[seconds[best, t] - seconds_in]
+    for name in names
+        d = abs[seconds[name, t] - seconds_in]
+        if d lt gap
+            best = name
+            gap = d
+    best
+
+--- a time moved toward the nearest multiple of a subdivision (`8n`): all
+--- the way at `percent` 1, halfway at 0.5
+fn quantized[seconds_in, subdivision, t, percent]
+    each = seconds[subdivision, t]
+    ideal = round[seconds_in / each] * each
+    seconds_in + (ideal - seconds_in) * percent
+
+--- ---- pitch ----
+
+--- the pitch of A4, the tuning every other note is reckoned from
+fn a4[]
+    440.0
+
+--- a MIDI note number's frequency (69 is A4, 440 Hz; 60 is C4)
+fn hz_of_midi[m]
+    a4[] * 2.0 ^ ((m - 69.0) / 12.0)
+
+--- a frequency's MIDI note number, unrounded (440 Hz is 69)
+fn midi_exact[f]
+    69.0 + 12.0 * log2[f / a4[]]
+
+--- a frequency's MIDI note number, to the nearest note
+fn midi_of_hz[f]
+    round[midi_exact[f]]
+
+--- a letter's semitones above C (`c` 0, `d` 2, … `b` 11)
+fn _letter_step[letter]
+    steps = map['c' = 0, 'd' = 2, 'e' = 4, 'f' = 5, 'g' = 7, 'a' = 9, 'b' = 11]
+    steps[letter]
+
+--- a note's name as semitones above its octave's C: its letter, then each
+--- sharp (`#`) one up, each double sharp (`x`) two, each flat (`b`) one down
+fn _pitch_class[name]
+    letters = split[lower[name], '']
+    step = 0 + _letter_step[letters[0]]
+    for ch in slice[letters, 1, len[letters]]
+        if ch eq '#'
+            step = step + 1
+        if ch eq 'x'
+            step = step + 2
+        if ch eq 'b'
+            step = step - 1
+    step
+
+--- a note's MIDI number from its name and octave (`C4` is 60, `A4` 69,
+--- `Eb3` 51, `B#3` 60), and whether the words name a note
+fn _note_number[words]
+    m = find[trim[words], '(?i)^([a-g]{1}(?:b|#|##|x|bb|###|#x|x#|bbb)?)(-?[0-9]+)']
+    if not m.ok
+        return [0.0, 0.0]
+    [_pitch_class[m.groups[1]] + (_number[m.groups[2]] + 1.0) * 12.0, 1.0]
+
+--- Tone's pitch notation as a frequency: a note (`C4`, `F#5`, `Bb-1`), a
+--- MIDI number (`60midi`), cycles a second (`440hz`, `440`), or a time
+--- whose cycle it is (`4n` is 2 Hz at 120 beats a minute)
+fn hz[words]
+    note_at = _note_number[words]
+    if note_at[1] gt 0.5
+        return hz_of_midi[note_at[0]]
+    m = find[trim[words], '(?i)^(\d+(?:\.\d+)?)midi']
+    if m.ok
+        return hz_of_midi[_number[m.groups[1]]]
+    w = trim[words]
+    m = find[w, '(?i)^(\d+(?:\.\d+)?)hz$']
+    if m.ok
+        return _number[m.groups[1]]
+    m = find[w, '^(\d+(?:\.\d+)?)$']
+    if m.ok
+        return _number[m.groups[1]]
+    1.0 / seconds[w, tempo[120.0]]
+
+--- Tone's pitch notation as a MIDI number, to the nearest note
+fn midi[words]
+    midi_of_hz[hz[words]]
+
+--- the note nearest a frequency, named with sharps (`A4`, `C#5`)
+fn note_name[f]
+    names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    number = round[12.0 * log2[f / a4[]]] + 57
+    octave = floor[number / 12.0]
+    if octave lt 0
+        number = number - 12 * octave
+    '`names[number % 12]``octave`'
+
+--- a frequency moved by semitones (7 is a fifth up, -12 an octave down)
+fn transposed[f, semitones]
+    f * 2.0 ^ (semitones / 12.0)
+
+--- a frequency and the ones the intervals above it make (a chord)
+fn harmonized[f, intervals]
+    out = for k in intervals
+        transposed[f, k]
+    out
+
+--- ---- tests ----
+
+test notation_reads_as_tone_reads_it[]
+    t = tempo[120.0]
+    seconds['4n', t] eq 0.5
+    seconds['8n', t] eq 0.25
+    seconds['1n', t] eq 2.0
+    seconds['4n.', t] eq 0.75
+    abs[seconds['8t', t] - 1.0 / 6.0] lt 0.000000001
+    seconds['1m', t] eq 2.0
+    seconds['2:1:0', t] eq 4.5
+    seconds['192i', t] eq 0.5
+    seconds['4hz', t] eq 0.25
+    seconds['0.5', t] eq 0.5
+    seconds_after['+4n', t, 1.0] eq 1.5
+    ticks_of['4n', t] eq 192.0
+    not is_time['quarter']
+    seconds['1n', metered[120.0, 3.0]] eq 1.5
+
+test pitch_reads_as_tone_reads_it[]
+    hz['A4'] eq 440.0
+    abs[hz['C4'] - 261.6255653005986] lt 0.000000001
+    midi['C4'] eq 60
+    midi['B#3'] eq 60
+    midi['Cb4'] eq 59
+    note_name[440.0] eq 'A4'
+    note_name[hz['C#5']] eq 'C#5'
+    abs[transposed[440.0, 12.0] - 880.0] lt 0.000000001
+
+test sounds_mix_from_where_each_starts[]
+    a = mono[10.0, zeros[4] + 1.0]
+    b = mono[10.0, zeros[3] + 2.0]
+    m = mixed_at[a, b, 0.2]
+    length_of[m] eq 5
+    m.left eq [1.0, 1.0, 3.0, 3.0, 2.0]
+    w = mixed[a, stereo[10.0, zeros[2] + 1.0, zeros[2] - 1.0]]
+    w.stereo
+    w.right eq [0.0, 0.0, 1.0, 1.0]
+
+test a_sound_is_asked_of_the_page_with_its_samples[]
+    c = lory.begin[json['{"t": 0, "width": 400, "height": 300, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 400, "height": 300, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+    c = play[c, stereo[8000.0, zeros[2] + 1.0, zeros[2] - 0.5], 0.25]
+    asked = c.asks[0]
+    asked[0] eq '@sound'
+    asked[1] eq '8000'
+    asked[2] eq '2'
+    asked[3] eq '0.25'
+    asked[4] eq 'base64f32:AACAPwAAAL8AAIA/AAAAvw=='
+    len[play[c, silence[8000.0, 0.0], 0.0].asks] eq 1

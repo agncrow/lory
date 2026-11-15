@@ -1,0 +1,219 @@
+--- What lory.navigation and lory.display compute on fixed inputs, written
+--- out, to diff the interpreter's run against the compiled program's: the
+--- pages, crumbs and steps shown, an app bar through a scroll, chips
+--- chosen, the animations' numbers, shortcuts and highlights, a gallery's
+--- places, and a page of them laid out, pressed and keyed (its boxes, what
+--- it told, how much it drew).
+---
+---     tests/modes.sh crow tests/modes/display.co
+use lory
+use lory.gui
+use lory.display
+use lory.navigation
+
+fn _digits[x]
+    fmt[x, decimals = 17]
+
+fn _ints[xs]
+    out = slice[[''], 0, 0]
+    for x in xs
+        out = push[out, str[x]]
+    join[out, ' ']
+
+fn _floats[xs]
+    out = slice[[''], 0, 0]
+    for x in xs
+        out = push[out, _digits[x]]
+    join[out, ' ']
+
+fn _texts[xs]
+    join[xs, ' ']
+
+fn _spans[spans]
+    out = slice[[''], 0, 0]
+    for s in spans
+        out = push[out, '`s[0]`-`s[1]`']
+    join[out, ' ']
+
+fn _frame[t, given]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 1400, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 1400, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']]
+
+fn _press_at[b]
+    x = b[0] + b[2] / 2.0
+    y = b[1] + b[3] / 2.0
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _key[name]
+    '[{"type": "key", "key": "`name`", "code": "`name`", "shift": false}]'
+
+fn _told[shown, what]
+    for e in shown.events
+        log['`what` told `e.id` `e.act` “`e.words`” `e.num`']
+
+fn _boxes[shown, ids, what]
+    for id in ids
+        if id in shown.boxes
+            b = shown.boxes[id]
+            log['`what` box `id`: `_digits[b[0]]` `_digits[b[1]]` `_digits[b[2]]` `_digits[b[3]]`']
+        else
+            log['`what` box `id`: none']
+
+--- ---- pages, crumbs and steps ----
+
+omega = 'Ωq'
+zhe = 'Жz'
+
+for length in [1, 5, 7, 12, 30]
+    for page in [1, 3, 6, 12, 30]
+        if page lte length
+            for visible in [0, 3, 5, 7]
+                items = navigation.pages_shown[length, page, visible]
+                off = navigation.arrows_off[length, page]
+                log['pages `length` at `page` by `visible`: `_ints[items]` current `navigation.page_current[items, page]` off `off[0]` `off[1]`']
+            for wide in [180.0, 300.0, 520.0]
+                log['fitted `length` at `page` in `wide`: `_ints[navigation.pages_fitted[length, page, wide]]` with ends `_ints[navigation.pages_fitted[length, page, wide, true]]`']
+for total in [0, 9, 95, 250]
+    for page in [1, 4, 11]
+        for centered in [false, true]
+            buttons = join[navigation.page_buttons[total, 10, page, 5, centered], ' ']
+            before = navigation.page_more[total, 10, page, 'prev', 5, centered]
+            after = navigation.page_more[total, 10, page, 'next', 5, centered]
+            log['toast `total` at `page` centred `centered`: `buttons` more `before` `after` last `navigation.last_page[total, 10]`']
+for count in [1, 3, 8, 9, 12]
+    for most in [0, 4, 8]
+        for around in [[1, 1], [2, 1], [0, 2]]
+            log['crumbs `count` most `most` around `around[0]` `around[1]`: `_ints[navigation.crumbs_shown[count, most, around[0], around[1]]]` open `_ints[navigation.crumbs_shown[count, most, around[0], around[1], true]]`']
+for active in [0, 2, 3]
+    states = slice[[''], 0, 0]
+    pressable = slice[[''], 0, 0]
+    loose = slice[[''], 0, 0]
+    i = 0
+    while i lt 5
+        states = push[states, navigation.step_state[i, active, [0, 1], [3], [4]]]
+        pressable = push[pressable, str[navigation.step_pressable[i, active, [0, 1], true, true, [4]]]]
+        loose = push[loose, str[navigation.step_pressable[i, active, [0, 1], true, false, [4]]]]
+        i = i + 1
+    log['steps at `active`: `_texts[states]` pressable `_texts[pressable]` unlinear `_texts[loose]`']
+
+--- ---- app bars through a scroll ----
+
+for behaviour in ['hide', 'fully-hide', 'hide inverted', 'collapse', 'collapse inverted', 'elevate', 'elevate inverted', 'fade-image', 'fade-image inverted']
+    s = navigation.unscrolled[]
+    for top in [0.0, 120.0, 340.0, 700.0, 1650.0, 1600.0, 1200.0, 250.0, 3.0]
+        s = navigation.bar_scrolled[s, top, 400.0, 2050.0, behaviour, 300.0, 64.0, 48.0]
+        log['bar `behaviour` at `top`: up `s.up` bottom `s.bottom` reached `s.reached` shown `s.shown` room `_digits[s.room]` lifted `_digits[s.lifted]` collapsed `s.collapsed` flat `s.flat` opacity `_digits[s.opacity]`']
+for density in ['', 'comfortable', 'compact']
+    log['bar tall `density`: `_digits[navigation.bar_tall[density]]` prominent `_digits[navigation.bar_tall[density, true]]`']
+for count in [2, 3, 5]
+    for grow in [false, true]
+        narrow = navigation.place_wide[omega, grow, 360.0, count]
+        broad = navigation.place_wide[omega, grow, 900.0, count]
+        log['place wide `count` grow `grow`: `_digits[narrow]` `_digits[broad]`']
+
+--- ---- chips, avatars, badges ----
+
+struct Pick [picked, multiple, mandatory, most]
+
+chosen = ['b']
+for step in [Pick['a', false, false, 0], Pick['b', false, true, 0], Pick['c', true, false, 2], Pick['a', true, false, 2], Pick['d', true, false, 2], Pick['c', true, true, 0]]
+    chosen = display.chips_chosen[chosen, step.picked, step.multiple, step.mandatory, step.most]
+    log['chips after `step.picked`: `_texts[chosen]`']
+for size in ['x_small', 'small', 'default', 'large', 'x_large']
+    s = display.chip_sizes[size]
+    plain = display.chip_wide[zhe, size]
+    closing = display.chip_wide[zhe, size, true]
+    ticked = display.chip_wide[zhe, size, false, true]
+    log['chip `size`: `_floats[s]` wide `_digits[plain]` closable `_digits[closing]` ticked `_digits[ticked]`']
+for state in ['idle', 'loading', 'loaded', 'error']
+    for t in [0.0, 300.0, 700.0]
+        log['fallback `state` at `t`: `display.fallback_shown[state, 100.0, t, 500.0]` undelayed `display.fallback_shown[state, 100.0, t, 0.0]`']
+for words in ['', '3', '42', '100+']
+    log['badge “`words`”: `_floats[display.badge_place[words]]` dotted `_floats[display.badge_place[words, true]]`']
+
+--- ---- the animations ----
+
+for t in [0.0, 50.0, 233.0, 700.0, 777.0, 1399.0, 1400.0, 2100.0]
+    p = display.spin_parts[t]
+    log['at `t`: leaves `_floats[display.spinner_leaves[t]]`']
+    log['at `t`: spin `_floats[p]` circle `_floats[display.circle_spin[t]]` pulse `_digits[display.skeleton_pulse[t]]` shimmer `_digits[display.shimmer_at[t]]`']
+    dot = slice[[''], 0, 0]
+    i = 0
+    while i lt 3
+        dot = push[dot, '`_digits[display.dot_lift[t, i]]`/`_digits[display.dot_pulse[t, i]]`/`_digits[display.ripple_ring[t, i]]`']
+        i = i + 1
+    log['at `t`: dots `_texts[dot]`']
+for value in [0.0, 12.5, 50.0, 99.0, 100.0]
+    log['circle `value`: `_floats[display.circle_geometry[value, 32.0, 4.0, 0.0, false]]` turned `_floats[display.circle_geometry[value, 48.0, 6.0, 90.0, true]]`']
+
+--- ---- shortcuts and highlights ----
+
+for shortcut in ['cmd+k', 'ctrl+shift+p', 'alt+arrowup', 'meta+enter-escape', 'shift+/', 'ctrl+k ctrl+s']
+    for platform in ['mac', 'pc']
+        parts = slice[[''], 0, 0]
+        for caps in display.hotkey_parts[shortcut, platform, 'symbol']
+            each = slice[[''], 0, 0]
+            for cap in caps
+                each = push[each, '`cap.part`:`cap.words`:`cap.shown`']
+            parts = push[parts, join[each, ',']]
+        shown = join[parts, ' | ']
+        label = display.hotkey_label[shortcut, platform]
+        symbols = display.hotkey_label[shortcut, platform, 'symbol']
+        log['hotkey `shortcut` on `platform`: `shown` label “`label`” symbols “`symbols`”']
+for case in [['The quick brown fox', 'o'], ['Crème brûlée, creme brulee', 'creme'], ['aaaa', 'aa'], ['Lory and lory', 'LORY']]
+    words = case[0]
+    term = case[1]
+    folded = display.term_ranges[words, term, true, false, 'true']
+    log['highlight `term` in `words`: `_spans[display.term_ranges[words, term]]` case `_spans[display.term_ranges[words, term, true]]` all `_spans[display.term_ranges[words, term, true, true]]` accents `_spans[folded]`']
+merged = display.ranges_merged[[[0, 3], [2, 5], [7, 8], [8, 9], [12, 12]]]
+log['merged: `_spans[merged]`']
+two = display.highlight_ranges['one two three two one', ['one', 'two'], true, true]
+log['two terms: `_spans[two]`']
+
+--- ---- a gallery's places, the lightbox's steps, sizes ----
+
+for arrangement in ['grid', 'strip', 'ring', 'stack']
+    for i in [0, 1, 4]
+        log['gallery `arrangement` `i`: `_floats[display.gallery_place[arrangement, i, 6, 3, 600.0, 320.0]]` shifted `_floats[display.gallery_place[arrangement, i, 6, 3, 600.0, 320.0, 8.0, 0.5]]`']
+    log['gallery `arrangement` tall `_digits[display.gallery_tall[arrangement, 7, 3, 600.0, 320.0]]`']
+between = display.box_between[[0.0, 0.0, 10.0, 10.0], [100.0, 50.0, 20.0, 40.0], 0.25]
+log['between `_floats[between]` moved `_digits[display.gallery_moved[100.0, 325.0]]`']
+for key in ['ArrowRight', 'ArrowLeft', 'Home', 'End', 'x']
+    log['lightbox `key`: `display.lightbox_step[0, 5, key]` `display.lightbox_step[4, 5, key]`']
+for unit in ['medium rectangle', 'leaderboard', 'mobile banner', 'wide skyscraper', 'billboard']
+    log['advert `unit`: `_floats[display.advert_size[unit]]` shown at 400 `display.advert_shown[unit, 400.0]` at 1200 `display.advert_shown[unit, 1200.0]`']
+for kind in ['line', 'paragraph', 'header', 'image', 'card', 'list']
+    log['bones `kind`: `_digits[display.bones_tall[kind]]`']
+log['placeholder widths `_floats[display.placeholder_widths[6]]`']
+log['spinner turns `_floats[display.spinner_turns[]]` opacity `_digits[display.spinner_opacity[]]`']
+
+--- ---- a page laid out, pressed and keyed ----
+
+fn _page[page, chosen, step]
+    bar = navigation.app_bar['bar', 'Ωmega', [navigation.tool_button['bar:find', 'Find', 'search']], navigation.unscrolled[], 'menu']
+    trail = navigation.breadcrumbs['trail', ['Home', 'Ψlibrary', 'Data', 'Ωnow'], '/', 3]
+    steps = navigation.stepper['steps', ['Cart', 'Ship', 'Pay'], step, [0]]
+    pages = navigation.pagination['pages', 12, page, 5]
+    chips = display.chip_group['tags', ['Жa', 'Жb', 'Жc'], chosen, true]
+    people = display.avatar_group['people', ['', '', ''], ['AB', 'CD', 'EF'], 2]
+    times = display.timeline['times', ['Ωone', 'Ωtwo'], ['first', 'second'], ['9:00', '10:00'], ['accent', 'success']]
+    cards = display.card[[display.statistic['42', 'Ψanswers']], 'card', 'Ωcard', 'sub']
+    loading = gui.row[[display.spinner[], display.skeleton_of['line', 200.0], display.circular[40.0]]]
+    gui.column[[bar, trail, steps, pages, chips, people, times, cards, loading]]
+
+ids = ['bar', 'bar:lead', 'bar:find', 'trail', 'trail:0', 'trail:more', 'trail:3', 'steps:0', 'steps:1', 'pages', 'pages:prev', 'pages:p2', 'pages:next', 'tags', 'tags:0', 'tags:2', 'times', 'card']
+first = gui.show[_frame[0, '[]'], _page[1, ['Жa'], 1]]
+_boxes[first, ids, 'first']
+log['first drew `len[first.canvas.verts]` vertices']
+again = gui.show[_frame[16, '[]'], _page[1, ['Жa'], 1]]
+log['again drew `len[again.canvas.verts]` vertices']
+for id in ['pages:next', 'trail:more', 'tags:2', 'steps:0', 'bar:lead']
+    if id in again.boxes
+        pressed = gui.show[_frame[32, _press_at[again.boxes[id]]], _page[1, ['Жa'], 1]]
+        _told[pressed, 'press `id`']
+held = gui.show[_frame[48, _press_at[again.boxes['pages:p2']]], _page[1, ['Жa'], 1]]
+_told[held, 'press pages:p2']
+keyed = gui.show[_frame[56, _key['ArrowRight']], _page[2, ['Жa', 'Жc'], 2]]
+_told[keyed, 'key on pages']
+after = gui.show[_frame[64, '[]'], _page[2, ['Жa', 'Жc'], 2]]
+_boxes[after, ['trail:1', 'trail:2', 'pages:p3', 'tags:1'], 'after']
+log['after drew `len[after.canvas.verts]` vertices']

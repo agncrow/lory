@@ -1,0 +1,29 @@
+--- Sound at work outside a browser, with the same output in both modes
+--- (`crow test --packages` runs this interpreted and compiled and compares
+--- the two): a bar of a sequence on the transport, each step's note
+--- rendered by a synth from when the transport fires it, mixed, put
+--- through a feedback delay, and measured; what a page would be handed
+--- for it; and where a note to the listener's right is heard. Nothing
+--- here needs a page.
+use math
+use sound
+use transport
+use synth
+use effect
+use analysis
+use channel
+
+rate = 8000.0
+tr = transport.sequence[transport.transport[120.0], 0, 'C4 [E4 G4] . C5', '8n', '0']
+hits = for f in transport.fired[tr, 0.0, 0.5]
+    synth.hit[f.time, sound.hz[f.value], 0.1, 0.8]
+for h in hits
+    log['hit at `h.at` s: `sound.note_name[h.hz]` (`h.hz` Hz)']
+tune = synth.played[synth.fm_synth[], hits, rate]
+echoed = effect.applied_over[effect.with_wet[effect.with_delay[effect.feedback_delay[], 0.125, 0.4], 0.5], tune, 0.0, 0.75]
+m = analysis.measure_of[echoed, 0.0, 0.2, sound.hz['C4']]
+log['the bar: `len[echoed.left]` samples, level `m.level` dB, fundamental `m.fundamental` Hz']
+call = sound.call_of[sound.sliced[echoed, 0.0, 0.01], 0.25]
+log['handed to the page: `call[0]` at `call[1]` a second, `call[2]` channel(s), `call[3]` s from now']
+g = channel.gains_of[channel.place[1.0, 0.0, -1.0], channel.listener[]]
+log['a note ahead and to the right is heard `g[0]` left and `g[1]` right']

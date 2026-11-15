@@ -1,0 +1,659 @@
+--- What a pointer finds on a laid chart, as Chart.js finds it: the marks
+--- each interaction mode picks at a point (index, dataset, point,
+--- nearest, x, y; only those under the pointer or the nearest; measured
+--- along x, along y, both, or round a centre), the tooltip that tells of
+--- them (its title and lines, its size, where it stands and which way its
+--- caret points), and what a click on a legend item hides or shows.
+---
+--- These are Chart.js 4.5.1's interaction modes, tooltip and legend
+--- rules, read from it and written anew (see charts_model.co).
+use math
+use lory
+use charts_model
+use charts_scales
+use charts_layout
+use charts_marks
+
+--- a mark found: its dataset and its place there
+struct Hit [set, index]
+
+--- a tooltip as it stands: whether it is shown, the marks it tells of,
+--- its title's lines and its body's (one for each mark, '' for none);
+--- its box (left, top, width, height), the point its caret points at,
+--- and which way it leans from it (`x_align`: left, center, right;
+--- `y_align`: top, center, bottom)
+struct Told [shown, hits, title, lines, x, y, width, height, caret_x, caret_y, x_align, y_align]
+
+fn _no_hits[]
+    slice[[Hit[0, 0]], 0, 0]
+
+fn _no_words[]
+    slice[[''], 0, 0]
+
+--- ---- the modes ----
+
+--- the marks the interaction `mode` finds at the pointer (`x`, `y`):
+--- 'index' those at the same place in every dataset, 'dataset' all of
+--- one dataset, 'point' those under the pointer, 'nearest' the nearest,
+--- 'x' and 'y' those level with it; `intersect`: only where the pointer
+--- is over a mark; `axis` how distance is measured ('x', 'y', 'xy', 'r';
+--- '' as the mode measures it)
+fn picked[ch, laid, layers, x, y, mode, intersect, axis]
+    ps = charts_scales.parsed_of[ch, laid.scales]
+    _picked[ch, laid, ps, layers, x, y, mode, intersect, axis]
+
+--- the marks the chart's own interaction finds at the pointer (none
+--- where the pointer is off its area): those drawn as under the pointer
+fn hovered[ch, laid, layers, x, y]
+    if not chart_in_area[ch, laid, x, y]
+        return _no_hits[]
+    picked[ch, laid, layers, x, y, ch.mode, ch.intersect, ch.axis]
+
+fn _picked[ch, laid, ps, layers, x, y, mode, intersect, axis0]
+    axis = axis0
+    if axis eq ''
+        axis = 'xy'
+        if mode eq 'index'
+            axis = 'x'
+    if mode eq 'x' or mode eq 'y'
+        return _level[ch, laid, ps, layers, x, y, mode, intersect]
+    if mode eq 'point'
+        return _under[ch, laid, ps, layers, x, y, axis]
+    if mode eq 'nearest'
+        return _nearest[ch, laid, ps, layers, x, y, axis, intersect]
+    found = _nearest[ch, laid, ps, layers, x, y, axis, false]
+    if intersect
+        found = _under[ch, laid, ps, layers, x, y, axis]
+    if len[found] eq 0
+        return found
+    out = _no_hits[]
+    if mode eq 'dataset'
+        d = found[0].set
+        j = 0
+        while j lt len[layers[d].marks]
+            out = push[out, Hit[d, j]]
+            j = j + 1
+        return out
+    j = found[0].index
+    order = charts_model.sorted_sets[ch, true]
+    k = 0
+    while k lt len[order]
+        marks = layers[order[k]].marks
+        if j lt len[marks] and not marks[j].skip
+            out = push[out, Hit[order[k], j]]
+        k = k + 1
+    out
+
+--- the marks under the pointer (none where it is off the area)
+fn _under[ch, laid, ps, layers, x, y, axis]
+    out = _no_hits[]
+    if not chart_in_area[ch, laid, x, y]
+        return out
+    order = charts_model.sorted_sets[ch, true]
+    k = 0
+    while k lt len[order]
+        d = order[k]
+        marks = layers[d].marks
+        span = _candidates[ch, laid, ps, layers, d, axis, x, y, true]
+        j = span[0]
+        while j lte span[1]
+            m = marks[j]
+            if not m.skip and in_area[m.x, m.y, laid.area, 0.0] and in_range[ch, m, x, y]
+                out = push[out, Hit[d, j]]
+            j = j + 1
+        k = k + 1
+    out
+
+--- the marks nearest the pointer (those as near as each other), measured
+--- along `axis`; round a centre (`axis` 'r', not only under the pointer)
+--- the arcs whose turn the pointer is within
+fn _nearest[ch, laid, ps, layers, x, y, axis, intersect]
+    out = _no_hits[]
+    if not chart_in_area[ch, laid, x, y]
+        return out
+    by_turn = axis eq 'r' and not intersect
+    along_x = 'x' in axis
+    along_y = 'y' in axis
+    least = inf
+    order = charts_model.sorted_sets[ch, true]
+    k = 0
+    while k lt len[order]
+        d = order[k]
+        marks = layers[d].marks
+        span = _candidates[ch, laid, ps, layers, d, axis, x, y, false]
+        j = span[0]
+        while j lte span[1]
+            m = marks[j]
+            if not m.skip
+                if by_turn
+                    if m.what eq 'arc' and charts_model.angle_between[_angle_from[m, x, y], m.start_angle, m.end_angle, false]
+                        out = push[out, Hit[d, j]]
+                else
+                    inside = in_range[ch, m, x, y]
+                    c = centre_of[ch, m]
+                    if (inside or not intersect) and (inside or chart_in_area[ch, laid, c[0], c[1]])
+                        dx = 0.0
+                        dy = 0.0
+                        if along_x
+                            dx = abs[x - c[0]]
+                        if along_y
+                            dy = abs[y - c[1]]
+                        distance = sqrt[dx ^ 2.0 + dy ^ 2.0]
+                        if distance lt least
+                            out = [Hit[d, j]]
+                            least = distance
+                        else if distance eq least
+                            out = push[out, Hit[d, j]]
+            j = j + 1
+        k = k + 1
+    out
+
+--- the marks level with the pointer along `way` ('x': above or below
+--- it, 'y': beside it); `intersect`: none unless one is under it
+fn _level[ch, laid, ps, layers, x, y, way, intersect]
+    out = _no_hits[]
+    over = false
+    order = charts_model.sorted_sets[ch, true]
+    k = 0
+    while k lt len[order]
+        d = order[k]
+        marks = layers[d].marks
+        span = _candidates[ch, laid, ps, layers, d, way, x, y, false]
+        j = span[0]
+        while j lte span[1]
+            m = marks[j]
+            if not m.skip and _level_with[m, x, y, way]
+                out = push[out, Hit[d, j]]
+                over = over or in_range[ch, m, x, y]
+            j = j + 1
+        k = k + 1
+    if intersect and not over
+        return _no_hits[]
+    out
+
+--- the run of a dataset's marks worth looking at: where its marks stand
+--- in order along the axis measured, those either side of the pointer
+--- (found by halving; under the pointer, those within the first mark's
+--- reach of it), else all of them
+fn _candidates[ch, laid, ps, layers, d, axis, x, y, intersect]
+    marks = layers[d].marks
+    n = len[marks]
+    p = ps[d]
+    whole = [0, n - 1]
+    if n eq 0 or not p.sorted or axis eq 'r' or not _cartesian[p.form]
+        return whole
+    ki = charts_scales.scale_at[laid.scales, p.i_id]
+    if ki lt 0
+        return whole
+    isc = laid.scales[ki]
+    if isc.axis ne axis
+        return whole
+    value = x
+    if axis eq 'y'
+        value = y
+    back = isc.reverse_pixels
+    s = ch.sets[d]
+    if not intersect
+        span = _lookup_marks[marks, axis, value, back]
+        if s.span_gaps gt 0.0 and (p.form eq 'line' or s.show_line)
+            lo = span[0]
+            while lo gt 0 and p.vvs[lo] ne p.vvs[lo]
+                lo = lo - 1
+            if p.vvs[lo] ne p.vvs[lo]
+                lo = span[0]
+            hi = span[1]
+            while hi lt n - 1 and p.vvs[hi] ne p.vvs[hi]
+                hi = hi + 1
+            if p.vvs[hi] ne p.vvs[hi]
+                hi = span[1]
+            return [lo, hi]
+        return span
+    if not _shared[s, p.form]
+        return whole
+    reach = _reach_of[marks[0], axis]
+    a = _lookup_marks[marks, axis, value - reach, back]
+    b = _lookup_marks[marks, axis, value + reach, back]
+    [a[0], b[1]]
+
+fn _cartesian[form]
+    form eq 'bar' or form eq 'line' or form eq 'scatter' or form eq 'bubble'
+
+--- whether a dataset's marks share one style (Chart.js then finds them
+--- by halving): none whose colours or radii differ value by value
+fn _shared[s, form]
+    form ne 'bubble' and len[s.fills] lte 1 and len[s.edges] lte 1 and len[s.hover_fills] lte 1 and len[s.hover_edges] lte 1
+
+--- how far from its middle a mark reaches along an axis
+fn _reach_of[m, axis]
+    if m.what eq 'bar'
+        if axis eq 'x'
+            return m.width / 2.0
+        return m.height / 2.0
+    m.radius + m.reach
+
+--- the two places either side of `value` among the marks, by where they
+--- stand along `axis` (`back`: they stand in falling order)
+fn _lookup_marks[marks, axis, value, back]
+    lo = 0
+    hi = len[marks] - 1
+    while hi - lo gt 1
+        mid = (lo + hi) / 2
+        v = marks[mid].x
+        if axis eq 'y'
+            v = marks[mid].y
+        below = v lt value
+        if back
+            below = v gte value
+        if below
+            lo = mid
+        else
+            hi = mid
+    [lo, hi]
+
+--- ---- one mark and the pointer ----
+
+--- whether the pointer is over the mark: within a point's reach, inside
+--- a bar, within an arc's turn and ring
+fn in_range[ch, m, x, y]
+    if m.what eq 'point'
+        return (x - m.x) ^ 2.0 + (y - m.y) ^ 2.0 lt (m.reach + m.radius) ^ 2.0
+    if m.what eq 'bar'
+        b = bar_bounds[m]
+        return charts_model.between[x, b[0], b[2]] and charts_model.between[y, b[1], b[3]]
+    s = ch.sets[m.set]
+    dx = x - m.x
+    dy = y - m.y
+    distance = sqrt[dx * dx + dy * dy]
+    angle = _angle_from[m, x, y]
+    adjust = (s.spacing + s.edge_width) / 2.0
+    sweep = m.circumference
+    if sweep ne sweep
+        sweep = m.end_angle - m.start_angle
+    turned = charts_model.angle_between[angle, m.start_angle, m.end_angle, false] and m.start_angle ne m.end_angle
+    (sweep gte pi * 2.0 or turned) and charts_model.between[distance, m.inner + adjust, m.outer + adjust]
+
+--- the angle of the pointer from the mark's centre (radians, from the
+--- right turning clockwise, from a quarter turn back)
+fn _angle_from[m, x, y]
+    angle = atan2[y - m.y, x - m.x]
+    if angle lt -0.5 * pi
+        angle = angle + pi * 2.0
+    angle
+
+--- whether the pointer is level with the mark along `way`
+fn _level_with[m, x, y, way]
+    if m.what eq 'point'
+        if way eq 'x'
+            return abs[x - m.x] lt m.radius + m.reach
+        return abs[y - m.y] lt m.radius + m.reach
+    if m.what eq 'bar'
+        b = bar_bounds[m]
+        if way eq 'x'
+            return charts_model.between[x, b[0], b[2]]
+        return charts_model.between[y, b[1], b[3]]
+    false
+
+--- a bar's box: left, top, right, bottom
+fn bar_bounds[m]
+    if m.horizontal
+        half = m.height / 2.0
+        return [min[m.x, m.base], m.y - half, max[m.x, m.base], m.y + half]
+    half = m.width / 2.0
+    [m.x - half, min[m.y, m.base], m.x + half, max[m.y, m.base]]
+
+--- a mark's middle: a point, the middle of a bar, the middle of an arc's
+--- piece of its ring
+fn centre_of[ch, m]
+    if m.what eq 'point'
+        return [m.x, m.y]
+    if m.what eq 'bar'
+        if m.horizontal
+            return [(m.x + m.base) / 2.0, m.y]
+        return [m.x, (m.y + m.base) / 2.0]
+    s = ch.sets[m.set]
+    half_angle = (m.start_angle + m.end_angle) / 2.0
+    half_radius = (m.inner + m.outer + s.spacing + m.offset) / 2.0
+    [m.x + cos[half_angle] * half_radius, m.y + sin[half_angle] * half_radius]
+
+--- where a tooltip about the mark points: a point, a bar's end, the
+--- middle of an arc
+fn tip_point[ch, m]
+    if m.what eq 'arc'
+        return centre_of[ch, m]
+    [m.x, m.y]
+
+--- whether a point is within the area (left, top, right, bottom), `margin`
+--- about it (none: half a pixel)
+fn in_area[x, y, area, margin0]
+    margin = margin0
+    if margin eq 0.0
+        margin = 0.5
+    x gt area[0] - margin and x lt area[2] + margin and y gt area[1] - margin and y lt area[3] + margin
+
+--- whether a point is within the chart's area, its points' overflow about
+--- it
+fn chart_in_area[ch, laid, x, y]
+    in_area[x, y, laid.area, laid.overflow]
+
+--- ---- the tooltip ----
+
+--- the chart's tooltip with the pointer at (`x`, `y`), its words measured
+--- with `pen`
+fn told[ch, laid, layers, x, y, pen]
+    ps = charts_scales.parsed_of[ch, laid.scales]
+    t = ch.tip
+    out = Told[false, _no_hits[], _no_words[], _no_words[], nan, nan, nan, nan, nan, nan, '', '']
+    if not t.shown or not chart_in_area[ch, laid, x, y]
+        return out
+    mode = tip_mode[ch]
+    hits = _picked[ch, laid, ps, layers, x, y, mode, tip_intersect[ch], tip_axis[ch]]
+    if len[hits] eq 0
+        return out
+    at = _tip_at[ch, layers, hits, x, y]
+    if at[0] ne at[0]
+        return out
+    title = _title_of[ch, laid, ps, hits, mode]
+    lines = _no_words[]
+    i = 0
+    while i lt len[hits]
+        lines = push[lines, _line_of[ch, laid, ps, hits[i], mode]]
+        i = i + 1
+    size = tip_size[t, title, lines, pen]
+    width = size[0]
+    height = size[1]
+    y_align = t.y_align
+    if y_align eq ''
+        y_align = 'center'
+        if at[1] lt height / 2.0
+            y_align = 'top'
+        else if at[1] gt laid.height - height / 2.0
+            y_align = 'bottom'
+    x_align = t.x_align
+    if x_align eq ''
+        x_align = _x_align_of[t, laid.area, laid.width, at, width, y_align]
+    box = _box_at[t, laid.width, laid.height, at, width, height, x_align, y_align]
+    Told[true, hits, title, lines, box[0], box[1], width, height, at[0], at[1], x_align, y_align]
+
+--- the mode, intersecting and axis the tooltip finds marks by: its own,
+--- else the chart's
+fn tip_mode[ch]
+    if ch.tip.mode ne ''
+        return ch.tip.mode
+    ch.mode
+
+fn tip_intersect[ch]
+    if ch.tip.intersect eq ''
+        return ch.intersect
+    ch.tip.intersect eq 'true'
+
+fn tip_axis[ch]
+    if ch.tip.axis ne ''
+        return ch.tip.axis
+    ch.axis
+
+--- where the tooltip's caret points: the mean of its marks' places (each
+--- different x counted once), or the place of the one nearest the pointer
+fn _tip_at[ch, layers, hits, x, y]
+    if ch.tip.position eq 'nearest'
+        best = inf
+        fx = x
+        fy = y
+        i = 0
+        while i lt len[hits]
+            m = layers[hits[i].set].marks[hits[i].index]
+            if charts_model.finite[m.x] and charts_model.finite[m.y]
+                c = centre_of[ch, m]
+                d = sqrt[(x - c[0]) ^ 2.0 + (y - c[1]) ^ 2.0]
+                if d lt best
+                    best = d
+                    p = tip_point[ch, m]
+                    fx = p[0]
+                    fy = p[1]
+            i = i + 1
+        return [fx, fy]
+    xs = charts_model.no_numbers[]
+    sum_y = 0.0
+    count = 0
+    i = 0
+    while i lt len[hits]
+        m = layers[hits[i].set].marks[hits[i].index]
+        if charts_model.finite[m.x] and charts_model.finite[m.y]
+            p = tip_point[ch, m]
+            px = p[0]
+            if not _has_number[xs, px]
+                xs = push[xs, px]
+            sum_y = sum_y + p[1]
+            count = count + 1
+        i = i + 1
+    if count eq 0
+        return [nan, nan]
+    sum_x = xs[0]
+    i = 1
+    while i lt len[xs]
+        sum_x = sum_x + xs[i]
+        i = i + 1
+    [sum_x / (0.0 + len[xs]), sum_y / (0.0 + count)]
+
+fn _has_number[vs, v]
+    for w in vs
+        if w eq v
+            return true
+    false
+
+--- the tooltip's title: the label of the first mark's place (its
+--- dataset's name in 'dataset' mode); none where that is empty
+fn _title_of[ch, laid, ps, hits, mode]
+    out = _no_words[]
+    h = hits[0]
+    words = ''
+    if mode eq 'dataset'
+        words = ch.sets[h.set].label
+    else
+        lv = label_and_value[ch, laid, ps, h.set, h.index]
+        words = lv[0]
+        if words eq '' and h.index lt len[ch.labels]
+            words = ch.labels[h.index]
+    if words ne ''
+        out = push[out, words]
+    out
+
+--- the tooltip's line about a mark: its dataset's name and its value
+fn _line_of[ch, laid, ps, h, mode]
+    lv = label_and_value[ch, laid, ps, h.set, h.index]
+    if mode eq 'dataset'
+        return '`lv[0]`: `lv[1]`'
+    name = ch.sets[h.set].label
+    if name ne ''
+        return '`name`: `lv[1]`'
+    lv[1]
+
+--- a mark's label and value as Chart.js writes them in a tooltip
+fn label_and_value[ch, laid, ps, d, j]
+    p = ps[d]
+    form = p.form
+    label = ''
+    if j lt len[ch.labels]
+        label = ch.labels[j]
+    if form eq 'pie' or form eq 'doughnut' or form eq 'polarArea'
+        return [label, charts_model.written_plain[p.vvs[j]]]
+    if form eq 'radar'
+        k = charts_scales.scale_at[laid.scales, p.v_id]
+        if k lt 0
+            return [label, '']
+        sc = laid.scales[k]
+        return [label, charts_scales.label_for_value[sc, ch.axes[sc.place], p.vvs[j]]]
+    ki = charts_scales.scale_at[laid.scales, p.i_id]
+    kv = charts_scales.scale_at[laid.scales, p.v_id]
+    if ki lt 0 or kv lt 0
+        return [label, '']
+    isc = laid.scales[ki]
+    vsc = laid.scales[kv]
+    i_text = charts_scales.label_for_value[isc, ch.axes[isc.place], p.ivs[j]]
+    v_text = charts_scales.label_for_value[vsc, ch.axes[vsc.place], p.vvs[j]]
+    if form eq 'scatter' or form eq 'bubble'
+        x_text = i_text
+        y_text = v_text
+        if p.i_axis eq 'y'
+            x_text = v_text
+            y_text = i_text
+        if form eq 'bubble'
+            r = nan
+            if j lt len[p.rs]
+                r = p.rs[j]
+            if r eq r and r ne 0.0
+                return [label, '(`x_text`, `y_text`, `js_text[r]`)']
+        return [label, '(`x_text`, `y_text`)']
+    if form eq 'bar' and charts_scales.floats[p, j]
+        s = ch.sets[d]
+        return [i_text, '[`js_text[s.starts[j]]`, `js_text[s.ys[j]]`]']
+    [i_text, v_text]
+
+--- a number as JavaScript writes it (`'' + x`)
+fn js_text[x]
+    if x eq 0.0
+        return '0'
+    '`x`'
+
+--- the tooltip's width and height: its padding about its title's lines
+--- (bold) and its body's, each body line after its colour box
+fn tip_size[t, title, lines, pen]
+    pad = t.padding
+    title_line = t.title_size * 1.2
+    body_line = t.body_size * 1.2
+    box_w = t.box_width
+    if box_w ne box_w
+        box_w = t.body_size
+    box_h = t.box_height
+    if box_h ne box_h
+        box_h = t.body_size
+    height = pad * 2.0
+    n = len[title]
+    if n gt 0
+        height = height + (0.0 + n) * title_line + (0.0 + n - 1) * t.title_spacing + t.title_margin
+    items = len[lines]
+    shown = 0
+    for w in lines
+        if w ne ''
+            shown = shown + 1
+    if shown gt 0
+        first_line = body_line
+        if t.display_colors
+            first_line = max[box_h, body_line]
+        height = height + (0.0 + items) * first_line + (0.0 + shown - items) * body_line + (0.0 + shown - 1) * t.body_spacing
+    width = 0.0
+    i = 0
+    while i lt n
+        width = max[width, charts_model.wide[pen, t.title_size, true, title[i]]]
+        i = i + 1
+    room = 0.0
+    if t.display_colors
+        room = box_w + 2.0 + t.box_padding
+    i = 0
+    while i lt items
+        if lines[i] ne ''
+            width = max[width, charts_model.wide[pen, t.body_size, false, lines[i]] + room]
+        i = i + 1
+    [width + pad * 2.0, height]
+
+--- which way the tooltip leans from its caret across: away from the
+--- nearer side where it stands level with it, else towards the middle
+--- where it would run off an edge
+fn _x_align_of[t, area, chart_w, at, width, y_align]
+    x = at[0]
+    align = 'center'
+    if y_align eq 'center'
+        align = 'right'
+        if x lte (area[0] + area[2]) / 2.0
+            align = 'left'
+    else if x lte width / 2.0
+        align = 'left'
+    else if x gte chart_w - width / 2.0
+        align = 'right'
+    caret = t.caret_size + t.caret_padding
+    if align eq 'left' and x + width + caret gt chart_w
+        return 'center'
+    if align eq 'right' and x - width - caret lt 0.0
+        return 'center'
+    align
+
+--- the tooltip box's top left corner, kept on the canvas
+fn _box_at[t, chart_w, chart_h, at, width, height, x_align, y_align]
+    reach = t.caret_size + t.caret_padding
+    x = at[0]
+    if x_align eq 'right'
+        x = x - width
+    else if x_align eq 'center'
+        x = x - width / 2.0
+    y = at[1]
+    if y_align eq 'top'
+        y = y + reach
+    else if y_align eq 'bottom'
+        y = y - (height + reach)
+    else
+        y = y - height / 2.0
+    if y_align eq 'center'
+        if x_align eq 'left'
+            x = x + reach
+        else if x_align eq 'right'
+            x = x - reach
+    else if x_align eq 'left'
+        x = x - (t.corner + t.caret_size)
+    else if x_align eq 'right'
+        x = x + t.corner + t.caret_size
+    [max[0.0, min[x, chart_w - width]], max[0.0, min[y, chart_h - height]]]
+
+--- ---- the legend ----
+
+--- the chart with the legend's `k`th item clicked: a dataset hidden or
+--- shown, or (a pie's, a doughnut's, a polar area's) a value; laid again
+--- as Chart.js lays a chart a second time
+fn toggled[ch0, laid, k]
+    ch = ch0
+    ch.laid_before = true
+    items = laid.legend.items
+    if k lt 0 or k gte len[items]
+        return ch
+    it = items[k]
+    if charts_model.arcs_kind[ch.form]
+        if charts_model.point_hidden[ch, it.index]
+            kept = charts_model.no_numbers[]
+            for h in ch.hidden_points
+                if int[h] ne it.index
+                    kept = push[kept, h]
+            ch.hidden_points = kept
+        else
+            ch.hidden_points = push[ch.hidden_points, 0.0 + it.index]
+        return ch
+    s = ch.sets[it.set]
+    s.hidden = not s.hidden
+    all_sets = ch.sets
+    all_sets[it.set] = s
+    ch.sets = all_sets
+    ch
+
+--- the legend item at the pointer, -1 for none
+fn legend_at[laid, x, y]
+    charts_layout.legend_item_at[laid, x, y]
+
+--- ---- truths ----
+
+test marks_are_found_where_the_pointer_is_over_them[]
+    clear = lory.rgba[0, 0, 0, 0.0]
+    bar = charts_marks.Mark['bar', 0, 0, 50.0, 20.0, 100.0, 10.0, 80.0, false, true, 'b', false, false, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, 0.0, nan, clear, clear]
+    bar_bounds[bar] eq [45.0, 20.0, 55.0, 100.0]
+    _level_with[bar, 52.0, 0.0, 'x']
+    not _level_with[bar, 56.0, 0.0, 'x']
+    in_area[10.0, 10.0, [0.0, 0.0, 100.0, 100.0], 0.0]
+    in_area[100.4, 10.0, [0.0, 0.0, 100.0, 100.0], 0.0]
+    not in_area[100.6, 10.0, [0.0, 0.0, 100.0, 100.0], 0.0]
+    js_text[1.5] eq '1.5'
+    js_text[-0.0] eq '0'
+
+test a_tooltip_leans_away_from_the_edge_it_is_near[]
+    t = charts_model.tip_of[]
+    area = [30.0, 10.0, 390.0, 280.0]
+    _x_align_of[t, area, 400.0, [50.0, 150.0], 80.0, 'center'] eq 'left'
+    _x_align_of[t, area, 400.0, [350.0, 150.0], 80.0, 'center'] eq 'right'
+    _x_align_of[t, area, 400.0, [350.0, 150.0], 380.0, 'top'] eq 'center'
+    _box_at[t, 400.0, 300.0, [50.0, 150.0], 80.0, 40.0, 'left', 'center'] eq [57.0, 130.0]
+    _box_at[t, 400.0, 300.0, [390.0, 5.0], 80.0, 40.0, 'right', 'top'] eq [320.0, 12.0]

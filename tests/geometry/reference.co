@@ -1,0 +1,224 @@
+--- Lory's geometry held to three.js's own: reference.json is what three
+--- r187 built for each case (reference.mjs ran it in node), and each of
+--- Lory's geometries must have three's vertex and index counts, its indices
+--- and groups, and every position, normal and uv the same single-precision
+--- float three wrote, to the last bit. Run from the repository's root:
+--- `crow test tests/geometry/reference.co` holds it interpreted, and
+--- `crow run tests/geometry/reference.co` compiles the same comparison and
+--- says what it found.
+use sys
+use lory.geometry
+
+--- the numbers of a list in the reference, each read as a float
+fn _numbers[j]
+    out = []
+    for x in j
+        out = push[out, 0.0 + x]
+    out
+
+--- the numbers of a list in the reference, each read as a whole number
+fn _wholes[j]
+    out = []
+    for x in j
+        out = push[out, floor[0.0 + x]]
+    out
+
+--- the numbers as single precision keeps them, as three's Float32Arrays do
+fn _single[numbers]
+    if len[numbers] eq 0
+        return numbers
+    sys.float_values[sys.float_bytes[numbers, 4, true], 0, len[numbers], 4, true]
+
+--- the floats of an attribute three wrote as its bytes in base64 (none
+--- where it wrote none)
+fn _attribute[encoded, count]
+    out = []
+    if count eq 0 or len[encoded] eq 0
+        return out
+    decoded = sys.unbase64[encoded]
+    if not decoded.ok
+        return out
+    sys.float_values[decoded, 0, count, 4, true]
+
+--- a path from its steps in the reference
+fn _path_of[steps]
+    p = geometry.path_from[0.0, 0.0]
+    for s in steps
+        form = '`s.form`'
+        n = _numbers[s.numbers]
+        if form eq 'move'
+            p = geometry.move_to[p, n[0], n[1]]
+        else if form eq 'line'
+            p = geometry.line_to[p, n[0], n[1]]
+        else if form eq 'quadratic'
+            p = geometry.quadratic_to[p, n[0], n[1], n[2], n[3]]
+        else if form eq 'cubic'
+            p = geometry.cubic_to[p, n[0], n[1], n[2], n[3], n[4], n[5]]
+        else if form eq 'spline'
+            p = geometry.spline_to[p, n]
+        else if form eq 'arc'
+            p = geometry.arc[p, n[0], n[1], n[2], n[3], n[4], n[5] eq 1.0]
+        else if form eq 'absarc'
+            p = geometry.absolute_arc[p, n[0], n[1], n[2], n[3], n[4], n[5] eq 1.0]
+        else if form eq 'ellipse'
+            p = geometry.ellipse[p, n[0], n[1], n[2], n[3], n[4], n[5], n[6] eq 1.0, n[7]]
+        else if form eq 'absellipse'
+            p = geometry.absolute_ellipse[p, n[0], n[1], n[2], n[3], n[4], n[5], n[6] eq 1.0, n[7]]
+    p
+
+--- the outlines of a case
+fn _outlines_of[j]
+    out = []
+    for each in j
+        o = geometry.outline[_path_of[each.path]]
+        for h in each.holes
+            o = geometry.holed[o, _path_of[h]]
+        out = push[out, o]
+    out
+
+--- a curve from the reference
+fn _curve_of[j]
+    form = '`j.form`'
+    if form eq 'helix'
+        n = _numbers[j.numbers]
+        return geometry.helix_curve[n[0], n[1], n[2]]
+    p = _numbers[j.points]
+    if form eq 'line'
+        return geometry.line_curve[p[0], p[1], p[2], p[3], p[4], p[5]]
+    if form eq 'quadratic'
+        return geometry.quadratic_curve[p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8]]
+    if form eq 'cubic'
+        return geometry.cubic_curve[p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]]
+    kind_of_spline = '`j.spline`'
+    geometry.spline_curve[p, (0.0 + j.closed) eq 1.0, kind_of_spline, 0.0 + j.tension]
+
+--- a case built by Lory, as three built it
+fn _made[c]
+    make = '`c.make`'
+    n = _numbers[c.numbers]
+    if make eq 'box'
+        return geometry.box[n[0], n[1], n[2], floor[n[3]], floor[n[4]], floor[n[5]]]
+    if make eq 'plane'
+        return geometry.plane[n[0], n[1], floor[n[2]], floor[n[3]]]
+    if make eq 'circle'
+        return geometry.circle[n[0], floor[n[1]], n[2], n[3]]
+    if make eq 'ring'
+        return geometry.ring[n[0], n[1], floor[n[2]], floor[n[3]], n[4], n[5]]
+    if make eq 'sphere'
+        return geometry.sphere[n[0], floor[n[1]], floor[n[2]], n[3], n[4], n[5], n[6]]
+    if make eq 'cylinder'
+        return geometry.cylinder[n[0], n[1], n[2], floor[n[3]], floor[n[4]], n[5] eq 1.0, n[6], n[7]]
+    if make eq 'cone'
+        return geometry.cone[n[0], n[1], floor[n[2]], floor[n[3]], n[4] eq 1.0, n[5], n[6]]
+    if make eq 'torus'
+        return geometry.torus[n[0], n[1], floor[n[2]], floor[n[3]], n[4], n[5], n[6]]
+    if make eq 'torus_knot'
+        return geometry.torus_knot[n[0], n[1], floor[n[2]], floor[n[3]], n[4], n[5]]
+    if make eq 'capsule'
+        return geometry.capsule[n[0], n[1], floor[n[2]], floor[n[3]], floor[n[4]]]
+    if make eq 'lathe'
+        return geometry.lathe[_numbers[c.points], floor[n[0]], n[1], n[2]]
+    if make eq 'tube'
+        return geometry.tube[_curve_of[c.curve], floor[n[0]], n[1], floor[n[2]], n[3] eq 1.0]
+    if make eq 'shape'
+        outlines = _outlines_of[c.outlines]
+        if c.list.ok
+            return geometry.shapes[outlines, floor[n[0]]]
+        return geometry.shape[outlines[0], floor[n[0]]]
+    if make eq 'extrude'
+        outlines = _outlines_of[c.outlines]
+        if c.curve.ok
+            return geometry.extrude_along[outlines, _curve_of[c.curve], floor[n[1]], floor[n[0]]]
+        return geometry.extrude[outlines, n[2], floor[n[1]], n[3] eq 1.0, n[4], n[5], n[6], floor[n[7]], floor[n[0]]]
+    if make eq 'tetrahedron'
+        return geometry.tetrahedron[n[0], floor[n[1]]]
+    if make eq 'octahedron'
+        return geometry.octahedron[n[0], floor[n[1]]]
+    if make eq 'icosahedron'
+        return geometry.icosahedron[n[0], floor[n[1]]]
+    if make eq 'dodecahedron'
+        return geometry.dodecahedron[n[0], floor[n[1]]]
+    if make eq 'polyhedron'
+        return geometry.polyhedron[_numbers[c.points], _wholes[c.faces], n[0], floor[n[1]]]
+    if make eq 'edges'
+        return geometry.edges[_made[c.of], n[0]]
+    geometry.wireframe[_made[c.of]]
+
+--- where Lory's floats differ from three's, as text
+fn _float_differences[name, what, mine, theirs]
+    out = []
+    if len[mine] ne len[theirs]
+        return push[out, '`name`: three has `len[theirs]` `what`, Lory `len[mine]`']
+    for i in range[len[theirs]]
+        if mine[i] ne theirs[i]
+            if len[out] lt 6
+                out = push[out, '`name` `what`[`i`]: three has `theirs[i]`, Lory `mine[i]`']
+    out
+
+--- where Lory's whole numbers differ from three's, as text
+fn _whole_differences[name, what, mine, theirs]
+    out = []
+    if len[mine] ne len[theirs]
+        return push[out, '`name`: three has `len[theirs]` `what`, Lory `len[mine]`']
+    for i in range[len[theirs]]
+        if mine[i] ne theirs[i]
+            if len[out] lt 6
+                out = push[out, '`name` `what`[`i`]: three has `theirs[i]`, Lory `mine[i]`']
+    out
+
+--- what a comparison found: its differences as text (the first 40), how
+--- many numbers it held, and how many cases
+struct Held [wrong, count, cases]
+
+--- one case's differences and how many numbers it held
+fn _held[c]
+    name = '`c.name`'
+    g = _made[c]
+    count = floor[0.0 + c.count]
+    wrong = []
+    if geometry.vertex_count[g] ne count
+        wrong = push[wrong, '`name`: three has `count` vertices, Lory `geometry.vertex_count[g]`']
+    index_count = floor[0.0 + c.index_count]
+    if len[g.indices] ne index_count
+        wrong = push[wrong, '`name`: three has `index_count` indices, Lory `len[g.indices]`']
+    positions = _attribute['`c.positions`', count * 3]
+    normals = _attribute['`c.normals`', count * 3]
+    uvs = _attribute['`c.uvs`', count * 2]
+    wrong = concat[wrong, _float_differences[name, 'positions', _single[g.positions], positions]]
+    wrong = concat[wrong, _float_differences[name, 'normals', _single[g.normals], normals]]
+    wrong = concat[wrong, _float_differences[name, 'uvs', _single[g.uvs], uvs]]
+    wrong = concat[wrong, _whole_differences[name, 'indices', g.indices, _wholes[c.indices]]]
+    wrong = concat[wrong, _whole_differences[name, 'groups', g.groups, _wholes[c.groups]]]
+    Held[wrong, len[positions] + len[normals] + len[uvs] + len[c.indices] + len[c.groups], 1]
+
+--- every case of the reference held to three's numbers
+fn _compared[]
+    j = json[read['tests/geometry/reference.json']]
+    wrong = []
+    numbers = 0
+    cases = 0
+    for c in j.cases
+        h = _held[c]
+        numbers = numbers + h.count
+        cases = cases + 1
+        for w in h.wrong
+            if len[wrong] lt 40
+                wrong = push[wrong, w]
+    Held[wrong, numbers, cases]
+
+test every_geometry_is_three_to_the_last_bit[]
+    found = _compared[]
+    assert[len[found.wrong] eq 0, join[found.wrong, '\n']]
+    --- (every number three wrote was held: its 108 cases' counts, floats,
+    --- indices and groups)
+    found.cases eq 108
+    found.count eq 162004
+
+--- (run as a program, `crow run tests/geometry/reference.co`, the same
+--- comparison is compiled and says what it found)
+held = _compared[]
+if len[held.wrong] eq 0
+    log['`held.cases` cases: all `held.count` numbers as three made them']
+else
+    listed = join[held.wrong, '\n']
+    log['`held.cases` cases, `held.count` numbers, these differ (the first 40):\n`listed`']

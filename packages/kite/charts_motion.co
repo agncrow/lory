@@ -1,0 +1,322 @@
+--- How a chart's marks move, as Chart.js moves them: the easings that
+--- shape a motion's pace, a number and a colour part way to another, and
+--- a chart's marks on their way from where they stood to where its data
+--- puts them (growing from their base as it first shows, moving on when
+--- the data changes, sent on from wherever they are when it changes again
+--- part way).
+---
+--- These are Chart.js 4.5.1's animations (its easings are Robert Penner's
+--- equations; its colours are mixed as its colour library mixes them),
+--- read from it and written anew (see charts_model.co).
+use math
+use lory
+use charts_model
+use charts_marks
+
+--- a chart's marks on their way: those they set out from and those they
+--- are going to (each dataset's, as `charts_marks.marked` lays them), when
+--- they set out and how long they take (milliseconds), and the easing
+--- that paces them
+struct Motion [from, to, start, duration, easing]
+
+--- ---- easings ----
+
+--- the easings Chart.js knows, by name
+fn easings[]
+    ['linear', 'easeInQuad', 'easeOutQuad', 'easeInOutQuad', 'easeInCubic', 'easeOutCubic', 'easeInOutCubic', 'easeInQuart', 'easeOutQuart', 'easeInOutQuart', 'easeInQuint', 'easeOutQuint', 'easeInOutQuint', 'easeInSine', 'easeOutSine', 'easeInOutSine', 'easeInExpo', 'easeOutExpo', 'easeInOutExpo', 'easeInCirc', 'easeOutCirc', 'easeInOutCirc', 'easeInElastic', 'easeOutElastic', 'easeInOutElastic', 'easeInBack', 'easeOutBack', 'easeInOutBack', 'easeInBounce', 'easeOutBounce', 'easeInOutBounce']
+
+--- how far along a motion is (0 to 1) when `t` of its time has passed,
+--- by the easing `name` (an unknown name is linear)
+fn eased[name, t]
+    if name eq 'easeInQuad'
+        return t * t
+    if name eq 'easeOutQuad'
+        return (0.0 - t) * (t - 2.0)
+    if name eq 'easeInOutQuad'
+        u = t / 0.5
+        if u lt 1.0
+            return 0.5 * u * u
+        v = u - 1.0
+        return -0.5 * (v * (v - 2.0) - 1.0)
+    if name eq 'easeInCubic'
+        return t * t * t
+    if name eq 'easeOutCubic'
+        u = t - 1.0
+        return u * u * u + 1.0
+    if name eq 'easeInOutCubic'
+        u = t / 0.5
+        if u lt 1.0
+            return 0.5 * u * u * u
+        v = u - 2.0
+        return 0.5 * (v * v * v + 2.0)
+    if name eq 'easeInQuart'
+        return t * t * t * t
+    if name eq 'easeOutQuart'
+        u = t - 1.0
+        return 0.0 - (u * u * u * u - 1.0)
+    if name eq 'easeInOutQuart'
+        u = t / 0.5
+        if u lt 1.0
+            return 0.5 * u * u * u * u
+        v = u - 2.0
+        return -0.5 * (v * v * v * v - 2.0)
+    if name eq 'easeInQuint'
+        return t * t * t * t * t
+    if name eq 'easeOutQuint'
+        u = t - 1.0
+        return u * u * u * u * u + 1.0
+    if name eq 'easeInOutQuint'
+        u = t / 0.5
+        if u lt 1.0
+            return 0.5 * u * u * u * u * u
+        v = u - 2.0
+        return 0.5 * (v * v * v * v * v + 2.0)
+    if name eq 'easeInSine'
+        return 0.0 - cos[t * (pi / 2.0)] + 1.0
+    if name eq 'easeOutSine'
+        return sin[t * (pi / 2.0)]
+    if name eq 'easeInOutSine'
+        return -0.5 * (cos[pi * t] - 1.0)
+    if name eq 'easeInExpo'
+        if t eq 0.0
+            return 0.0
+        return 2.0 ^ (10.0 * (t - 1.0))
+    if name eq 'easeOutExpo'
+        if t eq 1.0
+            return 1.0
+        return 0.0 - 2.0 ^ (-10.0 * t) + 1.0
+    if name eq 'easeInOutExpo'
+        if _at_edge[t]
+            return t
+        if t lt 0.5
+            return 0.5 * 2.0 ^ (10.0 * (t * 2.0 - 1.0))
+        return 0.5 * (0.0 - 2.0 ^ (-10.0 * (t * 2.0 - 1.0)) + 2.0)
+    if name eq 'easeInCirc'
+        if t gte 1.0
+            return t
+        return 0.0 - (sqrt[1.0 - t * t] - 1.0)
+    if name eq 'easeOutCirc'
+        u = t - 1.0
+        return sqrt[1.0 - u * u]
+    if name eq 'easeInOutCirc'
+        u = t / 0.5
+        if u lt 1.0
+            return -0.5 * (sqrt[1.0 - u * u] - 1.0)
+        v = u - 2.0
+        return 0.5 * (sqrt[1.0 - v * v] + 1.0)
+    if name eq 'easeInElastic'
+        if _at_edge[t]
+            return t
+        return _elastic_in[t, 0.075, 0.3]
+    if name eq 'easeOutElastic'
+        if _at_edge[t]
+            return t
+        return _elastic_out[t, 0.075, 0.3]
+    if name eq 'easeInOutElastic'
+        if _at_edge[t]
+            return t
+        if t lt 0.5
+            return 0.5 * _elastic_in[t * 2.0, 0.1125, 0.45]
+        return 0.5 + 0.5 * _elastic_out[t * 2.0 - 1.0, 0.1125, 0.45]
+    if name eq 'easeInBack'
+        k = 1.70158
+        return t * t * ((k + 1.0) * t - k)
+    if name eq 'easeOutBack'
+        k = 1.70158
+        u = t - 1.0
+        return u * u * ((k + 1.0) * u + k) + 1.0
+    if name eq 'easeInOutBack'
+        k = 1.70158 * 1.525
+        u = t / 0.5
+        if u lt 1.0
+            return 0.5 * (u * u * ((k + 1.0) * u - k))
+        v = u - 2.0
+        return 0.5 * (v * v * ((k + 1.0) * v + k) + 2.0)
+    if name eq 'easeInBounce'
+        return 1.0 - _bounce_out[1.0 - t]
+    if name eq 'easeOutBounce'
+        return _bounce_out[t]
+    if name eq 'easeInOutBounce'
+        if t lt 0.5
+            return (1.0 - _bounce_out[1.0 - t * 2.0]) * 0.5
+        return _bounce_out[t * 2.0 - 1.0] * 0.5 + 0.5
+    t
+
+fn _at_edge[t]
+    t eq 0.0 or t eq 1.0
+
+--- a spring's pull at the start of a motion: `s` its lag, `p` its period
+fn _elastic_in[t, s, p]
+    u = t - 1.0
+    0.0 - (2.0 ^ (10.0 * u) * sin[(u - s) * (pi * 2.0) / p])
+
+fn _elastic_out[t, s, p]
+    2.0 ^ (-10.0 * t) * sin[(t - s) * (pi * 2.0) / p] + 1.0
+
+--- a ball's bounces coming to rest
+fn _bounce_out[t]
+    m = 7.5625
+    d = 2.75
+    if t lt 1.0 / d
+        return m * t * t
+    if t lt 2.0 / d
+        u = t - 1.5 / d
+        return m * u * u + 0.75
+    if t lt 2.5 / d
+        u = t - 2.25 / d
+        return m * u * u + 0.9375
+    u = t - 2.625 / d
+    m * u * u + 0.984375
+
+--- ---- part way ----
+
+--- a number `share` of the way from `a` to `b`
+fn number_between[a, b, share]
+    a + (b - a) * share
+
+--- a colour `share` of the way from `from` to `to`, as Chart.js's colour
+--- library mixes them: each part in whole bytes, the two weighed by how
+--- far along and how opaque each is, the opacity kept to a whole byte
+fn color_between[from, to, share]
+    a1 = _alpha_of[to]
+    a2 = _alpha_of[from]
+    w = 2.0 * share - 1.0
+    a = a1 - a2
+    w1 = 0.0
+    if w * a eq -1.0
+        w1 = (w + 1.0) / 2.0
+    else
+        w1 = ((w + a) / (1.0 + w * a) + 1.0) / 2.0
+    w2 = 1.0 - w1
+    r = _mixed_byte[w1, charts_model.byte_of[to.r], w2, charts_model.byte_of[from.r]]
+    g = _mixed_byte[w1, charts_model.byte_of[to.g], w2, charts_model.byte_of[from.g]]
+    b = _mixed_byte[w1, charts_model.byte_of[to.b], w2, charts_model.byte_of[from.b]]
+    alpha = share * a1 + (1.0 - share) * a2
+    alpha_byte = max[min[0.0 + floor[alpha * 255.0 + 0.5], 255.0], 0.0]
+    lory.Color[r / 255.0, g / 255.0, b / 255.0, alpha_byte / 255.0]
+
+--- a colour's opacity as the colour library weighs it: to the hundredth
+fn _alpha_of[c]
+    byte = c.a * 255.0
+    max[min[(0.0 + floor[byte / 2.55 + 0.5]) / 100.0, 1.0], 0.0]
+
+fn _mixed_byte[w1, b1, w2, b2]
+    0.0 + int[w1 * b1 + w2 * b2 + 0.5] % 256
+
+--- ---- marks on their way ----
+
+--- marks setting out at `at_ms` from `from` to `to`, taking `duration`
+--- milliseconds paced by `easing`
+fn set_out[from, to, at_ms, duration, easing]
+    Motion[from, to, at_ms, 0.0 + floor[duration], easing]
+
+--- the motion sent on to `to` at `at_ms`: from wherever its marks stand
+--- then, for its whole time again (or what is left of it, if longer)
+fn retargeted[ch, laid, motion, to, at_ms]
+    left = motion.duration - (at_ms - motion.start)
+    Motion[moving[ch, laid, motion, at_ms], to, at_ms, 0.0 + floor[max[left, motion.duration]], motion.easing]
+
+--- whether the motion is over at `at_ms`
+fn arrived[motion, at_ms]
+    at_ms - motion.start gte motion.duration
+
+--- the marks where they stand at `at_ms` (milliseconds): each number
+--- part way from where it set out to where it is going (at once where
+--- they are the same or the time is up), each colour mixed part way; a
+--- line's control points drawn anew through its points as they stand
+fn moving[ch, laid, motion, at_ms]
+    elapsed = at_ms - motion.start
+    done = not (elapsed lt motion.duration)
+    share = 0.0
+    if elapsed gte 0.0 and not done
+        share = eased[motion.easing, max[0.0, min[1.0, elapsed / motion.duration]]]
+    out = motion.to
+    d = 0
+    while d lt len[out]
+        layer = out[d]
+        if d lt len[motion.from]
+            was = motion.from[d].marks
+            marks = layer.marks
+            j = 0
+            while j lt len[marks] and j lt len[was]
+                if was[j].what eq marks[j].what
+                    marks[j] = _mark_between[was[j], marks[j], share, done, elapsed lt 0.0]
+                j = j + 1
+            if d lt len[ch.sets]
+                s = ch.sets[d]
+                if marks_curve[ch, d] and len[marks] gt 0
+                    marks = charts_marks.curved[marks, s, laid.area, layer.what eq 'radar' and (s.span_gaps gt 0.0 or len[marks] eq len[ch.labels]), _index_axis_of[ch, layer.what]]
+            layer.marks = marks
+            out[d] = layer
+        d = d + 1
+    out
+
+--- whether a dataset's line is drawn curved (its control points then
+--- follow its moving points)
+fn marks_curve[ch, d]
+    s = ch.sets[d]
+    form = charts_model.form_of[ch, s]
+    lined = form eq 'line' or form eq 'radar' or (form eq 'scatter' and s.show_line)
+    lined and s.stepped eq '' and (s.tension ne 0.0 or s.monotone)
+
+fn _index_axis_of[ch, form]
+    if form eq 'radar' or form eq 'scatter' or form eq 'bubble'
+        return 'x'
+    ch.index_axis
+
+--- a mark part way from `a` to `b`
+fn _mark_between[a, b, share, done, before]
+    if done
+        return b
+    if before
+        return a
+    m = b
+    m.x = _part[a.x, b.x, share]
+    m.y = _part[a.y, b.y, share]
+    m.base = _part[a.base, b.base, share]
+    m.width = _part[a.width, b.width, share]
+    m.height = _part[a.height, b.height, share]
+    m.radius = _part[a.radius, b.radius, share]
+    m.start_angle = _part[a.start_angle, b.start_angle, share]
+    m.end_angle = _part[a.end_angle, b.end_angle, share]
+    m.circumference = _part[a.circumference, b.circumference, share]
+    m.inner = _part[a.inner, b.inner, share]
+    m.outer = _part[a.outer, b.outer, share]
+    m.offset = _part[a.offset, b.offset, share]
+    if not _same_color[a.fill, b.fill]
+        m.fill = color_between[a.fill, b.fill, share]
+    if not _same_color[a.edge, b.edge]
+        m.edge = color_between[a.edge, b.edge, share]
+    m
+
+--- a number part way: at once where it does not change (none part way
+--- from none)
+fn _part[a, b, share]
+    if a eq b
+        return b
+    number_between[a, b, share]
+
+fn _same_color[a, b]
+    a.r eq b.r and a.g eq b.g and a.b eq b.b and a.a eq b.a
+
+--- ---- truths ----
+
+test easings_start_at_naught_and_end_at_one[]
+    eased['linear', 0.25] eq 0.25
+    eased['easeInQuad', 0.5] eq 0.25
+    eased['easeOutQuart', 1.0] eq 1.0
+    eased['easeOutQuart', 0.0] eq 0.0
+    eased['easeOutBounce', 1.0] eq 1.0
+    eased['easeInOutBack', 0.5] eq 0.5
+    eased['easeInElastic', 0.0] eq 0.0
+    len[easings[]] eq 31
+
+test colours_are_mixed_in_whole_bytes[]
+    red = lory.hex['#ff0000']
+    blue = lory.hex['#0000ff']
+    c = color_between[red, blue, 0.1]
+    charts_model.byte_of[c.r] eq 230.0
+    charts_model.byte_of[c.b] eq 25.0
+    c.a eq 1.0
+    half = color_between[red, blue, 0.5]
+    charts_model.byte_of[half.r] eq 128.0

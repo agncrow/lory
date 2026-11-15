@@ -1,0 +1,570 @@
+--- A map's arithmetic: Web Mercator's picture of the earth, the tiles it is
+--- cut into, distances on the earth, the zoom that fits a box, the scale
+--- bar's numbers, a circle of metres on the picture, the middle of a line
+--- and of a polygon, and a line simplified.
+---
+--- Each is Leaflet's (1.9.4) behaviour, written anew and held to what
+--- Leaflet itself answers (tests/map/reference.json): the same steps in
+--- the same order, so the same floating point numbers come out. Places
+--- are latitude and longitude in degrees; points are CSS pixels of the
+--- world's picture at a zoom, 256 of them across the world at zoom 0,
+--- measured from its top left (north west) corner.
+use math
+
+--- a place on the earth: latitude north and longitude east, in degrees
+struct Place [lat, lng]
+
+--- a point on the world's picture, in CSS pixels from its top left
+struct Point [x, y]
+
+--- a box of places: its southern and northern latitudes, its western and
+--- eastern longitudes
+struct Bounds [south, west, north, east]
+
+--- what a view shows: its middle place, its zoom, its size in CSS pixels,
+--- and the point of the world's picture at its top left — rounded to a
+--- whole pixel, as Leaflet keeps it (the pixel origin), which is where a
+--- place is reckoned from on the screen
+struct Seen [lat, lng, zoom, w, h, ox, oy]
+
+--- the scale bar's numbers: the metres its longest bar spans, its metric
+--- label and width, its imperial label and width (widths in CSS pixels)
+struct Scale [most, metric, metric_wide, imperial, imperial_wide]
+
+--- ---- the projection ----
+
+--- the earth's radius Web Mercator projects with (WGS 84's), in metres
+fn radius[]
+    6378137.0
+
+--- the earth's mean radius distances are measured on, in metres
+fn earth_radius[]
+    6371000.0
+
+--- the latitude Web Mercator stops at, north and south: where the square
+--- picture of the world ends
+fn max_latitude[]
+    85.0511287798
+
+--- the factor that takes metres east of Greenwich to a fraction of the
+--- world's width
+fn _unit[]
+    0.5 / (pi * radius[])
+
+--- the world's width in CSS pixels at a zoom: 256 at zoom 0, twice as
+--- many at each zoom above
+fn world[zoom]
+    256.0 * 2.0 ^ zoom
+
+--- the zoom at which the world is `wide` pixels across
+fn zoom_of[wide]
+    ln[wide / 256.0] / 0.6931471805599453
+
+--- how many times larger the world is at zoom `to` than at zoom `from`
+fn zoom_scale[to, from]
+    world[to] / world[from]
+
+--- the zoom at which things are `scale` times their size at zoom `from`
+--- (infinity where no zoom is: a scale that is not a number)
+fn scale_zoom[scale, from]
+    z = zoom_of[scale * world[from]]
+    if z ne z
+        return inf
+    z
+
+--- a place in Web Mercator's metres: east of Greenwich and north of the
+--- equator, its latitude held to the projection's edge
+fn metres[lat, lng]
+    d = pi / 180.0
+    top = max_latitude[]
+    held = max[min[top, lat], 0.0 - top]
+    s = sin[held * d]
+    Point[radius[] * lng * d, radius[] * ln[(1.0 + s) / (1.0 - s)] / 2.0]
+
+--- the place at a point of Web Mercator's metres
+fn from_metres[x, y]
+    d = 180.0 / pi
+    Place[(2.0 * atan[exp[y / radius[]]] - pi / 2.0) * d, x * d / radius[]]
+
+--- the point a place falls on in the world's picture at a zoom
+fn project[lat, lng, zoom]
+    m = metres[lat, lng]
+    k = world[zoom]
+    t = _unit[]
+    Point[k * (t * m.x + 0.5), k * ((0.0 - t) * m.y + 0.5)]
+
+--- the place at a point of the world's picture at a zoom
+fn unproject[x, y, zoom]
+    k = world[zoom]
+    t = _unit[]
+    from_metres[(x / k - 0.5) / t, (y / k - 0.5) / (0.0 - t)]
+
+--- ---- JavaScript's rounding, which the reference's numbers carry ----
+
+--- the whole number nearest `x`, a half rounded up (towards positive
+--- infinity, as JavaScript's Math.round does: -2.5 is -2)
+fn js_round[x]
+    if x ne x or abs[x] gte 4503599627370496.0
+        return x
+    r = 0.0 + floor[x]
+    if x - r gte 0.5
+        return r + 1.0
+    r
+
+--- the whole number at or below `x` (infinities and nothing kept)
+fn js_floor[x]
+    if x ne x or abs[x] gte 4503599627370496.0
+        return x
+    0.0 + floor[x]
+
+--- the whole number at or above `x` (infinities and nothing kept)
+fn js_ceil[x]
+    if x ne x or abs[x] gte 4503599627370496.0
+        return x
+    0.0 + ceil[x]
+
+--- the remainder of `x` by `d` with the sign of `x`, exactly (fmod, as
+--- JavaScript's `%` is)
+fn remainder[x, d]
+    mod[[x], d][0]
+
+--- `x` brought into the range from `low` to `high` by whole turns of
+--- the range: `high` itself where `keep_high` says so, otherwise `low`
+--- (Leaflet's wrapNum)
+fn wrap_number[x, low, high, keep_high]
+    if x eq high and keep_high
+        return x
+    d = high - low
+    remainder[remainder[x - low, d] + d, d] + low
+
+--- the place with its longitude brought into -180 to 180
+fn wrap[lat, lng]
+    Place[lat, wrap_number[lng, -180.0, 180.0, true]]
+
+--- ---- distances ----
+
+--- the metres between two places along the earth's surface (the
+--- haversine formula, on the earth's mean radius)
+fn distance[lat1, lng1, lat2, lng2]
+    rad = pi / 180.0
+    a1 = lat1 * rad
+    a2 = lat2 * rad
+    sin_lat = sin[(lat2 - lat1) * rad / 2.0]
+    sin_lng = sin[(lng2 - lng1) * rad / 2.0]
+    a = sin_lat * sin_lat + cos[a1] * cos[a2] * sin_lng * sin_lng
+    c = 2.0 * atan2[sqrt[a], sqrt[1.0 - a]]
+    earth_radius[] * c
+
+--- the box of places `size` metres across about a place (`size` / 2 to
+--- each side; Leaflet's LatLng.toBounds)
+fn around[lat, lng, size]
+    lat_by = 180.0 * size / 40075017.0
+    lng_by = lat_by / cos[(pi / 180.0) * lat]
+    Bounds[min[lat - lat_by, lat + lat_by], min[lng - lng_by, lng + lng_by], max[lat - lat_by, lat + lat_by], max[lng - lng_by, lng + lng_by]]
+
+--- the metres a CSS pixel spans on the ground at a latitude and zoom
+--- (Web Mercator's ground resolution: the equator's length shrunk by the
+--- latitude's cosine, over the world's width)
+fn metres_per_pixel[lat, zoom]
+    2.0 * pi * radius[] * cos[lat * pi / 180.0] / world[zoom]
+
+--- ---- a view and its pixels ----
+
+--- what a view of a place at a zoom shows in a box `w` by `h` CSS pixels
+fn seen[lat, lng, zoom, w, h]
+    p = project[lat, lng, zoom]
+    Seen[lat, lng, zoom, w, h, js_round[p.x - w / 2.0], js_round[p.y - h / 2.0]]
+
+--- the place under a point of the view, in CSS pixels from its top left
+fn place_at[v, x, y]
+    unproject[x + v.ox, y + v.oy, v.zoom]
+
+--- where a place is in the view, in CSS pixels from its top left (not
+--- rounded, so a moving view moves it smoothly)
+fn point_of[v, lat, lng]
+    p = project[lat, lng, v.zoom]
+    Point[p.x - v.ox, p.y - v.oy]
+
+--- the box of places a view shows
+fn bounds_of[v]
+    low = place_at[v, 0.0, v.h]
+    high = place_at[v, v.w, 0.0]
+    Bounds[low.lat, low.lng, high.lat, high.lng]
+
+--- the zoom `zoom` brought to a multiple of `snap` (none: 0) and into the
+--- zooms allowed (Leaflet's _limitZoom)
+fn limit_zoom[zoom, snap, lowest, highest]
+    z = zoom
+    if snap gt 0.0
+        z = js_round[z / snap] * snap
+    max[lowest, min[highest, z]]
+
+--- the zoom at which a box of places fits a view `w` by `h` CSS pixels
+--- less `pad_x` and `pad_y` (or, `inside`, fills it), on multiples of
+--- `snap`, from the view's own zoom (Leaflet's getBoundsZoom)
+fn bounds_zoom[b, w, h, zoom, snap, lowest, highest, inside, pad_x, pad_y]
+    nw = project[b.north, b.west, zoom]
+    se = project[b.south, b.east, zoom]
+    wide = max[nw.x, se.x] - min[nw.x, se.x]
+    tall = max[nw.y, se.y] - min[nw.y, se.y]
+    scale_x = (w - pad_x) / wide
+    scale_y = (h - pad_y) / tall
+    scale = min[scale_x, scale_y]
+    if inside
+        scale = max[scale_x, scale_y]
+    z = scale_zoom[scale, zoom]
+    if snap gt 0.0
+        z = js_round[z / (snap / 100.0)] * (snap / 100.0)
+        if inside
+            z = js_ceil[z / snap] * snap
+        else
+            z = js_floor[z / snap] * snap
+    max[lowest, min[highest, z]]
+
+--- the view that fits a box of places: its middle and zoom, the box kept
+--- `left` and `top` pixels from the view's top left and `right` and
+--- `bottom` from its foot, its zoom no higher than `most` where that is
+--- given (Leaflet's fitBounds and its maxZoom)
+fn fit[b, w, h, zoom, snap, lowest, highest, left, top, right, bottom, most = -1.0]
+    z = bounds_zoom[b, w, h, zoom, snap, lowest, highest, false, left + right, top + bottom]
+    if most gte 0.0
+        z = min[most, z]
+    if z eq inf
+        return Seen[(b.south + b.north) / 2.0, (b.west + b.east) / 2.0, z, w, h, 0.0, 0.0]
+    shift_x = (right - left) / 2.0
+    shift_y = (bottom - top) / 2.0
+    low = project[b.south, b.west, z]
+    high = project[b.north, b.east, z]
+    middle = unproject[(low.x + high.x) / 2.0 + shift_x, (low.y + high.y) / 2.0 + shift_y, z]
+    seen[middle.lat, middle.lng, z, w, h]
+
+--- ---- the scale bar ----
+
+--- a number brought down to the nearest of 1, 2, 3, 5 or 10 times a
+--- power of ten below it (a scale bar's round lengths)
+fn round_number[n]
+    digits = len[str[floor[n]]]
+    ten = 10.0 ^ (0.0 + digits - 1.0)
+    d = n / ten
+    if d gte 10.0
+        return ten * 10.0
+    if d gte 5.0
+        return ten * 5.0
+    if d gte 3.0
+        return ten * 3.0
+    if d gte 2.0
+        return ten * 2.0
+    ten
+
+--- the scale bar of a view whose longest bar is `most_wide` CSS pixels:
+--- the metres that width spans across the view's middle, and the round
+--- lengths shown with their widths, in metres or kilometres and in feet or
+--- miles
+fn scale_of[v, most_wide]
+    y = v.h / 2.0
+    a = place_at[v, 0.0, y]
+    b = place_at[v, most_wide, y]
+    most = distance[a.lat, a.lng, b.lat, b.lng]
+    m = round_number[most]
+    metric = '`m` m'
+    if m gte 1000.0
+        metric = '`m / 1000.0` km'
+    feet = most * 3.2808399
+    imperial = ''
+    ratio = 0.0
+    if feet gt 5280.0
+        miles = feet / 5280.0
+        r = round_number[miles]
+        imperial = '`r` mi'
+        ratio = r / miles
+    else
+        r = round_number[feet]
+        imperial = '`r` ft'
+        ratio = r / feet
+    Scale[most, metric, js_round[most_wide * (m / most)], imperial, js_round[most_wide * ratio]]
+
+--- ---- a circle of metres ----
+
+--- a circle `reach` metres about a place, drawn at a zoom: its radius across
+--- and its radius up and down, in CSS pixels (wider than tall away from
+--- the equator, as Web Mercator stretches it)
+fn circle_radius[lat, lng, reach, zoom]
+    d = pi / 180.0
+    lat_by = (reach / earth_radius[]) / d
+    top = project[lat + lat_by, lng, zoom]
+    bottom = project[lat - lat_by, lng, zoom]
+    px = (top.x + bottom.x) / 2.0
+    py = (top.y + bottom.y) / 2.0
+    lat2 = unproject[px, py, zoom].lat
+    lng_by = acos[(cos[lat_by * d] - sin[lat * d] * sin[lat2 * d]) / (cos[lat * d] * cos[lat2 * d])] / d
+    if lng_by ne lng_by or lng_by eq 0.0
+        lng_by = lat_by / cos[pi / 180.0 * lat]
+    across = 0.0
+    if lng_by eq lng_by
+        across = px - project[lat2, lng - lng_by, zoom].x
+    Point[across, py - top.y]
+
+--- ---- middles ----
+
+--- whether two places are the same to a billionth of a degree
+fn same_place[lat1, lng1, lat2, lng2]
+    max[abs[lat1 - lat2], abs[lng1 - lng2]] lte 0.000000001
+
+--- the place halfway along the lines through the places (Leaflet's
+--- polylineCenter: measured in Web Mercator's metres)
+fn line_middle[lats, lngs]
+    n = len[lats]
+    if n eq 0
+        return Place[0.0, 0.0]
+    off = _near_middle[lats, lngs]
+    xs = []
+    ys = []
+    for i in range[n]
+        m = metres[lats[i] - off.lat, lngs[i] - off.lng]
+        xs = push[xs, m.x]
+        ys = push[ys, m.y]
+    half = 0.0
+    i = 0
+    while i lt n - 1
+        half = half + _apart[xs[i], ys[i], xs[i + 1], ys[i + 1]] / 2.0
+        i = i + 1
+    cx = xs[0]
+    cy = ys[0]
+    if half ne 0.0
+        went = 0.0
+        i = 0
+        while i lt n - 1
+            part = _apart[xs[i], ys[i], xs[i + 1], ys[i + 1]]
+            went = went + part
+            if went gt half
+                ratio = (went - half) / part
+                cx = xs[i + 1] - ratio * (xs[i + 1] - xs[i])
+                cy = ys[i + 1] - ratio * (ys[i + 1] - ys[i])
+                i = n
+            i = i + 1
+    p = from_metres[cx, cy]
+    Place[p.lat + off.lat, p.lng + off.lng]
+
+--- the middle (the centroid) of the polygon through the places, its
+--- closing place left off where it repeats the first (Leaflet's
+--- polygonCenter: measured in Web Mercator's metres)
+fn polygon_middle[lats, lngs]
+    n = len[lats]
+    if n eq 0
+        return Place[0.0, 0.0]
+    if n gte 2 and same_place[lats[0], lngs[0], lats[n - 1], lngs[n - 1]]
+        n = n - 1
+    open_lats = slice[lats, 0, n]
+    open_lngs = slice[lngs, 0, n]
+    off = _near_middle[open_lats, open_lngs]
+    xs = []
+    ys = []
+    for i in range[n]
+        m = metres[open_lats[i] - off.lat, open_lngs[i] - off.lng]
+        xs = push[xs, m.x]
+        ys = push[ys, m.y]
+    area = 0.0
+    sx = 0.0
+    sy = 0.0
+    i = 0
+    j = n - 1
+    while i lt n
+        f = ys[i] * xs[j] - ys[j] * xs[i]
+        sx = sx + (xs[i] + xs[j]) * f
+        sy = sy + (ys[i] + ys[j]) * f
+        area = area + f * 3.0
+        j = i
+        i = i + 1
+    cx = xs[0]
+    cy = ys[0]
+    if area ne 0.0
+        cx = sx / area
+        cy = sy / area
+    p = from_metres[cx, cy]
+    Place[p.lat + off.lat, p.lng + off.lng]
+
+--- the average of the places where their box is smaller than 1700 square
+--- metres (a tiny shape measured near its own middle, where metres are
+--- even), and none otherwise
+fn _near_middle[lats, lngs]
+    n = len[lats]
+    south = lats[0]
+    north = lats[0]
+    west = lngs[0]
+    east = lngs[0]
+    for i in range[n]
+        south = min[south, lats[i]]
+        north = max[north, lats[i]]
+        west = min[west, lngs[i]]
+        east = max[east, lngs[i]]
+    tall = distance[north, west, south, west]
+    wide = distance[north, east, north, west]
+    if tall * wide gte 1700.0
+        return Place[0.0, 0.0]
+    lat_sum = 0.0
+    lng_sum = 0.0
+    for i in range[n]
+        lat_sum = lat_sum + lats[i]
+        lng_sum = lng_sum + lngs[i]
+    Place[lat_sum / (0.0 + n), lng_sum / (0.0 + n)]
+
+fn _apart[x1, y1, x2, y2]
+    dx = x2 - x1
+    dy = y2 - y1
+    sqrt[dx * dx + dy * dy]
+
+--- ---- simplifying a line ----
+
+--- the points of a line, as indexes into xs and ys, that stay when the
+--- line is simplified to within `tolerance` pixels: points nearer than
+--- that to the last one kept are dropped, then the Douglas-Peucker
+--- reduction (Leaflet's LineUtil.simplify)
+fn simplify[xs, ys, tolerance]
+    n = len[xs]
+    kept = []
+    if tolerance lte 0.0 or n eq 0
+        for i in range[n]
+            kept = push[kept, i]
+        return kept
+    sq = tolerance * tolerance
+    --- (the radial pass: a point stays when it is farther than the
+    --- tolerance from the last that stayed; the last point always does)
+    near = []
+    near = push[near, 0]
+    prev = 0
+    i = 1
+    while i lt n
+        dx = xs[prev] - xs[i]
+        dy = ys[prev] - ys[i]
+        if dx * dx + dy * dy gt sq
+            near = push[near, i]
+            prev = i
+        i = i + 1
+    if prev lt n - 1
+        near = push[near, n - 1]
+    m = len[near]
+    marks = []
+    for k in range[m]
+        marks = push[marks, k eq 0 or k eq m - 1]
+    --- (the reduction, its ranges on a stack of their own, first and last)
+    lows = []
+    lows = push[lows, 0]
+    highs = []
+    highs = push[highs, m - 1]
+    while len[lows] gt 0
+        low = lows[len[lows] - 1]
+        high = highs[len[highs] - 1]
+        lows = slice[lows, 0, len[lows] - 1]
+        highs = slice[highs, 0, len[highs] - 1]
+        far = 0.0
+        at = -1
+        k = low + 1
+        while k lte high - 1
+            d = segment_distance_squared[xs[near[k]], ys[near[k]], xs[near[low]], ys[near[low]], xs[near[high]], ys[near[high]]]
+            if d gt far
+                at = k
+                far = d
+            k = k + 1
+        if far gt sq
+            marks[at] = true
+            lows = push[lows, at]
+            highs = push[highs, high]
+            lows = push[lows, low]
+            highs = push[highs, at]
+    out = []
+    for k in range[m]
+        if marks[k]
+            out = push[out, near[k]]
+    out
+
+--- the square of the distance from a point to the segment between two
+--- others
+fn segment_distance_squared[px, py, x1, y1, x2, y2]
+    x = x1
+    y = y1
+    dx = x2 - x
+    dy = y2 - y
+    along = dx * dx + dy * dy
+    if along gt 0.0
+        t = ((px - x) * dx + (py - y) * dy) / along
+        if t gt 1.0
+            x = x2
+            y = y2
+        else
+            if t gt 0.0
+                x = x + dx * t
+                y = y + dy * t
+    ex = px - x
+    ey = py - y
+    ex * ex + ey * ey
+
+test the_world_is_256_pixels_at_zoom_0_and_doubles[]
+    world[0.0] eq 256.0
+    world[3.0] eq 2048.0
+    zoom_of[1024.0] eq 2.0
+
+test greenwich_on_the_equator_is_the_middle_of_the_world[]
+    p = project[0.0, 0.0, 0.0]
+    p.x eq 128.0
+    p.y eq 128.0
+    q = unproject[128.0, 128.0, 0.0]
+    abs[q.lat] lt 0.000000001
+    abs[q.lng] lt 0.000000001
+
+test the_corners_of_the_square_world[]
+    p = project[max_latitude[], -180.0, 1.0]
+    abs[p.x] lt 0.000001
+    abs[p.y] lt 0.000001
+    q = project[-90.0, 180.0, 1.0]
+    abs[q.x - 512.0] lt 0.000001
+    abs[q.y - 512.0] lt 0.000001
+
+test javascript_rounds_halves_up[]
+    js_round[2.5] eq 3.0
+    js_round[-2.5] eq -2.0
+    js_round[-2.6] eq -3.0
+    js_round[0.49999999999999994] eq 0.0
+    js_floor[-0.5] eq -1.0
+    js_ceil[-0.5] eq 0.0
+    js_round[inf] eq inf
+
+test a_longitude_wraps_into_the_one_world[]
+    wrap[10.0, 190.0].lng eq -170.0
+    wrap[10.0, 180.0].lng eq 180.0
+    wrap[10.0, -180.0].lng eq -180.0
+    wrap[10.0, 540.0].lng eq -180.0
+    wrap_number[-1.0, 0.0, 8.0, false] eq 7.0
+
+test a_degree_of_the_equator_is_111_kilometres[]
+    abs[distance[0.0, 0.0, 0.0, 1.0] - 111194.92664455874] lt 0.000001
+    distance[10.0, 10.0, 10.0, 10.0] eq 0.0
+
+test a_pixel_at_zoom_0_spans_156_kilometres_at_the_equator[]
+    abs[metres_per_pixel[0.0, 0.0] - 156543.03392804097] lt 0.0001
+    abs[metres_per_pixel[60.0, 0.0] - 78271.51696402048] lt 0.0001
+
+test the_scale_bar_rounds_down_to_1_2_3_5_or_10[]
+    round_number[0.4] eq 1.0
+    round_number[1.9] eq 1.0
+    round_number[2.5] eq 2.0
+    round_number[37.0] eq 30.0
+    round_number[4999.0] eq 3000.0
+    round_number[5000.0] eq 5000.0
+    round_number[9999.0] eq 5000.0
+
+test a_view_reckons_places_from_its_rounded_corner[]
+    v = seen[0.0, 0.0, 1.0, 401.0, 301.0]
+    v.ox eq 56.0
+    v.oy eq 106.0
+    p = point_of[v, 0.0, 0.0]
+    p.x eq 200.0
+    p.y eq 150.0
+
+test a_line_keeps_its_ends_and_its_corners_when_simplified[]
+    xs = [0.0, 1.0, 2.0, 3.0, 3.0, 3.0]
+    ys = [0.0, 0.0, 0.0, 0.0, 1.0, 2.0]
+    kept = simplify[xs, ys, 0.5]
+    len[kept] eq 3
+    kept[0] eq 0
+    kept[1] eq 3
+    kept[2] eq 5

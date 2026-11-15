@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Room</title>
+<!-- Lory's window, the host page: served by a site at /room/, beside its
+     program built for the web at /room-build/ (crow.js and room.wasm);
+     room.js says what it does. /room/?at=/a/page shows that page. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e12; overflow: hidden; }
+  canvas#room { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #bar { position: fixed; left: 14px; bottom: 14px; display: flex; gap: 8px; align-items: center; font: 600 14px system-ui, sans-serif; }
+  #bar button, #bar a { padding: 9px 14px; border: 0; border-radius: 10px; background: #f6f7f9; color: #0f1317; cursor: pointer; text-decoration: none; }
+  #bar a, #bar button#mixed { background: #1d242d; color: #e6e9ec; }
+  #bar span { color: #8b95a1; font-weight: 500; }
+  #vr, #mixed { display: none; }
+  #said { position: fixed; left: 0; right: 0; top: 0; margin: 0; padding: 10px 14px; display: none; font: 13px ui-monospace, monospace; white-space: pre-wrap; background: #3a1010; color: #ffd9d9; }
+  /* the page itself, open beside the room: laid out and alive, never seen */
+  iframe#page { position: fixed; left: 0; top: 0; width: 1076px; height: 800px; border: 0; opacity: 0; pointer-events: none; z-index: -1; }
+</style>
+</head>
+<body>
+<canvas id="room"></canvas>
+<div id="bar"><button id="vr">Enter VR</button><button id="mixed">Enter, with my room in sight</button><a id="back" href="/">Back to the page</a><span id="hint">drag the bar under the window to move it · the wheel scrolls · in a headset, a thumbstick</span></div>
+<pre id="said"></pre>
+<iframe id="page" title="the page shown in the room"></iframe>
+<script src="/room-build/crow.js"></script>
+<script src="room.js"></script>
+</body>
+</html>

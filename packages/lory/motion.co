@@ -1,0 +1,2429 @@
+--- Lory's motion (docs/components/motion.md): easings, springs,
+--- animations held between frames, timelines, staggers, presence, and the
+--- arithmetic that scroll and drag effects need.
+---
+--- What anime.js 4.5.0, Motion 14.7.1 and AOS 2.3.4 do is re-implemented
+--- here, and tests/motion/reference.co holds it to their numbers. None of
+--- their source is included: their formulas were read from those versions
+--- and written anew, computed in the same order, so the floats come out the
+--- same.
+---
+--- An easing is named by text, spelt as the library it comes from spells
+--- it, and each spelling keeps its library's arithmetic:
+---
+---     e = motion.ease['outElastic(1, .3)']         --- anime.js
+---     y = motion.eased[e, 0.25]
+---     y = motion.ease_at['backInOut', 0.25]         --- Motion
+---     y = motion.ease_at['ease-in-out-back', 0.25]  --- AOS, a CSS bézier
+---
+--- An animation held between frames is the program's definition (what
+--- moves, for how long, with which easing), handed in each frame, and
+--- Lory's clock for it (when it started, where it was paused or sought,
+--- its speed and direction), kept in `use memory` under its id and read
+--- against the frame's time (`lory.time[c]`):
+---
+---     x = motion.tween[c, 'box', target, 600.0, 'outQuad']
+---     y = motion.spring_to[c, 'ball', target, motion.spring[170.0, 26.0, 1.0]]
+---     v = motion.run[c, 'intro', motion.keyframes[[0.0, 100.0, 40.0], 900.0]]
+---     motion.control[c, 'intro', k, 'pause', 0.0]
+
+use math
+use bits
+use memory
+use lory
+
+--- ---- easings ----
+
+--- an easing: the curve it draws (`curve`), how that curve is turned
+--- (`turn`: 'in' as drawn, 'out' turned about its middle, 'inOut' and
+--- 'outIn' halved as anime.js halves a curve, 'mirror' and 'mirror out'
+--- halved as Motion mirrors one), the curve's numbers (`p`) and, for a
+--- curve drawn through points, the points (`xs`, `ys`)
+struct Ease [curve, turn, p, xs, ys]
+
+fn _numbers[]
+    out = []
+    for i in range[0]
+        out = push[out, 0.0]
+    out
+
+fn _one[x]
+    push[_numbers[], x]
+
+fn _two[x, y]
+    push[_one[x], y]
+
+fn _four[x, y, z, w]
+    push[push[_two[x, y], z], w]
+
+fn _ease[curve, turn, p]
+    Ease[curve, turn, p, _numbers[], _numbers[]]
+
+fn _identity[]
+    _ease['none', 'in', _numbers[]]
+
+--- the easing a text names, read as the library that spells it so reads
+--- it: anime.js's names and functions ('outQuad', 'inOut(3)',
+--- 'outElastic(1, .3)', 'cubicBezier(.6,-.28,.735,.045)', 'steps(10)',
+--- 'linear(0, 0.25 50%, 1)', 'irregular(10, 1, seed)', 'spring(mass,
+--- stiffness, damping, velocity)', 'springBounce(bounce, duration)'),
+--- Motion's ('easeInOut', 'backOut', 'circIn', 'anticipate'), CSS's
+--- ('ease-in', 'cubic-bezier(…)', 'steps(4, jump-both)', 'step-end') and
+--- AOS's ('ease-in-out-back'). A name nothing knows is linear, as anime.js
+--- answers one.
+fn ease[name]
+    words = trim[name]
+    if not ('(' in words)
+        return _named[words]
+    parts = split[words, '(']
+    head = trim[parts[0]]
+    inside = trim[replace[parts[1], ')', '']]
+    if inside eq ''
+        return _called[head, slice[[''], 0, 0]]
+    _called[head, _pieces[inside]]
+
+--- whether a text names an easing (a name `ease` would read as linear only
+--- because it knows it as linear)
+fn ease_known[name]
+    words = trim[name]
+    head = words
+    if '(' in words
+        head = trim[split[words, '('][0]]
+    if head in ['linear', 'none', 'cubicBezier', 'cubic-bezier', 'steps', 'irregular', 'spring', 'springBounce']
+        return true
+    _named[head].curve ne 'none' or head in ['in', 'out', 'inOut', 'outIn']
+
+--- the value an easing gives at `t` (0 at the start, 1 at the end)
+fn eased[easing, t]
+    turn = easing.turn
+    if turn eq 'in'
+        return _curve[easing, t]
+    if turn eq 'out'
+        return 1.0 - _curve[easing, 1.0 - t]
+    if turn eq 'inOut'
+        if t lt 0.5
+            return _curve[easing, t * 2.0] / 2.0
+        return 1.0 - _curve[easing, t * -2.0 + 2.0] / 2.0
+    if turn eq 'outIn'
+        if t lt 0.5
+            return (1.0 - _curve[easing, 1.0 - t * 2.0]) / 2.0
+        return (_curve[easing, t * 2.0 - 1.0] + 1.0) / 2.0
+    if turn eq 'mirror'
+        if t lte 0.5
+            return _curve[easing, 2.0 * t] / 2.0
+        return (2.0 - _curve[easing, 2.0 * (1.0 - t)]) / 2.0
+    if t lte 0.5
+        return (1.0 - _curve[easing, 1.0 - 2.0 * t]) / 2.0
+    (2.0 - (1.0 - _curve[easing, 1.0 - 2.0 * (1.0 - t)])) / 2.0
+
+--- the value the easing a text names gives at `t`
+fn ease_at[name, t]
+    eased[ease[name], t]
+
+--- every easing that has a name of its own, without numbers: anime.js's,
+--- Motion's, CSS's and AOS's
+fn ease_names[]
+    names = ['linear', 'none']
+    for turn in ['in', 'out', 'inOut', 'outIn']
+        for family in ['', 'Quad', 'Cubic', 'Quart', 'Quint', 'Sine', 'Circ', 'Expo', 'Bounce', 'Back', 'Elastic']
+            names = push[names, concat[turn, family]]
+    for name in ['easeIn', 'easeOut', 'easeInOut', 'circIn', 'circOut', 'circInOut', 'backIn', 'backOut', 'backInOut', 'anticipate']
+        names = push[names, name]
+    for name in ['ease', 'ease-in', 'ease-out', 'ease-in-out', 'step-start', 'step-end']
+        names = push[names, name]
+    for name in _aos_names[]
+        names = push[names, name]
+    names
+
+fn _aos_names[]
+    ['ease-in-back', 'ease-out-back', 'ease-in-out-back', 'ease-in-sine', 'ease-out-sine', 'ease-in-out-sine', 'ease-in-quad', 'ease-out-quad', 'ease-in-out-quad', 'ease-in-cubic', 'ease-out-cubic', 'ease-in-out-cubic', 'ease-in-quart', 'ease-out-quart', 'ease-in-out-quart']
+
+--- a cubic bézier from (0, 0) to (1, 1) through (x1, y1) and (x2, y2), as
+--- CSS draws `cubic-bezier()`, solved as Motion solves one (Newton's steps
+--- kept inside a bisection's bracket)
+fn cubic_bezier[x1, y1, x2, y2]
+    if x1 eq y1 and x2 eq y2
+        return _identity[]
+    _ease['bezier', 'in', _four[x1, y1, x2, y2]]
+
+--- CSS's `steps(count, jump)`: `jump` is 'jump-start', 'jump-end',
+--- 'jump-none', 'jump-both', 'start' or 'end'
+fn steps[count, jump]
+    term = jump
+    if jump eq 'start'
+        term = 'jump-start'
+    if jump eq 'end'
+        term = 'jump-end'
+    term_code = 0.0
+    if term eq 'jump-start'
+        term_code = 1.0
+    if term eq 'jump-none'
+        term_code = 2.0
+    if term eq 'jump-both'
+        term_code = 3.0
+    _ease['jumps', 'in', _two[float[count], term_code]]
+
+--- the time an anime.js spring easing takes to settle, in ms (0 for any
+--- other easing): the duration anime.js gives an animation it eases
+fn spring_settling[easing]
+    if easing.curve ne 'spring'
+        return 0.0
+    easing.p[5]
+
+--- the numbers a call's pieces hold, each read as anime.js reads one (`+`)
+fn _pieces[inside]
+    out = slice[[''], 0, 0]
+    for piece in split[inside, ',']
+        out = push[out, trim[piece]]
+    out
+
+fn _number[pieces, i, otherwise]
+    if i gte len[pieces]
+        return otherwise
+    n = float[pieces[i]]
+    if not n.ok
+        return otherwise
+    0.0 + n
+
+--- an easing named without numbers
+fn _named[name]
+    if name eq 'linear' or name eq 'none'
+        return _identity[]
+    found = _motion_named[name]
+    if found.curve ne 'none'
+        return found
+    css_found = _css_named[name]
+    if css_found.curve ne 'none'
+        return css_found
+    _anime_named[name, slice[[''], 0, 0]]
+
+--- anime.js's in/out/inOut/outIn turns of its families, with the
+--- numbers given (or anime.js's own: power 1.68, overshoot 1.7, amplitude
+--- 1 and period .3)
+fn _anime_named[name, pieces]
+    turn = ''
+    if starts[name, 'outIn']
+        turn = 'outIn'
+    else if starts[name, 'inOut']
+        turn = 'inOut'
+    else if starts[name, 'in']
+        turn = 'in'
+    else if starts[name, 'out']
+        turn = 'out'
+    if turn eq ''
+        return _identity[]
+    rest = slice[name, len[turn], len[name]]
+    if rest eq ''
+        return _ease['power', turn, _one[_number[pieces, 0, 1.68]]]
+    if rest eq 'Quad'
+        return _ease['power', turn, _one[2.0]]
+    if rest eq 'Cubic'
+        return _ease['power', turn, _one[3.0]]
+    if rest eq 'Quart'
+        return _ease['power', turn, _one[4.0]]
+    if rest eq 'Quint'
+        return _ease['power', turn, _one[5.0]]
+    if rest eq 'Sine'
+        return _ease['sine', turn, _numbers[]]
+    if rest eq 'Circ'
+        return _ease['circ', turn, _numbers[]]
+    if rest eq 'Expo'
+        return _ease['expo', turn, _numbers[]]
+    if rest eq 'Bounce'
+        return _ease['bounce', turn, _numbers[]]
+    if rest eq 'Back'
+        return _ease['back', turn, _one[_number[pieces, 0, 1.7]]]
+    if rest eq 'Elastic'
+        return _elastic_ease[turn, _number[pieces, 0, 1.0], _number[pieces, 1, 0.3]]
+    _identity[]
+
+fn _elastic_ease[turn, amplitude, period]
+    amp = _clamp[amplitude, 1.0, 10.0]
+    width = _clamp[period, 0.00000000001, 2.0]
+    lag = (width / (pi * 2.0)) * asin[1.0 / amp]
+    stretch = (pi * 2.0) / width
+    _ease['elastic', turn, _four[amp, width, lag, stretch]]
+
+--- Motion's named easings
+fn _motion_named[name]
+    back = _four[0.33, 1.53, 0.69, 0.99]
+    if name eq 'easeIn'
+        return cubic_bezier[0.42, 0.0, 1.0, 1.0]
+    if name eq 'easeOut'
+        return cubic_bezier[0.0, 0.0, 0.58, 1.0]
+    if name eq 'easeInOut'
+        return cubic_bezier[0.42, 0.0, 0.58, 1.0]
+    if name eq 'backOut'
+        return _ease['bezier', 'in', back]
+    if name eq 'backIn'
+        return _ease['bezier', 'out', back]
+    if name eq 'backInOut'
+        return _ease['bezier', 'mirror out', back]
+    if name eq 'circIn'
+        return _ease['arc', 'in', _numbers[]]
+    if name eq 'circOut'
+        return _ease['arc', 'out', _numbers[]]
+    if name eq 'circInOut'
+        return _ease['arc', 'mirror', _numbers[]]
+    if name eq 'anticipate'
+        return _ease['anticipate', 'in', back]
+    _identity[]
+
+--- CSS's keywords and AOS's names, the cubic béziers AOS's stylesheet
+--- gives them (its cubic and quart are its quad's, as it ships them)
+fn _css_named[name]
+    if name eq 'ease'
+        return cubic_bezier[0.25, 0.1, 0.25, 1.0]
+    if name eq 'ease-in'
+        return cubic_bezier[0.42, 0.0, 1.0, 1.0]
+    if name eq 'ease-out'
+        return cubic_bezier[0.0, 0.0, 0.58, 1.0]
+    if name eq 'ease-in-out'
+        return cubic_bezier[0.42, 0.0, 0.58, 1.0]
+    if name eq 'step-start'
+        return steps[1, 'jump-start']
+    if name eq 'step-end'
+        return steps[1, 'jump-end']
+    if name eq 'ease-in-back'
+        return cubic_bezier[0.6, -0.28, 0.735, 0.045]
+    if name eq 'ease-out-back'
+        return cubic_bezier[0.175, 0.885, 0.32, 1.275]
+    if name eq 'ease-in-out-back'
+        return cubic_bezier[0.68, -0.55, 0.265, 1.55]
+    if name eq 'ease-in-sine'
+        return cubic_bezier[0.47, 0.0, 0.745, 0.715]
+    if name eq 'ease-out-sine'
+        return cubic_bezier[0.39, 0.575, 0.565, 1.0]
+    if name eq 'ease-in-out-sine'
+        return cubic_bezier[0.445, 0.05, 0.55, 0.95]
+    if name in ['ease-in-quad', 'ease-in-cubic', 'ease-in-quart']
+        return cubic_bezier[0.55, 0.085, 0.68, 0.53]
+    if name in ['ease-out-quad', 'ease-out-cubic', 'ease-out-quart']
+        return cubic_bezier[0.25, 0.46, 0.45, 0.94]
+    if name in ['ease-in-out-quad', 'ease-in-out-cubic', 'ease-in-out-quart']
+        return cubic_bezier[0.455, 0.03, 0.515, 0.955]
+    _identity[]
+
+--- an easing named with numbers
+fn _called[head, pieces]
+    if head eq 'cubicBezier'
+        x1 = _number[pieces, 0, 0.5]
+        y1 = _number[pieces, 1, 0.0]
+        x2 = _number[pieces, 2, 0.5]
+        y2 = _number[pieces, 3, 1.0]
+        if x1 eq y1 and x2 eq y2
+            return _identity[]
+        return _ease['bisected', 'in', _four[x1, y1, x2, y2]]
+    if head eq 'cubic-bezier'
+        return cubic_bezier[_number[pieces, 0, 0.0], _number[pieces, 1, 0.0], _number[pieces, 2, 1.0], _number[pieces, 3, 1.0]]
+    if head eq 'steps'
+        count = _number[pieces, 0, 10.0]
+        jump = ''
+        if len[pieces] gt 1
+            jump = pieces[1]
+        if jump in ['jump-start', 'jump-end', 'jump-none', 'jump-both', 'start', 'end']
+            return steps[int[count], jump]
+        up = 0.0
+        if jump eq 'true'
+            up = 1.0
+        return _ease['steps', 'in', _two[count, up]]
+    if head eq 'linear'
+        return _points[pieces]
+    if head eq 'irregular'
+        return _irregular[int[_number[pieces, 0, 10.0]], _number[pieces, 1, 1.0], int[_number[pieces, 2, 0.0]]]
+    if head eq 'spring'
+        return _anime_spring[_number[pieces, 0, 1.0], _number[pieces, 1, 100.0], _number[pieces, 2, 10.0], _number[pieces, 3, 0.0]]
+    if head eq 'springBounce'
+        return _anime_spring_bounce[_number[pieces, 0, 0.5], _number[pieces, 1, 628.0]]
+    named = _anime_named[head, pieces]
+    if named.curve ne 'none'
+        return named
+    _named[head]
+
+--- the curve itself, before it is turned
+fn _curve[easing, t]
+    curve = easing.curve
+    if curve eq 'none'
+        return t
+    if curve eq 'power'
+        return t ^ easing.p[0]
+    if curve eq 'sine'
+        return 1.0 - cos[t * (pi / 2.0)]
+    if curve eq 'circ'
+        return 1.0 - sqrt[1.0 - t * t]
+    if curve eq 'expo'
+        if t eq 0.0
+            return 0.0
+        return 2.0 ^ (10.0 * t - 10.0)
+    if curve eq 'bounce'
+        return _bounce[t]
+    if curve eq 'back'
+        over = easing.p[0]
+        return (over + 1.0) * t * t * t - over * t * t
+    if curve eq 'elastic'
+        if t eq 0.0 or t eq 1.0
+            return t
+        amp = easing.p[0]
+        return -amp * (2.0 ^ (-10.0 * (1.0 - t))) * sin[((1.0 - t) - easing.p[2]) * easing.p[3]]
+    if curve eq 'bisected'
+        return _bisected[easing.p[0], easing.p[1], easing.p[2], easing.p[3], t]
+    if curve eq 'bezier'
+        return _bezier[easing.p[0], easing.p[1], easing.p[2], easing.p[3], t]
+    if curve eq 'steps'
+        return _anime_steps[easing.p[0], easing.p[1], t]
+    if curve eq 'jumps'
+        return _jumps[easing.p[0], easing.p[1], t]
+    if curve eq 'points'
+        return _pointed[easing.xs, easing.ys, t]
+    if curve eq 'spring'
+        if t eq 0.0 or t eq 1.0
+            return t
+        return _anime_solve[easing.p, t * easing.p[4]]
+    if curve eq 'arc'
+        return 1.0 - sin[acos[t]]
+    if curve eq 'anticipate'
+        if t gte 1.0
+            return 1.0
+        twice = t * 2.0
+        if twice lt 1.0
+            return 0.5 * (1.0 - _bezier[0.33, 1.53, 0.69, 0.99, 1.0 - twice])
+        return 0.5 * (2.0 - 2.0 ^ (-10.0 * (twice - 1.0)))
+    t
+
+--- anime.js's bounce: the arc of the bounce `t` falls in
+fn _bounce[t]
+    b = 4
+    twos = 0.0
+    going = true
+    while going
+        b = b - 1
+        twos = 2.0 ^ b
+        going = t lt (twos - 1.0) / 11.0 and b gt -60
+    1.0 / (4.0 ^ (3 - b)) - 7.5625 * (((twos * 3.0 - 2.0) / 22.0 - t) ^ 2.0)
+
+--- anime.js's cubic bézier: x found by halving, a hundred halvings at most
+fn _bisected[x1, y1, x2, y2, t]
+    if t eq 0.0 or t eq 1.0
+        return t
+    lo = 0.0
+    hi = 1.0
+    at = 0.0
+    i = 0
+    going = true
+    while going
+        at = lo + (hi - lo) / 2.0
+        gap = _anime_bezier[at, x1, x2] - t
+        if gap gt 0.0
+            hi = at
+        else
+            lo = at
+        i = i + 1
+        going = abs[gap] gt 0.0000001 and i lt 100
+    _anime_bezier[at, y1, y2]
+
+fn _anime_bezier[t, a1, a2]
+    (((1.0 - 3.0 * a2 + 3.0 * a1) * t + (3.0 * a2 - 6.0 * a1)) * t + (3.0 * a1)) * t
+
+--- Motion's cubic bézier: Newton's steps from x, a halving where a step
+--- would leave the bracket, forty rounds at most
+fn _bezier[x1, y1, x2, y2, x]
+    lo = 0.0
+    hi = 1.0
+    t = x
+    i = 0
+    going = true
+    while going
+        if not (t gte lo and t lte hi)
+            t = (lo + hi) / 2.0
+        gap = _motion_bezier[t, x1, x2] - x
+        if gap * gap lt 0.0000000000000000000000000001 or i eq 40
+            going = false
+        else
+            if gap gt 0.0
+                hi = t
+            else
+                lo = t
+            t = t - (gap * 0.0000001) / (_motion_bezier[t + 0.0000001, x1, x2] - x - gap)
+            i = i + 1
+    _motion_bezier[t, y1, y2]
+
+fn _motion_bezier[t, a1, a2]
+    t * (3.0 * (1.0 - t) * ((1.0 - t) * a1 + t * a2) + t * t)
+
+--- anime.js's steps: `count` of them, rounded up where `up` is 1
+fn _anime_steps[count, up, t]
+    held = _clamp[t, 0.0, 1.0] * count
+    if up gt 0.5
+        return float[ceil[held]] * (1.0 / count)
+    float[floor[held]] * (1.0 / count)
+
+--- CSS's steps with their jump term (0 end, 1 start, 2 none, 3 both)
+fn _jumps[count, term, t]
+    step = floor[t * count]
+    if term eq 1.0 or term eq 3.0
+        step = step + 1
+    if t gte 0.0 and step lt 0
+        step = 0
+    jumps = count
+    if term eq 2.0
+        jumps = count - 1.0
+    if term eq 3.0
+        jumps = count + 1.0
+    if jumps lte 0.0
+        return 0.0
+    if t lte 1.0 and float[step] gt jumps
+        return 1.0
+    float[step] / jumps
+
+--- anime.js's linear(): straight between the points, each point a value
+--- and, if it says, where it stands ('0.25 50%'), else spaced evenly
+fn _points[pieces]
+    n = len[pieces]
+    if n eq 0
+        return _identity[]
+    xs = _one[0.0]
+    ys = _one[_first_number[pieces[0]]]
+    i = 1
+    while i lt n - 1
+        words = split[trim[pieces[i]], ' ']
+        x = float[i] / float[n - 1]
+        if len[words] gt 1
+            x = _first_number[replace[words[1], '%', '']] / 100.0
+        xs = push[xs, x]
+        ys = push[ys, _first_number[words[0]]]
+        i = i + 1
+    xs = push[xs, 1.0]
+    ys = push[ys, _first_number[pieces[n - 1]]]
+    Ease['points', 'in', _numbers[], xs, ys]
+
+--- the number a text holds (0 where it holds none), a plain float
+fn _number_in[words]
+    n = float[words]
+    if not n.ok
+        return 0.0
+    0.0 + n
+
+fn _first_number[piece]
+    words = split[trim[piece], ' ']
+    if len[words] eq 0
+        return 0.0
+    n = float[words[0]]
+    if not n.ok
+        return 0.0
+    0.0 + n
+
+fn _pointed[xs, ys, t]
+    n = len[xs]
+    i = 1
+    while i lt n
+        x = xs[i]
+        if t lte x
+            px = xs[i - 1]
+            py = ys[i - 1]
+            return py + (ys[i] - py) * (t - px) / (x - px)
+        i = i + 1
+    ys[n - 1]
+
+--- anime.js's irregular(): `length` points, each wandering up to the next
+--- by `randomness`, drawn from the seeded sequence (anime.js draws them
+--- from Math.random; a seed makes them the same each time)
+fn _irregular[length, randomness, seed_number]
+    vals = _one[0.0]
+    total = length - 1
+    r = random_seeded[seed_number]
+    i = 1
+    while i lt total
+        previous = vals[i - 1]
+        spacing = float[i] / float[total]
+        ending = float[i + 1] / float[total]
+        r = random_unit[r]
+        variation = spacing + (ending - spacing) * r.value
+        wandered = spacing * (1.0 - randomness) + variation * randomness
+        vals = push[vals, _clamp[wandered, previous, 1.0]]
+        i = i + 1
+    vals = push[vals, 1.0]
+    xs = _one[0.0]
+    n = len[vals]
+    j = 1
+    while j lt n - 1
+        xs = push[xs, float[j] / float[n - 1]]
+        j = j + 1
+    xs = push[xs, 1.0]
+    Ease['points', 'in', _numbers[], xs, vals]
+
+--- ---- anime.js's spring, an easing ----
+
+--- a spring easing: mass, stiffness, damping and velocity as anime.js
+--- bounds them, and the time it settles in (sampled every 20 ms until it
+--- has rested for ten samples, a minute at most)
+fn _anime_spring[mass, stiffness, damping, velocity]
+    _anime_spring_of[_clamp[mass, 1.0, 10000.0], _clamp[stiffness, 0.00000000001, 10000.0], _clamp[damping, 0.00000000001, 10000.0], _clamp[velocity, -10000.0, 10000.0]]
+
+--- a spring easing from a bounce (-1 to 1) and a perceived duration (ms)
+fn _anime_spring_bounce[bounce, duration]
+    bn = _clamp[bounce, -1.0, 1.0]
+    seconds = _clamp[duration, 10.0, 10000.0] / 1000.0
+    stiff = ((pi * 2.0) / seconds) ^ 2.0
+    damp_by = (pi * 4.0) / (seconds * (1.0 + bn))
+    if bn gte 0.0
+        damp_by = ((1.0 - bn) * 4.0 * pi) / seconds
+    stiff = _rounded[_clamp[stiff, 0.00000000001, 10000.0], 3]
+    damp_by = _rounded[_clamp[damp_by, 0.00000000001, 300.0], 3]
+    _anime_spring_of[1.0, stiff, damp_by, 0.0]
+
+fn _anime_spring_of[mass, stiffness, damping, velocity]
+    w0 = _clamp[sqrt[stiffness / mass], 0.00000000001, 1000.0]
+    zeta = damping / (2.0 * sqrt[stiffness * mass])
+    wd = 0.0
+    b = -velocity + w0
+    if zeta lt 1.0
+        wd = w0 * sqrt[1.0 - zeta * zeta]
+        b = (zeta * w0 + -velocity) / wd
+    if zeta gt 1.0
+        wd = w0 * sqrt[zeta * zeta - 1.0]
+        b = (zeta * w0 + -velocity) / wd
+    p = _four[w0, zeta, wd, b]
+    rest_most = 200.0 / 0.02 / 1000.0
+    rounds_most = 60000.0 / 0.02 / 1000.0
+    at = 0.0
+    rested = 0
+    rounds = 0
+    solver = 0.0
+    while float[rested] lte rest_most and float[rounds] lte rounds_most
+        if abs[1.0 - _anime_solve[p, at]] lt 0.0005
+            rested = rested + 1
+        else
+            rested = 0
+        solver = at
+        at = at + 0.02
+        rounds = rounds + 1
+    p = push[p, solver]
+    p = push[p, _js_round[solver * 1000.0]]
+    p = push[push[push[push[p, stiffness], damping], mass], velocity]
+    _ease['spring', 'in', p]
+
+fn _anime_solve[p, at]
+    w0 = p[0]
+    zeta = p[1]
+    wd = p[2]
+    b = p[3]
+    t = at
+    if zeta lt 1.0
+        t = exp[-t * zeta * w0] * (1.0 * cos[wd * t] + b * sin[wd * t])
+    else if zeta eq 1.0
+        t = (1.0 + b * t) * exp[-t * w0]
+    else
+        t = ((1.0 + b) * exp[(-zeta * w0 + wd) * t] + (1.0 - b) * exp[(-zeta * w0 - wd) * t]) / 2.0
+    1.0 - t
+
+--- ---- Motion's springs ----
+
+--- a spring: by its physics (`form` 'physics': stiffness, damping, mass),
+--- by the time it takes and its bounce ('duration': ms and -1 to 1), or by
+--- the time it seems to take ('visual': seconds); at rest when slower than
+--- `rest_speed` (units a second) and nearer than `rest_delta` (0 for
+--- either: Motion's own, by how far it moves)
+struct Spring [form, stiffness, damping, mass, duration, bounce, visual, rest_speed, rest_delta]
+
+--- a spring of these physics (Motion's own: 100, 10, 1)
+fn spring[stiffness, damping, mass]
+    Spring['physics', stiffness, damping, mass, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+--- a spring that settles in `duration` ms with `bounce` (Motion: 800, 0.3)
+fn spring_duration[duration, bounce]
+    Spring['duration', 0.0, 0.0, 1.0, duration, bounce, 0.0, 0.0, 0.0]
+
+--- a spring that seems to take `visual` seconds, with `bounce`
+fn spring_visual[visual, bounce]
+    Spring['visual', 0.0, 0.0, 1.0, 0.0, bounce, visual, 0.0, 0.0]
+
+--- the physics a spring comes to: stiffness, damping and mass; the
+--- duration it was asked to take (ms, 0 when its physics were given); and
+--- whether it was defined by time (its start's velocity is then not its own)
+struct Physics [stiffness, damping, mass, duration, timed, settles]
+
+fn spring_physics[sp]
+    if sp.form eq 'physics'
+        stiff = sp.stiffness
+        if not (stiff gt 0.0 and stiff lt inf)
+            stiff = 100.0
+        damping = sp.damping
+        if not (damping gte 0.0 and damping lt inf)
+            damping = 10.0
+        mass = sp.mass
+        if not (mass gt 0.0 and mass lt inf)
+            mass = 1.0
+        return Physics[stiff, damping, mass, 0.0, false, false]
+    ratio = _damping_ratio[sp.bounce]
+    if sp.form eq 'visual'
+        if sp.visual ne 0.0
+            ratio = _damping_ratio[sp.bounce]
+            root = ((2.0 * pi) / (sp.visual * 1.2)) * _overdamped_scale[ratio, (2.0 * pi) / 1.2]
+            stiff = root * root
+            found = Physics[stiff, 2.0 * ratio * sqrt[stiff], 1.0, 0.0, true, false]
+            return _valid_physics[found]
+    duration = sp.duration
+    if sp.form eq 'visual'
+        duration = 800.0
+    seconds = _between[0.01, 10.0, duration / 1000.0]
+    critical = _root_found[ratio, seconds, 5.0 / seconds]
+    undamped = critical * _overdamped_scale[ratio, critical * seconds]
+    stiff = undamped * undamped
+    _valid_physics[Physics[stiff, ratio * 2.0 * sqrt[stiff], 1.0, seconds * 1000.0, true, true]]
+
+fn _valid_physics[found]
+    if not (found.stiffness gt 0.0 and found.stiffness lt inf) or not (found.damping gte 0.0 and found.damping lt inf)
+        found.stiffness = 100.0
+        found.damping = 10.0
+    found
+
+fn _damping_ratio[bounce]
+    if bounce lt 0.0
+        return 1.0 / max[1.0 + bounce, 0.05]
+    max[1.0 - bounce, 0.05]
+
+--- how much faster than critical an overdamped spring must ring to take
+--- the same time (1 for any other)
+fn _overdamped_scale[ratio, critical_time]
+    if not (ratio gt 1.0)
+        return 1.0
+    root = sqrt[ratio * ratio - 1.0]
+    slow = ratio - root
+    fast = ratio + root
+    goal = 2.0 * root * exp[-critical_time] * (1.0 + critical_time)
+    x = critical_time
+    i = 1
+    while i lt 12
+        slope = exp[-fast * x] - exp[-slow * x]
+        x = x - (fast * exp[-slow * x] - slow * exp[-fast * x] - goal) / slope
+        i = i + 1
+    x / critical_time
+
+--- the undamped frequency at which a spring of this damping ratio settles
+--- to a thousandth in `seconds`, by eleven of Newton's steps
+fn _root_found[ratio, seconds, guess]
+    w = guess
+    i = 1
+    while i lt 12
+        w = w - _envelope[ratio, seconds, w] / _envelope_slope[ratio, seconds, w]
+        i = i + 1
+    w
+
+fn _envelope[ratio, seconds, w]
+    if ratio lt 1.0
+        decay = w * ratio
+        delta = decay * seconds
+        ringing = w * sqrt[1.0 - ratio * ratio]
+        return 0.001 - (decay / ringing) * exp[-delta]
+    -0.001 + exp[-w * seconds] * (w * seconds + 1.0)
+
+fn _envelope_slope[ratio, seconds, w]
+    if ratio lt 1.0
+        decay = w * ratio
+        delta = decay * seconds
+        grown = ratio * ratio * w * w * seconds
+        fell = exp[-delta]
+        ringing = (w * w) * sqrt[1.0 - ratio * ratio]
+        factor = 1.0
+        if -_envelope[ratio, seconds, w] + 0.001 gt 0.0
+            factor = -1.0
+        return (factor * -grown * fell) / ringing
+    exp[-w * seconds] * (-w * (seconds * seconds))
+
+--- where a spring is: its value, its velocity (units a second) and
+--- whether it is at rest
+struct Sample [value, velocity, done]
+
+--- the spring `sp` moving from `origin` to `to`, started at `velocity`
+--- units a second, `ms` after it started (a spring defined by time starts
+--- still, as Motion's does)
+fn spring_sample[sp, origin, to, velocity, ms]
+    phys = spring_physics[sp]
+    ratio = phys.damping / (2.0 * sqrt[phys.stiffness * phys.mass])
+    undamped = sqrt[phys.stiffness / phys.mass] / 1000.0
+    decay = ratio * undamped
+    delta = to - origin
+    speed = 0.0
+    if not phys.timed
+        speed = -(velocity / 1000.0)
+    granular = abs[delta] lt 5.0
+    rest_speed = sp.rest_speed
+    if rest_speed eq 0.0
+        rest_speed = 2.0
+        if granular
+            rest_speed = 0.01
+    rest_delta = sp.rest_delta
+    if rest_delta eq 0.0
+        rest_delta = 0.5
+        if granular
+            rest_delta = 0.005
+    t = ms
+    x = to
+    v = 0.0
+    if ratio lt 1.0
+        ringing = undamped * sqrt[1.0 - ratio * ratio]
+        lead = (speed + decay * delta) / ringing
+        sine_part = decay * lead + delta * ringing
+        cosine_part = decay * delta - lead * ringing
+        fade = exp[-decay * t]
+        sn = sin[ringing * t]
+        cs = cos[ringing * t]
+        x = to - fade * (lead * sn + delta * cs)
+        v = fade * (sine_part * sn + cosine_part * cs)
+    else if ratio eq 1.0
+        x = to - exp[-undamped * t] * (delta + (speed + undamped * delta) * t)
+        lead = speed + undamped * delta
+        v = exp[-undamped * t] * (undamped * lead * t - speed)
+    else
+        damped = undamped * sqrt[ratio * ratio - 1.0]
+        slow = decay - damped
+        fast = decay + damped
+        limit = inf
+        if not (damped lt 1.0 or phys.timed)
+            limit = 300.0 / damped
+        lead = (speed + decay * delta) / damped
+        slow_part = (delta + lead) / 2.0
+        fast_part = (delta - lead) / 2.0
+        slow_fade = _decay_at[decay, slow, limit, t]
+        fast_fade = _decay_at[decay, fast, limit, t]
+        x = to - slow_part * slow_fade - fast_part * fast_fade
+        v = slow * slow_part * slow_fade + fast * fast_part * fast_fade
+    velocity_now = v * 1000.0
+    done = abs[velocity_now] lte rest_speed and abs[to - x] lte rest_delta
+    if phys.settles
+        done = t gte phys.duration
+    value = x
+    if done
+        value = to
+    Sample[value, velocity_now, done]
+
+fn _decay_at[decay, rate, limit, t]
+    if t gt limit
+        return exp[(decay - rate) * limit - decay * t]
+    exp[-rate * t]
+
+--- ---- Motion's inertia: a value thrown, slowing, caught by its bounds ----
+
+--- a throw: where it starts, its velocity (units a second), how far it
+--- carries (`power` of the velocity, as Motion's 0.8), how fast it slows
+--- (`time_constant` ms), the spring that catches it at a bound (stiffness,
+--- damping), when it rests (`rest_delta`, `rest_speed`: 0 for the
+--- spring's own), its bounds (`low`, `high`: -inf and inf for none) and a
+--- step its target is rounded to (`snap`, 0 for none)
+struct Inertia [origin, velocity, power, time_constant, bounce_stiffness, bounce_damping, rest_delta, rest_speed, low, high, snap]
+
+fn inertia[origin, velocity]
+    Inertia[origin, velocity, 0.8, 325.0, 500.0, 10.0, 0.5, 0.0, -inf, inf, 0.0]
+
+--- a throw as it goes: where it is headed (`target`, `amplitude` the way
+--- there), whether a bound caught it, when and from where and how fast,
+--- and its value and rest at the last time asked
+struct Glide [target, amplitude, caught, caught_at, origin, speed, value, done]
+
+--- the throw at its start (caught at once if it starts out of bounds)
+fn glide[thrown]
+    amplitude = thrown.power * thrown.velocity
+    ideal = thrown.origin + amplitude
+    target = ideal
+    if thrown.snap ne 0.0
+        target = _js_round[ideal / thrown.snap] * thrown.snap
+    if target ne ideal
+        amplitude = target - thrown.origin
+    g = Glide[target, amplitude, false, 0.0, 0.0, 0.0, thrown.origin, false]
+    _caught_at[thrown, g, 0.0]
+
+--- the throw `ms` after it was let go, from where it was last asked (a
+--- bound catches it at the first time asked that finds it outside, as
+--- Motion's frames find it)
+fn glided[thrown, g, ms]
+    if not g.caught
+        g = _slowed[thrown, g, ms]
+        g = _caught_at[thrown, g, ms]
+    if g.caught and ms gte g.caught_at
+        caught = _catching[thrown, g]
+        landed = spring_sample[caught, g.origin, _boundary[thrown, g.origin], g.speed, ms - g.caught_at]
+        g.value = landed.value
+        g.done = landed.done
+        return g
+    if g.caught
+        g = _slowed[thrown, g, ms]
+    g
+
+fn _catching[thrown, g]
+    caught = spring[thrown.bounce_stiffness, thrown.bounce_damping, 1.0]
+    caught.rest_delta = thrown.rest_delta
+    caught.rest_speed = thrown.rest_speed
+    caught
+
+fn _slowed[thrown, g, ms]
+    delta = -g.amplitude * exp[-ms / thrown.time_constant]
+    g.done = abs[delta] lte thrown.rest_delta
+    g.value = g.target + delta
+    if g.done
+        g.value = g.target
+    g
+
+fn _caught_at[thrown, g, ms]
+    if not (g.value lt thrown.low or g.value gt thrown.high)
+        return g
+    g.caught = true
+    g.caught_at = ms
+    g.origin = g.value
+    delta = -g.amplitude * exp[-ms / thrown.time_constant]
+    g.speed = (-delta / thrown.time_constant) * 1000.0
+    g
+
+fn _boundary[thrown, v]
+    if abs[thrown.low - v] lt abs[thrown.high - v]
+        return thrown.low
+    thrown.high
+
+--- ---- keyframes and their clock ----
+
+--- an animation: its keyframe values, where each stands in its time (0 to
+--- 1), the easing of each stretch between two, how long one play takes
+--- (ms), and its clock's settings as anime.js's timer has them: a delay
+--- before it, how many more times it plays (`loops`; -1 for ever), a
+--- pause between plays, whether every other play runs back (`alternate`)
+--- and whether it runs back from the start (`reversed`)
+struct Tween [vals, offsets, eases, duration, delay, loops, loop_delay, alternate, reversed]
+
+--- keyframe values over `duration` ms, spaced evenly, each stretch eased
+--- in and out (Motion's keyframes), played once
+fn keyframes[vals, duration]
+    n = len[vals]
+    offsets = _numbers[]
+    eases = slice[[_identity[]], 0, 0]
+    i = 0
+    while i lt n
+        offsets = push[offsets, 0.0 + (1.0 - 0.0) * _progress[0.0, float[n - 1], float[i]]]
+        if i lt n - 1
+            eases = push[eases, ease['easeInOut']]
+        i = i + 1
+    if n gt 0
+        offsets[0] = 0.0
+    held = _numbers[]
+    for v in vals
+        held = push[held, 0.0 + v]
+    Tween[held, offsets, eases, duration, 0.0, 0, 0.0, false, false]
+
+--- one value moving to another over `duration` ms with the easing named
+fn tween_of[origin, to, duration, name]
+    with_ease[keyframes[_two[origin, to], duration], name]
+
+--- the animation with every stretch eased by the easing named
+fn with_ease[k, name]
+    one = ease[name]
+    eases = slice[[_identity[]], 0, 0]
+    i = 0
+    while i lt len[k.vals] - 1
+        eases = push[eases, one]
+        i = i + 1
+    k.eases = eases
+    k
+
+--- the value `ms` into one play of the animation (Motion's keyframes:
+--- held at its ends outside them)
+fn track_value[k, ms]
+    vals = k.vals
+    n = len[vals]
+    if n eq 0
+        return 0.0
+    if n eq 1
+        return vals[0]
+    if n eq 2 and vals[0] eq vals[1]
+        return vals[1]
+    at = _numbers[]
+    for o in k.offsets
+        at = push[at, o * k.duration]
+    if len[at] ne n
+        return vals[0]
+    v = _between[at[0], at[n - 1], ms]
+    if at[0] eq at[1] and v lt at[0]
+        return vals[0]
+    i = 0
+    if n - 1 gt 1
+        going = true
+        while going and i lt n - 2
+            if v lt at[i + 1]
+                going = false
+            else
+                i = i + 1
+    p = _progress[at[i], at[i + 1], v]
+    if i lt len[k.eases]
+        p = eased[k.eases[i], p]
+    vals[i] + (vals[i + 1] - vals[i]) * p
+
+--- where a clock stands: the time into its current play (`time`, ms),
+--- which play it is (from 0), how far through that play the animation is
+--- (0 to 1, after its direction) and whether it has ended
+struct Playhead [time, iteration, progress, done]
+
+fn _count[k]
+    if k.loops lt 0
+        return inf
+    float[k.loops + 1]
+
+fn _total[k]
+    total = (k.duration + k.loop_delay) * _count[k] - k.loop_delay
+    if total eq inf
+        total = 1000000000000.0
+    if total eq 0.0
+        total = 0.00000000001
+    total
+
+--- the clock of an animation `ms` after it started (anime.js's timer: the
+--- delay, the plays, the pauses between them, the turns)
+fn playhead[k, ms]
+    total = _total[k]
+    count = _count[k]
+    current = _clamp[ms, -k.delay, total]
+    at_end = current gte total
+    odd = false
+    elapsed = ms
+    iteration = 0
+    if count gt 1.0
+        period = k.duration + k.loop_delay
+        if at_end
+            period = k.duration
+        cut = 0
+        if period gt 0.0
+            cut = int[current / period]
+        elapsed = current - float[cut] * period
+        iteration = cut
+        if float[iteration] gt count
+            iteration = int[count]
+        if iteration lt 0
+            iteration = 0
+        if at_end
+            iteration = iteration - 1
+        odd = iteration % 2 ne 0
+    turned = k.reversed ne (k.alternate and odd)
+    time = elapsed
+    if turned
+        time = k.duration - elapsed
+    if at_end
+        time = total
+        if turned
+            time = 0.0
+    progress = 1.0
+    if k.duration gt 0.00000000001
+        progress = _clamp[time / k.duration, 0.0, 1.0]
+    Playhead[time, iteration, progress, at_end]
+
+--- how long the animation takes from its start to its end, every play
+--- and pause between plays counted (not its delay)
+fn tween_duration[k]
+    _total[k]
+
+--- the animation's value `ms` after it started, on its clock
+fn tween_value[k, ms]
+    head = playhead[k, ms]
+    track_value[k, head.progress * k.duration]
+
+--- a clock kept between frames: the frame time it last counted from
+--- (`since`), the time it then stood at (`held`), its speed, whether it is
+--- paused, and whether it was turned to run the other way
+struct Clock [since, held, speed, paused, turned]
+
+fn _clock_name[id]
+    'lory.motion/clock/`id`'
+
+fn _fresh_clock[]
+    Clock[-1.0, 0.0, 1.0, false, false]
+
+fn _clock_time[clock, at]
+    if clock.paused
+        return clock.held
+    clock.held + (at - clock.since) * clock.speed
+
+--- the animation's definition with its clock's turn taken
+fn _turned[k, clock]
+    k.reversed = k.reversed ne clock.turned
+    k
+
+fn _clock_now[c, id]
+    at = lory.time[c]
+    clock = recall[_clock_name[id], _fresh_clock[]]
+    if clock.since lt 0.0
+        clock.since = at
+        remember[_clock_name[id], clock]
+    clock
+
+--- the value of animation `k`, kept under `id`, at this frame (its clock
+--- starts the first frame it is asked for)
+fn run[c, id, k]
+    clock = _clock_now[c, id]
+    tween_value[_turned[k, clock], _clock_time[clock, lory.time[c]]]
+
+--- where the clock of animation `k`, kept under `id`, stands at this frame
+fn run_state[c, id, k]
+    clock = _clock_now[c, id]
+    playhead[_turned[k, clock], _clock_time[clock, lory.time[c]]]
+
+--- the clock kept under `id` as it stands at this frame: `held` is the
+--- time it shows now (ms of its own time, which runs on when it is turned:
+--- the playhead then shows its duration less it), and its speed, whether it
+--- is paused and whether it is turned
+fn clock_at[c, id]
+    at = lory.time[c]
+    clock = _clock_now[c, id]
+    clock.held = _clock_time[clock, at]
+    clock.since = at
+    clock
+
+--- the clock of animation `k`, kept under `id`, told what to do: 'play'
+--- (forward from where it is, from the start once it has ended), 'reverse'
+--- (back from where it is), 'alternate' (the other way, as anime.js's
+--- alternate()), 'pause', 'resume', 'seek' (to `num` ms), 'speed' (`num`
+--- times) or 'restart'
+fn control[c, id, k, act, num]
+    at = lory.time[c]
+    clock = _clock_now[c, id]
+    clock = _clock_acted[clock, k, act, num, at]
+    remember[_clock_name[id], clock]
+
+--- the clock after an act at frame time `at`
+fn _clock_acted[clock, k, act, num, at]
+    now_at = _clock_time[clock, at]
+    clock.held = now_at
+    clock.since = at
+    backward = k.reversed ne clock.turned
+    total = _total[k]
+    if act eq 'pause'
+        clock.paused = true
+    if act eq 'resume'
+        clock.paused = false
+    if act eq 'seek'
+        clock.held = num
+    if act eq 'speed'
+        clock.speed = num
+    if act eq 'restart'
+        clock = Clock[at, 0.0, clock.speed, false, false]
+    if act eq 'alternate'
+        clock = _alternated[clock, k]
+    if act eq 'play'
+        if backward
+            clock = _alternated[clock, k]
+        else if now_at gte total
+            clock.held = 0.0
+        clock.paused = false
+    if act eq 'reverse'
+        if not backward
+            clock = _alternated[clock, k]
+        else if now_at gte total
+            clock.held = 0.0
+        clock.paused = false
+    clock
+
+--- the clock run the other way from where it stands (anime.js's
+--- alternate(): an alternating clock of an even count of plays keeps its
+--- direction, the time seen from the end)
+fn _alternated[clock, k]
+    count = _count[k]
+    if count eq inf
+        clock.turned = not clock.turned
+        return clock
+    keeps = k.alternate and int[count] % 2 eq 0
+    if not keeps
+        clock.turned = not clock.turned
+    clock.held = k.duration * count - clock.held
+    clock
+
+--- the value that eases to `target` over `duration` ms with the easing
+--- named, kept under `id`: a new target starts it again from where it is
+fn tween[c, id, target, duration, name]
+    at = lory.time[c]
+    key = 'lory.motion/tween/`id`'
+    moving = recall[key, Moving[target, target, at, false]]
+    if not moving.kept or moving.to ne target
+        origin = target
+        if moving.kept
+            origin = _tween_at[moving, at, duration, name]
+        moving = Moving[origin, target, at, true]
+        remember[key, moving]
+    _tween_at[moving, at, duration, name]
+
+--- a value moving: where it set out from, where to, the frame time it set
+--- out, and whether it was kept (a value first asked for stands still)
+struct Moving [origin, to, since, kept]
+
+fn _tween_at[moving, at, duration, name]
+    p = 1.0
+    if duration gt 0.0
+        p = _clamp[(at - moving.since) / duration, 0.0, 1.0]
+    moving.origin + (moving.to - moving.origin) * eased[ease[name], p]
+
+--- the value a spring carries to `target`, kept under `id`: a new target
+--- starts the spring again from where the value is, at the speed it has
+fn spring_to[c, id, target, sp]
+    at = lory.time[c]
+    key = 'lory.motion/spring/`id`'
+    held = recall[key, Sprung[target, target, 0.0, at, false]]
+    if held.to ne target
+        now_sample = spring_sample[sp, held.origin, held.to, held.speed, at - held.since]
+        held = Sprung[now_sample.value, target, now_sample.velocity, at, false]
+    landed = spring_sample[sp, held.origin, held.to, held.speed, at - held.since]
+    remember[key, held]
+    landed.value
+
+--- a spring under way: from, to, its speed at the start, when it started
+struct Sprung [origin, to, speed, since, rested]
+
+--- ---- timelines (anime.js's positions) ----
+
+--- a timeline's child: its name, where it starts (ms), its own delay, how
+--- long one play takes, how many more times it plays, and its whole time
+struct Child [name, offset, delay, duration, loops, total]
+
+struct Label [name, at]
+
+--- a timeline: its children and labels, and how long one play of it takes
+struct Timeline [children, labels, iteration_duration, loops, loop_delay]
+
+fn timeline[]
+    Timeline[slice[[Child['', 0.0, 0.0, 0.0, 0, 0.0]], 0, 0], slice[[Label['', 0.0]], 0, 0], 0.0, 0, 0.0]
+
+--- the time a position names in the timeline as it stands: '' after
+--- everything, a number of ms, '+=100' and '-=100' after the end, '*=2',
+--- a label ('intro', 'intro+=50'), '<' the end of the last child added and
+--- '<<' its start ('<+=50', '<<-=20')
+fn timeline_position[tl, position]
+    whole = tl.iteration_duration
+    if whole eq 0.00000000001
+        whole = 0.0
+    words = trim[position]
+    if words eq ''
+        return whole
+    if float[words].ok
+        return _number_in[words]
+    sibling = starts[words, '<']
+    previous = 0.0
+    if sibling and len[tl.children] gt 0
+        last = tl.children[len[tl.children] - 1]
+        previous = last.offset + last.delay
+        if not starts[words, '<<']
+            previous = previous + last.total
+    operator = _operator[words]
+    if operator ne ''
+        parts = split[words, operator]
+        base = whole
+        if sibling
+            base = previous
+        else if parts[0] ne ''
+            base = _label_or[tl, parts[0], whole]
+        by = float[trim[parts[1]]]
+        if not by.ok
+            return base
+        if operator eq '-='
+            return base - by
+        if operator eq '+='
+            return base + by
+        return base * by
+    if sibling
+        return previous
+    _label_or[tl, words, whole]
+
+fn _operator[words]
+    found = ''
+    at = len[words]
+    for op in ['*=', '+=', '-=']
+        if op in words
+            place = len[split[words, op][0]]
+            if place lt at
+                at = place
+                found = op
+    found
+
+fn _label_or[tl, name, otherwise]
+    found = otherwise
+    for l in tl.labels
+        if l.name eq name
+            found = l.at
+    found
+
+--- the timeline with a child named `name`, `duration` ms long, put at
+--- `position` (see timeline_position), after its own `delay`, played
+--- `loops` more times
+fn timeline_add[tl, name, duration, position, delay = 0.0, loops = 0]
+    at = timeline_position[tl, position]
+    played = Tween[_numbers[], _numbers[], slice[[_identity[]], 0, 0], duration, 0.0, loops, 0.0, false, false]
+    total = (duration + 0.0) * _count[played] - 0.0
+    if total eq inf
+        total = 1000000000000.0
+    if total eq 0.0
+        total = 0.00000000001
+    if duration lte 0.00000000001
+        at = at - 0.00000000001
+    tl.children = push[tl.children, Child[name, at, delay, duration, loops, total]]
+    for child in tl.children
+        if child.offset + child.delay + child.total gt tl.iteration_duration
+            tl.iteration_duration = child.offset + child.delay + child.total
+    tl
+
+--- the timeline with a label at `position`
+fn timeline_label[tl, name, position]
+    at = timeline_position[tl, position]
+    kept = slice[[Label['', 0.0]], 0, 0]
+    for l in tl.labels
+        if l.name ne name
+            kept = push[kept, l]
+    tl.labels = push[kept, Label[name, at]]
+    tl
+
+--- how long the whole timeline takes, its loops counted
+fn timeline_duration[tl]
+    total = (tl.iteration_duration + tl.loop_delay) * _count[_timeline_clock[tl]] - tl.loop_delay
+    if total eq inf
+        total = 1000000000000.0
+    if total eq 0.0
+        total = 0.00000000001
+    total
+
+fn _timeline_clock[tl]
+    Tween[_numbers[], _numbers[], slice[[_identity[]], 0, 0], tl.iteration_duration, 0.0, tl.loops, tl.loop_delay, false, false]
+
+--- the child named, or a child of no name where there is none
+fn child_of[tl, name]
+    found = Child['', 0.0, 0.0, 0.0, 0, 0.0]
+    for child in tl.children
+        if child.name eq name
+            found = child
+    found
+
+--- where the label named stands (the timeline's length where there is none)
+fn label_at[tl, name]
+    _label_or[tl, name, tl.iteration_duration]
+
+--- the clock of the child named when the timeline stands at `ms`
+fn child_playhead[tl, name, ms]
+    child = child_of[tl, name]
+    played = Tween[_numbers[], _numbers[], slice[[_identity[]], 0, 0], child.duration, 0.0, child.loops, 0.0, false, false]
+    playhead[played, ms - child.offset - child.delay]
+
+--- ---- staggers ----
+
+--- a stagger: whose rule it follows ('anime' or 'motion'), the time
+--- between neighbours (`each`; or, ranged, the first and last delays
+--- `each` and `upto`), the time it adds to every delay (`base`), where it
+--- starts ('first', 'center', 'last', 'random', Motion's 'edges', an index
+--- as text, or anime.js's 'point' at `origin_x`, `origin_y` of the grid),
+--- whether it runs from the far end (`reversed`), an easing over it, a
+--- grid (`columns`, `rows`; 0 for a line), an axis of the grid ('x', 'y'
+--- or '') and the seed of its random order
+struct Stagger [rule, each, upto, ranged, base, origin, origin_x, origin_y, reversed, easing, eased, columns, rows, axis, seed]
+
+--- anime.js's stagger: `each` ms between neighbours
+fn stagger[each]
+    Stagger['anime', each, 0.0, false, 0.0, 'first', 0.0, 0.0, false, _identity[], false, 0, 0, '', 0]
+
+--- anime.js's stagger over a range: the first item at `first`, the
+--- farthest at `last`
+fn stagger_range[first, last]
+    st = stagger[first]
+    st.upto = last
+    st.ranged = true
+    st
+
+--- Motion's stagger: `each` between neighbours (seconds, as Motion counts)
+fn stagger_motion[each]
+    st = stagger[each]
+    st.rule = 'motion'
+    st
+
+--- the stagger with its delays eased by the easing named
+fn stagger_eased[st, name]
+    st.easing = ease[name]
+    st.eased = true
+    st
+
+--- the stagger over a grid of `columns` by `rows`
+fn stagger_grid[st, columns, rows]
+    st.columns = columns
+    st.rows = rows
+    st
+
+--- the delay of every item of `total`, in order
+fn staggers[st, total]
+    if st.rule eq 'motion'
+        return _motion_staggers[st, total]
+    _anime_staggers[st, total]
+
+--- the delay of item `index` of `total`
+fn staggered[st, index, total]
+    staggers[st, total][index]
+
+fn _from_index[st, total]
+    if st.origin eq 'center'
+        return float[total - 1] / 2.0
+    if st.origin eq 'last'
+        return float[total - 1]
+    n = float[st.origin]
+    if not n.ok
+        return 0.0
+    0.0 + n
+
+fn _anime_staggers[st, total]
+    origin = _from_index[st, total]
+    dists = _numbers[]
+    i = 0
+    while i lt total
+        if st.columns eq 0
+            dists = push[dists, abs[origin - float[i]]]
+        else
+            cols = float[st.columns]
+            rows = float[st.rows]
+            fx = 0.0
+            fy = 0.0
+            if st.origin eq 'point'
+                fx = st.origin_x * (cols - 1.0)
+                fy = st.origin_y * (rows - 1.0)
+            else if st.origin eq 'center'
+                fx = (cols - 1.0) / 2.0
+                fy = (rows - 1.0) / 2.0
+            else
+                fx = _js_mod[origin, cols]
+                fy = _js_mod[float[floor[origin / cols]], rows]
+            tx = float[i % st.columns]
+            ty = float[floor[float[i] / cols] % st.rows]
+            dx = fx - tx
+            dy = fy - ty
+            d = sqrt[dx * dx + dy * dy]
+            if st.axis eq 'x'
+                d = -dx
+            if st.axis eq 'y'
+                d = -dy
+            dists = push[dists, d]
+        i = i + 1
+    most = dists[0]
+    for d in dists
+        if d gt most
+            most = d
+    if st.eased or st.reversed
+        turned = _numbers[]
+        for d in dists
+            v = d
+            if st.eased
+                v = eased[st.easing, v / most] * most
+            if st.reversed
+                if st.axis ne ''
+                    v = -v
+                else
+                    v = abs[most - v]
+            turned = push[turned, v]
+        dists = turned
+    if st.origin eq 'random'
+        dists = _shuffled[dists, st.seed]
+    spacing = st.each
+    if st.ranged
+        spacing = (st.upto - st.each) / most
+    base = st.base
+    if base eq 0.0 and st.ranged
+        base = st.each
+    out = _numbers[]
+    for d in dists
+        step = spacing * _rounded[d, 2]
+        if not (step eq step)
+            step = 0.0
+        out = push[out, base + step]
+    out
+
+--- anime.js's shuffle, drawing from its seeded random
+fn _shuffled[items, seed_number]
+    out = items
+    r = random_seeded[seed_number]
+    m = len[out]
+    while m gt 0
+        m = m - 1
+        r = random_next[r, 0.0, float[m], 0]
+        j = int[r.value]
+        held = out[m]
+        out[m] = out[j]
+        out[j] = held
+    out
+
+fn _motion_staggers[st, total]
+    gridded = st.columns gt 0
+    cols = inf
+    rows = 1.0
+    if gridded
+        cols = float[st.columns]
+        rows = float[st.rows]
+    last_x = min[cols, float[total]] - 1.0
+    last_y = 0.0
+    if gridded
+        last_y = max[rows, float[ceil[float[total] / cols]]] - 1.0
+    numbered = float[st.origin].ok
+    index = _number_in[st.origin]
+    scale = 0.5
+    if st.origin eq 'first'
+        scale = 0.0
+    if st.origin eq 'last'
+        scale = 1.0
+    origin_x = last_x * scale
+    origin_y = last_y * scale
+    if numbered
+        origin_x = index
+        origin_y = 0.0
+        if gridded
+            origin_x = _js_mod[index, cols]
+            origin_y = float[floor[index / cols]]
+    dists = _numbers[]
+    r = random_seeded[st.seed]
+    j = 0
+    while j lt total
+        x = float[j]
+        y = 0.0
+        if gridded
+            x = float[j % st.columns]
+            y = float[floor[float[j] / cols]]
+        if st.origin eq 'random'
+            r = random_unit[r]
+            k = int[r.value * float[j + 1]]
+            dists = push[dists, 0.0]
+            dists[j] = dists[k]
+            dists[k] = float[j]
+        else if st.origin eq 'edges'
+            edge_x = min[x, last_x - x]
+            edge_y = min[y, last_y - y]
+            first = edge_y
+            if last_x ne 0.0
+                first = edge_x
+            second = edge_x
+            if last_y ne 0.0
+                second = edge_y
+            dists = push[dists, min[first, second]]
+        else
+            dists = push[dists, hypotenuse[x - origin_x, y - origin_y]]
+        j = j + 1
+    reach = float[total]
+    if gridded
+        reach = dists[0]
+        for d in dists
+            if d gt reach
+                reach = d
+    most = st.each * reach
+    out = _numbers[]
+    for d in dists
+        delay = st.each * d
+        if st.eased and most ne 0.0
+            delay = eased[st.easing, delay / most] * most
+        out = push[out, st.base + delay]
+    out
+
+--- the length of (x, y) as V8's Math.hypot finds it (each over the
+--- larger, so the floats are the same as Motion's)
+fn hypotenuse[x, y]
+    ax = abs[x]
+    ay = abs[y]
+    most = max[ax, ay]
+    if most eq 0.0
+        return 0.0
+    px = ax / most
+    py = ay / most
+    sqrt[px * px + py * py] * most
+
+--- ---- presence: shown, then gone ----
+
+--- where a presence stands: its eased value (0 gone, 1 shown), its
+--- progress (0 to 1), whether it is drawn at all (`present`: shown, or on
+--- its way out), entering, exiting, and whether its exit is over (`gone`)
+struct Presence [value, progress, present, entering, exiting, gone]
+
+struct Showing [shown, since, origin]
+
+--- a presence kept under `id`: shown or not this frame, entering over
+--- `enter` ms and leaving over `exit` ms, eased by the easing named (the
+--- exit retraces the entrance); a change half way turns it where it is
+fn presence[c, id, shown, enter, leave, name]
+    at = lory.time[c]
+    key = 'lory.motion/presence/`id`'
+    held = recall[key, Showing[false, at, 0.0]]
+    if held.shown ne shown
+        now_at = presence_of[held.shown, held.since, held.origin, enter, leave, name, at]
+        held = Showing[shown, at, now_at.progress]
+        remember[key, held]
+    presence_of[held.shown, held.since, held.origin, enter, leave, name, at]
+
+--- a presence that turned `shown` (or not) at `since`, from `origin`, seen
+--- at `at`
+fn presence_of[shown, since, origin, enter, leave, name, at]
+    p = origin
+    if shown
+        p = 1.0
+        if enter gt 0.0
+            p = min[1.0, origin + (at - since) / enter]
+    else
+        p = 0.0
+        if leave gt 0.0
+            p = max[0.0, origin - (at - since) / leave]
+    present = shown or (p gt 0.0)
+    entering = shown and (p lt 1.0)
+    exiting = (not shown) and (p gt 0.0)
+    gone = (not shown) and (p eq 0.0)
+    Presence[eased[ease[name], p], p, present, entering, exiting, gone]
+
+--- ---- scroll ----
+
+--- how far a target has come through its container as it scrolls (0 to
+--- 1), as Motion's scroll() offsets say: `scroll` the container's scroll,
+--- `container` its length, `target` the target's length and `inset` where
+--- the target starts in the scrolled content; each offset meets an edge of
+--- the target with one of the container ('start end': the target's start
+--- at the container's end; edges as 'start', 'center', 'end', a fraction,
+--- '50%' or '100px'); none given is ['start start', 'end end']
+fn scroll_progress[scroll, container, target, inset, offsets]
+    given = offsets
+    if len[given] eq 0
+        given = ['0 0', '1 1']
+    meets = _numbers[]
+    for o in given
+        meets = push[meets, _meeting[trim[o], container, target, inset]]
+    n = len[meets] - 1
+    if n lt 1
+        return 0.0
+    back = meets[0] gt meets[n]
+    ordered = meets
+    if back
+        ordered = reverse[meets]
+    if meets[0] eq meets[1] and scroll lt ordered[0]
+        if back
+            return 1.0
+        return 0.0
+    i = 0
+    while i lt n - 1 and scroll gte ordered[i + 1]
+        i = i + 1
+    p = (float[i] + _progress[ordered[i], ordered[i + 1], scroll]) / float[n]
+    if back
+        p = 1.0 - p
+    _between[0.0, 1.0, p]
+
+fn _meeting[offset, container, target, inset]
+    sides = split[offset, ' ']
+    if len[sides] lt 2
+        other = '0'
+        if offset in ['center', 'end']
+            other = offset
+        sides = [offset, other]
+    (inset + _edge[sides[0], target]) - (0.0 + _edge[sides[1], container])
+
+fn _edge[edge, length]
+    if edge eq 'start'
+        return length * 0.0
+    if edge eq 'center'
+        return length * 0.5
+    if edge eq 'end'
+        return length * 1.0
+    if ends[edge, 'px']
+        return _first_number[replace[edge, 'px', '']]
+    if ends[edge, '%']
+        return length * (_first_number[replace[edge, '%', '']] / 100.0)
+    length * _first_number[edge]
+
+--- a target's window of scroll as anime.js's onScroll finds it: where its
+--- progress starts and ends, how long it is, the progress at `scroll` (0
+--- to 1, to six places) and whether the target is in view
+struct ScrollWindow [enter_at, leave_at, distance, progress, in_view]
+
+--- `offset` the target's start in the scrolled content, its size, the
+--- container's size and its whole scrolled size; `enter` and `leave` as
+--- anime.js writes them, the container's edge then the target's ('end
+--- start' by default to enter, 'start end' to leave; 'top', 'center',
+--- 'bottom', '25%', '100', 'min', 'max', 'start+=50')
+fn scroll_window[scroll, offset, target_size, container_size, scroll_size, enter, leave]
+    entering = split[trim[enter], ' ']
+    enter_container = entering[0]
+    enter_target = 'start'
+    if len[entering] gt 1
+        enter_target = entering[1]
+    leaving = split[trim[leave], ' ']
+    leave_container = leaving[0]
+    leave_target = 'end'
+    if len[leaving] gt 1
+        leave_target = leaving[1]
+    most = scroll_size - container_size
+    entered = _bound[enter_target, target_size, 0.0, 0.0]
+    left = _bound[leave_target, target_size, 0.0, 0.0]
+    under = (entered + offset) - container_size
+    over = (left + offset) - most
+    origin = entered + offset - _bound[enter_container, container_size, under, over]
+    to = left + offset - _bound[leave_container, container_size, under, over]
+    distance = to - origin
+    if distance lte 0.0
+        distance = 0.0
+    p = (scroll - origin) / distance
+    progress = 0.0
+    if p eq p and p ne inf
+        progress = _rounded[_clamp[p, 0.0, 1.0], 6]
+    ScrollWindow[origin, to, distance, progress, scroll gt origin and scroll lt to]
+
+fn _bound[word, size, under, over]
+    operator = _operator[word]
+    value = 0.0
+    if operator ne ''
+        parts = split[word, operator]
+        first = _pixels[parts[0], size, under, over]
+        second = _pixels[parts[1], size, under, over]
+        if parts[0] eq 'min'
+            low = _relative[_pixels['min', size, 0.0, 0.0], second, operator]
+            value = low
+            if low lt first
+                value = first
+        else if parts[0] eq 'max'
+            high = _relative[_pixels['max', size, 0.0, 0.0], second, operator]
+            value = high
+            if high gt first
+                value = first
+        else
+            value = _relative[first, second, operator]
+    else
+        value = _pixels[word, size, under, over]
+    _js_round[value]
+
+fn _relative[x, y, operator]
+    if operator eq '-='
+        return x - y
+    if operator eq '+='
+        return x + y
+    x * y
+
+fn _pixels[word, size, under, over]
+    value = trim[word]
+    if value in ['top', 'left', 'start', 'min']
+        value = '0'
+    if value in ['bottom', 'right', 'end', 'max']
+        value = '100%'
+    if value eq 'center'
+        value = '50%'
+    px = 0.0
+    if ends[value, '%']
+        px = (_first_number[replace[value, '%', '']] / 100.0) * size
+    else
+        px = _first_number[replace[value, 'px', '']]
+    if word eq 'max' and under lt 0.0
+        px = px + under
+    if word eq 'min' and over gt 0.0
+        px = px + over
+    px
+
+--- AOS's line: the scroll at which an element `top` from the page's top
+--- and `height` tall is revealed, by its anchor placement ('top-bottom',
+--- 'center-bottom', 'bottom-bottom', 'top-center', 'bottom-center',
+--- 'center-center', 'top-top', 'bottom-top', 'center-top'; '' as
+--- 'top-bottom'), with `offset` added (AOS adds its 120 only where no
+--- placement is given)
+fn reveal_line[top, height, window_height, placement, offset]
+    line = top
+    if placement eq 'center-bottom'
+        line = line + height / 2.0
+    if placement eq 'bottom-bottom'
+        line = line + height
+    if placement eq 'top-center'
+        line = line + window_height / 2.0
+    if placement eq 'bottom-center'
+        line = line + (window_height / 2.0 + height)
+    if placement eq 'center-center'
+        line = line + (window_height / 2.0 + height / 2.0)
+    if placement eq 'top-top'
+        line = line + window_height
+    if placement eq 'bottom-top'
+        line = line + (height + window_height)
+    if placement eq 'center-top'
+        line = line + (height / 2.0 + window_height)
+    line + offset
+
+--- whether AOS shows an element of this line with the page scrolled to
+--- `scroll_top` in a window `window_height` tall
+fn revealed[scroll_top, window_height, line]
+    window_height + scroll_top gt line
+
+--- ---- numbers ----
+
+--- anime.js's damp: from `origin` toward `to` over `ms`, `factor` of the
+--- way a tenth of a ms (0 stays, 1 arrives)
+fn damp[origin, to, ms, factor]
+    if factor eq 0.0
+        return origin
+    if factor eq 1.0
+        return to
+    blend[origin, to, 1.0 - exp[-factor * ms * 0.1]]
+
+--- `amount` of the way from `origin` to `to` (anime.js's lerp)
+fn blend[origin, to, amount]
+    if amount eq 1.0
+        return to
+    if amount eq 0.0
+        return origin
+    origin + (to - origin) * amount
+
+--- `v` taken from one range to another (anime.js's mapRange)
+fn map_range[v, in_low, in_high, out_low, out_high]
+    out_low + ((v - in_low) / (in_high - in_low)) * (out_high - out_low)
+
+--- `v` wrapped into `lo` to `hi` (anime.js's wrap)
+fn wrapped[v, lo, hi]
+    _js_mod[_js_mod[v - lo, hi - lo] + (hi - lo), hi - lo] + lo
+
+--- `v` to the nearest multiple of `step` (0: as it is; anime.js's snap)
+fn snapped[v, step]
+    if step eq 0.0
+        return v
+    _js_round[v / step] * step
+
+--- JavaScript's Math.round: the nearest whole number, a half up
+fn _js_round[x]
+    down = float[floor[x]]
+    if x - down gte 0.5
+        return down + 1.0
+    down
+
+--- anime.js's round to `places`
+fn _rounded[v, places]
+    if places lt 0
+        return v
+    if places eq 0
+        return _js_round[v]
+    by = 10.0 ^ places
+    _js_round[v * by] / by
+
+--- JavaScript's %: the remainder with the sign of `x`
+fn _js_mod[x, y]
+    if y eq inf or y eq -inf
+        return x
+    rest = abs[x]
+    by = abs[y]
+    if by eq 0.0 or rest eq inf
+        return 0.0 / 0.0
+    while rest gte by
+        part = by
+        while part * 2.0 lte rest
+            part = part * 2.0
+        rest = rest - part
+    if x lt 0.0
+        return -rest
+    rest
+
+--- anime.js's clamp
+fn _clamp[v, lo, hi]
+    if v lt lo
+        return lo
+    if v gt hi
+        return hi
+    v
+
+--- Motion's clamp (its bounds first)
+fn _between[lo, hi, v]
+    if v gt hi
+        return hi
+    if v lt lo
+        return lo
+    v
+
+--- Motion's progress: how far `v` is from `origin` to `to` (1 where they meet)
+fn _progress[origin, to, v]
+    gap = to - origin
+    if gap eq 0.0
+        return 1.0
+    (v - origin) / gap
+
+--- ---- anime.js's seeded random ----
+
+--- a seeded sequence: its state and the number it last gave
+struct Random [state, value]
+
+fn random_seeded[seed_number]
+    Random[bitand[seed_number, 4294967295], 0.0]
+
+--- the sequence's next number from `lo` to `hi` at `places` decimals, as
+--- anime.js's createSeededRandom answers
+fn random_next[r, lo, hi, places]
+    r = random_unit[r]
+    by = 10.0 ^ places
+    r.value = float[floor[(r.value * (hi - lo + 1.0 / by) + lo) * by]] / by
+    r
+
+--- the sequence's next number from 0 to 1, before anime.js scales it
+fn random_unit[r]
+    t = bitand[r.state + 1831565813, 4294967295]
+    t = _imul[bitxor[t, shift[t, -15]], bitor[t, 1]]
+    t = bitxor[t, bitand[t + _imul[bitxor[t, shift[t, -7]], bitor[t, 61]], 4294967295]]
+    Random[t, float[bitxor[t, shift[t, -14]]] / 4294967296.0]
+
+fn _imul[x, y]
+    bitand[wrapmul[x, y], 4294967295]
+
+--- ---- paths and text ----
+
+--- a point on a path, and the way the path runs there (radians)
+struct Point [x, y, angle]
+
+struct Polyline [xs, ys]
+
+--- the length of the polyline through `xs`, `ys`
+fn path_length[xs, ys]
+    total = 0.0
+    i = 1
+    while i lt len[xs]
+        total = total + hypotenuse[xs[i] - xs[i - 1], ys[i] - ys[i - 1]]
+        i = i + 1
+    total
+
+--- the point `fraction` (0 to 1) of the way along the polyline, and its
+--- heading: a motion path
+fn path_point[xs, ys, along]
+    n = len[xs]
+    if n eq 0
+        return Point[0.0, 0.0, 0.0]
+    if n eq 1
+        return Point[xs[0], ys[0], 0.0]
+    goal = _clamp[along, 0.0, 1.0] * path_length[xs, ys]
+    walked = 0.0
+    i = 1
+    while i lt n
+        piece = hypotenuse[xs[i] - xs[i - 1], ys[i] - ys[i - 1]]
+        if walked + piece gte goal or i eq n - 1
+            f = 0.0
+            if piece gt 0.0
+                f = _clamp[(goal - walked) / piece, 0.0, 1.0]
+            angle = atan2[ys[i] - ys[i - 1], xs[i] - xs[i - 1]]
+            return Point[xs[i - 1] + (xs[i] - xs[i - 1]) * f, ys[i - 1] + (ys[i] - ys[i - 1]) * f, angle]
+        walked = walked + piece
+        i = i + 1
+    Point[xs[n - 1], ys[n - 1], 0.0]
+
+--- the first `fraction` of the polyline, as a line drawn so far
+fn path_drawn[xs, ys, along]
+    n = len[xs]
+    out_x = _numbers[]
+    out_y = _numbers[]
+    if n eq 0
+        return Polyline[out_x, out_y]
+    goal = _clamp[along, 0.0, 1.0] * path_length[xs, ys]
+    out_x = push[out_x, xs[0]]
+    out_y = push[out_y, ys[0]]
+    walked = 0.0
+    i = 1
+    going = true
+    while going and i lt n
+        piece = hypotenuse[xs[i] - xs[i - 1], ys[i] - ys[i - 1]]
+        if walked + piece lte goal
+            out_x = push[out_x, xs[i]]
+            out_y = push[out_y, ys[i]]
+            walked = walked + piece
+        else
+            f = 0.0
+            if piece gt 0.0
+                f = (goal - walked) / piece
+            out_x = push[out_x, xs[i - 1] + (xs[i] - xs[i - 1]) * f]
+            out_y = push[out_y, ys[i - 1] + (ys[i] - ys[i - 1]) * f]
+            going = false
+        i = i + 1
+    Polyline[out_x, out_y]
+
+--- the words of a line, without the spaces between them
+fn words_of[line]
+    out = slice[[''], 0, 0]
+    for word in split[line, ' ']
+        if word ne ''
+            out = push[out, word]
+    out
+
+--- the characters of a line, its spaces among them, to stagger one by one
+fn characters_of[line]
+    split[line, '']
+
+--- ---- tests ----
+
+--- a frame at `ms`, with nothing pressed, as Lory's page would hand one
+fn _frame_at[ms]
+    lory.begin[json['{"t": `ms`, "width": 400, "height": 300, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 400, "height": 300, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+
+fn _near[x, y]
+    abs[x - y] lt 0.000000001
+
+test css_steps_jump_where_the_css_spec_says[]
+    ends_late = ease['steps(4, jump-end)']
+    eased[ends_late, 0.0] eq 0.0
+    eased[ends_late, 0.3] eq 0.25
+    eased[ends_late, 0.99] eq 0.75
+    eased[ends_late, 1.0] eq 1.0
+    jumps_first = ease['steps(4, jump-start)']
+    eased[jumps_first, 0.0] eq 0.25
+    eased[jumps_first, 0.25] eq 0.5
+    eased[jumps_first, 0.99] eq 1.0
+    neither = ease['steps(4, jump-none)']
+    eased[neither, 0.0] eq 0.0
+    eased[neither, 0.5] eq 2.0 / 3.0
+    eased[neither, 0.75] eq 1.0
+    both = ease['steps(4, jump-both)']
+    eased[both, 0.0] eq 0.2
+    eased[both, 0.25] eq 0.4
+    eased[both, 1.0] eq 1.0
+    ease['steps(4, end)'] eq ends_late
+    ease['steps(4, start)'] eq jumps_first
+    ease_at['step-start', 0.0] eq 1.0
+    ease_at['step-end', 0.99] eq 0.0
+    ease_at['step-end', 1.0] eq 1.0
+
+test anime_steps_round_down_unless_told_to_round_up[]
+    ease_at['steps(4)', 0.3] eq 0.25
+    ease_at['steps(4, true)', 0.3] eq 0.5
+    ease_at['steps(4)', 1.0] eq 1.0
+    ease_at['steps(4, true)', 0.0] eq 0.0
+
+test easings_are_named_by_text_as_each_library_spells_them[]
+    ease_at['outQuad', 0.5] eq 0.75
+    ease_at['inQuad', 0.5] eq 0.25
+    ease_at['inOut(2)', 0.25] eq 0.125
+    ease_at['linear', 0.3] eq 0.3
+    ease['  outQuad  '] eq ease['outQuad']
+    ease['outElastic'] eq ease['outElastic(1, .3)']
+    ease['inBack'] eq ease['inBack(1.7)']
+    ease['in'] eq ease['in(1.68)']
+    ease['cubic-bezier(0.25, 0.1, 0.25, 1)'] eq ease['ease']
+    ease['ease-in-out-quart'] eq ease['ease-in-out-quad']
+    ease_known['outElastic(1, .3)']
+    ease_known['cubic-bezier(.17,.67,.83,.67)']
+    ease_known['backInOut']
+    ease_known['ease-in-out-back']
+    ease_known['linear']
+
+test a_name_nothing_knows_is_linear_and_is_not_known[]
+    ease_at['wobble', 0.3] eq 0.3
+    not ease_known['wobble']
+    not ease_known['outWobble']
+
+test a_bezier_on_the_diagonal_is_linear[]
+    cubic_bezier[0.3, 0.3, 0.7, 0.7].curve eq 'none'
+    ease['cubicBezier(.5, .5, .5, .5)'].curve eq 'none'
+    _near[ease_at['ease-in-out', 0.5], 0.5]
+    ease_at['ease', 0.0] eq 0.0
+    _near[ease_at['ease', 1.0], 1.0]
+
+test motions_turned_easings_mirror_each_other[]
+    _near[ease_at['backIn', 0.3], 1.0 - ease_at['backOut', 0.7]]
+    _near[ease_at['circIn', 0.3], 1.0 - ease_at['circOut', 0.7]]
+    _near[ease_at['backInOut', 0.5], 0.5]
+    ease_at['anticipate', 1.0] eq 1.0
+    ease_at['anticipate', 0.1] lt 0.0
+
+test every_named_easing_ends_at_1_and_all_but_step_start_start_at_0[]
+    held = true
+    for name in ease_names[]
+        first = 0.0
+        if name eq 'step-start'
+            first = 1.0
+        if not (ease_known[name] and _near[ease_at[name, 0.0], first] and _near[ease_at[name, 1.0], 1.0])
+            held = false
+    held
+    len[ease_names[]] gt 60
+
+test a_spring_sets_out_still_and_comes_to_rest_at_its_target[]
+    sp = spring[100.0, 10.0, 1.0]
+    first_sample = spring_sample[sp, 0.0, 100.0, 0.0, 0.0]
+    first_sample.value eq 0.0
+    abs[first_sample.velocity] lt 0.000000001
+    not first_sample.done
+    going = spring_sample[sp, 0.0, 100.0, 0.0, 100.0]
+    going.value gt 0.0 and going.velocity gt 0.0
+    rested = spring_sample[sp, 0.0, 100.0, 0.0, 5000.0]
+    rested.done
+    rested.value eq 100.0
+
+test a_spring_thrown_sets_out_at_its_speed[]
+    sp = spring[100.0, 10.0, 1.0]
+    thrown = spring_sample[sp, 0.0, 0.0, 500.0, 0.0]
+    _near[thrown.velocity, 500.0]
+    soon = spring_sample[sp, 0.0, 0.0, 500.0, 50.0]
+    soon.value gt 0.0
+
+test a_critically_damped_spring_never_passes_its_target[]
+    sp = spring[100.0, 20.0, 1.0]
+    held = true
+    for ms in range[0, 3000, 16]
+        if spring_sample[sp, 0.0, 100.0, 0.0, float[ms]].value gt 100.0
+            held = false
+    held
+
+test a_spring_given_a_duration_rests_when_it_is_over[]
+    sp = spring_duration[800.0, 0.3]
+    phys = spring_physics[sp]
+    phys.timed and phys.settles
+    phys.duration eq 800.0
+    not spring_sample[sp, 0.0, 100.0, 0.0, 799.0].done
+    spring_sample[sp, 0.0, 100.0, 0.0, 800.0].done
+    spring_sample[sp, 0.0, 100.0, 0.0, 800.0].value eq 100.0
+
+test a_spring_that_bounces_passes_its_target_first[]
+    sp = spring_duration[800.0, 0.5]
+    passed = false
+    for ms in range[0, 800, 16]
+        if spring_sample[sp, 0.0, 100.0, 0.0, float[ms]].value gt 100.0
+            passed = true
+    passed
+
+test a_clock_pauses_resumes_seeks_and_reverses_between_frames[]
+    k = tween_of[0.0, 100.0, 1000.0, 'linear']
+    id = 'test clock'
+    run[_frame_at[1000.0], id, k] eq 0.0
+    _near[run[_frame_at[1500.0], id, k], 50.0]
+    control[_frame_at[1500.0], id, k, 'pause', 0.0]
+    _near[run[_frame_at[2500.0], id, k], 50.0]
+    control[_frame_at[2500.0], id, k, 'resume', 0.0]
+    _near[run[_frame_at[2700.0], id, k], 70.0]
+    control[_frame_at[2700.0], id, k, 'seek', 900.0]
+    _near[run[_frame_at[2700.0], id, k], 90.0]
+    control[_frame_at[2700.0], id, k, 'reverse', 0.0]
+    _near[run[_frame_at[2700.0], id, k], 90.0]
+    _near[run[_frame_at[2800.0], id, k], 80.0]
+    control[_frame_at[2800.0], id, k, 'speed', 2.0]
+    _near[run[_frame_at[2900.0], id, k], 60.0]
+    control[_frame_at[2900.0], id, k, 'play', 0.0]
+    _near[run[_frame_at[2900.0], id, k], 60.0]
+    _near[run[_frame_at[3000.0], id, k], 80.0]
+    run[_frame_at[3200.0], id, k] eq 100.0
+    run_state[_frame_at[3200.0], id, k].done
+    control[_frame_at[3200.0], id, k, 'play', 0.0]
+    run[_frame_at[3200.0], id, k] eq 0.0
+
+test a_clock_restarts_and_plays_its_loops_back_and_forth[]
+    k = tween_of[0.0, 100.0, 1000.0, 'linear']
+    k.loops = 2
+    k.alternate = true
+    tween_duration[k] eq 3000.0
+    _near[tween_value[k, 250.0], 25.0]
+    _near[tween_value[k, 1250.0], 75.0]
+    _near[tween_value[k, 2250.0], 25.0]
+    tween_value[k, 3500.0] eq 100.0
+    playhead[k, 1250.0].iteration eq 1
+    playhead[k, 3500.0].done
+    id = 'test restart'
+    run[_frame_at[0.0], id, k] eq 0.0
+    control[_frame_at[500.0], id, k, 'restart', 0.0]
+    run[_frame_at[500.0], id, k] eq 0.0
+
+test a_clock_waits_out_its_delay_and_the_pauses_between_plays[]
+    k = tween_of[0.0, 100.0, 400.0, 'linear']
+    k.delay = 200.0
+    k.loops = 1
+    k.loop_delay = 100.0
+    tween_duration[k] eq 900.0
+    playhead[k, -100.0].time eq -100.0
+    playhead[k, -300.0].time eq -200.0
+    playhead[k, 450.0].time eq 450.0
+    playhead[k, 450.0].progress eq 1.0
+    playhead[k, 450.0].iteration eq 0
+    playhead[k, 600.0].time eq 100.0
+    playhead[k, 600.0].iteration eq 1
+
+test keyframes_ease_each_stretch_and_hold_at_their_ends[]
+    k = keyframes[[0.0, 100.0, 40.0], 1000.0]
+    k.offsets eq [0.0, 0.5, 1.0]
+    track_value[k, 0.0] eq 0.0
+    track_value[k, 500.0] eq 100.0
+    track_value[k, 1000.0] eq 40.0
+    track_value[k, 2000.0] eq 40.0
+    track_value[k, -50.0] eq 0.0
+    _near[track_value[k, 250.0], 100.0 * ease_at['easeInOut', 0.5]]
+    k.offsets = [0.0, 0.2, 1.0]
+    track_value[k, 200.0] eq 100.0
+    linear = with_ease[k, 'linear']
+    _near[track_value[linear, 600.0], 70.0]
+
+test a_tween_retargeted_sets_out_from_where_it_is[]
+    id = 'test tween'
+    tween[_frame_at[0.0], id, 100.0, 1000.0, 'linear'] eq 100.0
+    tween[_frame_at[100.0], id, 0.0, 1000.0, 'linear'] eq 100.0
+    _near[tween[_frame_at[600.0], id, 0.0, 1000.0, 'linear'], 50.0]
+    _near[tween[_frame_at[600.0], id, 200.0, 1000.0, 'linear'], 50.0]
+    _near[tween[_frame_at[1100.0], id, 200.0, 1000.0, 'linear'], 125.0]
+    tween[_frame_at[5000.0], id, 200.0, 1000.0, 'linear'] eq 200.0
+
+test a_spring_retargeted_keeps_its_speed[]
+    sp = spring[170.0, 26.0, 1.0]
+    id = 'test spring'
+    spring_to[_frame_at[0.0], id, 0.0, sp] eq 0.0
+    spring_to[_frame_at[0.0], id, 100.0, sp] eq 0.0
+    rising = spring_to[_frame_at[200.0], id, 100.0, sp]
+    rising gt 0.0 and rising lt 100.0
+    turned = spring_to[_frame_at[200.0], id, 0.0, sp]
+    turned eq rising
+    held = recall['lory.motion/spring/test spring', Sprung[0.0, 0.0, 0.0, 0.0, false]]
+    held.speed eq spring_sample[sp, 0.0, 100.0, 0.0, 200.0].velocity
+    held.speed gt 0.0
+    spring_to[_frame_at[216.0], id, 0.0, sp] gt turned
+    spring_to[_frame_at[5000.0], id, 0.0, sp] eq 0.0
+
+test presence_enters_exits_and_says_when_it_is_gone[]
+    id = 'test presence'
+    entering = presence[_frame_at[0.0], id, true, 200.0, 100.0, 'linear']
+    entering.value eq 0.0
+    entering.entering and entering.present and not entering.gone
+    half = presence[_frame_at[100.0], id, true, 200.0, 100.0, 'linear']
+    half.progress eq 0.5
+    shown = presence[_frame_at[300.0], id, true, 200.0, 100.0, 'linear']
+    shown.value eq 1.0
+    shown.present and not shown.entering
+    leaving = presence[_frame_at[300.0], id, false, 200.0, 100.0, 'linear']
+    leaving.exiting and leaving.present
+    leaving.progress eq 1.0
+    presence[_frame_at[350.0], id, false, 200.0, 100.0, 'linear'].progress eq 0.5
+    gone = presence[_frame_at[400.0], id, false, 200.0, 100.0, 'linear']
+    gone.gone and not gone.present and not gone.exiting
+
+test presence_turned_half_way_goes_back_from_where_it_is[]
+    id = 'test presence turned'
+    presence[_frame_at[0.0], id, true, 200.0, 200.0, 'linear']
+    presence[_frame_at[100.0], id, false, 200.0, 200.0, 'linear'].progress eq 0.5
+    presence[_frame_at[150.0], id, false, 200.0, 200.0, 'linear'].progress eq 0.25
+    presence[_frame_at[150.0], id, true, 200.0, 200.0, 'linear'].progress eq 0.25
+    presence[_frame_at[200.0], id, true, 200.0, 200.0, 'linear'].progress eq 0.5
+    presence_of[false, 0.0, 1.0, 200.0, 100.0, 'linear', 50.0].progress eq 0.5
+    presence_of[true, 0.0, 0.0, 0.0, 100.0, 'linear', 0.0].progress eq 1.0
+
+--- a headset's frame at `ms`, as the page hands it: its page 1000 by 560,
+--- a view for each eye, the right hand's ray on the page
+fn _headset_frame_at[ms]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    lory.begin[json['{"t": `ms`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}, {"eye": "right", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": [], "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}], "said": []}']]
+
+--- in a headset what is held between frames runs on the headset's frames
+--- as on a page's: a clock, a tween and a spring given a new target half
+--- way, and a presence hidden half way, each the same at the same times
+test animations_held_between_frames_run_in_a_headset_as_on_a_page[]
+    _headset_frame_at[0.0].xr
+    k = tween_of[0.0, 100.0, 600.0, 'outQuad']
+    sp = spring[170.0, 12.0, 1.0]
+    held = true
+    for ms in [0.0, 120.0, 240.0, 360.0, 480.0, 600.0, 720.0]
+        page = _frame_at[ms]
+        worn = _headset_frame_at[ms]
+        goal = 1.0
+        if ms gte 360.0
+            goal = 0.0
+        if run[page, 'page clock', k] ne run[worn, 'headset clock', k]
+            held = false
+        if tween[page, 'page tween', goal, 300.0, 'outCubic'] ne tween[worn, 'headset tween', goal, 300.0, 'outCubic']
+            held = false
+        if spring_to[page, 'page spring', goal, sp] ne spring_to[worn, 'headset spring', goal, sp]
+            held = false
+        if presence[page, 'page presence', goal gt 0.5, 200.0, 200.0, 'outBack'].value ne presence[worn, 'headset presence', goal gt 0.5, 200.0, 200.0, 'outBack'].value
+            held = false
+    held
+    run[_headset_frame_at[360.0], 'headset clock', k] gt 50.0
+
+test motions_scroll_offsets_meet_target_and_container_edges[]
+    none_given = slice[[''], 0, 0]
+    scroll_progress[900.0, 800.0, 200.0, 1500.0, none_given] eq 1.0
+    scroll_progress[1200.0, 800.0, 200.0, 1500.0, none_given] eq 0.5
+    scroll_progress[1500.0, 800.0, 200.0, 1500.0, none_given] eq 0.0
+    entering = ['start end', 'end start']
+    scroll_progress[700.0, 800.0, 200.0, 1500.0, entering] eq 0.0
+    scroll_progress[1100.0, 800.0, 200.0, 1500.0, entering] eq 0.4
+    scroll_progress[1700.0, 800.0, 200.0, 1500.0, entering] eq 1.0
+    scroll_progress[1100.0, 800.0, 200.0, 1500.0, ['0 1', '1 0']] eq 0.4
+    scroll_progress[1100.0, 800.0, 200.0, 1500.0, ['start 100%', '100% 0%']] eq 0.4
+    scroll_progress[800.0, 800.0, 200.0, 1500.0, ['start 100px', 'end start']] eq 0.0
+
+test animes_scroll_window_enters_at_the_containers_end[]
+    w = scroll_window[700.0, 1000.0, 200.0, 800.0, 3000.0, 'end start', 'start end']
+    w.enter_at eq 200.0
+    w.leave_at eq 1200.0
+    w.distance eq 1000.0
+    w.progress eq 0.5
+    w.in_view
+    centred = scroll_window[700.0, 1000.0, 200.0, 800.0, 3000.0, 'center center', 'center center']
+    centred.enter_at eq 700.0
+    centred.distance eq 0.0
+    before = scroll_window[100.0, 1000.0, 200.0, 800.0, 3000.0, 'end start', 'start end']
+    before.progress eq 0.0
+    not before.in_view
+    pushed = scroll_window[700.0, 1000.0, 200.0, 800.0, 3000.0, 'end+=100 start', 'start end']
+    pushed.enter_at eq 100.0
+
+test aos_reveals_an_element_where_its_anchor_meets_the_window[]
+    reveal_line[1500.0, 200.0, 800.0, '', 120.0] eq 1620.0
+    reveal_line[1500.0, 200.0, 800.0, 'top-bottom', 0.0] eq 1500.0
+    reveal_line[1500.0, 200.0, 800.0, 'center-bottom', 0.0] eq 1600.0
+    reveal_line[1500.0, 200.0, 800.0, 'bottom-bottom', 0.0] eq 1700.0
+    reveal_line[1500.0, 200.0, 800.0, 'top-center', 0.0] eq 1900.0
+    reveal_line[1500.0, 200.0, 800.0, 'center-center', 0.0] eq 2000.0
+    reveal_line[1500.0, 200.0, 800.0, 'bottom-center', 0.0] eq 2100.0
+    reveal_line[1500.0, 200.0, 800.0, 'top-top', 0.0] eq 2300.0
+    reveal_line[1500.0, 200.0, 800.0, 'center-top', 0.0] eq 2400.0
+    reveal_line[1500.0, 200.0, 800.0, 'bottom-top', 0.0] eq 2500.0
+    revealed[900.0, 800.0, 1620.0]
+    not revealed[820.0, 800.0, 1620.0]
+
+test a_throw_slows_to_where_its_power_carries_it[]
+    thrown = inertia[0.0, 1000.0]
+    g = glide[thrown]
+    g.target eq 800.0
+    g = glided[thrown, g, 16.0]
+    g.value gt 0.0 and g.value lt 800.0
+    g = glided[thrown, g, 10000.0]
+    g.done
+    g.value eq 800.0
+
+test a_throw_past_its_bound_is_caught_by_a_spring[]
+    thrown = inertia[0.0, 1000.0]
+    thrown.high = 100.0
+    g = glide[thrown]
+    for ms in range[0, 2000, 16]
+        g = glided[thrown, g, float[ms]]
+    g.caught
+    g.caught_at gt 0.0
+    g.origin gt 100.0
+    g = glided[thrown, g, 4000.0]
+    g.done
+    g.value eq 100.0
+
+test a_snapped_throw_lands_on_its_step[]
+    thrown = inertia[0.0, 1000.0]
+    thrown.snap = 300.0
+    glide[thrown].target eq 900.0
+
+test timeline_positions_follow_anime[]
+    tl = timeline[]
+    tl = timeline_add[tl, 'a', 500.0, '']
+    tl = timeline_add[tl, 'b', 300.0, '']
+    tl = timeline_add[tl, 'c', 200.0, '-=100']
+    tl = timeline_add[tl, 'd', 100.0, '<']
+    tl = timeline_add[tl, 'e', 100.0, '<<']
+    tl = timeline_label[tl, 'here', '+=50']
+    tl = timeline_add[tl, 'f', 100.0, 'here']
+    tl = timeline_add[tl, 'g', 100.0, 'here-=25']
+    tl = timeline_add[tl, 'h', 100.0, '250']
+    tl = timeline_add[tl, 'i', 100.0, '<+=10']
+    child_of[tl, 'b'].offset eq 500.0
+    child_of[tl, 'c'].offset eq 700.0
+    child_of[tl, 'd'].offset eq 900.0
+    child_of[tl, 'e'].offset eq 900.0
+    label_at[tl, 'here'] eq 1050.0
+    child_of[tl, 'f'].offset eq 1050.0
+    child_of[tl, 'g'].offset eq 1025.0
+    child_of[tl, 'h'].offset eq 250.0
+    child_of[tl, 'i'].offset eq 360.0
+    timeline_duration[tl] eq 1150.0
+    child_playhead[tl, 'b', 650.0].time eq 150.0
+    child_playhead[tl, 'b', 400.0].time eq -100.0
+    child_playhead[tl, 'b', 900.0].done
+    tl.loops = 1
+    tl.loop_delay = 100.0
+    timeline_duration[tl] eq 2400.0
+
+test a_timelines_child_waits_its_own_delay[]
+    tl = timeline_add[timeline[], 'a', 500.0, '', delay = 100.0]
+    tl = timeline_add[tl, 'b', 200.0, '', loops = 1]
+    child_of[tl, 'a'].offset eq 0.0
+    child_of[tl, 'b'].offset eq 600.0
+    child_of[tl, 'b'].total eq 400.0
+    timeline_duration[tl] eq 1000.0
+    child_playhead[tl, 'a', 150.0].time eq 50.0
+
+test animes_stagger_counts_from_where_it_starts[]
+    staggers[stagger[100.0], 4] eq [0.0, 100.0, 200.0, 300.0]
+    middle = stagger[100.0]
+    middle.origin = 'center'
+    staggers[middle, 5] eq [200.0, 100.0, 0.0, 100.0, 200.0]
+    back = stagger[100.0]
+    back.origin = 'last'
+    staggers[back, 3] eq [200.0, 100.0, 0.0]
+    turned = stagger[100.0]
+    turned.reversed = true
+    staggers[turned, 3] eq [200.0, 100.0, 0.0]
+    based = stagger[100.0]
+    based.base = 50.0
+    staggered[based, 2, 4] eq 250.0
+    staggers[stagger_range[100.0, 500.0], 3] eq [100.0, 300.0, 500.0]
+
+test animes_grid_stagger_measures_from_its_centre[]
+    grid = stagger_grid[stagger[100.0], 3, 3]
+    grid.origin = 'center'
+    found = staggers[grid, 9]
+    found[4] eq 0.0
+    found[1] eq 100.0
+    _near[found[0], 141.0]
+    along = stagger_grid[stagger[100.0], 3, 3]
+    along.origin = 'center'
+    along.axis = 'x'
+    across = staggers[along, 9]
+    across[0] eq -100.0
+    across[1] eq 0.0
+    across[2] eq 100.0
+
+test motions_stagger_counts_in_its_own_units[]
+    found = staggers[stagger_motion[0.1], 4]
+    found[0] eq 0.0
+    _near[found[3], 0.3]
+    middle = stagger_motion[0.1]
+    middle.origin = 'center'
+    _near[staggers[middle, 3][0], 0.1]
+    edges = stagger_motion[0.1]
+    edges.origin = 'edges'
+    out = staggers[edges, 5]
+    out[0] eq 0.0 and out[4] eq 0.0
+    _near[out[2], 0.2]
+
+test a_random_stagger_is_the_same_for_the_same_seed[]
+    shuffled = stagger[100.0]
+    shuffled.origin = 'random'
+    shuffled.seed = 7
+    once = staggers[shuffled, 6]
+    again = staggers[shuffled, 6]
+    once eq again
+    sort[once] eq [0.0, 100.0, 200.0, 300.0, 400.0, 500.0]
+
+test the_seeded_random_stays_in_its_range[]
+    r = random_seeded[5]
+    held = true
+    for i in range[50]
+        r = random_next[r, 10.0, 20.0, 0]
+        if r.value lt 10.0 or r.value gt 20.0
+            held = false
+    held
+    u = random_unit[random_seeded[5]]
+    u.value gte 0.0 and u.value lt 1.0
+
+test a_point_runs_along_a_polyline_by_its_length[]
+    xs = [0.0, 100.0, 100.0]
+    ys = [0.0, 0.0, 100.0]
+    path_length[xs, ys] eq 200.0
+    quarter = path_point[xs, ys, 0.25]
+    quarter.x eq 50.0 and quarter.y eq 0.0
+    quarter.angle eq 0.0
+    three = path_point[xs, ys, 0.75]
+    three.x eq 100.0 and three.y eq 50.0
+    _near[three.angle, pi / 2.0]
+    path_point[xs, ys, 1.0].y eq 100.0
+    path_point[xs, ys, 2.0].y eq 100.0
+    path_point[xs, ys, -1.0].x eq 0.0
+
+test a_line_drawn_so_far_ends_at_its_fraction[]
+    xs = [0.0, 100.0, 100.0]
+    ys = [0.0, 0.0, 100.0]
+    drawn = path_drawn[xs, ys, 0.75]
+    drawn.xs eq [0.0, 100.0, 100.0]
+    drawn.ys eq [0.0, 0.0, 50.0]
+    whole = path_drawn[xs, ys, 1.0]
+    whole.xs eq xs and whole.ys eq ys
+    nothing = path_drawn[xs, ys, 0.0]
+    nothing.xs[len[nothing.xs] - 1] eq 0.0
+    hypotenuse[3.0, 4.0] eq 5.0
+    hypotenuse[0.0, 0.0] eq 0.0
+
+test text_splits_into_words_and_characters[]
+    words_of['  the quick  fox '] eq ['the', 'quick', 'fox']
+    characters_of['ab c'] eq ['a', 'b', ' ', 'c']
+    len[words_of['']] eq 0
+
+test anime_number_helpers_damp_blend_map_wrap_and_snap[]
+    damp[0.0, 100.0, 16.0, 0.0] eq 0.0
+    damp[0.0, 100.0, 16.0, 1.0] eq 100.0
+    blend[0.0, 100.0, 0.25] eq 25.0
+    map_range[5.0, 0.0, 10.0, 0.0, 100.0] eq 50.0
+    wrapped[370.0, 0.0, 360.0] eq 10.0
+    wrapped[-10.0, 0.0, 360.0] eq 350.0
+    snapped[17.0, 5.0] eq 15.0
+    snapped[17.5, 5.0] eq 20.0
+    snapped[17.0, 0.0] eq 17.0

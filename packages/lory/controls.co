@@ -1,0 +1,261 @@
+--- Ways to move a camera, or things, by the pointer and the keys, as
+--- three.js's addon controls do: flying through a scene (its
+--- FlyControls), turning the scene about a point every way like a ball
+--- in the hand (TrackballControls), and dragging things over the plane
+--- that faces the eye (DragControls). Each keeps its state under an id,
+--- as `space.orbit` does, and answers a camera (`space.Camera`) or the
+--- things' new places. Lory's own orbit (`space.orbit`) is three's
+--- OrbitControls.
+use memory
+use math
+use lory
+use space
+
+--- ---- flying ----
+
+--- a flight: where the camera is, how it is turned (a quaternion), and
+--- the pointer's drag that steers it (where it began, how far from there)
+struct Flight [at, turn, dragging, from_x, from_y, look_x, look_y]
+
+--- the camera flying through the scene, kept under `id`, starting at
+--- `start` looking down -z: W and S fly forward and back, A and D to the
+--- sides, R and F up and down, Q and E roll, the arrow keys turn, and
+--- holding the pointer down and moving it from there turns toward it the
+--- farther it goes (three's FlyControls with `dragToLook`). `speed` is in
+--- metres a second, `turning` in radians a second
+fn fly[c, id, lens_of, start, speed, turning]
+    key = 'lory.controls.fly.`id`'
+    f = recall[key, Flight[[0.0 + start[0], 0.0 + start[1], 0.0 + start[2]], [0.0, 0.0, 0.0, 1.0], false, 0.0, 0.0, 0.0, 0.0]]
+    f = flown[f, c]
+    remember[key, f]
+    space.camera_placed[lens_of, space.compose[f.at, f.turn, [1.0, 1.0, 1.0]]]
+
+fn _key[c, code]
+    if lory.held_key[c, code]
+        return 1.0
+    0.0
+
+--- the flight after a frame of the pointer's events and the keys held
+fn flown[f, c]
+    half_w = lory.width[c] / 2.0
+    half_h = lory.height[c] / 2.0
+    for ev in lory.events[c]
+        if ev.on eq 'down' and ev.device ne 'ray'
+            f.dragging = true
+            f.from_x = ev.x
+            f.from_y = ev.y
+        if ev.on eq 'move' and f.dragging
+            f.look_x = (ev.x - f.from_x) / max[1.0, half_w]
+            f.look_y = (ev.y - f.from_y) / max[1.0, half_h]
+        if ev.on eq 'up' or ev.on eq 'leave'
+            f.dragging = false
+            f.look_x = 0.0
+            f.look_y = 0.0
+    dt = min[0.1, lory.dt[c]]
+    side = _key[c, 'KeyD'] - _key[c, 'KeyA']
+    rise = _key[c, 'KeyR'] - _key[c, 'KeyF']
+    back = _key[c, 'KeyS'] - _key[c, 'KeyW']
+    pitch = _key[c, 'ArrowUp'] - _key[c, 'ArrowDown'] - f.look_y
+    yaw = _key[c, 'ArrowLeft'] - _key[c, 'ArrowRight'] - f.look_x
+    roll = _key[c, 'KeyQ'] - _key[c, 'KeyE']
+    flight_steered[f, [side, rise, back], [pitch, yaw, roll], dt]
+
+--- the flight moved `go` (sideways, up, back: each -1 to 1, along the
+--- camera's own axes) and turned `turn` (about its own x, y and z) for
+--- `dt` seconds, at a metre and a radian a second
+fn flight_steered[f, go, turn, dt]
+    a = turn[0] * dt * 0.5
+    b = turn[1] * dt * 0.5
+    g = turn[2] * dt * 0.5
+    n = sqrt[a * a + b * b + g * g + 1.0]
+    f.turn = _unit4[space.quaternion_times[f.turn, [a / n, b / n, g / n, 1.0 / n]]]
+    m = space.turn_matrix[f.turn]
+    w = space.point_through[m, [go[0] * dt, go[1] * dt, go[2] * dt]]
+    f.at = [f.at[0] + w[0], f.at[1] + w[1], f.at[2] + w[2]]
+    f
+
+fn _unit4[q]
+    n = sqrt[q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]]
+    [q[0] / n, q[1] / n, q[2] / n, q[3] / n]
+
+--- ---- the trackball ----
+
+--- a trackball: the eye's place from the point it turns about, which way
+--- is up, the point, and the drag (where the pointer last was)
+struct Ball [offset, up, target, dragging, last_x, last_y]
+
+--- the camera turned about `target` every way by dragging (no up held
+--- level: the scene turns as a ball in the hand), the wheel bringing it
+--- nearer or farther (three's TrackballControls), kept under `id`,
+--- starting at `from`
+fn trackball[c, id, lens_of, target, from]
+    key = 'lory.controls.trackball.`id`'
+    t = [0.0 + target[0], 0.0 + target[1], 0.0 + target[2]]
+    b = recall[key, Ball[[from[0] - t[0], from[1] - t[1], from[2] - t[2]], [0.0, 1.0, 0.0], t, false, 0.0, 0.0]]
+    for ev in lory.events[c]
+        if ev.on eq 'down' and ev.device ne 'ray'
+            b.dragging = true
+            b.last_x = ev.x
+            b.last_y = ev.y
+        if ev.on eq 'move' and b.dragging
+            b = rolled[b, ev.x - b.last_x, ev.y - b.last_y, lory.px[c]]
+            b.last_x = ev.x
+            b.last_y = ev.y
+        if ev.on eq 'up' or ev.on eq 'leave'
+            b.dragging = false
+        if ev.on eq 'wheel'
+            k = exp[ev.dy / 600.0]
+            b.offset = [b.offset[0] * k, b.offset[1] * k, b.offset[2] * k]
+    remember[key, b]
+    seen_from = [b.target[0] + b.offset[0], b.target[1] + b.offset[1], b.target[2] + b.offset[2]]
+    space.camera_at[lens_of, seen_from, b.target, b.up]
+
+--- the trackball turned by a drag of `dx`, `dy` pixels (`ratio` pixels a
+--- CSS pixel): about the axis square to the drag as the eye sees it, by
+--- half a hundredth of a radian a CSS pixel, the up turning with it
+fn rolled[b, dx, dy, ratio]
+    sx = dx / ratio
+    sy = dy / ratio
+    angle = sqrt[sx * sx + sy * sy] * 0.005
+    if angle lt 0.0000001
+        return b
+    eye_way = _unit[[0.0 - b.offset[0], 0.0 - b.offset[1], 0.0 - b.offset[2]]]
+    up = _unit[b.up]
+    right = _unit[_cross[eye_way, up]]
+    up = _cross[right, eye_way]
+    --- (the way the pointer moved, in the scene: right and up as seen)
+    moved = [right[0] * sx - up[0] * sy, right[1] * sx - up[1] * sy, right[2] * sx - up[2] * sy]
+    axis = _unit[_cross[moved, _unit[b.offset]]]
+    q = space.quaternion_of_axis[axis, angle]
+    m = space.turn_matrix[q]
+    b.offset = space.point_through[m, b.offset]
+    b.up = _unit[space.point_through[m, b.up]]
+    b
+
+fn _unit[v]
+    n = sqrt[v[0] * v[0] + v[1] * v[1] + v[2] * v[2]]
+    if n lt 0.0000000001
+        return v
+    [v[0] / n, v[1] / n, v[2] / n]
+
+fn _cross[a, b]
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+fn _dot[a, b]
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+--- ---- dragging things ----
+
+--- a drag of things: where each stands, which is held (-1: none), and the
+--- plane it moves over (a point on it and the way it faces) and where on
+--- the thing it was taken (from its place)
+struct Dragged [places, held, point, facing, offset]
+
+--- things dragged by the pointer (three's DragControls), kept under `id`:
+--- the thing whose `form` (each where its place puts it) the pointer's
+--- ray meets first is taken where it is pressed and moved over the plane
+--- through that point facing the camera, as the pointer moves, until it
+--- is let go. Answers the drag: its places, the held one
+fn drag[c, id, cam, form, places]
+    key = 'lory.controls.drag.`id`'
+    d = recall[key, Dragged[places, -1, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]]
+    if len[d.places] ne len[places]
+        d.places = places
+    r = space.pointer_ray[c, cam]
+    w = cam.world
+    toward_eye = _unit[[w[8], w[9], w[10]]]
+    for ev in lory.events[c]
+        if ev.on eq 'down' and ev.device ne 'ray'
+            d = taken[d, r, form, toward_eye]
+        if ev.on eq 'up' or ev.on eq 'leave'
+            d.held = -1
+    if d.held gte 0
+        d = moved_to[d, r]
+    remember[key, d]
+    d
+
+--- the drag after a press along the ray: the nearest thing met taken
+--- there, its plane facing `facing`
+fn taken[d, r, form, facing]
+    d.held = -1
+    if not r.there
+        return d
+    near = 0.0
+    i = 0
+    while i lt len[d.places]
+        p = d.places[i]
+        met = space.hits[r, form, space.compose[p, [0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0]]]
+        if len[met] gt 0 and (d.held lt 0 or met[0].distance lt near)
+            d.held = i
+            near = met[0].distance
+            d.point = met[0].point
+        i = i + 1
+    if d.held gte 0
+        p = d.places[d.held]
+        d.facing = facing
+        d.offset = [d.point[0] - p[0], d.point[1] - p[1], d.point[2] - p[2]]
+    d
+
+--- the held thing moved to where the ray meets its plane (where the ray
+--- runs along the plane, it stays)
+fn moved_to[d, r]
+    if not r.there
+        return d
+    along = _dot[r.way, d.facing]
+    if abs[along] lt 0.000001
+        return d
+    k = _dot[[d.point[0] - r.from[0], d.point[1] - r.from[1], d.point[2] - r.from[2]], d.facing] / along
+    if k lt 0.0
+        return d
+    there = [r.from[0] + r.way[0] * k, r.from[1] + r.way[1] * k, r.from[2] + r.way[2] * k]
+    out = []
+    i = 0
+    while i lt len[d.places]
+        if i eq d.held
+            out = push[out, [there[0] - d.offset[0], there[1] - d.offset[1], there[2] - d.offset[2]]]
+        else
+            out = push[out, d.places[i]]
+        i = i + 1
+    d.places = out
+    d
+
+--- ---- tests ----
+
+fn _flight_at_rest[]
+    Flight[[0.0, 0.0, 5.0], [0.0, 0.0, 0.0, 1.0], false, 0.0, 0.0, 0.0, 0.0]
+
+test flying_forward_goes_where_the_camera_looks[]
+    f = flight_steered[_flight_at_rest[], [0.0, 0.0, -1.0], [0.0, 0.0, 0.0], 0.5]
+    abs[f.at[2] - 4.5] lt 0.0000001
+    turned = flight_steered[_flight_at_rest[], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0], 0.5]
+    on = flight_steered[turned, [0.0, 0.0, -1.0], [0.0, 0.0, 0.0], 1.0]
+    on.at[0] lt -0.2
+    on.at[2] lt 5.0
+    abs[on.at[1]] lt 0.0000001
+    rolled_flight = flight_steered[_flight_at_rest[], [1.0, 0.0, 0.0], [0.0, 0.0, 3.14159265], 1.0]
+    rolled_flight.at[1] gt 0.9
+
+test the_trackball_turns_the_eye_about_its_point_keeping_its_distance[]
+    b = Ball[[0.0, 0.0, 5.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0], true, 0.0, 0.0]
+    right = rolled[b, 100.0, 0.0, 1.0]
+    right.offset[0] lt -1.0
+    abs[_dot[right.offset, right.offset] - 25.0] lt 0.000001
+    abs[right.up[1] - 1.0] lt 0.000001
+    over = rolled[b, 0.0, 628.318531, 1.0]
+    over.offset[2] lt -4.99
+    over.up[1] lt -0.99
+
+test a_thing_is_taken_and_dragged_over_the_plane_facing_the_eye[]
+    box = space.triangles[space.box[1.0, 1.0, 1.0]]
+    two = push[push[[], [0.0, 0.0, 0.0]], [3.0, 0.0, 0.0]]
+    d = Dragged[two, -1, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
+    took = taken[d, space.Ray[[0.0, 0.2, 10.0], [0.0, 0.0, -1.0], true], box, [0.0, 0.0, 1.0]]
+    took.held eq 0
+    abs[took.point[2] - 0.5] lt 0.000001
+    abs[took.offset[1] - 0.2] lt 0.000001
+    moved = moved_to[took, space.Ray[[2.0, 1.2, 10.0], [0.0, 0.0, -1.0], true]]
+    abs[moved.places[0][0] - 2.0] lt 0.000001
+    abs[moved.places[0][1] - 1.0] lt 0.000001
+    abs[moved.places[0][2]] lt 0.000001
+    moved.places[1] eq [3.0, 0.0, 0.0]
+    taken[d, space.Ray[[0.0, 5.0, 10.0], [0.0, 0.0, -1.0], true], box, [0.0, 0.0, 1.0]].held eq -1

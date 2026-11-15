@@ -1,0 +1,419 @@
+--- Times for Kite's charts' time axes: a time is milliseconds since 1970
+--- in UTC, as Chart.js's time scale holds it. Here are the units a time
+--- axis steps by (Chart.js's: millisecond to year, each of a size and of
+--- the steps it is counted in before the next unit is taken), and what
+--- Chart.js asks its date adapter (date-fns): a time brought down to the
+--- start of its unit, a time moved on by units, the whole units between
+--- two times, and a time written in a date-fns format (`MMM d`, `h:mm a`,
+--- `yyyy-MM-dd`, `PP` …).
+use math
+use charts_model
+
+--- ---- units ----
+
+--- the units, smallest first
+fn units[]
+    ['millisecond', 'second', 'minute', 'hour', 'day', 'week', 'month', 'quarter', 'year']
+
+--- the place of a unit among `units[]` (-1 for none)
+fn unit_place[unit]
+    all_units = units[]
+    for i in range[len[all_units]]
+        if all_units[i] eq unit
+            return i
+    -1
+
+--- a unit's length in milliseconds (a month and a year as Chart.js
+--- counts them on average)
+fn unit_size[unit]
+    if unit eq 'second'
+        return 1000.0
+    if unit eq 'minute'
+        return 60000.0
+    if unit eq 'hour'
+        return 3600000.0
+    if unit eq 'day'
+        return 86400000.0
+    if unit eq 'week'
+        return 604800000.0
+    if unit eq 'month'
+        return 2628000000.0
+    if unit eq 'quarter'
+        return 7884000000.0
+    if unit eq 'year'
+        return 31540000000.0
+    1.0
+
+--- how many of a unit Chart.js counts before it takes the next (a year:
+--- no end)
+fn unit_steps[unit]
+    if unit eq 'millisecond'
+        return 1000.0
+    if unit eq 'second' or unit eq 'minute'
+        return 60.0
+    if unit eq 'hour'
+        return 24.0
+    if unit eq 'day'
+        return 30.0
+    if unit eq 'week' or unit eq 'quarter'
+        return 4.0
+    if unit eq 'month'
+        return 12.0
+    9007199254740991.0
+
+--- whether Chart.js takes a unit of itself (a week and a quarter only
+--- when asked)
+fn unit_common[unit]
+    unit ne 'week' and unit ne 'quarter'
+
+--- ---- the calendar ----
+
+--- the days since 1970-01-01 of a date (month 1 to 12)
+fn days_of[y, m, d]
+    yy = y
+    if m lte 2
+        yy = y - 1
+    era = floor[(0.0 + yy) / 400.0]
+    yoe = yy - era * 400
+    mp = (m + 9) % 12
+    doy = (153 * mp + 2) / 5 + d - 1
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    era * 146097 + doe - 719468
+
+--- the date of a day since 1970-01-01: year, month (1 to 12) and day
+fn civil_of[days]
+    z = days + 719468
+    era = floor[(0.0 + z) / 146097.0]
+    doe = z - era * 146097
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    y = yoe + era * 400
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    mp = (5 * doy + 2) / 153
+    d = doy - (153 * mp + 2) / 5 + 1
+    m = mp + 3
+    if m gt 12
+        m = m - 12
+    if m lte 2
+        y = y + 1
+    [y, m, d]
+
+--- the days in a month of a year
+fn month_days[y, m]
+    if m eq 2
+        if (y % 4 eq 0 and y % 100 ne 0) or y % 400 eq 0
+            return 29
+        return 28
+    if m eq 4 or m eq 6 or m eq 9 or m eq 11
+        return 30
+    31
+
+--- a time's parts: year, month, day, hour, minute, second, millisecond
+--- and the day of the week (0 Sunday)
+fn parts_of[t]
+    days = floor[t / 86400000.0]
+    rest = t - days * 86400000.0
+    date = civil_of[days]
+    h = floor[rest / 3600000.0]
+    rest = rest - h * 3600000.0
+    mi = floor[rest / 60000.0]
+    rest = rest - mi * 60000.0
+    s = floor[rest / 1000.0]
+    ms = floor[rest - s * 1000.0]
+    wd = (days % 7 + 11) % 7
+    [date[0], date[1], date[2], h, mi, s, ms, wd]
+
+--- the time of a date and a time of day
+fn time_of[y, m, d, h, mi, s, ms]
+    0.0 + days_of[y, m, d] * 86400000 + h * 3600000 + mi * 60000 + s * 1000 + ms
+
+--- ---- what Chart.js asks its date adapter ----
+
+--- the time brought down to the start of its unit (a week starts on a
+--- Sunday; an `isoWeek` on `weekday`, 0 Sunday to 6 Saturday)
+fn start_of[t, unit, weekday]
+    if unit eq 'second'
+        return (0.0 + floor[t / 1000.0]) * 1000.0
+    if unit eq 'minute'
+        return (0.0 + floor[t / 60000.0]) * 60000.0
+    if unit eq 'hour'
+        return (0.0 + floor[t / 3600000.0]) * 3600000.0
+    if unit eq 'day'
+        return (0.0 + floor[t / 86400000.0]) * 86400000.0
+    p = parts_of[t]
+    if unit eq 'week' or unit eq 'isoWeek'
+        first = 0
+        if unit eq 'isoWeek'
+            first = weekday
+        back = (p[7] - first + 7) % 7
+        return time_of[p[0], p[1], p[2], 0, 0, 0, 0] - back * 86400000.0
+    if unit eq 'month'
+        return time_of[p[0], p[1], 1, 0, 0, 0, 0]
+    if unit eq 'quarter'
+        return time_of[p[0], ((p[1] - 1) / 3) * 3 + 1, 1, 0, 0, 0, 0]
+    if unit eq 'year'
+        return time_of[p[0], 1, 1, 0, 0, 0, 0]
+    t
+
+--- the last millisecond of the time's unit
+fn end_of[t, unit]
+    start_of[moved_by[t, 1, unit], unit, 0] - 1.0
+
+--- the time moved on by `n` units (a month on keeps its day, or the
+--- month's last where it has fewer)
+fn moved_by[t, n, unit]
+    if unit eq 'month' or unit eq 'quarter' or unit eq 'year'
+        months = n
+        if unit eq 'quarter'
+            months = n * 3
+        if unit eq 'year'
+            months = n * 12
+        p = parts_of[t]
+        k = p[0] * 12 + p[1] - 1 + months
+        y = floor[(0.0 + k) / 12.0]
+        m = k - y * 12 + 1
+        d = min[p[2], month_days[y, m]]
+        return time_of[y, m, d, p[3], p[4], p[5], p[6]]
+    t + n * unit_size[unit]
+
+--- the whole units from `b` to `a` (negative where `a` is before),
+--- counted towards naught
+fn units_between[a, b, unit]
+    if unit eq 'month' or unit eq 'quarter' or unit eq 'year'
+        months = _months_between[a, b]
+        if unit eq 'quarter'
+            return _toward_naught[months / 3.0]
+        if unit eq 'year'
+            return _toward_naught[months / 12.0]
+        return months
+    if unit eq 'week'
+        return _toward_naught[(a - b) / 604800000.0]
+    _toward_naught[(a - b) / unit_size[unit]]
+
+fn _toward_naught[x]
+    if x lt 0.0
+        return 0.0 - floor[0.0 - x]
+    0.0 + floor[x]
+
+fn _months_between[a, b]
+    if a lt b
+        return 0.0 - _months_between[b, a]
+    pa = parts_of[a]
+    pb = parts_of[b]
+    months = (pa[0] * 12 + pa[1]) - (pb[0] * 12 + pb[1])
+    late = ((pa[2] * 24 + pa[3]) * 60 + pa[4]) * 60000 + pa[5] * 1000 + pa[6]
+    earlier = ((pb[2] * 24 + pb[3]) * 60 + pb[4]) * 60000 + pb[5] * 1000 + pb[6]
+    if late lt earlier and months gt 0
+        months = months - 1
+    0.0 + months
+
+--- ---- writing a time ----
+
+fn _month_names[]
+    ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+fn _day_names[]
+    ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+--- a whole number written with at least `n` digits
+fn _padded[v, n]
+    text = str[v]
+    while len[text] lt n
+        text = '0`text`'
+    text
+
+fn _ordinal[n]
+    rest = n % 100
+    if rest gte 11 and rest lte 13
+        return '`n`th'
+    last = n % 10
+    if last eq 1
+        return '`n`st'
+    if last eq 2
+        return '`n`nd'
+    if last eq 3
+        return '`n`rd'
+    '`n`th'
+
+--- the time written in a date-fns format: its tokens are runs of one
+--- letter (`yyyy`, `MMM`, `d`, `HH`, `h`, `mm`, `ss`, `SSS`, `a` to
+--- `aaaaa`, `qqq`, `EEE`, `do`, `P` to `PPPP`, `p`, `pp`), text between
+--- single quotes is written as it is, and anything else as it stands
+fn formatted[t, pattern]
+    p = parts_of[t]
+    out = ''
+    chars = split[pattern, '']
+    n = len[chars]
+    i = 0
+    while i lt n
+        ch = chars[i]
+        if ch eq '\''
+            j = i + 1
+            lit = ''
+            while j lt n and chars[j] ne '\''
+                lit = '`lit``chars[j]`'
+                j = j + 1
+            if j eq i + 1 and j lt n
+                lit = '\''
+            out = '`out``lit`'
+            i = j + 1
+        else
+            if _is_letter[ch]
+                j = i
+                while j lt n and chars[j] eq ch
+                    j = j + 1
+                run = j - i
+                if ch eq 'd' and j lt n and chars[j] eq 'o'
+                    piece = _ordinal[p[2]]
+                    out = '`out``piece`'
+                    i = j + 1
+                else
+                    piece = _token[p, ch, run]
+                    out = '`out``piece`'
+                    i = j
+            else
+                out = '`out``ch`'
+                i = i + 1
+    out
+
+fn _is_letter[ch]
+    low = lower[ch]
+    low ne upper[ch]
+
+fn _token[p, ch, run]
+    if ch eq 'y'
+        if run eq 2
+            return _padded[p[0] % 100, 2]
+        return _padded[p[0], run]
+    if ch eq 'M' or ch eq 'L'
+        if run eq 1
+            return str[p[1]]
+        if run eq 2
+            return _padded[p[1], 2]
+        name = _month_names[][p[1] - 1]
+        if run eq 3
+            return slice[name, 0, 3]
+        if run eq 5
+            return slice[name, 0, 1]
+        return name
+    if ch eq 'd'
+        return _padded[p[2], run]
+    if ch eq 'E' or ch eq 'e' or ch eq 'c'
+        name = _day_names[][p[7]]
+        if run lte 3
+            return slice[name, 0, 3]
+        if run eq 5
+            return slice[name, 0, 1]
+        if run eq 6
+            return slice[name, 0, 2]
+        return name
+    if ch eq 'H'
+        return _padded[p[3], run]
+    if ch eq 'h'
+        h = p[3] % 12
+        if h eq 0
+            h = 12
+        return _padded[h, run]
+    if ch eq 'K'
+        return _padded[p[3] % 12, run]
+    if ch eq 'k'
+        h = p[3]
+        if h eq 0
+            h = 24
+        return _padded[h, run]
+    if ch eq 'm'
+        return _padded[p[4], run]
+    if ch eq 's'
+        return _padded[p[5], run]
+    if ch eq 'S'
+        return slice[_padded[p[6], 3], 0, min[run, 3]]
+    if ch eq 'a' or ch eq 'b' or ch eq 'B'
+        pm = p[3] gte 12
+        if run lte 2
+            if pm
+                return 'PM'
+            return 'AM'
+        if run eq 3
+            if pm
+                return 'pm'
+            return 'am'
+        if run eq 5
+            if pm
+                return 'p'
+            return 'a'
+        if pm
+            return 'p.m.'
+        return 'a.m.'
+    if ch eq 'q' or ch eq 'Q'
+        q = (p[1] - 1) / 3 + 1
+        if run eq 1
+            return str[q]
+        if run eq 2
+            return _padded[q, 2]
+        if run eq 3
+            return 'Q`q`'
+        word = _ordinal[q]
+        return '`word` quarter'
+    if ch eq 'P'
+        if run eq 1
+            return '`_padded[p[1], 2]`/`_padded[p[2], 2]`/`p[0]`'
+        names = _month_names[]
+        name = names[p[1] - 1]
+        short = slice[name, 0, 3]
+        if run eq 2
+            return '`short` `p[2]`, `p[0]`'
+        day = _ordinal[p[2]]
+        if run eq 3
+            return '`name` `day`, `p[0]`'
+        week = _day_names[][p[7]]
+        return '`week`, `name` `day`, `p[0]`'
+    if ch eq 'p'
+        h = p[3] % 12
+        if h eq 0
+            h = 12
+        half = 'AM'
+        if p[3] gte 12
+            half = 'PM'
+        if run eq 1
+            return '`h`:`_padded[p[4], 2]` `half`'
+        return '`h`:`_padded[p[4], 2]`:`_padded[p[5], 2]` `half`'
+    if ch eq 'D'
+        start = days_of[p[0], 1, 1]
+        here = days_of[p[0], p[1], p[2]]
+        return _padded[here - start + 1, run]
+    ''
+
+--- ---- tests ----
+
+test the_calendar_counts_days_as_the_world_does[]
+    days_of[1970, 1, 1] eq 0
+    days_of[2026, 1, 5] eq 20458
+    civil_of[20458] eq [2026, 1, 5]
+    civil_of[-1] eq [1969, 12, 31]
+    civil_of[days_of[2024, 2, 29]] eq [2024, 2, 29]
+    month_days[2024, 2] eq 29
+    month_days[2100, 2] eq 28
+    parts_of[1767571200000.0][7] eq 1
+
+test times_move_by_units_as_date_fns_moves_them[]
+    t = time_of[2026, 1, 31, 10, 30, 0, 0]
+    moved_by[t, 1, 'month'] eq time_of[2026, 2, 28, 10, 30, 0, 0]
+    moved_by[t, 1, 'year'] eq time_of[2027, 1, 31, 10, 30, 0, 0]
+    start_of[t, 'month', 0] eq time_of[2026, 1, 1, 0, 0, 0, 0]
+    start_of[t, 'week', 0] eq time_of[2026, 1, 25, 0, 0, 0, 0]
+    start_of[t, 'isoWeek', 1] eq time_of[2026, 1, 26, 0, 0, 0, 0]
+    start_of[t, 'quarter', 0] eq time_of[2026, 1, 1, 0, 0, 0, 0]
+    end_of[t, 'day'] eq time_of[2026, 1, 31, 23, 59, 59, 999]
+    units_between[time_of[2026, 3, 15, 0, 0, 0, 0], time_of[2026, 1, 20, 0, 0, 0, 0], 'month'] eq 1.0
+    units_between[time_of[2026, 1, 2, 12, 0, 0, 0], time_of[2026, 1, 1, 0, 0, 0, 0], 'day'] eq 1.0
+
+test times_are_written_in_date_fns_formats[]
+    t = time_of[2026, 1, 5, 14, 7, 9, 45]
+    formatted[t, 'MMM d'] eq 'Jan 5'
+    formatted[t, 'yyyy-MM-dd'] eq '2026-01-05'
+    formatted[t, 'h:mm aaaa'] eq '2:07 p.m.'
+    formatted[t, 'ha'] eq '2PM'
+    formatted[t, 'h:mm:ss.SSS aaaa'] eq '2:07:09.045 p.m.'
+    formatted[t, 'PP'] eq 'Jan 5, 2026'
+    formatted[t, 'qqq - yyyy'] eq 'Q1 - 2026'
+    formatted[t, 'MMM d, yyyy, h:mm:ss aaaa'] eq 'Jan 5, 2026, 2:07:09 p.m.'
+    formatted[t, '\'week of\' EEE do'] eq 'week of Mon 5th'

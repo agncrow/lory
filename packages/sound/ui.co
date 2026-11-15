@@ -1,0 +1,489 @@
+--- Sound's controls, drawn with Lory as Tone's demos draw theirs: a
+--- keyboard of notes, a grid of steps for a sequencer, a knob, a level
+--- meter, a spectrum and a waveform, and a player's row (a play button, a
+--- seek slider, the time and the pace). Each is a `gui.drawn` control (or
+--- gui's own controls in a row), so it lays out, takes presses from a
+--- mouse, a touch or a headset's ray, and tells the program what was done
+--- as gui's events:
+---
+---     tree = gui.column[[ui.keyboard['keys', 60, 72, held], ui.meter['level', db]]]
+---     shown = gui.show[c, tree]
+---     for ev in shown.events
+---         if ev.id eq 'keys' and ev.act eq 'note'
+---             --- ev.num is the MIDI note pressed, ev.words its name
+---
+--- A keyboard tells `note` when a key is pressed (its MIDI number and its
+--- name); a grid of steps tells `step` when a cell is pressed (`row:column`
+--- in its words, 1 or 0 what the cell becomes); a knob tells `change` as
+--- it is dragged up and down or keyed; a player's play button tells
+--- `press`, its slider `change` and its pace `choose`.
+
+use math
+use memory
+use lory
+use lory.gui
+use lory.icons
+use sound
+
+--- numbers a control draws (a spectrum's levels, a waveform's samples),
+--- held by Lory under the control's id while the tree is drawn
+struct Levels [values]
+
+--- a key of a keyboard: its MIDI note, its box (left, top, width, height,
+--- from the keyboard's corner) and whether it is white
+struct Key [midi, x, y, w, h, white]
+
+--- where a knob's drag began: the pointer's height and the knob's value
+struct Drag [y, value]
+
+fn _no_levels[]
+    Levels[slice[[0.0], 0, 0]]
+
+--- ---- a keyboard ----
+
+--- whether a MIDI note is a white key
+fn is_white[midi]
+    k = midi % 12
+    k eq 0 or k eq 2 or k eq 4 or k eq 5 or k eq 7 or k eq 9 or k eq 11
+
+--- the keys of a keyboard from `lowest` to `highest` (MIDI notes) laid in
+--- a box `w` by `h`: the white keys side by side, each black key over the
+--- line between its two white neighbours, three fifths of their width and
+--- three fifths of the height down; the white keys first, then the black
+fn keys_laid[lowest, highest, w, h]
+    whites = 0
+    m = lowest
+    while m lte highest
+        if is_white[m]
+            whites = whites + 1
+        m = m + 1
+    out = [Key[0, 0.0, 0.0, 0.0, 0.0, true]]
+    out = slice[out, 0, 0]
+    if whites eq 0
+        return out
+    each = w / whites
+    blacks = out
+    i = 0
+    m = lowest
+    while m lte highest
+        if is_white[m]
+            out = push[out, Key[m, i * each, 0.0, each, h, true]]
+            i = i + 1
+        else
+            blacks = push[blacks, Key[m, i * each - each * 0.3, 0.0, each * 0.6, h * 0.6, false]]
+        m = m + 1
+    for k in blacks
+        out = push[out, k]
+    out
+
+--- the MIDI note under a point of a keyboard (from its corner), the black
+--- keys found first as they lie on top; -1 off every key
+fn key_at[lowest, highest, w, h, x, y]
+    laid = keys_laid[lowest, highest, w, h]
+    found = -1
+    i = len[laid] - 1
+    while i gte 0 and found lt 0
+        k = laid[i]
+        if x gte k.x and x lt k.x + k.w and y gte k.y and y lt k.y + k.h
+            found = k.midi
+        i = i - 1
+    found
+
+--- the notes held, as a keyboard's words carry them
+fn _held_words[held]
+    parts = for m in held
+        '`m`'
+    joined = join[parts, ',']
+    ',`joined`,'
+
+--- a keyboard from `lowest` to `highest` (MIDI notes) as wide as the
+--- column it stands in, the notes in `held` drawn pressed
+fn keyboard[id, lowest, highest, held]
+    gui.drawn[id, 0.0, 0.0, 140.0, _keys_painted, lo = 0.0 + lowest, hi = 0.0 + highest, words = _held_words[held]]
+
+fn _keys_painted[d]
+    lowest = int[floor[d.lo]]
+    highest = int[floor[d.hi]]
+    c = d.c
+    laid = keys_laid[lowest, highest, d.w, d.h]
+    r = 3.0 * d.s
+    i = 0
+    while i lt len[laid]
+        k = laid[i]
+        held = find[d.words, ',`k.midi`,'].ok
+        color = lory.rgb[0.97, 0.97, 0.95]
+        if not k.white
+            color = lory.rgb[0.12, 0.13, 0.15]
+        if held
+            color = d.look.accent
+        if k.white
+            c = lory.round_rect[c, d.x + k.x, d.y, k.w, k.h, r, d.look.edge]
+            c = lory.round_rect[c, d.x + k.x + d.s, d.y, k.w - 2.0 * d.s, k.h - d.s, r, color]
+        else
+            c = lory.round_rect[c, d.x + k.x, d.y, k.w, k.h, r, color]
+        i = i + 1
+    d.c = c
+    for ev in lory.events[d.c]
+        if ev.on eq 'down'
+            m = key_at[lowest, highest, d.w, d.h, ev.x - d.x, ev.y - d.y]
+            if m gte 0
+                d = gui.tell[d, 'note', sound.note_name[sound.hz_of_midi[0.0 + m]], 0.0 + m]
+    d
+
+--- ---- a grid of steps ----
+
+--- whether a step is on in a grid (each row a text of `1` and `0`)
+fn is_on[grid, row, column]
+    if row lt 0 or row gte len[grid]
+        return false
+    slice[grid[row], column, column + 1] eq '1'
+
+--- a grid with one step turned over
+fn toggled[grid, row, column]
+    out = slice[grid, 0, 0]
+    i = 0
+    while i lt len[grid]
+        line = grid[i]
+        if i eq row and column gte 0 and column lt len[line]
+            mark = '1'
+            if is_on[grid, row, column]
+                mark = '0'
+            line = '`slice[line, 0, column]``mark``slice[line, column + 1, len[line]]`'
+        out = push[out, line]
+        i = i + 1
+    out
+
+--- a grid of `columns` steps in each of its rows, none on
+fn empty_grid[rows, columns]
+    zeros_words = ''
+    k = 0
+    while k lt columns
+        zeros_words = '`zeros_words`0'
+        k = k + 1
+    out = slice[[''], 0, 0]
+    i = 0
+    while i lt rows
+        out = push[out, zeros_words]
+        i = i + 1
+    out
+
+--- a sequencer's grid of steps (each row a text of `1` and `0`), the
+--- step at `at` shown playing (-1: none), 30 CSS pixels a row
+fn steps[id, grid, at]
+    columns = 0
+    if len[grid] gt 0
+        columns = len[grid[0]]
+    gui.drawn[id, 0.0 + at, 0.0, 30.0 * len[grid], _steps_painted, lo = 0.0 + len[grid], hi = 0.0 + columns, words = join[grid, '/']]
+
+fn _steps_painted[d]
+    rows = split[d.words, '/']
+    count = len[rows]
+    columns = int[floor[d.hi]]
+    c = d.c
+    if count eq 0 or columns eq 0
+        return d
+    cell_w = d.w / columns
+    cell_h = d.h / count
+    gap = 2.0 * d.s
+    playing = int[floor[d.num]]
+    r = 0
+    while r lt count
+        k = 0
+        while k lt columns
+            color = d.look.field
+            if k eq playing
+                color = d.look.hover
+            if is_on[rows, r, k]
+                color = d.look.accent
+            c = lory.round_rect[c, d.x + k * cell_w + gap, d.y + r * cell_h + gap, cell_w - 2.0 * gap, cell_h - 2.0 * gap, 4.0 * d.s, color]
+            k = k + 1
+        r = r + 1
+    d.c = c
+    for ev in lory.events[d.c]
+        if ev.on eq 'down' and ev.x gte d.x and ev.x lt d.x + d.w and ev.y gte d.y and ev.y lt d.y + d.h
+            row = int[floor[(ev.y - d.y) / cell_h]]
+            column = int[floor[(ev.x - d.x) / cell_w]]
+            becomes = 1.0
+            if is_on[rows, row, column]
+                becomes = 0.0
+            d = gui.tell[d, 'step', '`row`:`column`', becomes]
+    d
+
+--- ---- a knob ----
+
+--- a knob holding `value` from `lo` to `hi`, its words under it: dragged
+--- up it turns up (the whole range in 150 CSS pixels), the arrows turn it
+--- a hundredth, Page Up and Page Down a tenth, Home and End to its ends
+fn knob[id, value, lo, hi, words]
+    gui.drawn[id, 0.0 + value, 64.0, 84.0, _knob_painted, lo = 0.0 + lo, hi = 0.0 + hi, words = words]
+
+--- where a knob's pointer points for a share of its range (0 to 1): from
+--- a quarter turn and a half left of up round to as far right (radians,
+--- clockwise from up)
+fn knob_angle[share]
+    (min[1.0, max[0.0, share]] - 0.5) * 1.5 * pi
+
+fn _knob_painted[d]
+    c = d.c
+    span = d.hi - d.lo
+    size = min[d.w, d.h - 20.0 * d.s]
+    cx = d.x + d.w / 2.0
+    cy = d.y + size / 2.0
+    ring = d.look.edge
+    if d.hover or d.down
+        ring = d.look.accent
+    c = lory.circle[c, cx, cy, size / 2.0, ring]
+    c = lory.circle[c, cx, cy, size / 2.0 - 3.0 * d.s, d.look.field]
+    share = 0.0
+    if span ne 0.0
+        share = (d.num - d.lo) / span
+    a = knob_angle[share]
+    c = lory.line[c, cx, cy, cx + sin[a] * (size / 2.0 - 6.0 * d.s), cy - cos[a] * (size / 2.0 - 6.0 * d.s), 3.0 * d.s, d.look.accent]
+    c = lory.text_centered[c, cx, d.y + d.h - 8.0 * d.s, d.words, 12.0 * d.s, d.look.muted]
+    d.c = c
+    value = d.num
+    key = 'sound.ui.knob.`d.id`'
+    for ev in lory.events[d.c]
+        if ev.on eq 'down' and ev.x gte d.x and ev.x lt d.x + d.w and ev.y gte d.y and ev.y lt d.y + d.h
+            remember[key, Drag[ev.y, value]]
+        if ev.on eq 'move' and d.down
+            began = recall[key, Drag[ev.y, value]]
+            value = began.value + (began.y - ev.y) / (150.0 * d.s) * span
+    if d.focused
+        for k in d.keys
+            if k eq 'ArrowUp' or k eq 'ArrowRight'
+                value = value + span / 100.0
+            if k eq 'ArrowDown' or k eq 'ArrowLeft'
+                value = value - span / 100.0
+            if k eq 'PageUp'
+                value = value + span / 10.0
+            if k eq 'PageDown'
+                value = value - span / 10.0
+            if k eq 'Home'
+                value = d.lo
+            if k eq 'End'
+                value = d.hi
+    d.num = min[max[d.lo, d.hi], max[min[d.lo, d.hi], value]]
+    d
+
+--- ---- a meter, a spectrum and a waveform ----
+
+--- a level meter from -60 dB to 0 dB holding `db`: green to -12, amber
+--- to -3 and red above
+fn meter[id, db]
+    gui.drawn[id, 0.0 + db, 0.0, 16.0, _meter_painted, lo = -60.0, hi = 0.0]
+
+--- how much of a meter a level fills (0 to 1)
+fn meter_share[db, lo, hi]
+    if db ne db
+        return 0.0
+    min[1.0, max[0.0, (db - lo) / (hi - lo)]]
+
+fn _meter_painted[d]
+    c = d.c
+    r = 3.0 * d.s
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, d.look.field]
+    share = meter_share[d.num, d.lo, d.hi]
+    color = d.look.success
+    if d.num gt -12.0
+        color = d.look.warning
+    if d.num gt -3.0
+        color = d.look.danger
+    if share gt 0.0
+        c = lory.round_rect[c, d.x, d.y, d.w * share, d.h, r, color]
+    d.c = c
+    d
+
+--- a spectrum of levels in decibels (an analyser's values), drawn as bars
+--- from -100 dB to 0 dB, `tall` CSS pixels high
+fn spectrum[id, levels, tall]
+    remember['sound.ui.`id`', Levels[levels]]
+    gui.drawn[id, 0.0, 0.0, tall, _spectrum_painted, lo = -100.0, hi = 0.0, words = id]
+
+fn _spectrum_painted[d]
+    held = recall['sound.ui.`d.words`', _no_levels[]]
+    c = lory.round_rect[d.c, d.x, d.y, d.w, d.h, 4.0 * d.s, d.look.field]
+    n = len[held.values]
+    if n gt 0
+        each = d.w / n
+        i = 0
+        while i lt n
+            share = meter_share[held.values[i], d.lo, d.hi]
+            tall = share * d.h
+            if tall gt 0.0
+                c = lory.rect[c, d.x + i * each, d.y + d.h - tall, max[1.0, each - d.s], tall, d.look.accent]
+            i = i + 1
+    d.c = c
+    d
+
+--- a waveform of samples (-1 to 1), drawn as a line through the middle,
+--- `tall` CSS pixels high
+fn waveform[id, samples, tall]
+    remember['sound.ui.`id`', Levels[samples]]
+    gui.drawn[id, 0.0, 0.0, tall, _waveform_painted, words = id]
+
+fn _waveform_painted[d]
+    held = recall['sound.ui.`d.words`', _no_levels[]]
+    c = lory.round_rect[d.c, d.x, d.y, d.w, d.h, 4.0 * d.s, d.look.field]
+    n = len[held.values]
+    if n gt 1
+        xs = d.x + (0.0 + range[n]) / (n - 1.0) * d.w
+        ys = d.y + d.h * 0.5 - clip[held.values, -1.0, 1.0] * (d.h * 0.45)
+        c = lory.path[c, xs, ys, 1.5 * d.s, d.look.accent]
+    d.c = c
+    d
+
+--- the peaks of a sound's samples in `count` stretches (each the largest
+--- size in it): a waveform's outline
+fn peaks_of[samples, count]
+    n = len[samples]
+    out = zeros[count]
+    if n eq 0 or count eq 0
+        return out
+    i = 0
+    while i lt count
+        a = int[floor[i * n / count]]
+        b = max[a + 1, int[floor[(i + 1) * n / count]]]
+        out[i] = max[abs[slice[samples, a, min[n, b]]]]
+        i = i + 1
+    out
+
+--- ---- a player's row ----
+
+--- seconds as a clock shows them (`m:ss`)
+fn clock[seconds]
+    whole = int[floor[max[0.0, seconds]]]
+    minutes = whole / 60
+    rest = whole - minutes * 60
+    if rest lt 10
+        return '`minutes`:0`rest`'
+    '`minutes`:`rest`'
+
+--- the paces a player offers
+fn paces[]
+    ['0.5', '1', '1.5', '2']
+
+--- a player's row: its play button (`id:play`, a pause button while it
+--- plays), its seek slider (`id:seek`, from 0 to the duration), the time
+--- played and the whole, and its pace (`id:pace`)
+fn player[id, at, duration, playing, pace]
+    shows = 0.0
+    if playing
+        shows = 1.0
+    button = gui.drawn['`id`:play', shows, 34.0, 34.0, _play_painted]
+    seek = gui.slider['`id`:seek', min[at, duration], 0.0, max[duration, 0.001]]
+    told = gui.text['`clock[at]` / `clock[duration]`', 13.0, 'muted']
+    gui.row[[button, seek, told, gui.select['`id`:pace', paces[], pace]], align = 'center']
+
+fn _play_painted[d]
+    c = d.c
+    ground = d.look.field
+    if d.hover
+        ground = d.look.hover
+    if d.down
+        ground = d.look.press
+    c = lory.round_rect[c, d.x, d.y, d.w, d.h, 6.0 * d.s, ground]
+    name = 'play'
+    if d.num gt 0.5
+        name = 'pause'
+    inset = d.w * 0.2
+    c = icons.draw[c, name, d.x + inset, d.y + inset, d.w - 2.0 * inset, d.look.ink]
+    d.c = c
+    if d.pressed
+        d = gui.tell[d, 'press', name, d.num]
+    else if d.focused
+        for k in d.keys
+            if k eq 'Enter' or k eq ' '
+                d = gui.tell[d, 'press', name, d.num]
+    d
+
+--- ---- tests ----
+
+fn _frame[given_input, pointers, xr]
+    views = '[{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}]'
+    controllers = '[]'
+    if xr
+        unit_matrix = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+        views = '[{"eye": "left", "x": 0, "y": 0, "width": 900, "height": 700, "projection": `unit_matrix`, "camera": `unit_matrix`}, {"eye": "right", "x": 0, "y": 0, "width": 900, "height": 700, "projection": `unit_matrix`, "camera": `unit_matrix`}]'
+        controllers = '[{"hand": "right", "origin": [0, 1.25, 0], "direction": [0, 0, -1], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, 0]}]'
+    json['{"t": 1000, "width": 900, "height": 700, "ratio": 1, "xr": `xr`, "views": `views`, "input": `given_input`, "pointers": `pointers`, "controllers": `controllers`, "said": []}']
+
+fn _pressed_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _nothing_pressed[]
+    gui.unfocus[]
+    gui.show[lory.begin[_frame[_pressed_at[899, 699], '[{"x": 899, "y": 699, "down": false}]', false]], gui.column[[gui.space[10.0]]]]
+
+test the_keys_lie_as_a_piano_lays_them[]
+    laid = keys_laid[60, 72, 800.0, 140.0]
+    len[laid] eq 13
+    whites = 0
+    for k in laid
+        if k.white
+            whites = whites + 1
+    whites eq 8
+    key_at[60, 72, 800.0, 140.0, 10.0, 130.0] eq 60
+    key_at[60, 72, 800.0, 140.0, 100.0, 20.0] eq 61
+    key_at[60, 72, 800.0, 140.0, 99.0, 130.0] eq 60
+    key_at[60, 72, 800.0, 140.0, 100.0, 130.0] eq 62
+    key_at[60, 72, 800.0, 140.0, 799.0, 130.0] eq 72
+    key_at[60, 72, 800.0, 140.0, 900.0, 130.0] eq -1
+
+test a_key_pressed_tells_its_note[]
+    _nothing_pressed[]
+    tree = gui.column[[keyboard['keys', 60, 72, [64]]]]
+    shown = gui.show[lory.begin[_frame[_pressed_at[30, 140], '[{"x": 30, "y": 140, "down": false}]', false]], tree]
+    notes = slice[[0.0], 0, 0]
+    named = slice[[''], 0, 0]
+    for ev in shown.events
+        if ev.id eq 'keys' and ev.act eq 'note'
+            notes = push[notes, ev.num]
+            named = push[named, ev.words]
+    notes eq [60.0]
+    named eq ['C4']
+
+test a_ray_pressing_a_key_plays_it[]
+    _nothing_pressed[]
+    tree = gui.column[[gui.space[220.0], keyboard['keys', 60, 72, []]]]
+    pressing = '[{"type": "down", "device": "ray", "id": "right"}, {"type": "up", "device": "ray", "id": "right"}]'
+    shown = gui.show[lory.begin[_frame[pressing, '[]', true]], tree]
+    c = shown.canvas
+    played = 0
+    for ev in shown.events
+        if ev.id eq 'keys' and ev.act eq 'note'
+            played = played + 1
+            note = sound.mono[8000.0, sin[(0.0 + range[80]) * (2.0 * pi * sound.hz_of_midi[ev.num] / 8000.0)]]
+            c = sound.play[c, note, 0.0]
+    played eq 1
+    len[c.asks] gt 0
+    c.asks[len[c.asks] - 1][0] eq '@sound'
+
+test the_grid_turns_a_step_over[]
+    g = empty_grid[2, 4]
+    g eq ['0000', '0000']
+    h = toggled[g, 1, 2]
+    h eq ['0000', '0010']
+    is_on[h, 1, 2] eq true
+    toggled[h, 1, 2] eq g
+    _nothing_pressed[]
+    tree = gui.column[[steps['grid', h, 0]]]
+    shown = gui.show[lory.begin[_frame[_pressed_at[24 + 852 * 2 / 4 + 10, 24 + 45], '[{"x": 500, "y": 69, "down": false}]', false]], tree]
+    told = slice[[''], 0, 0]
+    for ev in shown.events
+        if ev.id eq 'grid' and ev.act eq 'step'
+            told = push[told, '`ev.words` `ev.num`']
+    told eq ['1:2 0']
+
+test the_meters_and_the_clock_read_right[]
+    meter_share[-30.0, -60.0, 0.0] eq 0.5
+    meter_share[10.0, -60.0, 0.0] eq 1.0
+    meter_share[nan, -60.0, 0.0] eq 0.0
+    clock[65.4] eq '1:05'
+    clock[600.0] eq '10:00'
+    peaks_of[[0.1, -0.5, 0.2, 0.3], 2] eq [0.5, 0.3]
+    abs[knob_angle[0.0] + 0.75 * pi] lt 0.000000001
+    _nothing_pressed[]
+    tree = gui.column[[meter['level', -6.0], spectrum['fft', [-20.0, -50.0, -90.0], 60.0], waveform['wave', [0.0, 0.5, -0.5], 40.0], knob['gain', 0.5, 0.0, 1.0, 'Gain'], player['tune', 3.0, 10.0, false, '1']]]
+    shown = gui.show[lory.begin[_frame['[]', '[]', false]], tree]
+    len[shown.events] eq 0

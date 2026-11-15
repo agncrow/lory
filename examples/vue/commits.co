@@ -1,0 +1,175 @@
+--- Fetching Data: the latest three commits of Vue's core on the branch
+--- chosen (`main` or `minor`), asked of GitHub's API as the example
+--- starts and again each time the branch changes. Each shows its short
+--- sha and the first line of its message, its author and its date (`T`
+--- and `Z` made spaces). As Vue's does, the example shows the commits of
+--- whichever answer came last, and nothing while none has come or when
+--- what came is not a list. A link pressed copies its address (a page in
+--- a headset opens no other tab).
+use lory
+use lory.gui
+use common
+
+--- a commit as the list shows it
+struct Commit [sha, url, message, name, profile, date]
+
+--- the branch chosen, the commits shown, the requests to send and those
+--- sent (each its name and address), how many were sent, the example's
+--- start (a request's name carries it) and addresses to copy
+struct Commits [branch, commits, asks, sent, count, mount, copies]
+
+fn api[]
+    'https://api.github.com/repos/vuejs/core/commits?per_page=3&sha='
+
+fn branches[]
+    ['main', 'minor']
+
+--- what the example asks as it starts: the commits of `main`
+fn fresh_at[mount]
+    s = Commits['main', slice[[Commit['', '', '', '', '', '']], 0, 0], slice[[['', '']], 0, 0], slice[[['', '']], 0, 0], 0, mount, slice[[''], 0, 0]]
+    asked[s]
+
+--- the commits of the branch chosen asked for (`watchEffect`)
+fn asked[s]
+    id = 'vue-commits-`s.mount`-`s.count`'
+    ask = [id, '`api[]``s.branch`']
+    s.asks = push[s.asks, ask]
+    s.sent = push[s.sent, ask]
+    s.count = s.count + 1
+    s
+
+--- `truncate`: a message's first line
+fn first_line[v]
+    lines = split[v, '\n']
+    if len[lines] gt 1 and lines[0] ne ''
+        return lines[0]
+    v
+
+--- `formatDate`
+fn date_words[v]
+    join[split[join[split[v, 'T'], ' '], 'Z'], ' ']
+
+fn _text_at[j, key]
+    if type[j] ne 'map'
+        return ''
+    if not (key in j)
+        return ''
+    v = j[key]
+    if not v.ok
+        return ''
+    '`v`'
+
+--- the words at `key` inside the map at `outer` of a map
+fn _inner_text[j, outer, key]
+    if type[j] ne 'map'
+        return ''
+    if not (outer in j)
+        return ''
+    inner = j[outer]
+    if not inner.ok
+        return ''
+    _text_at[inner, key]
+
+fn _commit_of[item]
+    author = ''
+    date = ''
+    if type[item] eq 'map' and 'commit' in item
+        whole = item['commit']
+        if whole.ok
+            author = _inner_text[whole, 'author', 'name']
+            date = _inner_text[whole, 'author', 'date']
+    Commit[_text_at[item, 'sha'], _text_at[item, 'html_url'], _inner_text[item, 'commit', 'message'], author, _inner_text[item, 'author', 'html_url'], date]
+
+--- the commits an answer's body holds (none, where it is not a list)
+fn commits_of[body]
+    out = slice[[Commit['', '', '', '', '', '']], 0, 0]
+    j = json[body]
+    if not j.ok
+        return out
+    if type[j] ne 'array'
+        return out
+    for item in j
+        c = _commit_of[item]
+        if c.ok
+            out = push[out, Commit['`c.sha`', '`c.url`', '`c.message`', '`c.name`', '`c.profile`', '`c.date`']]
+    out
+
+--- the commits an answer's body holds, none where it cannot be read
+fn _commits_in[body]
+    got = commits_of[body]
+    if not got.ok
+        return slice[[Commit['', '', '', '', '', '']], 0, 0]
+    got
+
+--- what the page answered to the requests this start sent: the commits
+--- of the last one
+fn ticked[s, c]
+    for said in lory.said[c]
+        if _text_at[said, 'what'] eq 'answer'
+            id = _text_at[said, 'id']
+            for ask in s.sent
+                if ask[0] eq id
+                    s.commits = _commits_in[_text_at[said, 'body']]
+    s
+
+fn controls[s, c, room]
+    title = common.titled['', 'Latest Vue Core Commits', 32.0, c]
+    choice = gui.radio['fetching-data:branch', branches[], s.branch]
+    branch = common.with_id[gui.text['vuejs/core@`s.branch`'], 'fetching-data:shown']
+    kids = [title, choice, branch]
+    rows = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    for m in s.commits
+        sha = common.link_to['fetching-data:commit:`i`', slice[m.sha, 0, 7], m.url, c]
+        top = gui.row[[sha, gui.text['-'], gui.text[first_line[m.message]]], gap = 6.0]
+        author = common.link_to['fetching-data:author:`i`', m.name, m.profile, c]
+        under = gui.row[[gui.text['by'], author, gui.text['at'], common.titled['', date_words[m.date], 15.0, c]], gap = 6.0]
+        rows = push[rows, common.named[gui.column[[top, under], gap = 4.0], 'fetching-data:row:`i`']]
+        i = i + 1
+    if len[rows] gt 0
+        kids = push[kids, gui.column[rows, gap = 20.0]]
+    gui.column[kids, gap = 12.0]
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if ev.id eq 'fetching-data:branch' and ev.act eq 'choose' and ev.words ne s.branch
+            s.branch = ev.words
+            s = asked[s]
+        if starts[ev.id, 'fetching-data:commit:'] or starts[ev.id, 'fetching-data:author:']
+            if ev.act eq 'press'
+                i = int[slice[ev.id, 21, len[ev.id]]]
+                if i lt len[s.commits]
+                    m = s.commits[i]
+                    if starts[ev.id, 'fetching-data:commit:']
+                        s.copies = push[s.copies, m.url]
+                    else
+                        s.copies = push[s.copies, m.profile]
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['branch'] = common.words_by[tree, 'fetching-data:shown']
+    out['picked'] = common.words_by[tree, 'fetching-data:branch']
+    rows = slice[[''], 0, 0]
+    links = slice[[''], 0, 0]
+    i = 0
+    while common.holds[tree, 'fetching-data:row:`i`']
+        rows = push[rows, common.words_under[tree, 'fetching-data:row:`i`']]
+        commit_link = common.tip_by[tree, 'fetching-data:commit:`i`']
+        author_link = common.tip_by[tree, 'fetching-data:author:`i`']
+        links = push[links, '`commit_link` `author_link`']
+        i = i + 1
+    out['rows'] = join[rows, '\n']
+    out['links'] = join[links, '\n']
+    urls = slice[[''], 0, 0]
+    for ask in s.sent
+        urls = push[urls, ask[1]]
+    out['requests'] = join[urls, '\n']
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

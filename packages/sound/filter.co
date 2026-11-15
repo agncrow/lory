@@ -1,0 +1,441 @@
+--- Filters: the page's BiquadFilterNode, of each of its eight kinds
+--- (`lowpass`, `highpass`, `bandpass`, `lowshelf`, `highshelf`, `notch`,
+--- `allpass`, `peaking`), its coefficients the Audio EQ Cookbook's as the
+--- Web Audio spec states them, run sample by sample as the page runs
+--- them (its frequency may change every sample, as an envelope or an LFO
+--- sweeps it); Tone's Filter, a cascade of one to four of them (rolloff
+--- -12, -24, -48 or -96 dB an octave), and its frequency response at
+--- Tone's own frequencies; Tone's one-pole filter, its feedback comb (the
+--- worklet's delay, a sample longer than the delay time's whole samples),
+--- its lowpass comb (a one-pole before a comb), its three-band split and
+--- EQ3; and convolution, normalised as the page's ConvolverNode
+--- normalises an impulse.
+---
+---     f = filter.filter['lowpass', 800.0]
+---     ys = filter.filtered[f, xs, 22050.0]
+
+use math
+use sound
+
+--- one biquad's settings: its type, its frequency (Hz), its Q, its gain
+--- (dB; the shelves and peaking use it) and detune (cents)
+struct Biquad [type, frequency, q, gain, detune]
+
+--- Tone's Filter: a biquad's settings and how steeply it rolls off
+--- (-12, -24, -48 or -96 dB an octave: one, two, three or four biquads)
+struct Filter [type, frequency, q, gain, detune, rolloff]
+
+--- a biquad's normalised coefficients: b0, b1, b2 over a0, and a1, a2
+--- over a0
+struct Coefficients [b0, b1, b2, a1, a2]
+
+--- ---- biquads ----
+
+--- a biquad of a kind at a frequency, Q 1, no gain
+fn biquad[kind, frequency]
+    Biquad[kind, 0.0 + frequency, 1.0, 0.0, 0.0]
+
+--- the coefficients of a biquad at a rate, as the Web Audio spec computes
+--- them: Q in decibels for the lowpass and highpass, a plain Q for the
+--- rest, the shelves' slope 1
+fn coefficients[b, rate]
+    return _coefficients_at[b.type, b.frequency * 2.0 ^ (b.detune / 1200.0), b.q, b.gain, rate]
+
+fn _coefficients_at[kind, frequency, q, gain, rate]
+    nyquist = rate / 2.0
+    f = min[1.0, max[0.0, frequency / nyquist]]
+    if kind eq 'lowpass' or kind eq 'highpass'
+        if f gte 1.0
+            if kind eq 'lowpass'
+                return Coefficients[1.0, 0.0, 0.0, 0.0, 0.0]
+            return Coefficients[0.0, 0.0, 0.0, 0.0, 0.0]
+        if f lte 0.0
+            if kind eq 'lowpass'
+                return Coefficients[0.0, 0.0, 0.0, 0.0, 0.0]
+            return Coefficients[1.0, 0.0, 0.0, 0.0, 0.0]
+    w = pi * f
+    cw = cos[w]
+    sw = sin[w]
+    big = 10.0 ^ (gain / 40.0)
+    if kind eq 'lowpass' or kind eq 'highpass'
+        alpha = sw / (2.0 * 10.0 ^ (q / 20.0))
+        a0 = 1.0 + alpha
+        if kind eq 'lowpass'
+            return Coefficients[(1.0 - cw) / 2.0 / a0, (1.0 - cw) / a0, (1.0 - cw) / 2.0 / a0, -2.0 * cw / a0, (1.0 - alpha) / a0]
+        return Coefficients[(1.0 + cw) / 2.0 / a0, 0.0 - (1.0 + cw) / a0, (1.0 + cw) / 2.0 / a0, -2.0 * cw / a0, (1.0 - alpha) / a0]
+    if kind eq 'lowshelf' or kind eq 'highshelf'
+        alpha = sw / 2.0 * sqrt[2.0]
+        k = 2.0 * sqrt[big] * alpha
+        if kind eq 'lowshelf'
+            a0 = (big + 1.0) + (big - 1.0) * cw + k
+            return Coefficients[big * ((big + 1.0) - (big - 1.0) * cw + k) / a0, 2.0 * big * ((big - 1.0) - (big + 1.0) * cw) / a0, big * ((big + 1.0) - (big - 1.0) * cw - k) / a0, -2.0 * ((big - 1.0) + (big + 1.0) * cw) / a0, ((big + 1.0) + (big - 1.0) * cw - k) / a0]
+        a0 = (big + 1.0) - (big - 1.0) * cw + k
+        return Coefficients[big * ((big + 1.0) + (big - 1.0) * cw + k) / a0, -2.0 * big * ((big - 1.0) + (big + 1.0) * cw) / a0, big * ((big + 1.0) + (big - 1.0) * cw - k) / a0, 2.0 * ((big - 1.0) - (big + 1.0) * cw) / a0, ((big + 1.0) - (big - 1.0) * cw - k) / a0]
+    alpha = sw / (2.0 * max[q, 0.0001])
+    a0 = 1.0 + alpha
+    if kind eq 'bandpass'
+        return Coefficients[alpha / a0, 0.0, 0.0 - alpha / a0, -2.0 * cw / a0, (1.0 - alpha) / a0]
+    if kind eq 'notch'
+        return Coefficients[1.0 / a0, -2.0 * cw / a0, 1.0 / a0, -2.0 * cw / a0, (1.0 - alpha) / a0]
+    if kind eq 'allpass'
+        return Coefficients[(1.0 - alpha) / a0, -2.0 * cw / a0, (1.0 + alpha) / a0, -2.0 * cw / a0, (1.0 - alpha) / a0]
+    if kind eq 'peaking'
+        a0 = 1.0 + alpha / big
+        return Coefficients[(1.0 + alpha * big) / a0, -2.0 * cw / a0, (1.0 - alpha * big) / a0, -2.0 * cw / a0, (1.0 - alpha / big) / a0]
+    Coefficients[1.0, 0.0, 0.0, 0.0, 0.0]
+
+--- the gain a biquad passes at a frequency (the size of its response
+--- there)
+fn response_at[b, rate, hz]
+    c = coefficients[b, rate]
+    w = pi * hz / (rate / 2.0)
+    re_top = c.b0 + c.b1 * cos[w] + c.b2 * cos[2.0 * w]
+    im_top = 0.0 - c.b1 * sin[w] - c.b2 * sin[2.0 * w]
+    re_bottom = 1.0 + c.a1 * cos[w] + c.a2 * cos[2.0 * w]
+    im_bottom = 0.0 - c.a1 * sin[w] - c.a2 * sin[2.0 * w]
+    sqrt[(re_top * re_top + im_top * im_top) / (re_bottom * re_bottom + im_bottom * im_bottom)]
+
+--- samples through one biquad of fixed coefficients (direct form one, as
+--- the page runs it)
+fn _run[c, xs]
+    out = zeros[len[xs]]
+    x1 = 0.0
+    x2 = 0.0
+    y1 = 0.0
+    y2 = 0.0
+    i = 0
+    while i lt len[xs]
+        x = xs[i]
+        y = c.b0 * x + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2
+        out[i] = y
+        x2 = x1
+        x1 = x
+        y2 = y1
+        y1 = y
+        i = i + 1
+    out
+
+--- samples through one biquad whose frequency is given for each sample
+--- (Hz), its coefficients computed anew at each, as the page computes them
+--- for a frequency that moves
+fn _run_swept[kind, freqs, q, gain, xs, rate]
+    n = len[xs]
+    at = flatten[freqs]
+    w = pi * clip[at / (rate / 2.0), 0.0, 1.0]
+    cw = cos[w]
+    sw = sin[w]
+    b0 = zeros[n]
+    b1 = zeros[n]
+    b2 = zeros[n]
+    a1 = zeros[n]
+    a2 = zeros[n]
+    if kind eq 'lowpass' or kind eq 'highpass' or kind eq 'bandpass' or kind eq 'allpass' or kind eq 'notch'
+        alpha = sw / (2.0 * max[q, 0.0001])
+        if kind eq 'lowpass' or kind eq 'highpass'
+            alpha = sw / (2.0 * 10.0 ^ (q / 20.0))
+        a0 = 1.0 + alpha
+        a1 = (-2.0 * cw) ./ a0
+        a2 = (1.0 - alpha) ./ a0
+        if kind eq 'lowpass'
+            b0 = ((1.0 - cw) / 2.0) ./ a0
+            b1 = (1.0 - cw) ./ a0
+            b2 = b0
+        if kind eq 'highpass'
+            b0 = ((1.0 + cw) / 2.0) ./ a0
+            b1 = (0.0 - (1.0 + cw)) ./ a0
+            b2 = b0
+        if kind eq 'bandpass'
+            b0 = alpha ./ a0
+            b2 = 0.0 - b0
+        if kind eq 'notch'
+            b0 = 1.0 / a0
+            b1 = a1
+            b2 = b0
+        if kind eq 'allpass'
+            b0 = a2
+            b1 = a1
+            b2 = (1.0 + alpha) ./ a0
+        if kind eq 'lowpass' or kind eq 'highpass'
+            --- (at or beyond the ends, as the page sets them: a lowpass
+            --- passes all at the top and nothing at the bottom, a highpass
+            --- the other way round)
+            f = at / (rate / 2.0)
+            top = where[f gte 1.0, 0.0 * f + 1.0, 0.0 * f]
+            bottom = where[f lte 0.0, 0.0 * f + 1.0, 0.0 * f]
+            beyond = top + bottom
+            keeps = bottom
+            if kind eq 'lowpass'
+                keeps = top
+            b0 = where[beyond gt 0.0, keeps, b0]
+            b1 = where[beyond gt 0.0, 0.0 * f, b1]
+            b2 = where[beyond gt 0.0, 0.0 * f, b2]
+            a1 = where[beyond gt 0.0, 0.0 * f, a1]
+            a2 = where[beyond gt 0.0, 0.0 * f, a2]
+    else
+        i = 0
+        while i lt n
+            c = _coefficients_at[kind, 0.0 + at[i], q, gain, rate]
+            b0[i] = c.b0
+            b1[i] = c.b1
+            b2[i] = c.b2
+            a1[i] = c.a1
+            a2[i] = c.a2
+            i = i + 1
+    out = zeros[n]
+    x1 = 0.0
+    x2 = 0.0
+    y1 = 0.0
+    y2 = 0.0
+    i = 0
+    while i lt n
+        x = xs[i]
+        y = b0[i] * x + b1[i] * x1 + b2[i] * x2 - a1[i] * y1 - a2[i] * y2
+        out[i] = y
+        x2 = x1
+        x1 = x
+        y2 = y1
+        y1 = y
+        i = i + 1
+    out
+
+--- samples through one biquad whose frequency is given for each sample
+--- (Hz), its coefficients computed anew at each, as the page computes them
+--- for a frequency that moves (a phaser's allpasses, a wah's filters)
+fn swept_biquad[b, xs, freqs, rate]
+    _run_swept[b.type, freqs * 2.0 ^ (b.detune / 1200.0), b.q, b.gain, xs, rate]
+
+--- samples through one biquad
+fn biquad_filtered[b, xs, rate]
+    _run[coefficients[b, rate], xs]
+
+--- ---- Tone's Filter ----
+
+--- Tone's Filter of a kind at a frequency: Q 1, no gain, -12 dB an octave
+fn filter[kind, frequency]
+    Filter[kind, 0.0 + frequency, 1.0, 0.0, 0.0, -12]
+
+--- a filter of this Q
+fn with_q[f, q]
+    f.q = 0.0 + q
+    f
+
+--- a filter of this gain (dB: the shelves and peaking)
+fn with_gain[f, gain]
+    f.gain = 0.0 + gain
+    f
+
+--- a filter rolling off this steeply (-12, -24, -48 or -96 dB an octave)
+fn with_rolloff[f, rolloff]
+    f.rolloff = rolloff
+    f
+
+--- how many biquads a rolloff takes
+fn stages_of[f]
+    if f.rolloff eq -24
+        return 2
+    if f.rolloff eq -48
+        return 3
+    if f.rolloff eq -96
+        return 4
+    1
+
+fn _biquad_of[f]
+    Biquad[f.type, f.frequency, f.q, f.gain, f.detune]
+
+--- samples through a filter (each of its biquads in turn)
+fn filtered[f, xs, rate]
+    c = coefficients[_biquad_of[f], rate]
+    out = xs
+    k = 0
+    while k lt stages_of[f]
+        out = _run[c, out]
+        k = k + 1
+    out
+
+--- samples through a filter whose frequency is given for each sample
+fn swept[f, xs, freqs, rate]
+    out = xs
+    detuned = freqs * 2.0 ^ (f.detune / 1200.0)
+    k = 0
+    while k lt stages_of[f]
+        out = _run_swept[f.type, detuned, f.q, f.gain, out, rate]
+        k = k + 1
+    out
+
+--- the frequencies Tone reads a filter's response at: `n` of them from
+--- 20 Hz to 20 kHz, closer together low down (the square of each place)
+fn tone_frequencies[n]
+    p = (0.0 + range[n]) / n
+    p .* p * (20000.0 - 20.0) + 20.0
+
+--- a filter's gain at each frequency (its biquads' gains multiplied), as
+--- Tone's `getFrequencyResponse` answers; above the rate's highest
+--- frequency none (NaN), as the page answers
+fn frequency_response[f, rate, freqs]
+    b = _biquad_of[f]
+    out = zeros[len[freqs]]
+    i = 0
+    while i lt len[freqs]
+        if freqs[i] gt rate / 2.0
+            out[i] = nan
+        else
+            out[i] = response_at[b, rate, freqs[i]] ^ stages_of[f]
+        i = i + 1
+    out
+
+--- a filter's impulse response: its first `n` samples after a click
+fn impulse_response[f, rate, n]
+    click = zeros[n]
+    click[0] = 1.0
+    filtered[f, click, rate]
+
+--- ---- Tone's primitive filters ----
+
+--- samples through Tone's one-pole filter (`lowpass` or `highpass`) at a
+--- frequency: each output a share of the input and the rest the last
+--- output (the share 2π·frequency/rate)
+fn one_pole[kind, frequency, xs, rate]
+    a0 = 2.0 * pi * frequency / rate
+    keep = 1.0 - a0
+    out = zeros[len[xs]]
+    y = 0.0
+    last_x = 0.0
+    i = 0
+    while i lt len[xs]
+        x = xs[i]
+        if kind eq 'highpass'
+            y = x - last_x + keep * y
+        else
+            y = a0 * x + keep * y
+        out[i] = y
+        last_x = x
+        i = i + 1
+    out
+
+--- a number as the page keeps a parameter's value: to 24 binary digits
+--- (a single-precision float)
+fn single[x]
+    if x eq 0.0
+        return 0.0
+    size = abs[x]
+    digits = 23.0 - floor[ln[size] / ln[2.0]]
+    scale = exp[digits * ln[2.0]]
+    kept = floor[size * scale + 0.5] / scale
+    if x lt 0.0
+        return 0.0 - kept
+    kept
+
+--- samples through Tone's feedback comb: each heard `delay` seconds later
+--- (a sample more than the whole samples in the delay as the page keeps
+--- it, as Tone's worklet reads its line), fed back `resonance` (0 to 1)
+--- each time round
+fn comb[xs, rate, delay, resonance]
+    d = int[floor[single[delay] * rate]] + 1
+    n = len[xs]
+    if d gte n
+        return zeros[n]
+    out = zeros[d]
+    last = zeros[d]
+    a = d
+    while a lt n
+        b = min[n, a + d]
+        piece = slice[xs, a - d, b - d] + slice[last, 0, b - a] * resonance
+        out = concat[out, piece]
+        last = piece
+        a = b
+    out
+
+--- samples through Tone's lowpass comb: a one-pole lowpass at `dampening`
+--- Hz, then a feedback comb
+fn lowpass_comb[xs, rate, delay, resonance, dampening]
+    comb[one_pole['lowpass', dampening, xs, rate], rate, delay, resonance]
+
+--- a sound split in three bands as Tone's MultibandSplit splits it: below
+--- `low_frequency` (a lowpass), between (a highpass then a lowpass), and
+--- above `high_frequency` (a highpass), each -12 dB an octave of Q `q`
+fn bands[xs, rate, low_frequency, high_frequency, q]
+    low = filtered[with_q[filter['lowpass', low_frequency], q], xs, rate]
+    mid = filtered[with_q[filter['lowpass', high_frequency], q], filtered[with_q[filter['highpass', low_frequency], q], xs, rate], rate]
+    high = filtered[with_q[filter['highpass', high_frequency], q], xs, rate]
+    [low, mid, high]
+
+--- a sound through Tone's EQ3: its three bands (split at 400 and 2500 Hz
+--- by default) each raised or cut by decibels, and summed
+fn equalized[xs, rate, low, mid, high, low_frequency, high_frequency]
+    b = bands[xs, rate, low_frequency, high_frequency, 1.0]
+    b[0] * sound.gain_of[low] + b[1] * sound.gain_of[mid] + b[2] * sound.gain_of[high]
+
+--- ---- convolution ----
+
+--- the smallest power of two at least `n`
+fn _power_of_two[n]
+    size = 1
+    while size lt n
+        size = size * 2
+    size
+
+--- two signals convolved (each sample of one spread by the other), by
+--- multiplying their spectra
+fn convolved[a, b]
+    n = len[a] + len[b] - 1
+    if len[a] eq 0 or len[b] eq 0
+        return zeros[0]
+    size = _power_of_two[n]
+    fa = fft[concat[a, zeros[size - len[a]]]]
+    fb = fft[concat[b, zeros[size - len[b]]]]
+    re = fa[0] .* fb[0] - fa[1] .* fb[1]
+    im = fa[0] .* fb[1] + fa[1] .* fb[0]
+    slice[ifft[re, im], 0, n]
+
+--- the gain the page's ConvolverNode scales an impulse response by (of
+--- `channels` channels, all their samples in `heard`): one over its RMS
+--- power, times -58 dB, times 44100 over its rate
+fn convolver_scale[heard, channels, rate]
+    power = sqrt[sum[heard .* heard] / len[heard]]
+    if power lt 0.000125
+        power = 0.000125
+    scale = 1.0 / power * 10.0 ^ (-58.0 / 20.0) * (44100.0 / rate)
+    if channels eq 4
+        scale = scale * 0.5
+    scale
+
+--- ---- tests ----
+
+test a_lowpass_passes_below_its_frequency_and_falls_above[]
+    f = filter['lowpass', 1000.0]
+    r = frequency_response[f, 16000.0, [100.0, 1000.0, 4000.0]]
+    abs[r[0] - 1.0] lt 0.01
+    abs[r[1] - 10.0 ^ (1.0 / 20.0)] lt 0.000001
+    r[2] lt 0.1
+    s = frequency_response[with_rolloff[f, -24], 16000.0, [4000.0]]
+    abs[s[0] - r[2] * r[2]] lt 0.0000001
+    above = frequency_response[f, 16000.0, [9000.0]][0]
+    above ne above
+
+test every_kind_has_its_shape[]
+    rate = 16000.0
+    abs[response_at[biquad['highpass', 1000.0], rate, 20.0]] lt 0.01
+    abs[response_at[biquad['bandpass', 1000.0], rate, 1000.0] - 1.0] lt 0.000001
+    response_at[biquad['notch', 1000.0], rate, 1000.0] lt 0.000001
+    abs[response_at[biquad['allpass', 1000.0], rate, 3000.0] - 1.0] lt 0.000001
+    peak = Biquad['peaking', 1000.0, 1.0, 6.0, 0.0]
+    abs[response_at[peak, rate, 1000.0] - sound.gain_of[6.0]] lt 0.000001
+    shelf = Biquad['lowshelf', 1000.0, 1.0, -6.0, 0.0]
+    abs[response_at[shelf, rate, 20.0] - sound.gain_of[-6.0]] lt 0.01
+
+test the_impulse_and_the_response_agree[]
+    f = filter['lowpass', 2000.0]
+    h = impulse_response[f, 16000.0, 512]
+    abs[sum[h] - 1.0] lt 0.001
+    same = swept[f, concat[[1.0], zeros[63]], zeros[64] + 2000.0, 16000.0]
+    abs[same[5] - h[5]] lt 0.000000001
+
+test the_primitives_are_tones[]
+    click = concat[[1.0], zeros[9]]
+    c = comb[click, 10.0, 0.2, 0.5]
+    c eq [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.25]
+    o = one_pole['lowpass', 1.0, [1.0, 1.0], 100.0]
+    abs[o[0] - 2.0 * pi / 100.0] lt 0.000000001
+    convolved[[1.0, 2.0], [1.0, 1.0, 1.0]] eq [1.0, 3.0, 3.0, 2.0]
+    e = equalized[zeros[100] + 1.0, 16000.0, 0.0, 0.0, 0.0, 400.0, 2500.0]
+    len[e] eq 100

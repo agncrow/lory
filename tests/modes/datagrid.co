@@ -1,0 +1,101 @@
+--- What lory.datagrid makes of fixed rows, written out, to diff the
+--- interpreter's run against the compiled program's: merges and chosen
+--- cells, TOAST UI Grid's keymap with copying and pasting, edits checked
+--- and saved, a feed's changes and their flashes, a sheet's formulas with
+--- undo, and the boxes a grid paints.
+use lory.datatable as dt
+use lory.datagrid as dg
+
+fn _rows[n]
+    teams = ['red', 'red', 'blue', 'blue', 'blue', 'gold', 'gold']
+    out = slice[[dt.row['', map['' = dt.missing[]]]], 0, 0]
+    i = 0
+    while i lt n
+        cells = map[team = dt.words[teams[i % 7]], name = dt.words['n`(i * 5) % n`'], hours = dt.number[(i * 3) % 11]]
+        out = push[out, dt.row['r`i`', cells]]
+        i = i + 1
+    out
+
+fn _table[]
+    dt.new[[dt.column['team', 'Team'], dt.column['name', 'Name'], dt.column['hours', 'Hours']], _rows[12]]
+
+fn _bounds_text[bs]
+    out = slice[[''], 0, 0]
+    for b in bs
+        out = push[out, '`b.top`-`b.bottom`:`b.left`-`b.right`']
+    sep = ' '
+    joined = join[out, sep]
+    joined
+
+--- merges down the team column, and presses and reaches over them
+k = dg.laid[_table[], dg.selecting[], dg.spanning[rows = ['team']]]
+spans = slice[[''], 0, 0]
+for r in k.spans.rows
+    spans = push[spans, '`dg.row_span[k.spans, r.id, \'team\']`']
+log['spans `join[spans, \' \']`']
+log['merges `_bounds_text[k.merges]`']
+sel = dg.pressed[k, slice[[dg.range_of['', '', '', '']], 0, 0], 'r3', 'team']
+log['press r3 `_bounds_text[dg.selection_bounds[k, sel]]`']
+sel = dg.reached[k, sel, 'r6', 'hours']
+log['reach r6 `_bounds_text[dg.selection_bounds[k, sel]]` `dg.selected_count[k, dg.selection_bounds[k, sel]]`']
+sel = dg.pressed[k, sel, 'r9', 'name', multi = true]
+log['add r9 `_bounds_text[dg.selection_bounds[k, sel]]` ids `join[dg.selected_ids[k, dg.selection_bounds[k, sel]], \' \']`']
+
+--- the keymap, step by step
+g = dg.grid['keys', _table[]]
+g = dg.focused_on[g, 'r0', 'team']
+for key in ['ArrowDown', 'ArrowRight', 'Tab', 'Tab', 'End', 'PageDown', 'Home', 'PageUp', 'ArrowRight']
+    gk = dg.grid_laid[g]
+    g = dg.keyed[g, gk, key]
+    log['`key` -> `g.focus.row` `g.focus.column`']
+gk = dg.grid_laid[g]
+g = dg.keyed[g, gk, 'ArrowDown', shift = true]
+g = dg.keyed[g, gk, 'ArrowRight', shift = true]
+g = dg.keyed[g, gk, 'c', ctrl = true]
+log['copied `replace[replace[g.copied, \'\t\', \'|\'], \'\n\', \'/\']`']
+g = dg.focused_on[g, 'r5', 'name']
+g = dg.keyed[g, gk, 'v', ctrl = true]
+gk = dg.grid_laid[g]
+pasted = slice[[''], 0, 0]
+for r in ['r5', 'r6']
+    for c in ['name', 'hours']
+        pasted = push[pasted, dg.cell_words[dg.cell_value[g, gk, r, c]]]
+log['pasted `join[pasted, \' \']`']
+
+--- edits checked by their rules, kept as drafts, then saved
+e = dg.grid['form', _table[]]
+e.drafts = true
+e = dg.specs_set[e, [dg.spec['hours', number = true, least = 0.0, most = 10.0], dg.spec['name', required = true, unique = true]]]
+ek = dg.grid_laid[e]
+for step in [['r1', 'hours', '12'], ['r1', 'hours', '7'], ['r2', 'name', ''], ['r2', 'name', 'n0'], ['r2', 'name', 'zed']]
+    e = dg.cell_set[e, ek, step[0], step[1], dg.typed_value[e, step[1], step[2]]]
+    log['set `step[0]` `step[1]` `step[2]`: error `dg.cell_error[e, step[0], step[1]]` dirty `join[dg.dirty_rows[e], \',\']` can save `dg.can_save[e]`']
+e = dg.saved[e]
+log['saved `dt.shown[e.table.rows[1].cells[\'hours\']]` `dt.shown[e.table.rows[2].cells[\'name\']]` dirty `len[dg.dirty_rows[e]]`']
+
+--- a feed
+f = dg.time_set[dg.grid['feed', _table[]], 1000.0]
+f = dg.ticked[f, [dg.change['r4', 'hours', dt.number[20]], dg.change['r5', 'hours', dt.number[0]], dg.change['r6', 'name', dt.words['new']]]]
+for ms in [1000.0, 1200.0, 1600.0, 2000.0]
+    f = dg.time_set[f, ms]
+    log['at `ms`: `dg.flash_of[f, \'r4\', \'hours\']` `dg.flash_of[f, \'r5\', \'hours\']` `dg.flash_of[f, \'r6\', \'name\']`']
+
+--- a sheet
+s = dg.sheet[]
+for cell in [['A0', '5'], ['A1', '7'], ['A2', '=A0+A1'], ['B0', 'x'], ['B1', '=B0+A0'], ['B2', '=A2*2-1'], ['C0', '=C1'], ['C1', '=C0'], ['A1', '10']]
+    s = dg.sheet_set[s, cell[0], cell[1]]
+shown = slice[[''], 0, 0]
+for name in ['A0', 'A1', 'A2', 'B0', 'B1', 'B2', 'C0', 'C1']
+    shown = push[shown, '`name`=`dg.cell_shown[s, name]`']
+log['sheet `join[shown, \' \']`']
+s = dg.undone[s]
+log['undone A2=`dg.cell_shown[s, \'A2\']` B2=`dg.cell_shown[s, \'B2\']` redo `dg.can_redo[s]`']
+t = dg.sheet_tally[s, 0, 2, 0, 1]
+log['tally `t.count` `t.numbers` `t.total`']
+
+--- the boxes a grid paints
+p = dg.painting[dg.grid['paint', _table[]], 450.0, 200.0]
+words = slice[[''], 0, 0]
+for b in p.boxes
+    words = push[words, '`b.part`:`b.row`:`b.column`:`b.x`:`b.y`:`b.w`:`b.h`:`b.words`']
+log['painted `len[p.boxes]` `join[words, \' \']`']

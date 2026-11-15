@@ -1,0 +1,129 @@
+--- What Lory's sound package computes, written out a case to a line, to
+--- diff the interpreter's run against the compiled program's: time and
+--- pitch notation, an envelope's and a ramp's values, the transport's
+--- firings, each oscillator's first samples, filters' responses, signal
+--- maths, a player, each synth's and each effect's short render measured,
+--- dynamics, the analyser and the meter, places heard about a listener,
+--- and the controls' layouts. The renders are short (hundredths of a
+--- second at 8 kHz, or at 16 kHz where a filter's top frequency asks it,
+--- as a pluck's and Freeverb's dampening do). A number is written as the fewest digits that read
+--- back as the same float, so the two runs write the same line only when
+--- every bit of every number is the same. tests/sound/reference.co and
+--- renders.co hold the interpreter's numbers to Tone.js itself. Run from
+--- the repository's root:
+---
+---     tests/modes.sh crow tests/modes/sound.co
+
+use math
+use sound
+use sound.signal
+use sound.envelope
+use sound.transport
+use sound.source
+use sound.filter
+use sound.synth
+use sound.effect
+use sound.dynamics
+use sound.channel
+use sound.analysis
+use sound.ui
+
+--- some numbers as one line's words
+fn _line[xs]
+    words = slice[[''], 0, 0]
+    for x in xs
+        words = push[words, '`x`']
+    join[words, ' ']
+
+--- every `step`th sample of a run, as one line's words
+fn _every[xs, step]
+    picked = slice[[0.0], 0, 0]
+    i = 0
+    while i lt len[xs]
+        picked = push[picked, 0.0 + xs[i]]
+        i = i + step
+    _line[picked]
+
+rate = 8000.0
+
+--- ---- notation ----
+
+t = sound.metered[120.0, 4.0]
+for words in ['4n', '8t', '1m', '2:1:2', '16n.', '0.75', '3i']
+    log['time `words`: `sound.seconds[words, t]` s, `sound.ticks[words, t]` ticks']
+for words in ['A4', 'C4', 'F#3', 'Bb5', 'c-1']
+    log['pitch `words`: `sound.hz[words]` Hz, midi `sound.midi[words]`']
+eighth = '8n'
+log['notation of 2.6 s: `sound.notation_of[2.6, t]`; bars:beats `sound.bars_beats[2.6, t]`; quantized to 8n `sound.quantized[2.6, eighth, t, 1.0]`']
+
+--- ---- an envelope and a ramp ----
+
+shape = envelope.adsr[0.01, 0.1, 0.5, 0.2]
+level = envelope.rendered[envelope.attack_release[shape, 0.0, 0.15, 1.0, rate], rate, 0.0, 400]
+log['adsr: `_every[level, 20]`']
+p = signal.exponential_at[signal.linear_at[signal.set_at[signal.param[1.0], 2.0, 0.0], 5.0, 0.02], 1.0, 0.04]
+log['ramps: `_every[signal.rendered[p, rate, 0.0, 400], 25]`']
+
+--- ---- the transport ----
+
+tr = transport.sequence[transport.swung[transport.transport[110.0], 0.3, '8n'], 0, 'C4 [E4 G4] . B4', '8n', '0']
+for f in transport.fired[tr, 0.0, 2.0]
+    log['fired `f.track` `f.value` at `f.time` (tick `f.tick`)']
+
+--- ---- oscillators, noise and a player ----
+
+for name in ['sine', 'square', 'sawtooth', 'triangle', 'square4', 'pulse', 'pwm', 'amsine', 'fmsquare', 'fatsawtooth']
+    xs = source.steady[source.oscillator[name], 220.0, 0.01, rate]
+    log['oscillator `name`: `_every[xs, 8]`']
+log['lfo: `_every[source.lfo[3.0, 100.0, 300.0, 45.0, 0.05, rate], 40]`']
+for kind in ['white', 'pink', 'brown']
+    log['noise `kind`: `_every[source.noise_heard[kind, 80, 5], 10]`']
+data = sin[(0.0 + range[60]) / 5.0]
+pl = source.with_fades[source.looped_between[source.at_pace[source.player[sound.mono[rate, data]], 1.3], 0.001, 0.005], 0.001, 0.002]
+log['player: `_every[source.played[pl, 0.0, 0.02, rate], 8]`']
+
+--- ---- filters and signals ----
+
+freqs = filter.tone_frequencies[12]
+for kind in ['lowpass', 'highpass', 'bandpass', 'notch', 'allpass', 'peaking', 'lowshelf', 'highshelf']
+    f = filter.with_gain[filter.with_q[filter.filter[kind, 900.0], 2.0], 4.0]
+    log['filter `kind`: `_line[filter.frequency_response[f, 16000.0, freqs]]`']
+click = concat[[1.0], zeros[79]]
+log['comb: `_every[filter.comb[click, rate, 0.003, 0.6], 5]`']
+low = filter.one_pole['lowpass', 300.0, slice[click, 0, 16], rate]
+log['one pole: `_every[low, 2]`']
+ramp = (0.0 + range[21]) / 10.0 - 1.0
+log['scale_exp: `_line[signal.scale_exp[ramp, 10.0, 30.0, 2.0]]`']
+log['abs: `_line[signal.size_of[ramp]]`; gain to audio: `_line[signal.gain_to_audio[ramp]]`']
+
+--- ---- synths, effects and dynamics, rendered short ----
+
+for name in ['Synth', 'MonoSynth', 'FMSynth', 'AMSynth', 'DuoSynth', 'MembraneSynth', 'MetalSynth', 'NoiseSynth', 'PluckSynth']
+    s = synth.played[synth.named[name], [synth.hit[0.0, 220.0, 0.03, 1.0]], 16000.0]
+    log['synth `name`: `len[s.left]` samples, RMS `analysis.rms[s.left]`, every 40th `_every[slice[s.left, 0, 400], 40]`']
+tone = sound.mono[16000.0, sin[(0.0 + range[960]) * (2.0 * pi * 440.0 / 16000.0)] * 0.5]
+for name in effect.names[]
+    out = effect.applied_over[effect.named[name], tone, 0.05, 0.1]
+    log['effect `name`: left RMS `analysis.rms[out.left]`, right RMS `analysis.rms[out.right]`, every 97th `_every[out.left, 97]`']
+loud = sound.mono[rate, sin[(0.0 + range[400]) * (2.0 * pi * 200.0 / rate)] * 0.9]
+log['compressor: `_every[dynamics.compressed[dynamics.compressor[], loud].left, 40]`']
+log['gate: `_every[dynamics.gated[dynamics.gate[], loud].left, 37]`']
+log['curve: `dynamics.curve_at[dynamics.compressor[], 0.5]`, makeup `dynamics.makeup_of[dynamics.compressor[]]`']
+
+--- ---- analysis and places ----
+
+heard = sin[(0.0 + range[600]) * (2.0 * pi * 1000.0 / rate)] * 0.5
+reading = analysis.analysed[analysis.analyser['fft', 32], heard]
+log['fft: `_line[reading.values]`']
+log['meter: `analysis.metered[analysis.meter[], heard].db`']
+for at in [[1.0, 0.0, 0.0], [-1.0, 0.0, 2.0], [0.5, 2.0, -1.0], [3.0, 0.0, -3.0]]
+    g = channel.gains_of[channel.place[at[0], at[1], at[2]], channel.listener[]]
+    log['place `_line[at]`: `_line[g]`']
+log['pan 0.3: `channel.panned[sound.mono[rate, [1.0]], 0.3].left[0]` `channel.panned[sound.mono[rate, [1.0]], 0.3].right[0]`']
+
+--- ---- the controls' layouts ----
+
+for k in ui.keys_laid[60, 72, 800.0, 140.0]
+    log['key `k.midi`: `k.x` `k.y` `k.w` `k.h` `k.white`']
+log['key at 100, 20: `ui.key_at[60, 72, 800.0, 140.0, 100.0, 20.0]`; knob angle of 0.25: `ui.knob_angle[0.25]`']
+log['grid: `ui.toggled[ui.empty_grid[3, 5], 2, 4]`']

@@ -1,0 +1,200 @@
+--- Lory's scrolling (`use lory.scrolling`), drawn by Lory: full-page
+--- sections with their dots, slides and arrows; a scroll area with its own
+--- bar; a list of 50,000 rows drawing only those in view; an endless feed
+--- pulled down to refresh; and a page of effects (a sticky heading, blocks
+--- told as they come into view, a parallax band, a scroll spy, progress
+--- and a way back to the top). The program's state is a record kept in
+--- process memory between frames. In a headset the thumbstick scrolls
+--- what the ray rests on and the ray presses the dots.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.scrolling
+
+--- what the program holds between frames: the tab shown, the sections,
+--- the scroll area, the list, the feed (its items, the pull to refresh,
+--- when it last asked for more), the effects' page and what it was told
+struct App [tab, pages, area, list, feed, pull, items, asked_t, page, stuck, seen, said]
+
+fn sections[]
+    [scrolling.section[name = 'first', color = '#1d3557', tooltip = 'First'], scrolling.section[name = 'second', slides = 3, color = '#264653', tooltip = 'Second'], scrolling.section[name = 'third', color = '#3d405b', tooltip = 'Third'], scrolling.section[name = 'fourth', color = '#283618', tooltip = 'Fourth']]
+
+fn fresh[]
+    o = scrolling.page_options[nav = true, show_tooltip = true, slides_nav = true, loop_bottom = true]
+    App['Sections', scrolling.pages[sections[], 800.0, 500.0, o], scrolling.area_of[], scrolling.virtual_of[50000, 36.0, overscan = 5], scrolling.feed_of[margin = 200.0], scrolling.pull_of[], 20, -1.0, scrolling.area_of[bar = 'scroll'], scrolling.stuck_of[], scrolling.seen_of[], '']
+
+fn tabs[]
+    ['Sections', 'Scroll area', 'Virtual list', 'Feed', 'Effects']
+
+--- what each section and slide shows
+fn faces[]
+    out = [gui.heading['Full-page sections']]
+    out = push[out, gui.column[[gui.heading['Slides'], gui.text['The first of three: the arrows or the dots below move across.']]]]
+    out = push[out, gui.column[[gui.heading['Slide two'], gui.text['Press the left arrow to go back.']]]]
+    out = push[out, gui.column[[gui.heading['Slide three'], gui.text['The last slide.']]]]
+    out = push[out, gui.column[[gui.heading['Third'], gui.text['The keys move a section at a time: arrows, Page Up and Down, Home, End, Space.']]]]
+    out = push[out, gui.column[[gui.heading['Fourth'], gui.text['Down once more loops back to the first.']]]]
+    out
+
+fn rows_of[n, words]
+    out = [gui.text['`words` 0']]
+    k = 1
+    while k lt n
+        out = push[out, gui.text['`words` `k`']]
+        k = k + 1
+    out
+
+fn list_faces[v]
+    out = [gui.space[0.0]]
+    out = slice[out, 0, 0]
+    r = scrolling.virtual_rows[v]
+    i = r[0]
+    while i lte r[1] and r[1] gte r[0]
+        out = push[out, gui.row[[gui.text['Row `i`'], gui.text['of 50,000', tone = 'muted']]]]
+        i = i + 1
+    out
+
+--- the effects' page: a heading that sticks while its part scrolls past,
+--- a band whose picture lags (Vuetify's parallax), blocks told as they
+--- come into view, its progress and a way back to the top
+fn effects_kids[a, stuck_y, shift]
+    out = [gui.heading['Effects']]
+    out = push[out, gui.text['Scroll down: the heading below sticks while its part passes.']]
+    out = push[out, gui.space[200.0]]
+    out = push[out, gui.moved[gui.heading['Sticky heading'], 0.0, stuck_y]]
+    for k in range[12]
+        out = push[out, gui.text['Part one, line `k`']]
+    out = push[out, gui.moved[gui.text['A parallax band (its words lag the page)', tone = 'accent'], 0.0, shift]]
+    for k in range[12]
+        out = push[out, gui.text['Part two, line `k`']]
+    out = push[out, gui.space[400.0]]
+    out = push[out, gui.text['The end.']]
+    out
+
+fn view_of[a, w, h]
+    top = [gui.tabs['tab', tabs[], a.tab]]
+    if a.tab eq 'Sections'
+        top = push[top, scrolling.pages_view[a.pages, faces[]]]
+    if a.tab eq 'Scroll area'
+        top = push[top, gui.text['A scroll area with its own bar: it shows while the pointer is over it, and hides 600 ms after it leaves.', tone = 'muted']]
+        top = push[top, scrolling.area_view[a.area, 'area', h - 40.0, rows_of[80, 'Line']]]
+    if a.tab eq 'Virtual list'
+        r = scrolling.virtual_rows[a.list]
+        top = push[top, gui.text['Rows `r[0]` to `r[1]` drawn.', tone = 'muted']]
+        top = push[top, scrolling.virtual_view[a.list, 'list', h - 40.0, list_faces[a.list]]]
+    if a.tab eq 'Feed'
+        top = push[top, scrolling.pull_view[a.pull, [scrolling.feed_view[a.feed, 'feed', h - 40.0, rows_of[a.items, 'Item']]]]]
+    if a.tab eq 'Effects'
+        e = a.page
+        share = scrolling.scrolled_share[e.top, e.tall, e.content]
+        bar = [gui.progress[share], gui.text[a.said, tone = 'muted']]
+        if scrolling.back_to_top_shown[e.top]
+            bar = push[bar, gui.button['back', 'Back to top']]
+        top = push[top, gui.row[bar]]
+        y = scrolling.sticky_y[a.stuck, e.top, e.tall, 200.0 + 60.0, 40.0, 900.0] - (200.0 + 60.0)
+        band = scrolling.vuetify_parallax[e.top, e.tall, 900.0, 40.0, scale = 0.6]
+        top = push[top, scrolling.area_view[e, 'effects', h - 60.0, effects_kids[e, y, band[0] * 0.1]]]
+    gui.column[top]
+
+--- what the reader did, and the feed's loading, applied to the record
+fn applied[a, shown, c, t]
+    for e in shown.events
+        if e.id eq 'tab' and e.act eq 'choose'
+            a.tab = e.words
+        if e.id eq 'back' and e.act eq 'press'
+            a.page = scrolling.area_to[a.page, 0.0, t]
+    a.pages = scrolling.pages_heard[a.pages, shown]
+    a.area = scrolling.area_heard[a.area, shown, 'area']
+    a.list = scrolling.virtual_heard[a.list, shown, 'list']
+    a.feed = scrolling.feed_heard[a.feed, shown, 'feed']
+    a.page = scrolling.area_heard[a.page, shown, 'effects']
+    if 'feed' in shown.boxes
+        a.pull = scrolling.pull_heard[c, a.pull, shown.boxes['feed'], a.feed.area.top]
+    --- (the feed loads 20 more half a second after it asks, to 100)
+    for side in scrolling.feed_wants[a.feed]
+        a.feed = scrolling.feed_load[a.feed, side]
+        a.asked_t = t
+    if scrolling.feed_status[a.feed, 'end'] eq 'loading' and t - a.asked_t gt 500.0
+        a.items = a.items + 20
+        status = 'ok'
+        if a.items gte 100
+            status = 'empty'
+        a.feed = scrolling.feed_done[a.feed, 'end', status]
+    if a.pull.refreshing and t - a.asked_t gt 800.0
+        a.items = 20
+        a.feed = scrolling.feed_reset[a.feed]
+        a.pull = scrolling.pull_done[a.pull]
+    if a.pull.refreshing and a.asked_t lt 0.0
+        a.asked_t = t
+    a
+
+fn framed[frame]
+    a = recall['scrolling example', fresh[]]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    t = lory.time[c]
+    s = lory.px[c]
+    w = lory.width[c] / s - 48.0
+    h = lory.height[c] / s - 48.0 - 60.0
+    p = a.pages
+    if p.view_w ne w or p.view_h ne h
+        p = scrolling.page_resized[p, w, h, t]
+    a.pages = p
+    if a.tab eq 'Sections'
+        a.pages = scrolling.paged[c, a.pages]
+    if a.tab eq 'Scroll area'
+        a.area = scrolling.area_scrolled[c, a.area]
+    if a.tab eq 'Virtual list'
+        a.list = scrolling.virtual_scrolled[c, a.list]
+    if a.tab eq 'Feed'
+        a.feed = scrolling.feed_scrolled[c, a.feed]
+    if a.tab eq 'Effects'
+        e = scrolling.area_scrolled[c, a.page]
+        a.page = e
+        a.stuck = scrolling.sticky_at[a.stuck, e.top, e.tall, 260.0, 40.0, 0.0, 900.0]
+        a.seen = scrolling.seen_at[a.seen, e.top, e.tall, 900.0, 40.0, once = false]
+        if len[a.seen.told] gt 0
+            told = join[a.seen.told, ', ']
+            a.said = 'The band: `told`'
+    remember['scrolling example', a]
+    shown = gui.show[c, view_of[a, w, h]]
+    a = applied[a, shown, shown.canvas, t]
+    remember['scrolling example', a]
+    shown
+
+fn draw[frame]
+    shown = framed[frame]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+--- ---- tests: frames as the page hands them ----
+
+fn frame_at[t, given]
+    inner = join[given, ', ']
+    '{"t": `t`, "width": 1000, "height": 760, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 760, "projection": [], "camera": []}], "input": [`inner`], "pointers": [], "controllers": [], "said": []}'
+
+fn key_of[name]
+    '{"type": "key", "key": "`name`", "code": "`name`", "shift": false}'
+
+fn click_at[x, y]
+    ['{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}', '{"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}']
+
+test the_example_moves_its_sections_by_key_and_shows_each_tab[]
+    remember['scrolling example', fresh[]]
+    first = framed[json[frame_at[1000.0, []]]]
+    lory.end[first.canvas] gt 0
+    moved = framed[json[frame_at[1100.0, [key_of['ArrowDown']]]]]
+    lory.end[moved.canvas] gt 0
+    done = framed[json[frame_at[2000.0, []]]]
+    lory.end[done.canvas] gt 0
+    scrolling.page_index[recall['scrolling example', fresh[]].pages] eq 1
+    for name in tabs[]
+        a = recall['scrolling example', fresh[]]
+        a.tab = name
+        remember['scrolling example', a]
+        shown = framed[json[frame_at[3000.0, []]]]
+        lory.end[shown.canvas] gt 0
+    a = recall['scrolling example', fresh[]]
+    a.tab eq 'Effects'

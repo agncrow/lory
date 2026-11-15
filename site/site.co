@@ -1,0 +1,139 @@
+--- Lory's site, rendered by Crow, as Crow's own book is (Crow's
+--- docs/book/site.co): the Markdown pages site/SUMMARY.md names, from
+--- where they stand in the repository, written to site/out/ at the same
+--- paths as .html; the README is also the front door (index.html); and
+--- each example's web build (examples/<name>/main_web, written by
+--- `crow build --target web main.co` in its folder) copied to
+--- site/out/examples/<name>/, so a link to an example's folder opens it
+--- running. Run from the repository's root:
+---
+---   crow run site/site.co       --- compiled: writes every page
+---   crow run -i site/site.co    --- interpreted: the same pages
+---   crow test site/site.co      --- the page layout, no browser
+use web, ui, doc
+
+out = 'site/out/'
+
+--- One page: a top bar with search, the menu on the left, the page and its
+--- previous and next links on the right. Below tablet width the menu steps
+--- aside and the top bar's button brings it back as an overlay. `up` takes
+--- links back to the site's root.
+view chapter[title, body, nav, pages, up]
+    return stack[
+        row[
+            button['☰', class = 'nav-toggle', title = 'menu'],
+            img[src = '`up`lory.svg', alt = '', width = 28, height = 28],
+            a['Lory', href = '`up`index.html', class = 'title'],
+            row[
+                input[class = 'doc-search', type = 'search', placeholder = 'Search  /', hidden_below = 'phone'],
+                a['Examples', href = '`up`examples/README.html'],
+                a['Crow', href = 'https://agncrow.github.io/crow/'],
+                a['GitHub', href = 'https://github.com/agncrow/lory'],
+                gap = 'm', align = 'center', class = 'links', hidden_below = 'phone'
+            ],
+            gap = 'm', align = 'center', justify = 'between', class = 'doc-top'
+        ],
+        div[class = 'doc-results', hidden = 'hidden'],
+        row[
+            stack[nav, width = '272px', hidden_below = 'tablet', class = 'doc-side'],
+            stack[body, pages, fill = 'true', class = 'doc', pad = 'xl'],
+            align = 'start'
+        ]
+    ]
+
+--- A page for the harness, written here since a view reads no file. (Its
+--- menu has no part's heading: the harness lays a part's heading beside
+--- the menu's brand, on its line, where a browser starts a line for it, and
+--- so finds the menu too wide.)
+view sample[]
+    toc = doc.chapters['# Lory\n\n- [The catalog](docs/components/README.md)\n  - [Controls](docs/components/gui.md)']
+    md = '# Controls\n\nWhat a control is.\n\n| Function | What it is |\n|---|---|\n| \`button\` | Pressed |\n'
+    return chapter['Controls', doc.markdown[md], doc.menu[toc, 'docs/components/gui.md'], doc.pager[toc, 'docs/components/gui.md'], '../../']
+
+test layout[]
+    s = app[sample, width = 1280]
+    top = box[s, '.doc-top'][0]
+    nav_box = box[s, '.doc-nav'][0]
+    text_box = box[s, '.doc'][0]
+    assert[top.y lt nav_box.y]                     --- the bar is above everything
+    assert[nav_box.x lt text_box.x]                --- the menu sits left of the text
+    assert[len[box[s, '.doc-top .nav-toggle']] eq 1]
+    assert[len[box[s, '.doc table']] eq 1]         --- a component's table is a table
+    assert[len[elements[s, '.doc h1']] eq 1]
+    assert[fits[s, 1280]]
+    phone = app[sample, width = 390]
+    assert[len[box[phone, '.doc-nav']] eq 0]      --- the menu steps aside on a phone
+    assert[fits[phone, 390]]
+
+--- how many folders deep a page stands, as the `../` that takes its links
+--- back to the site's root
+fn up_from[path]
+    up = ''
+    for part in slice[split[path, '/'], 0, len[split[path, '/']] - 1]
+        up = '`up`../'
+    return up
+
+--- the page's folders made under the site, outermost first (a page written
+--- into a folder that is not there is a failed write)
+fn folders_made[out, path]
+    parts = split[path, '/']
+    at = out
+    i = 0
+    while i lt len[parts] - 1
+        at = '`at``parts[i]`/'
+        mkdir[at]
+        i = i + 1
+    return at
+
+--- an example's page, as its web build wrote it, copied beside the site's
+--- pages: the page, its loader and its program (the build's other pages are
+--- its tests')
+fn example_copied[out, name]
+    from = 'examples/`name`/main_web/'
+    if not exists['`from`main.wasm']
+        log['examples/`name`: no web build, so not on the site (crow build --target web main.co there)']
+        return 0
+    to = '`out`examples/`name`/'
+    mkdir[to]
+    cp['`from`index.html', '`to`index.html']
+    cp['`from`crow.js', '`to`crow.js']
+    cp['`from`main.wasm', '`to`main.wasm']
+    return 1
+
+--- every example that has a web build, copied: how many were
+fn examples_copied[out]
+    mkdir['`out`examples/']
+    names = ls['examples']
+    n = 0
+    i = 0
+    while i lt len[names]
+        name = names[i]
+        if exists['examples/`name`/main.co']
+            n = n + example_copied[out, name]
+        i = i + 1
+    return n
+
+toc = doc.chapters[read['site/SUMMARY.md']]
+mkdir[out]
+for i in range[len[toc]]
+    path = toc.path[i]
+    title = toc.title[i]
+    up = up_from[path]
+    folders_made[out, path]
+    written = doc.document['`title` — Lory', chapter[title, doc.markdown[read[path]], doc.menu[toc, path], doc.pager[toc, path], up]]
+    html_path = replace[path, '.md', '.html']
+    write['`out``html_path`', written]
+--- the front door is the README
+first = toc.path[0]
+write['`out`index.html', doc.document['Lory', chapter[toc.title[0], doc.markdown[read[first]], doc.menu[toc, first], doc.pager[toc, first], '']]]
+--- the mark, for the top bar and the tab
+write['`out`lory.svg', read['assets/lory.svg']]
+--- every example's build, running
+copied = examples_copied[out]
+--- the search index: every page's title, address and words
+entries = for i in range[len[toc]]
+    path = toc.path[i]
+    map[t = toc.title[i], p = replace[path, '.md', '.html'], x = doc.plain[read[path]]]
+write['`out`search.json', encode[entries]]
+n = len[toc]
+log['`n` pages and `copied` examples written to `out`']

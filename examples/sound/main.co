@@ -1,0 +1,212 @@
+--- Sound made by the program: a keyboard of notes, a few of Tone's synths,
+--- an effect after them, a step sequencer on the transport, and a meter
+--- and a spectrum of what was last handed to the page, all drawn with
+--- Lory. A key pressed (by a mouse, a touch or a headset's ray) renders
+--- its note here and hands its samples to the page to play at_time; the
+--- sequencer's steps are rendered a fifth of a second ahead of when they
+--- are heard and handed with when to start.
+use sys
+use math
+use memory
+use lory
+use lory.gui
+use sound
+use sound.synth
+use sound.effect
+use sound.transport
+use sound.analysis
+use sound.ui
+
+--- the program's state, kept between frames: the synth and effect chosen,
+--- the volume (dB), the notes lately pressed (and when), the sequencer's
+--- grid, whether it plays and when it started (seconds on the frame's
+--- clock), how far it has handed its sound, and the last sound handed
+--- with when it starts, for the meter and the spectrum
+struct App [instrument, after, volume, pressed, pressed_at, grid, playing, started, handed, last, last_at, level]
+
+--- the state and the canvas after something was done to them
+struct Done [app, canvas]
+
+fn rate[]
+    22050.0
+
+fn instruments[]
+    ['Synth', 'FMSynth', 'AMSynth', 'MonoSynth', 'DuoSynth', 'PluckSynth', 'MembraneSynth']
+
+fn effects[]
+    ['none', 'feedback_delay', 'chorus', 'jc_reverb', 'distortion', 'phaser', 'tremolo', 'bit_crusher']
+
+--- the sequencer's rows, top to bottom: the notes each sounds
+fn row_notes[]
+    [72, 67, 64, 60]
+
+fn fresh[]
+    grid = ['10001000', '00100010', '01000100', '10101010']
+    App['Synth', 'feedback_delay', -6.0, slice[[0], 0, 0], 0.0, grid, false, 0.0, transport.clock[0.2], sound.silence[rate[], 0.0], 0.0, analysis.meter[]]
+
+fn sequencer[]
+    transport.every[transport.transport[120.0], 0, '8n', '0', '']
+
+--- a note's samples: the chosen synth's hit of 0.3 s, through the chosen
+--- effect (its tail cut at a second and a half), at the volume
+fn note_sound[a, midi]
+    hz = sound.hz_of_midi[0.0 + midi]
+    dry = synth.played[synth.named[a.instrument], [synth.hit[0.0, hz, 0.3, 1.0]], rate[]]
+    wet = dry
+    if a.after ne 'none'
+        wet = effect.applied_over[effect.named[a.after], dry, 0.0, 1.5]
+    sound.scaled[wet, sound.gain_of[a.volume]]
+
+--- the steps on in a column of the grid, as their notes
+fn column_notes[grid, column]
+    out = slice[[0], 0, 0]
+    notes = row_notes[]
+    for r in range[len[grid]]
+        if ui.is_on[grid, r, column]
+            out = push[out, notes[r]]
+    out
+
+fn held_of[a, at_time]
+    if at_time - a.pressed_at lt 0.3
+        return a.pressed
+    slice[[0], 0, 0]
+
+--- what has been handed lately, up to at_time: the last sound's samples heard
+--- so far
+fn heard_of[a, at_time]
+    n = sound.frames_in[rate[], max[0.0, at_time - a.last_at]]
+    xs = a.last.left
+    slice[xs, 0, min[n, len[xs]]]
+
+fn tree_of[a, at_time, at_step]
+    heard = heard_of[a, at_time]
+    levels = analysis.values_of[analysis.analyser['fft', 64], heard]
+    db = a.level.last
+    shown_db = -100.0
+    if db gt 0.0
+        shown_db = sound.db_of[db]
+    --- (the grid's rows copied as text: the steps' painter reads them so)
+    rows = for row in a.grid
+        '`row`'
+    label = 'Play'
+    if a.playing
+        label = 'Stop'
+    controls = gui.row[[gui.sized[gui.column[[gui.label['Synth'], gui.select['instrument', instruments[], a.instrument]]], 200.0], gui.sized[gui.column[[gui.label['Effect'], gui.select['after', effects[], a.after]]], 200.0], ui.knob['volume', a.volume, -30.0, 0.0, 'volume `fmt[a.volume, decimals = 0]` dB'], gui.button['play', label]]]
+    looks = gui.row[[gui.sized[ui.meter['meter', shown_db], 40.0], ui.spectrum['spectrum', levels, 120.0]]]
+    gui.panel[[gui.heading['Sound, made by the program'], controls, ui.steps['grid', rows, at_step], looks, ui.keyboard['keys', 60, 76, held_of[a, at_time]]]]
+
+--- a sound handed to the page `when` seconds from at_time, kept as the last
+fn handed[a, c, s, when, at_time]
+    a.last = s
+    a.last_at = at_time + when
+    Done[a, sound.play[c, s, when]]
+
+fn applied[a, ev, c, at_time]
+    if ev.id eq 'instrument'
+        a.instrument = ev.words
+    if ev.id eq 'after'
+        a.after = ev.words
+    if ev.id eq 'volume'
+        a.volume = ev.num
+    if ev.id eq 'grid' and ev.act eq 'step'
+        at = split[ev.words, ':']
+        a.grid = ui.toggled[a.grid, int[at[0]], int[at[1]]]
+    if ev.id eq 'play'
+        a.playing = not a.playing
+        a.started = at_time
+        a.handed = transport.clock[0.2]
+    if ev.id eq 'keys' and ev.act eq 'note'
+        a.pressed = [int[ev.num]]
+        a.pressed_at = at_time
+        done = handed[a, c, note_sound[a, int[ev.num]], 0.0, at_time]
+        return done
+    Done[a, c]
+
+--- the sequencer's steps due this frame, rendered and handed ahead
+fn sequenced[a, c, at_time]
+    if not a.playing
+        return Done[a, c]
+    d = transport.due[a.handed, sequencer[], at_time - a.started]
+    a.handed = d.clock
+    for f in d.events
+        column = int[round[f.time / 0.25]] % 8
+        for m in column_notes[a.grid, column]
+            when = max[0.0, f.time - (at_time - a.started)]
+            done = handed[a, c, note_sound[a, m], when, at_time]
+            a = done.app
+            c = done.canvas
+    Done[a, c]
+
+fn step_at[a, at_time]
+    if not a.playing
+        return -1
+    int[floor[(at_time - a.started) / 0.25]] % 8
+
+fn frame_of[a, c]
+    at_time = lory.time[c] / 1000.0
+    c = lory.clear[c, gui.dark[].page]
+    shown = gui.show[c, tree_of[a, at_time, step_at[a, at_time]]]
+    c = shown.canvas
+    for ev in shown.events
+        done = applied[a, ev, c, at_time]
+        a = done.app
+        c = done.canvas
+    done = sequenced[a, c, at_time]
+    a = done.app
+    c = done.canvas
+    a.level = analysis.metered[a.level, heard_of[a, at_time]].meter
+    Done[a, c]
+
+fn draw[frame]
+    a = recall['app', fresh[]]
+    done = frame_of[a, lory.begin[frame]]
+    remember['app', done.app]
+    lory.end[done.canvas]
+
+sys.frames[draw]
+
+--- ---- tests ----
+
+fn screen[given, xr]
+    views = '[{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 760, "projection": [], "camera": []}]'
+    if xr
+        views = '[{"eye": "left", "x": 0, "y": 0, "width": 900, "height": 760, "projection": [], "camera": []}]'
+    json['{"t": 1000, "width": 900, "height": 760, "ratio": 1, "xr": `xr`, "views": `views`, "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+fn _asked_sound[c]
+    asked = 0
+    for ask in c.asks
+        if ask[0] eq '@sound'
+            asked = asked + 1
+    asked
+
+fn _key_press[xr]
+    gui.unfocus[]
+    first = gui.show[lory.begin[screen['[]', xr]], tree_of[fresh[], 1.0, -1]]
+    b = first.boxes['keys']
+    frame_of[fresh[], lory.begin[screen[_press_at[b[0] + 10.0, b[1] + b[3] - 10.0], xr]]]
+
+test a_key_pressed_hands_the_page_its_note[]
+    done = _key_press[false]
+    _asked_sound[done.canvas] eq 1
+    done.app.pressed eq [60]
+    len[done.app.last.left] gt 22050
+
+test a_key_pressed_in_a_headset_hands_its_note_too[]
+    done = _key_press[true]
+    _asked_sound[done.canvas] eq 1
+
+test the_sequencer_hands_its_steps_ahead[]
+    a = fresh[]
+    a.playing = true
+    a.started = 1.0
+    a.after = 'none'
+    done = sequenced[a, lory.begin[screen['[]', false]], 1.0]
+    --- (the first column's two steps, C5 and C4, within the fifth of a
+    --- second handed)
+    _asked_sound[done.canvas] eq 2
+    done.app.handed.handed eq 0.2
+    column_notes[a.grid, 0] eq [72, 60]

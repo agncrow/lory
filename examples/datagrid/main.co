@@ -1,0 +1,394 @@
+--- Data grids drawn by Lory, on four tabs. People: a grid of forty
+--- made-up people whose cells are edited in its edit bar (a double press,
+--- Enter, or typing on a cell begins an edit), each column's rules
+--- checked, a role offered by the team (a relation), the edits kept as
+--- drafts until saved, the hours summed in its footer, grouped by team
+--- as a tree that opens, in three looks. Cells: cells chosen by a press,
+--- a drag, Shift and Ctrl as TanStack Table's cell selection has it, the
+--- teams merged down their column. Live: stations' readings changed by a
+--- feed twice a second, each changed cell flashing the way it went.
+--- Sheet: the 7GUIs Cells spreadsheet, its formulas worked out again as
+--- their cells change, with undo and redo. The keys are TOAST UI Grid's
+--- (arrows, Tab, Home and End, Page Up and Down, Shift to choose, Ctrl+A,
+--- Ctrl+C and Ctrl+V, Delete). In a headset the ray presses its cells and
+--- the thumbstick scrolls them; an edit is typed on gui's keyboard into
+--- the edit bar.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.datatable as dt
+use lory.datagrid as dg
+
+--- The program's state: the tab shown, the four grids, the feed's last
+--- tick and how many it has made.
+struct App [tab, people, cells, live, sheet, ticked, ticks]
+
+fn _syllable[n]
+    ['ka', 'lo', 'mi', 'ra', 'ten', 'vo', 'shi', 'an', 'bel', 'dor', 'el', 'fin'][n % 12]
+
+fn _name[i]
+    '`upper[_syllable[i * 7]]``_syllable[i * 5 + 3]` `upper[_syllable[i * 3 + 1]]``_syllable[i * 11]`'
+
+fn _teams[]
+    ['red', 'blue', 'gold']
+
+fn _roles[]
+    map[red = 'lead|maker|tester', blue = 'maker|writer', gold = 'lead|keeper']
+
+fn people_table[]
+    rows = slice[[dt.row['', map['' = dt.missing[]]]], 0, 0]
+    i = 0
+    while i lt 40
+        team = _teams[][(i * 7) % 3]
+        roles = split[_roles[][team], '|']
+        cells = map[name = dt.words[_name[i]], team = dt.words[team], role = dt.words[roles[i % len[roles]]], hours = dt.number[(i * 13) % 41]]
+        rows = push[rows, dt.row['p`i`', cells]]
+        i = i + 1
+    t = dt.new[[dt.column['name', 'Name', size = 220.0], dt.column['team', 'Team', size = 110.0], dt.column['role', 'Role', size = 130.0], dt.column['hours', 'Hours', size = 100.0]], rows]
+    dt.page_size_set[t, 1000]
+
+fn people_grid[]
+    g = dg.grid['people', people_table[]]
+    g.drafts = true
+    g = dg.specs_set[g, [dg.spec['name', required = true, unique = true], dg.spec['team', editor = 'select', choices = _teams[], listed = true], dg.spec['role', editor = 'select', listed = true], dg.spec['hours', number = true, least = 0.0, most = 60.0, summary = 'sum']]]
+    dg.relations_set[g, [dg.relation['team', 'role', choices = _roles[]]]]
+
+fn cells_grid[]
+    rows = slice[[dt.row['', map['' = dt.missing[]]]], 0, 0]
+    i = 0
+    while i lt 24
+        cells = map[team = dt.words[_teams[][int[i / 4] % 3]], name = dt.words[_name[i]], a = dt.number[i % 5], b = dt.number[(i * 3) % 7]]
+        rows = push[rows, dt.row['c`i`', cells]]
+        i = i + 1
+    t = dt.new[[dt.column['team', 'Team'], dt.column['name', 'Name', size = 220.0], dt.column['a', 'A', size = 90.0], dt.column['b', 'B', size = 90.0]], rows]
+    g = dg.grid['cells', dt.page_size_set[t, 1000]]
+    g.spanning = dg.spanning[rows = ['team']]
+    g
+
+fn _stations[]
+    ['North', 'South', 'East', 'West', 'Harbour', 'Ridge', 'Mill', 'Ford', 'Heath', 'Vale', 'Cliff', 'Moor']
+
+fn live_grid[]
+    rows = slice[[dt.row['', map['' = dt.missing[]]]], 0, 0]
+    i = 0
+    for name in _stations[]
+        cells = map[station = dt.words[name], temp = dt.number[10.0 + (i * 7) % 13], wind = dt.number[(i * 5) % 30], ticks = dt.number[0]]
+        rows = push[rows, dt.row['s`i`', cells]]
+        i = i + 1
+    t = dt.new[[dt.column['station', 'Station', size = 200.0], dt.column['temp', 'Temperature'], dt.column['wind', 'Wind'], dt.column['ticks', 'Readings']], rows]
+    g = dg.grid['live', dt.page_size_set[t, 1000]]
+    dg.specs_set[g, [dg.spec['station', editor = 'none'], dg.spec['temp', editor = 'none', summary = 'mean'], dg.spec['wind', editor = 'none', summary = 'max'], dg.spec['ticks', editor = 'none']]]
+
+fn sheet_grid[]
+    s = dg.sheet[]
+    for cell in [['A0', 'Rent'], ['B0', '1200'], ['A1', 'Food'], ['B1', '430'], ['A2', 'Travel'], ['B2', '95'], ['A3', 'Total'], ['B3', '=B0+B1+B2'], ['C3', '=B3/3']]
+        s = dg.sheet_set[s, cell[0], cell[1]]
+    g = dg.sheet_grid['sheet', s]
+    g
+
+fn fresh[]
+    App['people', people_grid[], cells_grid[], live_grid[], sheet_grid[], 0.0, 0]
+
+fn _unmade[]
+    a = fresh[]
+    a.tab = ''
+    a
+
+--- the grid a tab shows
+fn shown_grid[a]
+    if a.tab eq 'cells'
+        return a.cells
+    if a.tab eq 'live'
+        return a.live
+    if a.tab eq 'sheet'
+        return a.sheet
+    a.people
+
+fn _with_grid[a, g]
+    if a.tab eq 'cells'
+        a.cells = g
+    else if a.tab eq 'live'
+        a.live = g
+    else if a.tab eq 'sheet'
+        a.sheet = g
+    else
+        a.people = g
+    a
+
+--- the words under a grid: what is chosen, changed or worked out
+fn _words[a]
+    g = shown_grid[a]
+    k = dg.grid_laid[g]
+    if a.tab eq 'cells'
+        b = dg.selection_bounds[k, g.sel]
+        ids = dg.selected_ids[k, b]
+        return '`dg.selected_count[k, b]` cells chosen: `join[slice[ids, 0, min[8, len[ids]]], \' \']`'
+    if a.tab eq 'live'
+        return '`a.ticks` readings in'
+    if a.tab eq 'sheet'
+        t = dg.sheet_tally[g.sheet, 0, 19, 0, 4]
+        return '`t.count` cells hold something, `t.numbers` of them numbers, summing to `dt.number_text[t.total]`'
+    errors = 0
+    for key in keys[g.edits.errors]
+        if key ne ''
+            errors = errors + 1
+    '`len[dg.dirty_rows[g]]` people changed, `errors` cells breaking a rule'
+
+fn _controls[a]
+    g = shown_grid[a]
+    if a.tab eq 'people'
+        grouped = 'Group by team'
+        if len[g.table.state.grouping] gt 0
+            grouped = 'Ungroup'
+        return gui.row[[gui.button['save', 'Save'], gui.button['discard', 'Discard'], gui.button['group', grouped], gui.label['Look'], gui.select['look', ['default', 'striped', 'clean'], g.look]]]
+    if a.tab eq 'sheet'
+        return gui.row[[gui.button['undo', 'Undo'], gui.button['redo', 'Redo']]]
+    if a.tab eq 'live'
+        return gui.row[[gui.note['A feed changes these twice a second.']]]
+    gui.row[[gui.note['Press, drag, Shift or Ctrl and press, Ctrl+A.']]]
+
+--- how tall the grid is drawn: what the frame leaves it, from 200 to 460
+--- (a headset's page is 560 high, so there it is 300)
+fn grid_tall[c]
+    max[200.0, min[460.0, c.height - 260.0]]
+
+fn page_of[a, tall]
+    g = shown_grid[a]
+    gui.panel[[gui.heading['Data grids'], gui.tabs['tab', ['people', 'cells', 'live', 'sheet'], a.tab], _controls[a], dg.grid_view[g, 860.0, tall], gui.note[_words[a]]]]
+
+fn page_tree[a, c]
+    gui.sized[page_of[a, grid_tall[c]], 900.0]
+
+--- the feed's tick: some stations' readings changed, as a feed sends them
+fn tick[g, n]
+    changes = slice[[dg.change['', '', dt.missing[]]], 0, 0]
+    k = dg.grid_laid[g]
+    for i in [0, 1, 2]
+        at = (n * 5 + i * 7) % 12
+        id = 's`at`'
+        temp = dg.cell_value[g, k, id, 'temp'].num
+        step = ((n * 3 + i) % 5 - 2) * 0.5
+        wind = (n * 11 + at * 3) % 30
+        seen = dg.cell_value[g, k, id, 'ticks'].num
+        changes = push[changes, dg.change[id, 'temp', dt.number[temp + step]]]
+        changes = push[changes, dg.change[id, 'wind', dt.number[wind]]]
+        changes = push[changes, dg.change[id, 'ticks', dt.number[seen + 1.0]]]
+    dg.ticked[g, changes]
+
+--- The state after a frame: the program's own controls applied, then the
+--- shown grid's events, then the feed ticked when its time came.
+fn after_frame[a, shown, c]
+    for e in shown.events
+        if e.id eq 'tab' and e.act eq 'choose'
+            a.tab = e.words
+        else if e.id eq 'save'
+            a.people = dg.saved[a.people]
+        else if e.id eq 'discard'
+            a.people = dg.discarded[a.people]
+        else if e.id eq 'group'
+            g = a.people
+            if len[g.table.state.grouping] gt 0
+                g.table = dt.grouping_set[g.table, []]
+            else
+                g.table = dt.grouping_set[g.table, ['team']]
+            a.people = g
+        else if e.id eq 'look' and e.act eq 'choose'
+            g = a.people
+            g.look = e.words
+            a.people = g
+        else if e.id eq 'undo'
+            a.sheet = dg.sheet_undone[a.sheet]
+        else if e.id eq 'redo'
+            a.sheet = dg.sheet_redone[a.sheet]
+    a = _with_grid[a, dg.handled[shown_grid[a], shown]]
+    at_ms = 0.0 + lory.time[c]
+    a.live = dg.time_set[a.live, at_ms]
+    if at_ms - a.ticked gte 500.0
+        a.live = dg.flashes_pruned[tick[a.live, a.ticks]]
+        a.ticked = at_ms
+        a.ticks = a.ticks + 1
+    a
+
+fn framed[frame]
+    a = recall['app', _unmade[]]
+    if a.tab eq ''
+        a = fresh[]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    shown = gui.show[c, page_tree[a, c]]
+    a = after_frame[a, shown, shown.canvas]
+    --- (what was copied goes on the page's clipboard)
+    copied = shown_grid[a].copied
+    if copied ne ''
+        shown.canvas = lory.copy[shown.canvas, copied]
+    remember['app', a]
+    shown
+
+fn draw[frame]
+    shown = framed[frame]
+    --- (a page that drives this example, as tests/datagrid/browser.py
+    --- does, asks where its controls are by telling it 'boxes')
+    if asked_where[shown.canvas]
+        log[encode[shown.boxes]]
+    if _asked[shown.canvas, 'state']
+        log['state `encode[state_of[recall[\'app\', _unmade[]]]]`']
+    lory.end[shown.canvas]
+
+--- what the program holds, in words, for a page that drives it to read:
+--- the tab, the shown grid's focus, edit and scroll, the people changed,
+--- the feed's readings, and the sheet's total
+fn state_of[a]
+    g = shown_grid[a]
+    out = map[tab = a.tab, focus = '`g.focus.row` `g.focus.column`', editing = '`g.editing.row` `g.editing.column`', draft = g.draft]
+    out = set[out, 'scroll', '`g.scroll`']
+    out = set[out, 'changed', '`len[dg.dirty_rows[a.people]]`']
+    out = set[out, 'hours', dt.shown[a.people.table.rows[2].cells['hours']]]
+    out = set[out, 'ticks', '`a.ticks`']
+    out = set[out, 'total', dg.cell_shown[a.sheet.sheet, 'B3']]
+    out
+
+--- whether the page told the program these words this frame
+fn _asked[c, words]
+    asked = false
+    for ev in lory.events[c]
+        if ev.on eq 'told' and ev.words eq words
+            asked = true
+    asked
+
+--- whether the page told the program 'boxes' this frame
+fn asked_where[c]
+    asked = false
+    for ev in lory.events[c]
+        if ev.on eq 'told' and ev.words eq 'boxes'
+            asked = true
+    asked
+
+sys.frames[draw]
+
+fn screen[ms, given]
+    json['{"t": `ms`, "width": 1000, "height": 800, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 800, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+fn _mouse[kind, x, y]
+    '{"type": "`kind`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}'
+
+fn _input[evs]
+    sep = ', '
+    joined = join[evs, sep]
+    '[`joined`]'
+
+--- a frame of the page with the input given, and the state after it
+fn _step[a, ms, given]
+    c = lory.begin[screen[ms, given]]
+    shown = gui.show[c, page_tree[a, c]]
+    after_frame[a, shown, shown.canvas]
+
+fn _boxes[a]
+    c = lory.begin[screen[0.0, '[]']]
+    gui.show[c, page_tree[a, c]].boxes
+
+test a_page_that_asks_is_told_where_the_controls_are[]
+    asked_where[lory.begin[screen[0.0, '[{"type": "told", "text": "boxes"}]']]]
+    not asked_where[lory.begin[screen[0.0, '[{"type": "told", "text": "other"}]']]]
+    _asked[lory.begin[screen[0.0, '[{"type": "told", "text": "state"}]']], 'state']
+    st = state_of[fresh[]]
+    st['tab'] eq 'people' and st['total'] eq '1725' and st['changed'] eq '0'
+
+test the_first_tab_shows_forty_people_and_their_hours_summed[]
+    a = fresh[]
+    p = dg.painting[a.people, 860.0, 400.0]
+    total = 0.0
+    for r in a.people.table.rows
+        total = total + r.cells['hours'].num
+    words = slice[[''], 0, 0]
+    for b in p.boxes
+        if b.part eq 'foot'
+            words = push[words, b.words]
+    'sum `dt.number_text[total]`' in words
+
+test a_press_and_a_double_press_edit_a_persons_hours_kept_until_saved[]
+    gui.unfocus[]
+    a = fresh[]
+    b = _boxes[a]['people']
+    --- (the hours column begins at 860 * 460 / 560)
+    x = b[0] + 860.0 * 460.0 / 560.0 + 20.0
+    y = b[1] + 34.0 + 30.0 * 2.0 + 15.0
+    a = _step[a, 100.0, _input[[_mouse['down', x, y], _mouse['up', x, y]]]]
+    a.people.focus.row eq 'p2' and a.people.focus.column eq 'hours'
+    a = _step[a, 200.0, _input[[_mouse['double', x, y]]]]
+    a.people.editing.row eq 'p2'
+    a = _step[a, 300.0, '[{"type": "key", "key": "Backspace", "code": "Backspace"}, {"type": "key", "key": "Backspace", "code": "Backspace"}, {"type": "text", "text": "61"}]']
+    a.people.draft eq '61'
+    a = _step[a, 400.0, '[{"type": "key", "key": "Enter", "code": "Enter"}]']
+    dg.cell_error[a.people, 'p2', 'hours'] ne ''
+    not dg.can_save[a.people]
+    a = _step[a, 500.0, _input[[_mouse['double', x, y]]]]
+    a = _step[a, 600.0, '[{"type": "key", "key": "Backspace", "code": "Backspace"}, {"type": "key", "key": "Backspace", "code": "Backspace"}, {"type": "text", "text": "8"}, {"type": "key", "key": "Enter", "code": "Enter"}]']
+    dg.cell_error[a.people, 'p2', 'hours'] eq ''
+    a.people.table.rows[2].cells['hours'].num eq 26.0
+    s = _boxes[a]['save']
+    a = _step[a, 700.0, _input[[_mouse['down', s[0] + 5.0, s[1] + 5.0], _mouse['up', s[0] + 5.0, s[1] + 5.0]]]]
+    a.people.table.rows[2].cells['hours'].num eq 8.0
+
+test the_feed_changes_readings_and_they_flash[]
+    a = fresh[]
+    a.tab = 'live'
+    a = _step[a, 1000.0, '[]']
+    a.ticks eq 1
+    k = dg.grid_laid[a.live]
+    dg.cell_words[dg.cell_value[a.live, k, 's0', 'ticks']] eq '1'
+    dg.flash_of[a.live, 's0', 'ticks'] eq 1.0
+    a = _step[a, 1300.0, '[]']
+    a.ticks eq 1
+    dg.flash_of[a.live, 's0', 'ticks'] lt 1.0
+
+--- A headset's frame at `ms`, its right hand's ray pointed at the page's
+--- point (x, y) of its 1000 by 560, its thumbstick pulled `toward` the
+--- reader, with the input given; `behind` is what the headset shows
+--- behind the drawing ('opaque' or 'alpha-blend').
+fn headset_at[ms, x, y, toward, given, behind]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    way = encode[[(0.002 * x - 1.0) / 1.5, (0.55 - 0.002 * y) / 1.5, -1.0]]
+    json['{"t": `ms`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "blend": "`behind`", "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}, {"eye": "right", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": `way`, "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, `toward`]}], "said": []}']
+
+fn trigger[]
+    '[{"type": "down", "device": "ray", "id": "right"}, {"type": "up", "device": "ray", "id": "right"}]'
+
+fn _worn[a, ms, x, y, toward, given]
+    c = lory.begin[headset_at[ms, x, y, toward, given, 'opaque']]
+    shown = gui.show[c, page_tree[a, c]]
+    drawn = lory.end[shown.canvas]
+    after_frame[a, shown, shown.canvas]
+
+fn _cleared[calls]
+    for call in calls
+        if call[0] eq 'clearColor'
+            return call
+    ['none']
+
+--- in a headset the grid is drawn 300 high on the 560 page; the trigger
+--- with the ray on a cell focuses it, and the thumbstick scrolls the rows
+test in_a_headset_the_trigger_focuses_a_cell_and_the_thumbstick_scrolls[]
+    gui.unfocus[]
+    a = fresh[]
+    c = lory.begin[headset_at[30000.0, 990.0, 550.0, 0.0, '[]', 'opaque']]
+    first = gui.show[c, page_tree[a, c]]
+    lory.end[first.canvas] gt 0
+    b = first.boxes['people']
+    b[3] eq 300.0
+    b[1] + b[3] lte 560.0
+    x = b[0] + 60.0
+    y = b[1] + 34.0 + 30.0 + 15.0
+    a = _worn[a, 30100.0, x, y, 0.0, trigger[]]
+    a.people.focus.row eq 'p1' and a.people.focus.column eq 'name'
+    a = _worn[a, 30200.0, x, y, 1.0, '[]']
+    a.people.scroll gt 0.0
+
+--- in a headset that shows the room through the drawing, the frame is
+--- cleared to nothing, so only the panel stands in the room
+test in_a_headset_showing_the_room_the_page_has_no_backdrop[]
+    seen = framed[headset_at[50000.0, 500.0, 275.0, 0.0, '[]', 'alpha-blend']]
+    lory.seen_through[seen.canvas]
+    _cleared[lory.batch[seen.canvas]] eq ['clearColor', str[0.0], str[0.0], str[0.0], str[0.0]]
+    own = framed[headset_at[50100.0, 500.0, 275.0, 0.0, '[]', 'opaque']]
+    not lory.seen_through[own.canvas]

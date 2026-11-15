@@ -1,0 +1,147 @@
+--- Lory's carousels (`use lory.carousel`), drawn by Lory: react-slick's
+--- carousel in its kinds (arrows, dots, autoplay and looping; several at
+--- once and rows; centred with its neighbours peeking; slides of their own
+--- widths; a fade; slides loaded as they come; breakpoints; upright and
+--- right to left; two carousels moving each other, and a program's buttons
+--- moving one), Vuetify's window (panes sliding in the way their index
+--- goes) and slide group (chips scrolled a page at a time, chosen), and
+--- Motion's ticker (an endless line, slowed while hovered, dragged). What
+--- each holds between frames is lory.carousel's; the program keeps only
+--- the pane it shows. In a headset the page is 1000 by 560 on a panel: the
+--- thumbstick scrolls it, the ray presses arrows and dots, and the trigger
+--- held while the ray moves swipes a carousel.
+use sys
+use memory
+use lory
+use lory.gui
+use lory.carousel
+
+--- what the program holds between frames: the pane its window shows
+struct App [pane]
+
+--- a slide: a panel of a heading and words, `tall` pixels of room under
+--- them (0 for none)
+fn slide[title, words, tall]
+    kids = [gui.heading[title], gui.text[words]]
+    if tall gt 0.0
+        kids = push[kids, gui.space[tall]]
+    gui.panel[kids]
+
+fn slides[n, word]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, slide['`word` `i + 1`', 'One of `n` slides.', 40.0]]
+        i = i + 1
+    out
+
+--- slides of their own heights, for adaptive height
+fn uneven[n]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, slide['Slide `i + 1`', 'A slide `40 + 50 * (i % 3)` pixels taller than its words.', 40.0 + 50.0 * (i % 3)]]
+        i = i + 1
+    out
+
+--- slides of their own widths, for variable width
+fn widths[n]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, gui.sized[slide['`120 + 60 * (i % 4)` wide', 'Its own width.', 20.0], 120.0 + 60.0 * (i % 4)]]
+        i = i + 1
+    out
+
+fn chips[n]
+    out = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    while i lt n
+        out = push[out, gui.panel[[gui.text['Choice `i + 1`']], pad = 10.0]]
+        i = i + 1
+    out
+
+fn section[title, words, kid]
+    gui.panel[[gui.heading[title], gui.note[words], kid], gap = 8.0]
+
+fn view_of[c, a, tall]
+    hero = carousel.carousel[c, 'hero', slides[6, 'Slide'], carousel.settings[dots = true, autoplay = true, autoplay_speed = 2500.0]]
+    several = carousel.carousel[c, 'several', slides[9, 'Item'], carousel.responsive[c, carousel.settings[show = 3, scroll = 3, dots = true], [carousel.breakpoint[900.0, carousel.settings[show = 2, scroll = 2, dots = true]], carousel.breakpoint[600.0, carousel.settings[show = 1, dots = true]]]]]
+    rows = carousel.carousel[c, 'rows', slides[8, 'Cell'], carousel.settings[rows = 2, per_row = 2, dots = true]]
+    centred = carousel.carousel[c, 'centred', slides[6, 'Centred'], carousel.settings[center = true, show = 3, padding = '60px']]
+    variable = carousel.carousel[c, 'variable', widths[8], carousel.settings[variable = true, show = 1]]
+    adaptive = carousel.carousel[c, 'adaptive', uneven[6], carousel.settings[adaptive_height = true, dots = true]]
+    fade = carousel.carousel[c, 'fade', slides[4, 'Faded'], carousel.settings[fade = true, dots = true, speed = 700.0]]
+    lazy = carousel.carousel[c, 'lazy', slides[8, 'Loaded'], carousel.settings[lazy = 'ondemand', show = 2]]
+    upright = carousel.carousel[c, 'upright', slides[5, 'Upright'], carousel.settings[vertical = true, vertical_swiping = true, show = 2]]
+    rtl = carousel.carousel[c, 'rtl', slides[5, 'Right to left'], carousel.settings[rtl = true, dots = true]]
+    main = carousel.carousel[c, 'main', slides[5, 'Main'], carousel.settings[nav_for = 'thumbs', arrows = false, fade = true]]
+    thumbs = carousel.carousel[c, 'thumbs', slides[5, 'Thumb'], carousel.settings[nav_for = 'main', show = 3, center = true, focus_on_select = true, swipe_to_slide = true]]
+    buttons = gui.row[[gui.button['back', 'Previous'], gui.button['on', 'Next'], gui.button['third', 'Go to 3'], gui.button['play', 'Play'], gui.button['pause', 'Pause']]]
+    window = carousel.panes[c, 'window', [slide['Pane 1', 'The first pane.', 60.0], slide['Pane 2', 'The second pane, a little taller.', 120.0], slide['Pane 3', 'The last pane.', 30.0]], a.pane]
+    group = carousel.slide_group[c, 'group', chips[16], center = true]
+    tick = carousel.ticker[c, 'tick', chips[8], hover_factor = 0.2, draggable = true]
+    kinds = [section['Arrows, dots, autoplay, looping', 'react-slick: arrows and the arrow keys, dots, a swipe by mouse or touch; autoplay pauses while the pointer rests on it.', hero], section['Several at once, by breakpoint', 'Three slides, two under 900 pixels, one under 600.', several], section['Rows', 'Two rows of two in each slide.', rows], section['Centred', 'The slide shown in the middle, its neighbours peeking.', centred], section['Variable width', 'Each slide as wide as it is.', variable], section['Adaptive height', 'The list as tall as the slide shown.', adaptive], section['Fade', 'Slides fading over one another.', fade], section['Lazy loading', 'Slides drawn as they come into view.', lazy], section['Upright', 'Slides above one another, swiped up and down.', upright], section['Right to left', 'Its order and its arrows reversed.', rtl], section['Linked', 'Each moves the other; press a thumb to show it.', gui.column[[main, thumbs]]], section['Moved by the program', 'The buttons call next_slide, previous_slide, go_to, play and pause on the first carousel.', buttons], section['Window', 'Vuetify: each pane slides in the way its index goes.', window], section['Slide group', 'Vuetify: chips scrolled a page at a time; a chip pressed is chosen and centred.', group], section['Ticker', 'Motion: an endless line, slowed while hovered, dragged and thrown.', tick]]
+    page = gui.column[push[[gui.heading['lory.carousel']], gui.column[kinds, gap = 16.0]], gap = 12.0]
+    gui.scroll['page', tall, [page]]
+
+fn applied[a, e]
+    if e.id eq 'back' and e.act eq 'press'
+        carousel.previous_slide['hero']
+    if e.id eq 'on' and e.act eq 'press'
+        carousel.next_slide['hero']
+    if e.id eq 'third' and e.act eq 'press'
+        carousel.go_to['hero', 2]
+    if e.id eq 'play' and e.act eq 'press'
+        carousel.play['hero']
+    if e.id eq 'pause' and e.act eq 'press'
+        carousel.pause['hero']
+    if e.id eq 'window' and e.act eq 'change'
+        a.pane = 0 + floor[e.num]
+    a
+
+--- one frame: the program's record recalled, the page shown and what the
+--- reader did applied
+fn framed[frame]
+    a = recall['carousel example', App[0]]
+    c = lory.begin[frame]
+    c = lory.clear[c, gui.dark[].page]
+    s = lory.px[c]
+    shown = gui.show[c, view_of[c, a, lory.height[c] / s - 48.0]]
+    for e in shown.events
+        a = applied[a, e]
+    remember['carousel example', a]
+    shown
+
+fn draw[frame]
+    shown = framed[frame]
+    lory.end[shown.canvas]
+
+sys.frames[draw]
+
+--- ---- a test: frames as the page hands them ----
+
+--- (a page tall enough to show every kind at once)
+fn screen[ms, given]
+    json['{"t": `ms`, "width": 1200, "height": 6000, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1200, "height": 6000, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": []}']
+
+--- the page draws each kind, and the window's arrow moves it to its next
+--- pane, which the program then shows
+test the_page_draws_every_kind_and_its_window_steps[]
+    gui.unfocus[]
+    remember['carousel example', App[0]]
+    shown = framed[screen[1000.0, '[]']]
+    ms = 1000.0
+    while ms lt 1100.0
+        ms = ms + 16.0
+        shown = framed[screen[ms, '[]']]
+    drawn = true
+    for id in ['hero:list', 'several:list', 'rows:list', 'centred:list', 'variable:list', 'adaptive:list', 'fade:list', 'lazy:list', 'upright:list', 'rtl:list', 'main:list', 'thumbs:list', 'window', 'group', 'tick']
+        if not (id in shown.boxes)
+            log['not drawn: `id`']
+            drawn = false
+    b = shown.boxes['window:next']
+    x = b[0] + b[2] / 2.0
+    y = b[1] + b[3] / 2.0
+    shown = framed[screen[ms + 16.0, '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]']]
+    drawn and recall['carousel example', App[0]].pane eq 1

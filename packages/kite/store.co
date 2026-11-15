@@ -126,7 +126,6 @@ fn set_bars[k, b, more_older, more_newer]
 --- older bars put before the ones held (a load the view asked for as it
 --- reached the first bar)
 fn prepend[k, b, more_older]
-    n = len[b.c]
     k.bars = _joined[b, k.bars]
     k.more_older = more_older
     k.dirty = true
@@ -565,7 +564,7 @@ fn _signed_pow[v]
     10.0 ^ v
 
 --- a value's place on the pane's axis (klinecharts' valueToRealValue)
-fn real_of[k, p, v]
+fn real_of[_k, p, v]
     if p.axis eq 'logarithm'
         return _signed_log[v]
     if p.axis eq 'percentage'
@@ -575,7 +574,7 @@ fn real_of[k, p, v]
         return (v - r.from) / r.span * r.real_span + r.real_from
     v
 
-fn _value_of_real[k, p, rv]
+fn _value_of_real[_k, p, rv]
     if p.axis eq 'logarithm'
         return _signed_pow[rv]
     if p.axis eq 'percentage'

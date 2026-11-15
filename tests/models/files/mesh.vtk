@@ -1,0 +1,21 @@
+# vtk DataFile Version 3.0
+A square pyramid with its points' colours and normals, written for Lory's tests; its title runs on so that the first 250 bytes, which three reads to learn the file's form, lie within its header
+ASCII
+DATASET POLYDATA
+POINTS 5 float
+-1 0 -1  1 0 -1  1 0 1
+-1 0 1  0 1.5 0
+POLYGONS 5 21
+4 0 1 2 3
+3 0 4 1
+3 1 4 2
+3 2 4 3
+3 3 4 0
+POINT_DATA 5
+NORMALS normals float
+0 -1 0 0 -1 0
+0 -1 0 0 -1 0
+0 1 0
+COLOR_SCALARS colors 3
+1 0 0 0 1 0 0 0 1
+1 1 0 0.5 0.5 0.5

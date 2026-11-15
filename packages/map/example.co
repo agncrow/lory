@@ -1,0 +1,212 @@
+--- Lory's maps at work outside a browser, with the same output in both
+--- modes (`crow test --packages` runs this interpreted and compiled and
+--- compares the two): places projected onto the world's picture and back,
+--- a view's scale bar, a box fitted, the tiles a view needs and their
+--- addresses, a flight's path, a wheel's zoom and a throw, GeoJSON read
+--- and found under a point, points clustered, and a map driven through
+--- frames as a page hands them: its tiles asked for and come, dragged,
+--- wheeled, a marker pressed and its popup told, and flown to a city.
+--- Nothing here needs a page or the network: what a frame would paint is
+--- read back as a test reads it. (Every number of it, and many more, are
+--- tests/modes/maps.co's too.)
+use math
+use memory
+use lory
+use lory.colors
+use map
+use geo
+use camera
+use grid
+use features
+use points
+
+--- a frame 900 by 700 at time `t` (milliseconds), with the input given and
+--- what the page said (JSON lists)
+fn screen[t, given, said]
+    lory.begin[json['{"t": `t`, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 900, "height": 700, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": `said`}']]
+
+--- a mouse's event at a place (`on`: down, move or up)
+fn mouse[on, x, y]
+    '[{"type": "`on`", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+--- a press and its release at a place
+fn press_at[x, y]
+    '[{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": 0}]'
+
+--- the images a map has asked for answered, as the page answers them
+fn answered[id]
+    held = recall['map.`id`.tiles', grid.held_none[1]]
+    out = slice[[''], 0, 0]
+    for i in range[len[held.urls]]
+        if held.urls[i] ne ''
+            out = push[out, '{"what": "image", "id": `40000 + i`, "url": "`held.urls[i]`", "width": 256, "height": 256}']
+    listed = join[out, ', ']
+    '[`listed`]'
+
+--- how many of a frame's asks are for images
+fn images_asked[c]
+    n = 0
+    for a in c.asks
+        if len[a] gt 1
+            if a[1] eq '@image'
+                n = n + 1
+    n
+
+--- how many tiles a frame drew: the pictures of the page objects tiles
+--- are held in (40000 on)
+fn tiles_drawn[c]
+    n = 0
+    for k in c.seg_image
+        if k gte 40000
+            n = n + 1
+    n
+
+--- what the reader did to a map in its last frame, as words
+fn told[id]
+    out = slice[[''], 0, 0]
+    for t in map.happened[id]
+        if t.what eq ''
+            out = push[out, '`t.act` on the map']
+        else
+            out = push[out, '`t.act` `t.what`']
+    join[out, ', ']
+
+fn two[v]
+    fmt[v, decimals = 2]
+
+fn six[v]
+    fmt[v, decimals = 6]
+
+--- ---- places ----
+
+log['--- places']
+paris = geo.project[48.8566, 2.3522, 0.0]
+log['Paris is at `six[paris.x]` `six[paris.y]` of the world 256 pixels wide at zoom 0, and the world is `geo.world[10.0]` pixels wide at zoom 10']
+back = geo.unproject[paris.x, paris.y, 0.0]
+log['and back: `six[back.lat]` `six[back.lng]`']
+log['Paris to London is `two[geo.distance[48.8566, 2.3522, 51.5074, -0.1278] / 1000.0]` km by the haversine, on a sphere of `geo.earth_radius[]` m']
+log['a pixel spans `two[geo.metres_per_pixel[0.0, 0.0]]` m at the equator at zoom 0, and `two[geo.metres_per_pixel[48.8566, 12.0]]` m in Paris at zoom 12']
+round_world = geo.wrap[10.0, 390.0]
+log['a longitude of 390 is `round_world.lng` in the one world']
+
+--- ---- a view ----
+
+log['--- a view']
+paris_view = geo.seen[48.8566, 2.3522, 12.0, 900.0, 700.0]
+edges = geo.bounds_of[paris_view]
+log['Paris at zoom 12 in 900 by 700 shows `six[edges.south]` `six[edges.west]` to `six[edges.north]` `six[edges.east]`']
+bar = geo.scale_of[paris_view, 100.0]
+log['its scale bar: `bar.metric` over `two[bar.metric_wide]` px, `bar.imperial` over `two[bar.imperial_wide]` px']
+london = geo.Bounds[51.28, -0.51, 51.69, 0.33]
+fitted = geo.fit[london, 900.0, 700.0, 3.0, 1.0, 0.0, 18.0, 0.0, 0.0, 0.0, 0.0]
+log['Greater London fitted in 900 by 700: zoom `fitted.zoom` about `six[fitted.lat]` `six[fitted.lng]`; with zooms not snapped, `six[geo.bounds_zoom[london, 900.0, 700.0, 3.0, 0.0, 0.0, 18.0, false, 0.0, 0.0]]`']
+
+--- ---- tiles ----
+
+log['--- tiles']
+osm = map.openstreetmap[]
+log['OpenStreetMap: `osm.template`, zooms `osm.lowest` to `osm.highest`, credited `osm.credit`']
+zoomed_at = grid.tile_zoom[osm, 2.4]
+needed = grid.tiles_at[osm, zoomed_at, 20.0, 0.0, 2.4, 900.0, 700.0, 0.0, 0.0]
+log['a view at zoom 2.4 is drawn from tiles of zoom `zoomed_at`: `len[needed]` of them, the first `needed[0].key` at `needed[0].url`, `two[needed[0].size]` px wide']
+lettered = grid.layer['https://{s}.tiles.example.test/{z}/{x}/{y}.png', 'Example tiles']
+log['a template with subdomains names each tile by its place, a, b or c: `grid.address[lettered, 1, 2, 3]` and `grid.address[lettered, 2, 2, 3]`']
+
+--- ---- moving the view ----
+
+log['--- moving the view']
+start = geo.seen[0.0, 0.0, 3.0, 900.0, 700.0]
+path = camera.flight[start, 48.8566, 2.3522, 10.0, 0.0]
+log['a flight from 0 0 at zoom 3 to Paris at zoom 10 takes `two[path.duration]` ms']
+for part in [0.25, 0.5, 0.75, 1.0]
+    spot = camera.flight_at[path, part * path.duration]
+    log['  at `part` of it: `six[spot.lat]` `six[spot.lng]` at zoom `six[spot.zoom]`']
+log['the wheel turned 100 of its units away from the reader (300 pixels on a Mac) zooms in `camera.wheel_step[100.0, 5.0, 1.0, 0.0, 18.0, 60.0]` levels where zooms snap to whole ones, `six[camera.wheel_step[100.0, 5.0, 0.0, 0.0, 18.0, 60.0]]` where they do not']
+thrown = camera.throw_of[[100.0, 110.0, 125.0, 145.0, 170.0, 200.0], [100.0, 102.0, 105.0, 109.0, 114.0, 120.0], [0.0, 16.0, 32.0, 48.0, 64.0, 80.0], 80.0]
+log['a drag let go while moving is thrown on `two[thrown.dx]` `two[thrown.dy]` px over `two[thrown.seconds]` s']
+
+--- ---- shapes ----
+
+log['--- shapes']
+yard = '{"type": "FeatureCollection", "features": [{"type": "Feature", "id": "yard", "properties": {"rank": 3}, "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [8, 0], [8, 6], [0, 6], [0, 0]], [[2, 2], [2, 4], [5, 4], [5, 2], [2, 2]]]}}, {"type": "Feature", "id": "road", "properties": {"rank": 12}, "geometry": {"type": "LineString", "coordinates": [[-5, 40], [0, 42], [5, 41]]}}, {"type": "Feature", "id": "well", "geometry": {"type": "Point", "coordinates": [3.5, 50.25]}}]}'
+read_in = features.read_geojson['shapes', yard, features.style[]]
+for f in read_in
+    piece = f.pieces[0]
+    if piece.form eq 'polygon'
+        log['`f.id`: a polygon of `len[piece.ring_at]` rings and `len[piece.lats]` corners, cut into `len[piece.triangles] / 3` triangles']
+    else
+        if len[piece.lats] eq 1
+            log['`f.id`: a point']
+        else
+            log['`f.id`: a `piece.form` through `len[piece.lats]` places']
+per = 256.0 / geo.world[5.0]
+on_yard = geo.project[1.0, 1.0, 0.0]
+in_hole = geo.project[3.0, 3.0, 0.0]
+log['a point of the yard is on it: `features.hits[read_in[0], on_yard.x, on_yard.y, per]`; a point in its hole is not: `features.hits[read_in[0], in_hole.x, in_hole.y, per]`']
+ranked = features.fill_steps[read_in, 'rank', '#eeeeee', [0.0, 10.0], ['#a1dab4', '#225ea8']]
+log['filled by rank: the yard `colors.hex_of[ranked[0].style.fill_color]`, the road `colors.hex_of[ranked[1].style.fill_color]`; the well, with no rank, keeps its own `colors.hex_of[ranked[2].style.fill_color]`']
+
+--- ---- clusters ----
+
+log['--- clusters']
+lats = []
+lngs = []
+for i in range[60]
+    lats = push[lats, 40.0 + (i % 8) * 0.7]
+    lngs = push[lngs, -3.0 + floor[(0.0 + i) / 8.0] * 0.9]
+crowd = points.tree[points.points_at[lats, lngs], 60.0, 0.0, 18.0]
+for z in [2.0, 5.0, 6.0, 9.0]
+    groups = points.groups_at[crowd, z]
+    counts = slice[[''], 0, 0]
+    for g in groups
+        counts = push[counts, '`g.count`']
+    listed = join[counts, ' ']
+    if len[groups] eq 60
+        log['60 points at zoom `z`: each drawn alone']
+    else
+        log['60 points at zoom `z`: `len[groups]` drawn, of `listed`']
+
+--- ---- a map on a page ----
+
+log['--- a map on a page']
+map.forget_map['example']
+m = map.at[map.of['example'], 20.0, 0.0, 2.0]
+m = map.tiles[m, map.tile_layer['tiles/{z}/{x}/{y}.png', 'Tiles of our own']]
+m = map.add_marker[m, 'paris', 48.8566, 2.3522, 'Paris']
+m = map.keep[m]
+c = map.show[screen[0.0, '[]', '[]'], m, 0.0, 0.0, 900.0, 700.0]
+log['the first frame asks for `images_asked[c]` tiles and draws `len[c.verts] / lory.floats[]` vertices: the controls, the marker, the credit']
+c = map.show[screen[500.0, '[]', answered['example']], map.of['example'], 0.0, 0.0, 900.0, 700.0]
+log['once they come, the next frame draws `tiles_drawn[c]` of them']
+c = map.show[screen[1000.0, mouse['down', 450.0, 350.0], '[]'], map.of['example'], 0.0, 0.0, 900.0, 700.0]
+c = map.show[screen[1016.0, mouse['move', 500.0, 350.0], '[]'], map.of['example'], 0.0, 0.0, 900.0, 700.0]
+c = map.show[screen[1032.0, mouse['move', 550.0, 350.0], '[]'], map.of['example'], 0.0, 0.0, 900.0, 700.0]
+c = map.show[screen[1300.0, mouse['up', 550.0, 350.0], '[]'], map.of['example'], 0.0, 0.0, 900.0, 700.0]
+m = map.of['example']
+log['dragged 100 px east and held still before it was let go, its middle is at `six[m.lat]` `six[m.lng]`, and it is not thrown: moving `map.moving[m]`']
+under = map.place_under[m, 600.0, 200.0]
+c = map.show[screen[2000.0, '[{"type": "wheel", "device": "mouse", "x": 600, "y": 200, "dx": 0, "dy": -100}]', '[]'], m, 0.0, 0.0, 900.0, 700.0]
+c = map.show[screen[2050.0, '[]', '[]'], map.of['example'], 0.0, 0.0, 900.0, 700.0]
+c = map.show[screen[2500.0, '[]', '[]'], map.of['example'], 0.0, 0.0, 900.0, 700.0]
+m = map.of['example']
+kept_at = map.point_on[m, under.lat, under.lng]
+log['the wheel turned 100 px up at 600 200 zooms it to `m.zoom` about the pointer: the place that was under it is at `two[kept_at.x]` `two[kept_at.y]`']
+pin = map.point_on[m, 48.8566, 2.3522]
+c = map.show[screen[3000.0, press_at[pin.x, pin.y - 20.0], '[]'], m, 0.0, 0.0, 900.0, 700.0]
+m = map.of['example']
+log['the marker pressed tells `told[m.id]`, and its popup says `m.popup.words`']
+c = map.show[screen[3500.0, press_at[100.0, 600.0], '[]'], m, 0.0, 0.0, 900.0, 700.0]
+log['a press on the map away from it tells `told[m.id]`']
+m = map.add_point[map.of['example'], 'markers', 'tack', 30.0, 20.0, map.glyph[map.style[], 'map-pin-filled', 30.0, '#d6336c']]
+m = map.keep[map.bind_popup[m, 'tack', 'A pin of Lory icons']]
+tack = map.point_on[m, 30.0, 20.0]
+c = map.show[screen[3600.0, press_at[tack.x, tack.y - 15.0], '[]'], m, 0.0, 0.0, 900.0, 700.0]
+m = map.of['example']
+log['a marker drawn as the icon map-pin-filled, 30 px square, pressed above its point tells `told[m.id]`, and its popup points from `two[0.0 - m.popup.dy]` px above it']
+m = map.keep[map.fly_to[map.of['example'], 35.6762, 139.6503, 9.0]]
+c = map.show[screen[4000.0, '[]', '[]'], m, 0.0, 0.0, 900.0, 700.0]
+m = map.of['example']
+log['flown to Tokyo, it is on its way: moving `map.moving[m]`, for `two[m.motion.flight.duration]` ms']
+c = map.show[screen[30000.0, '[]', '[]'], m, 0.0, 0.0, 900.0, 700.0]
+m = map.of['example']
+log['and it lands at `m.lat` `m.lng` at zoom `m.zoom`: moving `map.moving[m]`']

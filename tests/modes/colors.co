@@ -1,0 +1,46 @@
+--- Everything lory.colors makes, written out, to diff the interpreter's
+--- run against the compiled program's.
+use lory
+use lory.colors
+
+fn _hexes[cs]
+    out = slice[[''], 0, 0]
+    for c in cs
+        out = push[out, colors.hex_alpha_of[c]]
+    join[out, ' ']
+
+fn _digits[x]
+    fmt[x, decimals = 17]
+
+for name in colors.scale_names[]
+    for look in ['light', 'dark']
+        log['`name` `look` `_hexes[colors.scale[name, look]]`']
+        log['`name` `look` alpha `_hexes[colors.alpha_scale[name, look]]`']
+for pair in [['indigo', 'auto'], ['amber', 'sand'], ['crimson', 'gray']]
+    for look in ['light', 'dark']
+        t = colors.theme[pair[0], pair[1], look]
+        log['theme `pair[0]` `look` `_hexes[[t.page, t.panel, t.surface, t.field, t.edge, t.edge_strong, t.ink, t.muted, t.accent, t.accent_hover, t.accent_soft, t.accent_text, t.on_accent, t.hover, t.press, t.focus, t.overlay, t.shadow, t.danger, t.danger_soft, t.danger_text, t.on_danger, t.success, t.warning, t.on_warning, t.info]]`']
+for name in colors.palette_names[]
+    shades = slice[[''], 0, 0]
+    for sh in colors.shade_names[name]
+        shades = push[shades, colors.hex_of[colors.palette[name, sh]]]
+    row = join[shades, ' ']
+    log['palette `name` `row`']
+for name in colors.semantic_names[]
+    n = colors.named_states[name]
+    log['semantic `name` `_hexes[[n.base, n.hover, n.focus, n.down, n.active, n.light, n.soft, n.ink, n.on]]`']
+for code in ['#3a7bd5', '#ff0000', '#777777', '#c0ffee', '#12345678']
+    c = colors.parse[code]
+    lab = colors.to_oklab[c]
+    lch = colors.to_oklch[c]
+    hsl = colors.to_hsl[c]
+    white = colors.parse['#ffffff']
+    amber = colors.parse['#ffc53d']
+    lc = colors.apca[c, white]
+    log['`code` `_digits[lab.l]` `_digits[lab.a]` `_digits[lab.b]` `_digits[lch.c]` `_digits[lch.h]` `_digits[hsl.h]` `_digits[hsl.s]` `_digits[colors.luminance[c]]` `_digits[lc]`']
+    for space in ['srgb', 'linear', 'oklab', 'oklch', 'hsl', 'hsv']
+        m = colors.mix[c, amber, 0.3, space]
+        log['`code` mix `space` `_digits[m.r]` `_digits[m.g]` `_digits[m.b]`']
+    log['`code` moved `_hexes[[colors.lighter[c, 0.1], colors.darker[c, 0.1], colors.saturated[c, 0.1], colors.on_color[c]]]`']
+brand = colors.scale_from[colors.parse['#7c3aed'], 'light']
+log['custom `_hexes[brand]`']

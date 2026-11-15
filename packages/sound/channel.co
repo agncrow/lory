@@ -1,0 +1,341 @@
+--- Channels: where a sound stands and how loud it is, as Tone's and the
+--- page's nodes set them. `panned` lays a sound from left (-1) to right
+--- (1) at equal power, as the page's StereoPannerNode does (a sound of two
+--- channels kept on its own side and the other's folded in); `volumed`
+--- sets its level in decibels; strips mix with Tone's mute and solo (once
+--- one is soloed only the soloed are heard); `crossfaded` fades from one
+--- sound to another at equal power; `mono_of` hears a sound on both sides;
+--- a sound's middle and sides come apart and join again as Tone's
+--- MidSideSplit and MidSideMerge make them.
+---
+--- A place puts a sound around a listener, as the page's PannerNode does
+--- with its equal-power panning: where the sound is from the listener
+--- (its azimuth and elevation, the listener's forward and up), how far
+--- (the inverse, linear or exponential distance model, from the reference
+--- distance and by the rolloff), and which way the sound faces (its cone:
+--- full inside the inner angle, the outer gain outside the outer, a
+--- straight fade between). The listener can be the reader's head in a
+--- headset (`listener_of[c]`, from `lory.xr.head`):
+---
+---     here = channel.listener_of[c]
+---     bird = channel.place[2.0, 1.6, -1.0]
+---     heard = channel.placed[song, bird, here]
+
+use math
+use sound
+use lory
+use lory.xr
+
+--- a strip of a mixer: its sound, its pan (-1 to 1), its volume (dB),
+--- whether it is muted and whether it is soloed
+struct Strip [sound, pan, volume, mute, solo]
+
+--- a sound's middle (the two sides' sum over the square root of two) and
+--- its sides (their difference over it)
+struct MidSide [rate, middle, sides]
+
+--- a listener: where the ears are (x, y, z, in metres), the way they face
+--- and which way is up
+struct Listener [position, forward, up]
+
+--- a sound's place: where it is (x, y, z, metres) and which way it faces
+--- (none, [0, 0, 0], faces every way), its distance model (`inverse`,
+--- `linear` or `exponential`), its reference and farthest distances, its
+--- rolloff, its cone's inner and outer angles (degrees) and the gain
+--- outside the outer
+struct Place [position, orientation, distance_model, reference, farthest, rolloff, inner_angle, outer_angle, outer_gain]
+
+--- ---- panning and levels ----
+
+--- a sound laid from left (-1) to right (1) at equal power: one channel
+--- split by the cosine and sine of its place's quarter turn; two kept on
+--- their own sides, the far side folded toward the near one
+fn panned[s, pan]
+    p = min[1.0, max[-1.0, 0.0 + pan]]
+    if not s.stereo
+        x = (p + 1.0) * 0.5
+        return sound.stereo[s.rate, s.left * cos[x * pi * 0.5], s.left * sin[x * pi * 0.5]]
+    if p lte 0.0
+        x = p + 1.0
+        return sound.stereo[s.rate, s.left + s.right * cos[x * pi * 0.5], s.right * sin[x * pi * 0.5]]
+    x = p
+    sound.stereo[s.rate, s.left * cos[x * pi * 0.5], s.right + s.left * sin[x * pi * 0.5]]
+
+--- a sound at a level in decibels (0 as it is)
+fn volumed[s, db]
+    sound.scaled[s, sound.gain_of[db]]
+
+--- a sound heard not at all, as long as it was
+fn muted[s]
+    sound.scaled[s, 0.0]
+
+--- a sound panned and then set to a level (Tone's PanVol)
+fn pan_vol[s, pan, db]
+    volumed[panned[s, pan], db]
+
+--- a strip of a sound, centred at 0 dB, neither muted nor soloed
+fn strip[s]
+    Strip[s, 0.0, 0.0, false, false]
+
+--- a strip panned and set to a level
+fn strip_at[s, pan, db]
+    Strip[s, 0.0 + pan, 0.0 + db, false, false]
+
+--- a strip muted, or not
+fn with_mute[t, mute]
+    Strip[t.sound, t.pan, t.volume, mute, t.solo]
+
+--- a strip soloed, or not
+fn with_solo[t, solo]
+    Strip[t.sound, t.pan, t.volume, t.mute, solo]
+
+--- whether a strip is heard among others: not muted, and soloed where
+--- any of them is
+fn heard_among[t, strips]
+    if t.mute
+        return false
+    any_solo = false
+    for other in strips
+        if other.solo
+            any_solo = true
+    if any_solo
+        return t.solo
+    true
+
+--- strips mixed into one sound of two channels: each heard one panned and
+--- set to its level (an empty mix is nothing at `rate`)
+fn mixed_strips[strips, rate]
+    out = sound.stereo[0.0 + rate, zeros[0], zeros[0]]
+    for t in strips
+        if heard_among[t, strips]
+            out = sound.mixed[out, pan_vol[t.sound, t.pan, t.volume]]
+    out
+
+--- from one sound to another at equal power, `fade` of the way (0 the
+--- first alone, 1 the second)
+fn crossfaded[a, b, fade]
+    x = min[1.0, max[0.0, 0.0 + fade]]
+    sound.mixed[sound.scaled[a, cos[x * pi * 0.5]], sound.scaled[b, sin[x * pi * 0.5]]]
+
+--- a sound heard the same on both sides (two channels folded into one
+--- first), as Tone's Mono gives it
+fn mono_of[s]
+    sound.widened[sound.narrowed[s]]
+
+--- a sound's middle and sides (a sound of one channel splits as the left
+--- alone, as the page's splitter splits it)
+fn mid_side_of[s]
+    right = zeros[len[s.left]]
+    if s.stereo
+        right = s.right
+    MidSide[s.rate, (s.left + right) * sqrt[0.5], (s.left - right) * sqrt[0.5]]
+
+--- a middle and sides joined into a sound of two channels
+fn joined[m]
+    sound.stereo[m.rate, (m.middle + m.sides) * sqrt[0.5], (m.middle - m.sides) * sqrt[0.5]]
+
+--- ---- places around a listener ----
+
+--- the listener the page starts with: at the origin, facing ahead (-z),
+--- up up (+y)
+fn listener[]
+    Listener[[0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]
+
+--- a listener at a place, facing ahead
+fn listener_at[x, y, z]
+    Listener[[0.0 + x, 0.0 + y, 0.0 + z], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]
+
+--- a listener where the reader's head is in the frame, turned and nodded
+--- as it is (a frame with no view: a seated reader looking ahead)
+fn listener_of[c]
+    h = xr.head[c]
+    turn = h[3]
+    nod = h[4]
+    forward = [sin[turn] * cos[nod], sin[nod], 0.0 - cos[turn] * cos[nod]]
+    up = [0.0 - sin[turn] * sin[nod], cos[nod], cos[turn] * sin[nod]]
+    Listener[[h[0], h[1], h[2]], forward, up]
+
+--- a sound at a place, as Tone's Panner3D starts one: facing every way,
+--- the inverse distance model from 1 m, rolloff 1, farthest 10000 m
+fn place[x, y, z]
+    Place[[0.0 + x, 0.0 + y, 0.0 + z], [0.0, 0.0, 0.0], 'inverse', 1.0, 10000.0, 1.0, 360.0, 360.0, 0.0]
+
+--- a place of this distance model, reference distance and rolloff
+fn with_distance[pl, model, reference, rolloff]
+    Place[pl.position, pl.orientation, model, 0.0 + reference, pl.farthest, 0.0 + rolloff, pl.inner_angle, pl.outer_angle, pl.outer_gain]
+
+--- a place facing a way, with a cone of these angles and outer gain
+fn with_cone[pl, x, y, z, inner, outer, outer_gain]
+    Place[pl.position, [0.0 + x, 0.0 + y, 0.0 + z], pl.distance_model, pl.reference, pl.farthest, pl.rolloff, 0.0 + inner, 0.0 + outer, 0.0 + outer_gain]
+
+fn _minus[a, b]
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+
+fn _dot[a, b]
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+fn _cross[a, b]
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+fn _length[a]
+    sqrt[_dot[a, a]]
+
+fn _unit[a]
+    size = _length[a]
+    if size lte 0.0
+        return [0.0, 0.0, 0.0]
+    [a[0] / size, a[1] / size, a[2] / size]
+
+fn _degrees_between[a, b]
+    180.0 / pi * acos[min[1.0, max[-1.0, _dot[a, b]]]]
+
+--- where a place is from a listener, as the page reckons it: its azimuth
+--- (degrees, 0 ahead, 90 to the right, -90 to the left, ±180 behind) and
+--- its elevation (degrees up, -90 to 90)
+fn azimuth_elevation[pl, l]
+    toward = _unit[_minus[pl.position, l.position]]
+    if _length[toward] lte 0.0
+        return [0.0, 0.0]
+    right = _unit[_cross[l.forward, l.up]]
+    ahead = _unit[l.forward]
+    up = _cross[right, ahead]
+    lift = _dot[toward, up]
+    flat = _unit[[toward[0] - lift * up[0], toward[1] - lift * up[1], toward[2] - lift * up[2]]]
+    azimuth = _degrees_between[flat, right]
+    if _dot[flat, ahead] lt 0.0
+        azimuth = 360.0 - azimuth
+    if azimuth gte 0.0 and azimuth lte 270.0
+        azimuth = 90.0 - azimuth
+    else
+        azimuth = 450.0 - azimuth
+    elevation = 90.0 - _degrees_between[toward, up]
+    if elevation gt 90.0
+        elevation = 180.0 - elevation
+    else if elevation lt -90.0
+        elevation = -180.0 - elevation
+    [azimuth, elevation]
+
+--- how much a place's distance from a listener lets through: by the
+--- inverse model the reference distance over itself plus the rolloff's
+--- share of how much farther; by the linear a straight fall to the
+--- farthest distance; by the exponential the distance over the reference
+--- to the power of minus the rolloff (nearer than the reference, all)
+fn distance_gain[pl, l]
+    d = _length[_minus[pl.position, l.position]]
+    near = pl.reference
+    if pl.distance_model eq 'linear'
+        far = max[pl.farthest, near]
+        roll = min[1.0, max[0.0, pl.rolloff]]
+        if far eq near
+            return 1.0 - roll
+        return 1.0 - roll * (min[max[d, near], far] - near) / (far - near)
+    if pl.distance_model eq 'exponential'
+        return (max[d, near] / near) ^ (0.0 - pl.rolloff)
+    near / (near + pl.rolloff * (max[d, near] - near))
+
+--- how much a place's cone lets through toward a listener: all inside
+--- half the inner angle of the way it faces, the outer gain beyond half
+--- the outer, a straight fade between (a place facing every way, or
+--- whole cones, lets all through)
+fn cone_gain[pl, l]
+    facing = _unit[pl.orientation]
+    if _length[facing] lte 0.0 or (pl.inner_angle eq 360.0 and pl.outer_angle eq 360.0)
+        return 1.0
+    angle = _degrees_between[_unit[_minus[l.position, pl.position]], facing]
+    inner = abs[pl.inner_angle] / 2.0
+    outer = abs[pl.outer_angle] / 2.0
+    if angle lte inner
+        return 1.0
+    if angle gte outer
+        return pl.outer_gain
+    x = (angle - inner) / (outer - inner)
+    (1.0 - x) + pl.outer_gain * x
+
+--- the gains a sound of one channel is heard by on the left and the
+--- right from a place: its azimuth (behind folded to the front) laid at
+--- equal power, times its distance's and its cone's gains
+fn gains_of[pl, l]
+    a = azimuth_elevation[pl, l][0]
+    a = min[180.0, max[-180.0, a]]
+    if a lt -90.0
+        a = -180.0 - a
+    else if a gt 90.0
+        a = 180.0 - a
+    x = (a + 90.0) / 180.0
+    g = distance_gain[pl, l] * cone_gain[pl, l]
+    [cos[x * pi * 0.5] * g, sin[x * pi * 0.5] * g]
+
+--- a sound heard from a place by a listener, of two channels (a sound of
+--- two kept on its own sides and folded toward the place's side, as the
+--- page pans two)
+fn placed[s, pl, l]
+    a = azimuth_elevation[pl, l][0]
+    a = min[180.0, max[-180.0, a]]
+    if a lt -90.0
+        a = -180.0 - a
+    else if a gt 90.0
+        a = 180.0 - a
+    g = distance_gain[pl, l] * cone_gain[pl, l]
+    if not s.stereo
+        x = (a + 90.0) / 180.0
+        return sound.stereo[s.rate, s.left * (cos[x * pi * 0.5] * g), s.left * (sin[x * pi * 0.5] * g)]
+    if a lte 0.0
+        x = (a + 90.0) / 90.0
+        return sound.stereo[s.rate, (s.left + s.right * cos[x * pi * 0.5]) * g, s.right * (sin[x * pi * 0.5] * g)]
+    x = a / 90.0
+    sound.stereo[s.rate, s.left * (cos[x * pi * 0.5] * g), (s.right + s.left * sin[x * pi * 0.5]) * g]
+
+--- ---- tests ----
+
+test a_pan_keeps_the_power[]
+    s = sound.mono[8000.0, [1.0]]
+    centre = panned[s, 0.0]
+    abs[centre.left[0] - sqrt[0.5]] lt 0.000000001
+    abs[centre.left[0] * centre.left[0] + centre.right[0] * centre.right[0] - 1.0] lt 0.000000001
+    hard = panned[s, -1.0]
+    abs[hard.left[0] - 1.0] lt 0.000000001
+    abs[hard.right[0]] lt 0.000000001
+    two = panned[sound.stereo[8000.0, [1.0], [1.0]], 1.0]
+    abs[two.left[0]] lt 0.000000001
+    abs[two.right[0] - 2.0] lt 0.000000001
+    abs[volumed[s, -6.0].left[0] - sound.gain_of[-6.0]] lt 0.000000001
+
+test solo_silences_the_rest[]
+    a = strip[sound.mono[8000.0, [1.0]]]
+    b = with_solo[strip[sound.mono[8000.0, [0.5]]], true]
+    heard_among[a, [a, b]] eq false
+    heard_among[b, [a, b]] eq true
+    heard_among[with_mute[a, true], [a]] eq false
+    m = mixed_strips[[a, b], 8000.0]
+    abs[m.left[0] - 0.5 * sqrt[0.5]] lt 0.000000001
+    f = crossfaded[sound.mono[8000.0, [1.0]], sound.mono[8000.0, [1.0]], 0.5]
+    abs[f.left[0] - 2.0 * sqrt[0.5]] lt 0.000000001
+    j = joined[mid_side_of[sound.stereo[8000.0, [0.25], [0.75]]]]
+    abs[j.left[0] - 0.25] lt 0.000000001
+    abs[j.right[0] - 0.75] lt 0.000000001
+
+test a_place_is_heard_from_where_it_is[]
+    l = listener[]
+    right = place[1.0, 0.0, 0.0]
+    azimuth_elevation[right, l][0] eq 90.0
+    abs[azimuth_elevation[place[-1.0, 0.0, 0.0], l][0] + 90.0] lt 0.000000001
+    abs[azimuth_elevation[place[0.0, 0.0, -1.0], l][0]] lt 0.000000001
+    abs[azimuth_elevation[place[0.0, 1.0, -1.0], l][1] - 45.0] lt 0.000001
+    g = gains_of[right, l]
+    abs[g[0]] lt 0.000000001
+    abs[g[1] - 1.0] lt 0.000000001
+    far = place[0.0, 0.0, -4.0]
+    abs[distance_gain[far, l] - 0.25] lt 0.000000001
+    abs[distance_gain[with_distance[far, 'exponential', 1.0, 2.0], l] - 1.0 / 16.0] lt 0.000000001
+    abs[distance_gain[with_distance[far, 'linear', 1.0, 1.0], l] - (1.0 - 3.0 / 9999.0)] lt 0.000000001
+    facing_away = with_cone[far, 0.0, 0.0, -1.0, 60.0, 120.0, 0.25]
+    abs[cone_gain[facing_away, l] - 0.25] lt 0.000000001
+    facing_back = with_cone[far, 0.0, 0.0, 1.0, 60.0, 120.0, 0.25]
+    abs[cone_gain[facing_back, l] - 1.0] lt 0.000000001
+
+test the_head_is_the_listener[]
+    c = lory.begin[json['{"t": 0, "width": 900, "height": 700, "ratio": 1, "xr": false, "views": [], "input": [], "pointers": [], "controllers": [], "said": []}']]
+    l = listener_of[c]
+    l.position eq [0.0, 1.25, 0.0]
+    abs[l.forward[2] + 1.0] lt 0.000000001
+    abs[l.up[1] - 1.0] lt 0.000000001

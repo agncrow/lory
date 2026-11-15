@@ -1,0 +1,3104 @@
+--- The shapes three.js builds — its BufferGeometry classes — made by Lory,
+--- laid out as three lays them out, vertex for vertex: a program draws
+--- them through `space` or reads their numbers itself.
+---
+---     use lory.geometry
+---
+---     g = geometry.torus_knot[1.0, 0.4, 64, 8, 2.0, 3.0]
+---     c = space.mesh_form[c, 'knot', geometry.space_form[g]]
+---     c = space.mesh_form[c, 'knot edges', geometry.space_segments[geometry.edges[g, 10.0]]]
+---     c = space.draw[c, 'knot', lory.identity[], space.pushed_back[space.plain[lory.hex['#e8590c']]]]
+---     c = space.draw[c, 'knot edges', lory.identity[], space.shown[lory.white[]]]
+---
+--- A geometry is its positions and normals (three numbers a vertex), its
+--- uvs (two), the indices of its triangles (none where each three
+--- vertices in turn make one) and its groups (three numbers each). The
+--- box, plane, circle, ring, sphere, cylinder, cone, torus, torus knot,
+--- capsule, lathe, tube, shape, extrusion and the regular polyhedra are
+--- three's, and so are its edges (where faces meet at more than an angle)
+--- and its wireframe. Curves in space (a line, Bézier curves, Catmull-Rom
+--- splines, a helix) carry a tube or an extrusion; paths in the plane
+--- (lines, curves, splines, arcs and ellipses) with holes are a shape's
+--- outline, cut into triangles as three's ShapeUtils cuts them (earcut's
+--- ears, its holes bridged in).
+---
+--- A geometry is handed to space as it is, its indices kept
+--- (`space_form`), and its edges and wireframe as segments
+--- (`space_segments`): space draws them as lines in the scene, behind what
+--- is nearer, in a headset too. `lines_drawn` draws them instead with
+--- Lory's flat lines of any width, over the scene.
+---
+--- lory.geometry reimplements, in Crow, the geometries of three.js,
+--- Copyright 2010-2026 three.js authors, licensed under the MIT License
+--- (https://github.com/mrdoob/three.js), and the triangulation three cuts
+--- shapes with, earcut, Copyright Mapbox, licensed under the ISC License
+--- (https://github.com/mapbox/earcut). No source of either is included:
+--- three's layouts and formulas were read from version 0.187.0 (earcut
+--- 3.0.2 within it) and written anew, and tests/geometry/reference.co
+--- holds Lory to the numbers three answers, bit for bit. The one table
+--- taken as three has it is the order of the regular polyhedra's faces
+--- (their corners are worked out here), so that their triangles come as
+--- three's come.
+use sys
+use math
+use lory
+use space
+
+--- a geometry: its positions and normals (three numbers a vertex), its
+--- uvs (two), the indices of its triangles (none where each three vertices
+--- in turn make one), and its groups — three numbers each: where the group
+--- starts (an index, or a vertex where there are none), how many it
+--- counts, and the material it is drawn in
+struct Geometry [positions, normals, uvs, indices, groups]
+
+--- a geometry of nothing yet, to add to
+fn _empty[]
+    Geometry[[], [], [], [], []]
+
+--- how many vertices the geometry holds
+fn vertex_count[g]
+    len[g.positions] / 3
+
+--- how many triangles it draws
+fn triangle_count[g]
+    if len[g.indices] gt 0
+        return len[g.indices] / 3
+    len[g.positions] / 9
+
+--- ---- numbers ----
+
+--- the numbers of a list, each read as a float (a list written out is a
+--- tensor; this is a list grown by `push`)
+fn _floats[numbers]
+    out = []
+    for x in numbers
+        out = push[out, 0.0 + x]
+    out
+
+--- the numbers of a list, each read as a whole number
+fn _ints[numbers]
+    out = []
+    for x in numbers
+        out = push[out, floor[0.0 + x]]
+    out
+
+--- the numbers as single precision keeps them: three holds a geometry's
+--- numbers in Float32Arrays, and works its normals and edges out from what
+--- it reads back from them
+fn _single[xs]
+    if len[xs] eq 0
+        return xs
+    sys.float_values[sys.float_bytes[xs, 4, true], 0, len[xs], 4, true]
+
+--- two numbers put onto a list of them
+fn _two_onto[xs, a, b]
+    push[push[xs, a], b]
+
+--- three numbers put onto a list of them
+fn _three_onto[xs, a, b, c]
+    push[push[push[xs, a], b], c]
+
+--- three whole numbers (indices, or a group's start, count and material)
+--- put onto a list of them
+fn _indices_onto[xs, a, b, c]
+    push[push[push[xs, a], b], c]
+
+--- the smallest gap between 1 and the next float (JavaScript's
+--- Number.EPSILON)
+fn _epsilon[]
+    1.0 / 4503599627370496.0
+
+--- a direction of length one, as three's `normalize` makes it: each part
+--- times one over the length (a length of 0 kept as it is)
+fn _unit[x, y, z]
+    l = sqrt[x * x + y * y + z * z]
+    if not (l gt 0.0)
+        l = 1.0
+    k = 1.0 / l
+    [x * k, y * k, z * k]
+
+--- the cross product of two directions, worked out as three works it out
+fn _cross[ax, ay, az, bx, by, bz]
+    [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx]
+
+--- (x, y, z) turned by `angle` about the axis (a unit direction), as
+--- three's rotation matrix about an axis turns a point
+fn _turned[x, y, z, ax, ay, az, angle]
+    c = cos[angle]
+    s = sin[angle]
+    t = 1.0 - c
+    tx = t * ax
+    ty = t * ay
+    m11 = tx * ax + c
+    m12 = tx * ay - s * az
+    m13 = tx * az + s * ay
+    m21 = tx * ay + s * az
+    m22 = ty * ay + c
+    m23 = ty * az - s * ax
+    m31 = tx * az - s * ay
+    m32 = ty * az + s * ax
+    m33 = t * az * az + c
+    [m11 * x + m12 * y + m13 * z + 0.0, m21 * x + m22 * y + m23 * z + 0.0, m31 * x + m32 * y + m33 * z + 0.0]
+
+--- each three numbers made of length one (three's normalizeNormals)
+fn _normalized[xs]
+    out = []
+    for i in range[len[xs] / 3]
+        u = _unit[xs[i * 3], xs[i * 3 + 1], xs[i * 3 + 2]]
+        out = _three_onto[out, u[0], u[1], u[2]]
+    out
+
+--- a triangle soup's normals, each corner its face's: worked out from
+--- the positions as single precision holds them, as three's
+--- computeVertexNormals does for a geometry without indices
+fn _flat_normals[positions]
+    p = _single[positions]
+    raw = []
+    for f in range[len[p] / 9]
+        i = f * 9
+        cbx = p[i + 6] - p[i + 3]
+        cby = p[i + 7] - p[i + 4]
+        cbz = p[i + 8] - p[i + 5]
+        abx = p[i] - p[i + 3]
+        aby = p[i + 1] - p[i + 4]
+        abz = p[i + 2] - p[i + 5]
+        n = _cross[cbx, cby, cbz, abx, aby, abz]
+        for k in range[3]
+            raw = _three_onto[raw, n[0], n[1], n[2]]
+    _normalized[_single[raw]]
+
+--- ---- planes, discs and rings ----
+
+--- a box `width` across (x), `height` up (y) and `depth` deep (z) about
+--- the origin, each face cut into segments: its six faces in three's order
+--- (+x, -x, +y, -y, +z, -z), a group each
+fn box[width = 1.0, height = 1.0, depth = 1.0, width_segments = 1, height_segments = 1, depth_segments = 1]
+    g = _empty[]
+    g = _side[g, 2, 1, -1.0, -1.0, depth, height, width, depth_segments, height_segments, 0]
+    g = _side[g, 2, 1, 1.0, -1.0, depth, height, -width, depth_segments, height_segments, 1]
+    g = _side[g, 0, 2, 1.0, 1.0, width, depth, height, width_segments, depth_segments, 2]
+    g = _side[g, 0, 2, 1.0, -1.0, width, depth, -height, width_segments, depth_segments, 3]
+    g = _side[g, 0, 1, 1.0, -1.0, width, height, depth, width_segments, height_segments, 4]
+    g = _side[g, 0, 1, -1.0, -1.0, width, height, -depth, width_segments, height_segments, 5]
+    g
+
+--- of three numbers, the one for an axis: `a` on the axis `u`, `b` on the
+--- axis `v`, `c` on the third
+fn _on_axis[axis, u, v, a, b, c]
+    if axis eq u
+        return a
+    if axis eq v
+        return b
+    c
+
+--- one face of a box: a grid across the axes `u` and `v` (each way's
+--- direction its sign), standing `deep` / 2 out along the third, facing
+--- out along it where `deep` is more than 0 and in where it is not
+fn _side[g, u, v, u_way, v_way, across, up, deep, grid_x, grid_y, material]
+    step_across = across / (0.0 + grid_x)
+    step_up = up / (0.0 + grid_y)
+    half_across = across / 2.0
+    half_up = up / 2.0
+    half_deep = deep / 2.0
+    row_length = grid_x + 1
+    facing = -1.0
+    if deep gt 0.0
+        facing = 1.0
+    base = len[g.positions] / 3
+    positions = g.positions
+    normals = g.normals
+    uvs = g.uvs
+    for iy in range[grid_y + 1]
+        y = (0.0 + iy) * step_up - half_up
+        for ix in range[row_length]
+            x = (0.0 + ix) * step_across - half_across
+            a = x * u_way
+            b = y * v_way
+            positions = _three_onto[positions, _on_axis[0, u, v, a, b, half_deep], _on_axis[1, u, v, a, b, half_deep], _on_axis[2, u, v, a, b, half_deep]]
+            normals = _three_onto[normals, _on_axis[0, u, v, 0.0, 0.0, facing], _on_axis[1, u, v, 0.0, 0.0, facing], _on_axis[2, u, v, 0.0, 0.0, facing]]
+            uvs = _two_onto[uvs, (0.0 + ix) / (0.0 + grid_x), 1.0 - (0.0 + iy) / (0.0 + grid_y)]
+    indices = g.indices
+    begun = len[indices]
+    for iy in range[grid_y]
+        for ix in range[grid_x]
+            a = base + ix + row_length * iy
+            b = base + ix + row_length * (iy + 1)
+            c = base + (ix + 1) + row_length * (iy + 1)
+            d = base + (ix + 1) + row_length * iy
+            indices = _indices_onto[indices, a, b, d]
+            indices = _indices_onto[indices, b, c, d]
+    g.positions = positions
+    g.normals = normals
+    g.uvs = uvs
+    g.indices = indices
+    g.groups = _indices_onto[g.groups, begun, len[indices] - begun, material]
+    g
+
+--- a plane `width` across and `height` up, facing +z, cut into a grid
+fn plane[width = 1.0, height = 1.0, width_segments = 1, height_segments = 1]
+    half_width = width / 2.0
+    half_height = height / 2.0
+    row_length = width_segments + 1
+    step_width = width / (0.0 + width_segments)
+    step_height = height / (0.0 + height_segments)
+    positions = []
+    normals = []
+    uvs = []
+    for iy in range[height_segments + 1]
+        y = (0.0 + iy) * step_height - half_height
+        for ix in range[row_length]
+            x = (0.0 + ix) * step_width - half_width
+            positions = _three_onto[positions, x, -y, 0.0]
+            normals = _three_onto[normals, 0.0, 0.0, 1.0]
+            uvs = _two_onto[uvs, (0.0 + ix) / (0.0 + width_segments), 1.0 - (0.0 + iy) / (0.0 + height_segments)]
+    indices = []
+    for iy in range[height_segments]
+        for ix in range[width_segments]
+            a = ix + row_length * iy
+            b = ix + row_length * (iy + 1)
+            c = (ix + 1) + row_length * (iy + 1)
+            d = (ix + 1) + row_length * iy
+            indices = _indices_onto[indices, a, b, d]
+            indices = _indices_onto[indices, b, c, d]
+    Geometry[positions, normals, uvs, indices, []]
+
+--- a disc of `segments` (at least 3) about its centre, facing +z, over
+--- the angle from `theta_start` to `theta_start + theta_length`: a fan
+fn circle[radius = 1.0, segments = 32, theta_start = 0.0, theta_length = 6.283185307179586]
+    n = max[3, segments]
+    positions = _three_onto[[], 0.0, 0.0, 0.0]
+    normals = _three_onto[[], 0.0, 0.0, 1.0]
+    uvs = _two_onto[[], 0.5, 0.5]
+    for s in range[n + 1]
+        angle = theta_start + (0.0 + s) / (0.0 + n) * theta_length
+        x = radius * cos[angle]
+        y = radius * sin[angle]
+        positions = _three_onto[positions, x, y, 0.0]
+        normals = _three_onto[normals, 0.0, 0.0, 1.0]
+        uvs = _two_onto[uvs, (x / radius + 1.0) / 2.0, (y / radius + 1.0) / 2.0]
+    indices = []
+    for i in range[1, n + 1]
+        indices = _indices_onto[indices, i, i + 1, 0]
+    Geometry[positions, normals, uvs, indices, []]
+
+--- a flat ring between two radii, facing +z: `theta_segments` (at least
+--- 3) about it and `phi_segments` (at least 1) across it
+fn ring[inner = 0.5, outer = 1.0, theta_segments = 32, phi_segments = 1, theta_start = 0.0, theta_length = 6.283185307179586]
+    around = max[3, theta_segments]
+    across = max[1, phi_segments]
+    radius = inner
+    step = (outer - inner) / (0.0 + across)
+    positions = []
+    normals = []
+    uvs = []
+    for j in range[across + 1]
+        for i in range[around + 1]
+            angle = theta_start + (0.0 + i) / (0.0 + around) * theta_length
+            x = radius * cos[angle]
+            y = radius * sin[angle]
+            positions = _three_onto[positions, x, y, 0.0]
+            normals = _three_onto[normals, 0.0, 0.0, 1.0]
+            uvs = _two_onto[uvs, (x / outer + 1.0) / 2.0, (y / outer + 1.0) / 2.0]
+        --- (each ring's radius the last one's and a step: three adds them up)
+        radius = radius + step
+    indices = []
+    for j in range[across]
+        level = j * (around + 1)
+        for i in range[around]
+            a = i + level
+            b = a + around + 1
+            c = a + around + 2
+            d = a + 1
+            indices = _indices_onto[indices, a, b, d]
+            indices = _indices_onto[indices, b, c, d]
+    Geometry[positions, normals, uvs, indices, []]
+
+--- ---- round solids ----
+
+--- a sphere of rows from its top down (`height_segments`, at least 2), each
+--- of `width_segments` (at least 3) about the vertical: phi is the angle
+--- about it, theta the angle down from the top
+fn sphere[radius = 1.0, width_segments = 32, height_segments = 16, phi_start = 0.0, phi_length = 6.283185307179586, theta_start = 0.0, theta_length = 3.141592653589793]
+    columns = max[3, width_segments]
+    rows = max[2, height_segments]
+    theta_end = min[theta_start + theta_length, pi]
+    positions = []
+    normals = []
+    uvs = []
+    for iy in range[rows + 1]
+        v = (0.0 + iy) / (0.0 + rows)
+        theta = theta_start + v * theta_length
+        y = radius * cos[theta]
+        across = sqrt[radius * radius - y * y]
+        --- (a pole's uvs are moved half a segment, to the middle of its fan)
+        shift = 0.0
+        if iy eq 0 and theta_start eq 0.0
+            shift = 0.5 / (0.0 + columns)
+        else if iy eq rows and theta_end eq pi
+            shift = -0.5 / (0.0 + columns)
+        for ix in range[columns + 1]
+            u = (0.0 + ix) / (0.0 + columns)
+            phi = phi_start + u * phi_length
+            x = -across * cos[phi]
+            z = across * sin[phi]
+            positions = _three_onto[positions, x, y, z]
+            n = _unit[x, y, z]
+            normals = _three_onto[normals, n[0], n[1], n[2]]
+            uvs = _two_onto[uvs, u + shift, 1.0 - v]
+    indices = []
+    stride = columns + 1
+    for iy in range[rows]
+        for ix in range[columns]
+            a = iy * stride + ix + 1
+            b = iy * stride + ix
+            c = (iy + 1) * stride + ix
+            d = (iy + 1) * stride + ix + 1
+            --- (a pole's fan has one triangle a segment, not two)
+            if iy ne 0 or theta_start gt 0.0
+                indices = _indices_onto[indices, a, b, d]
+            if iy ne rows - 1 or theta_end lt pi
+                indices = _indices_onto[indices, b, c, d]
+    Geometry[positions, normals, uvs, indices, []]
+
+--- a cylinder `height` tall about the y axis, `top` and `bottom` its
+--- radii: its side (group 0), then its top (1) and its bottom (2) unless
+--- it is open ended (a radius of 0 has no cap), over the angle from
+--- `theta_start`
+fn cylinder[top = 1.0, bottom = 1.0, height = 1.0, radial_segments = 32, height_segments = 1, open_ended = false, theta_start = 0.0, theta_length = 6.283185307179586]
+    _cylinder_of[top, bottom, height, radial_segments, height_segments, open_ended, theta_start, theta_length]
+
+--- a cone: a cylinder whose top is a point
+fn cone[radius = 1.0, height = 1.0, radial_segments = 32, height_segments = 1, open_ended = false, theta_start = 0.0, theta_length = 6.283185307179586]
+    _cylinder_of[0.0, radius, height, radial_segments, height_segments, open_ended, theta_start, theta_length]
+
+--- a cylinder of `around` segments about it and `rows` down it (a
+--- cone's top radius 0)
+fn _cylinder_of[top, bottom, height, around, rows, open_ended, theta_start, theta_length]
+    half = height / 2.0
+    slope = (bottom - top) / height
+    positions = []
+    normals = []
+    uvs = []
+    for y in range[rows + 1]
+        v = (0.0 + y) / (0.0 + rows)
+        radius = v * (bottom - top) + top
+        for x in range[around + 1]
+            u = (0.0 + x) / (0.0 + around)
+            theta = u * theta_length + theta_start
+            s = sin[theta]
+            co = cos[theta]
+            positions = _three_onto[positions, radius * s, -v * height + half, radius * co]
+            n = _unit[s, slope, co]
+            normals = _three_onto[normals, n[0], n[1], n[2]]
+            uvs = _two_onto[uvs, u, 1.0 - v]
+    indices = []
+    stride = around + 1
+    for x in range[around]
+        for y in range[rows]
+            a = y * stride + x
+            b = (y + 1) * stride + x
+            c = (y + 1) * stride + x + 1
+            d = y * stride + x + 1
+            --- (a side that narrows to a point has one triangle there, not two)
+            if top gt 0.0 or y ne 0
+                indices = _indices_onto[indices, a, b, d]
+            if bottom gt 0.0 or y ne rows - 1
+                indices = _indices_onto[indices, b, c, d]
+    g = Geometry[positions, normals, uvs, indices, _indices_onto[[], 0, len[indices], 0]]
+    if not open_ended
+        if top gt 0.0
+            g = _cap[g, true, top, half, around, theta_start, theta_length]
+        if bottom gt 0.0
+            g = _cap[g, false, bottom, half, around, theta_start, theta_length]
+    g
+
+--- a cylinder's cap: a centre for each segment, then its rim
+fn _cap[g, on_top, radius, half, around, theta_start, theta_length]
+    side = -1.0
+    material = 2
+    if on_top
+        side = 1.0
+        material = 1
+    positions = g.positions
+    normals = g.normals
+    uvs = g.uvs
+    centres = len[positions] / 3
+    for x in range[around]
+        positions = _three_onto[positions, 0.0, half * side, 0.0]
+        normals = _three_onto[normals, 0.0, side, 0.0]
+        uvs = _two_onto[uvs, 0.5, 0.5]
+    rim = centres + around
+    for x in range[around + 1]
+        u = (0.0 + x) / (0.0 + around)
+        theta = u * theta_length + theta_start
+        co = cos[theta]
+        s = sin[theta]
+        positions = _three_onto[positions, radius * s, half * side, radius * co]
+        normals = _three_onto[normals, 0.0, side, 0.0]
+        uvs = _two_onto[uvs, co * 0.5 + 0.5, s * 0.5 * side + 0.5]
+    indices = g.indices
+    begun = len[indices]
+    for x in range[around]
+        c = centres + x
+        i = rim + x
+        if on_top
+            indices = _indices_onto[indices, i, i + 1, c]
+        else
+            indices = _indices_onto[indices, i + 1, i, c]
+    g.positions = positions
+    g.normals = normals
+    g.uvs = uvs
+    g.indices = indices
+    g.groups = _indices_onto[g.groups, begun, len[indices] - begun, material]
+    g
+
+--- a torus about the z axis: `radius` to the middle of its tube,
+--- `tube_radius` the tube's own; the ring sweeps `sweep` of a turn, the
+--- tube from `theta_start` over `theta_length`
+fn torus[radius = 1.0, tube_radius = 0.4, radial_segments = 12, tubular_segments = 48, sweep = 6.283185307179586, theta_start = 0.0, theta_length = 6.283185307179586]
+    around = radial_segments
+    along = tubular_segments
+    positions = []
+    normals = []
+    uvs = []
+    for j in range[around + 1]
+        v = theta_start + (0.0 + j) / (0.0 + around) * theta_length
+        for i in range[along + 1]
+            u = (0.0 + i) / (0.0 + along) * sweep
+            x = (radius + tube_radius * cos[v]) * cos[u]
+            y = (radius + tube_radius * cos[v]) * sin[u]
+            z = tube_radius * sin[v]
+            positions = _three_onto[positions, x, y, z]
+            n = _unit[x - radius * cos[u], y - radius * sin[u], z]
+            normals = _three_onto[normals, n[0], n[1], n[2]]
+            uvs = _two_onto[uvs, (0.0 + i) / (0.0 + along), (0.0 + j) / (0.0 + around)]
+    indices = []
+    for j in range[1, around + 1]
+        for i in range[1, along + 1]
+            a = (along + 1) * j + i - 1
+            b = (along + 1) * (j - 1) + i - 1
+            c = (along + 1) * (j - 1) + i
+            d = (along + 1) * j + i
+            indices = _indices_onto[indices, a, b, d]
+            indices = _indices_onto[indices, b, c, d]
+    Geometry[positions, normals, uvs, indices, []]
+
+--- a torus knot: a tube about the (p, q) knot that winds `p` times about
+--- its axis and `q` times through its hole
+fn torus_knot[radius = 1.0, tube_radius = 0.4, tubular_segments = 64, radial_segments = 8, p = 2.0, q = 3.0]
+    along = tubular_segments
+    around = radial_segments
+    positions = []
+    normals = []
+    uvs = []
+    for i in range[along + 1]
+        u = (0.0 + i) / (0.0 + along) * p * pi * 2.0
+        here = _knot_at[u, p, q, radius]
+        ahead = _knot_at[u + 0.01, p, q, radius]
+        tx = ahead[0] - here[0]
+        ty = ahead[1] - here[1]
+        tz = ahead[2] - here[2]
+        mx = ahead[0] + here[0]
+        my = ahead[1] + here[1]
+        mz = ahead[2] + here[2]
+        binormal = _cross[tx, ty, tz, mx, my, mz]
+        perpendicular = _cross[binormal[0], binormal[1], binormal[2], tx, ty, tz]
+        b = _unit[binormal[0], binormal[1], binormal[2]]
+        n = _unit[perpendicular[0], perpendicular[1], perpendicular[2]]
+        for j in range[around + 1]
+            v = (0.0 + j) / (0.0 + around) * pi * 2.0
+            cx = -tube_radius * cos[v]
+            cy = tube_radius * sin[v]
+            x = here[0] + (cx * n[0] + cy * b[0])
+            y = here[1] + (cx * n[1] + cy * b[1])
+            z = here[2] + (cx * n[2] + cy * b[2])
+            positions = _three_onto[positions, x, y, z]
+            w = _unit[x - here[0], y - here[1], z - here[2]]
+            normals = _three_onto[normals, w[0], w[1], w[2]]
+            uvs = _two_onto[uvs, (0.0 + i) / (0.0 + along), (0.0 + j) / (0.0 + around)]
+    indices = []
+    for j in range[1, along + 1]
+        for i in range[1, around + 1]
+            a = (around + 1) * (j - 1) + (i - 1)
+            b = (around + 1) * j + (i - 1)
+            c = (around + 1) * j + i
+            d = (around + 1) * (j - 1) + i
+            indices = _indices_onto[indices, a, b, d]
+            indices = _indices_onto[indices, b, c, d]
+    Geometry[positions, normals, uvs, indices, []]
+
+--- where the knot is at `u` along it
+fn _knot_at[u, p, q, radius]
+    cosine = cos[u]
+    sine = sin[u]
+    angle = q / p * u
+    swing = cos[angle]
+    [radius * (2.0 + swing) * 0.5 * cosine, radius * (2.0 + swing) * sine * 0.5, radius * sin[angle] * 0.5]
+
+--- a capsule about the y axis: a cylinder `height` tall between two half
+--- spheres of `radius`, `cap_segments` (at least 1) down each cap,
+--- `height_segments` (at least 1) down its middle; its uvs run by length
+--- down the whole
+fn capsule[radius = 1.0, height = 1.0, cap_segments = 4, radial_segments = 8, height_segments = 1]
+    h = max[0.0, height]
+    caps = max[1, cap_segments]
+    around = max[3, radial_segments]
+    middle = max[1, height_segments]
+    half = h / 2.0
+    cap_arc = (pi / 2.0) * radius
+    total = 2.0 * cap_arc + h
+    rows = caps * 2 + middle
+    per_row = around + 1
+    positions = []
+    normals = []
+    uvs = []
+    indices = []
+    for iy in range[rows + 1]
+        profile_y = 0.0
+        profile_r = 0.0
+        normal_y = 0.0
+        along = 0.0
+        if iy lte caps
+            progress = (0.0 + iy) / (0.0 + caps)
+            angle = (progress * pi) / 2.0
+            profile_y = -half - radius * cos[angle]
+            profile_r = radius * sin[angle]
+            normal_y = -radius * cos[angle]
+            along = progress * cap_arc
+        else if iy lte caps + middle
+            progress = (0.0 + (iy - caps)) / (0.0 + middle)
+            profile_y = -half + progress * h
+            profile_r = radius
+            along = cap_arc + progress * h
+        else
+            progress = (0.0 + (iy - caps - middle)) / (0.0 + caps)
+            angle = (progress * pi) / 2.0
+            profile_y = half + radius * sin[angle]
+            profile_r = radius * cos[angle]
+            normal_y = radius * sin[angle]
+            along = cap_arc + h + progress * cap_arc
+        v = max[0.0, min[1.0, along / total]]
+        shift = 0.0
+        if iy eq 0
+            shift = 0.5 / (0.0 + around)
+        else if iy eq rows
+            shift = -0.5 / (0.0 + around)
+        for ix in range[around + 1]
+            u = (0.0 + ix) / (0.0 + around)
+            theta = u * pi * 2.0
+            s = sin[theta]
+            co = cos[theta]
+            positions = _three_onto[positions, -profile_r * co, profile_y, profile_r * s]
+            n = _unit[-profile_r * co, normal_y, profile_r * s]
+            normals = _three_onto[normals, n[0], n[1], n[2]]
+            uvs = _two_onto[uvs, u + shift, v]
+        if iy gt 0
+            before = (iy - 1) * per_row
+            for ix in range[around]
+                i1 = before + ix
+                i2 = before + ix + 1
+                i3 = iy * per_row + ix
+                i4 = iy * per_row + ix + 1
+                indices = _indices_onto[indices, i1, i2, i3]
+                indices = _indices_onto[indices, i2, i4, i3]
+    Geometry[positions, normals, uvs, indices, []]
+
+--- a lathe: the points (x, y each) turned about the y axis in
+--- `segments`, from `phi_start` over `phi_length` (at most a turn)
+fn lathe[points, segments = 12, phi_start = 0.0, phi_length = 6.283185307179586]
+    profile = _floats[points]
+    n = len[profile] / 2
+    turn = max[0.0, min[6.283185307179586, phi_length]]
+    inverse = 1.0 / (0.0 + segments)
+    --- (each point's normal across the outline: the first and last from
+    --- their one edge, those between from the sum of their two)
+    sides = []
+    px = 0.0
+    py = 0.0
+    pz = 0.0
+    for j in range[n]
+        if j eq 0
+            dx = profile[2] - profile[0]
+            dy = profile[3] - profile[1]
+            px = dy * 1.0
+            py = -dx
+            pz = dy * 0.0
+            u = _unit[px, py, pz]
+            sides = _three_onto[sides, u[0], u[1], u[2]]
+        else if j eq n - 1
+            u = _unit[px, py, pz]
+            sides = _three_onto[sides, u[0], u[1], u[2]]
+        else
+            dx = profile[j * 2 + 2] - profile[j * 2]
+            dy = profile[j * 2 + 3] - profile[j * 2 + 1]
+            cx = dy * 1.0
+            cy = -dx
+            cz = dy * 0.0
+            u = _unit[cx + px, cy + py, cz + pz]
+            sides = _three_onto[sides, u[0], u[1], u[2]]
+            px = cx
+            py = cy
+            pz = cz
+    positions = []
+    normals = []
+    uvs = []
+    for i in range[segments + 1]
+        phi = phi_start + (0.0 + i) * inverse * turn
+        s = sin[phi]
+        co = cos[phi]
+        for j in range[n]
+            x = profile[j * 2]
+            positions = _three_onto[positions, x * s, profile[j * 2 + 1], x * co]
+            uvs = _two_onto[uvs, (0.0 + i) / (0.0 + segments), (0.0 + j) / (0.0 + (n - 1))]
+            normals = _three_onto[normals, sides[j * 3] * s, sides[j * 3 + 1], sides[j * 3] * co]
+    indices = []
+    for i in range[segments]
+        for j in range[n - 1]
+            a = j + i * n
+            b = a + n
+            c = a + n + 1
+            d = a + 1
+            indices = _indices_onto[indices, a, b, d]
+            indices = _indices_onto[indices, c, d, b]
+    Geometry[positions, normals, uvs, indices, []]
+
+--- ---- curves in space ----
+
+--- a curve in space: its form (`line`, `quadratic`, `cubic`, `spline` or
+--- `helix`), its points (three numbers each), whether a spline closes on
+--- itself, which spline it is (`centripetal`, `chordal` or `catmullrom`)
+--- and its tension, a helix's radius, height and turns, and how far along
+--- it each of 200 even steps of its own measure is
+struct Curve [form, points, closed, spline, tension, numbers, lengths]
+
+--- the straight line from one point to another
+fn line_curve[ax, ay, az, bx, by, bz]
+    points = _three_onto[_three_onto[[], 0.0 + ax, 0.0 + ay, 0.0 + az], 0.0 + bx, 0.0 + by, 0.0 + bz]
+    _measured[Curve['line', points, false, 'centripetal', 0.5, [], []]]
+
+--- a quadratic Bézier curve: from a point, drawn towards a second, to a third
+fn quadratic_curve[ax, ay, az, bx, by, bz, cx, cy, cz]
+    points = _three_onto[_three_onto[_three_onto[[], 0.0 + ax, 0.0 + ay, 0.0 + az], 0.0 + bx, 0.0 + by, 0.0 + bz], 0.0 + cx, 0.0 + cy, 0.0 + cz]
+    _measured[Curve['quadratic', points, false, 'centripetal', 0.5, [], []]]
+
+--- a cubic Bézier curve: from a point, drawn towards a second and a
+--- third, to a fourth
+fn cubic_curve[ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz]
+    points = _three_onto[_three_onto[_three_onto[_three_onto[[], 0.0 + ax, 0.0 + ay, 0.0 + az], 0.0 + bx, 0.0 + by, 0.0 + bz], 0.0 + cx, 0.0 + cy, 0.0 + cz], 0.0 + dx, 0.0 + dy, 0.0 + dz]
+    _measured[Curve['cubic', points, false, 'centripetal', 0.5, [], []]]
+
+--- a Catmull-Rom spline through the points (three numbers each),
+--- closed or not: `centripetal` (no cusps, no loops), `chordal`, or
+--- `catmullrom` with its tension
+fn spline_curve[points, closed = false, spline = 'centripetal', tension = 0.5]
+    _measured[Curve['spline', _floats[points], closed, spline, 0.0 + tension, [], []]]
+
+--- a helix about the y axis, `turns` times round, `height` tall from
+--- y = -height / 2
+fn helix_curve[radius = 1.0, height = 1.0, turns = 1.0]
+    numbers = _three_onto[[], 0.0 + radius, 0.0 + height, 0.0 + turns]
+    _measured[Curve['helix', [], false, 'centripetal', 0.5, numbers, []]]
+
+--- the curve with its lengths measured: the distance along it to each
+--- of 200 even steps of its own measure (three's arc lengths)
+fn _measured[curve]
+    lengths = push[[], 0.0]
+    last = point_on[curve, 0.0]
+    total = 0.0
+    for k in range[1, 201]
+        here = point_on[curve, (0.0 + k) / 200.0]
+        dx = here[0] - last[0]
+        dy = here[1] - last[1]
+        dz = here[2] - last[2]
+        total = total + sqrt[dx * dx + dy * dy + dz * dz]
+        lengths = push[lengths, total]
+        last = here
+    curve.lengths = lengths
+    curve
+
+--- how long the curve is (as its 200 steps measure it)
+fn curve_length[curve]
+    measured = curve.lengths
+    measured[len[measured] - 1]
+
+--- the point `t` of the way along the curve by its own measure (where
+--- its steps are not even): three numbers
+fn point_on[curve, t]
+    form = curve.form
+    points = curve.points
+    if form eq 'line'
+        if t eq 1.0
+            return [points[3], points[4], points[5]]
+        return [(points[3] - points[0]) * t + points[0], (points[4] - points[1]) * t + points[1], (points[5] - points[2]) * t + points[2]]
+    if form eq 'quadratic'
+        return [_quadratic[t, points[0], points[3], points[6]], _quadratic[t, points[1], points[4], points[7]], _quadratic[t, points[2], points[5], points[8]]]
+    if form eq 'cubic'
+        return [_cubic[t, points[0], points[3], points[6], points[9]], _cubic[t, points[1], points[4], points[7], points[10]], _cubic[t, points[2], points[5], points[8], points[11]]]
+    if form eq 'helix'
+        h = curve.numbers
+        angle = 2.0 * pi * h[2] * t
+        return [h[0] * cos[angle], h[1] * t - h[1] / 2.0, h[0] * sin[angle]]
+    _spline_point[points, curve.closed, curve.spline, curve.tension, t]
+
+--- one coordinate of a quadratic Bézier curve at `t`, as three weighs
+--- its three points
+fn _quadratic[t, a, b, c]
+    k = 1.0 - t
+    k * k * a + 2.0 * (1.0 - t) * t * b + t * t * c
+
+--- one coordinate of a cubic Bézier curve at `t`, as three weighs its
+--- four points
+fn _cubic[t, a, b, c, d]
+    k = 1.0 - t
+    k * k * k * a + 3.0 * k * k * t * b + 3.0 * (1.0 - t) * t * t * c + t * t * t * d
+
+--- a Catmull-Rom spline's point: the segment `t` falls in, between the
+--- points about it (an open spline's ends reflected past it)
+fn _spline_point[points, closed, spline, tension, t]
+    l = len[points] / 3
+    reach = l - 1
+    if closed
+        reach = l
+    p = (0.0 + reach) * t
+    whole = floor[p]
+    weight = p - whole
+    if closed
+        if not (whole gt 0)
+            whole = whole + (floor[(0.0 + abs[whole]) / (0.0 + l)] + 1) * l
+    else if weight eq 0.0 and whole eq l - 1
+        whole = l - 2
+        weight = 1.0
+    i1 = whole % l
+    i2 = (whole + 1) % l
+    x0 = 0.0
+    y0 = 0.0
+    z0 = 0.0
+    if closed or whole gt 0
+        i0 = (whole - 1) % l
+        x0 = points[i0 * 3]
+        y0 = points[i0 * 3 + 1]
+        z0 = points[i0 * 3 + 2]
+    else
+        x0 = points[0] - points[3] + points[0]
+        y0 = points[1] - points[4] + points[1]
+        z0 = points[2] - points[5] + points[2]
+    x3 = 0.0
+    y3 = 0.0
+    z3 = 0.0
+    if closed or whole + 2 lt l
+        i3 = (whole + 2) % l
+        x3 = points[i3 * 3]
+        y3 = points[i3 * 3 + 1]
+        z3 = points[i3 * 3 + 2]
+    else
+        e1 = (l - 1) * 3
+        e2 = (l - 2) * 3
+        x3 = points[e1] - points[e2] + points[e1]
+        y3 = points[e1 + 1] - points[e2 + 1] + points[e1 + 1]
+        z3 = points[e1 + 2] - points[e2 + 2] + points[e1 + 2]
+    x1 = points[i1 * 3]
+    y1 = points[i1 * 3 + 1]
+    z1 = points[i1 * 3 + 2]
+    x2 = points[i2 * 3]
+    y2 = points[i2 * 3 + 1]
+    z2 = points[i2 * 3 + 2]
+    if spline eq 'catmullrom'
+        return [_even_cubic[x0, x1, x2, x3, tension, weight], _even_cubic[y0, y1, y2, y3, tension, weight], _even_cubic[z0, z1, z2, z3, tension, weight]]
+    power = 0.25
+    if spline eq 'chordal'
+        power = 0.5
+    dt0 = _apart[x0, y0, z0, x1, y1, z1] ^ power
+    dt1 = _apart[x1, y1, z1, x2, y2, z2] ^ power
+    dt2 = _apart[x2, y2, z2, x3, y3, z3] ^ power
+    --- (points on top of each other would divide by nothing)
+    if dt1 lt 0.0001
+        dt1 = 1.0
+    if dt0 lt 0.0001
+        dt0 = dt1
+    if dt2 lt 0.0001
+        dt2 = dt1
+    [_uneven_cubic[x0, x1, x2, x3, dt0, dt1, dt2, weight], _uneven_cubic[y0, y1, y2, y3, dt0, dt1, dt2, weight], _uneven_cubic[z0, z1, z2, z3, dt0, dt1, dt2, weight]]
+
+--- the square of the distance between two points
+fn _apart[ax, ay, az, bx, by, bz]
+    dx = ax - bx
+    dy = ay - by
+    dz = az - bz
+    dx * dx + dy * dy + dz * dz
+
+--- the cubic from x0 to x1 leaving with slope t0 and arriving with t1, at w
+fn _hermite[x0, x1, t0, t1, w]
+    c2 = -3.0 * x0 + 3.0 * x1 - 2.0 * t0 - t1
+    c3 = 2.0 * x0 - 2.0 * x1 + t0 + t1
+    w2 = w * w
+    w3 = w2 * w
+    x0 + t0 * w + c2 * w2 + c3 * w3
+
+--- one coordinate of a Catmull-Rom segment from x1 to x2 at `w`, its
+--- slopes the tension times the chords about it
+fn _even_cubic[x0, x1, x2, x3, tension, w]
+    _hermite[x1, x2, tension * (x2 - x0), tension * (x3 - x1), w]
+
+--- one coordinate of a centripetal or chordal segment from x1 to x2 at
+--- `w`, its slopes weighed by how far apart its four points are
+fn _uneven_cubic[x0, x1, x2, x3, dt0, dt1, dt2, w]
+    t1 = (x1 - x0) / dt0 - (x2 - x0) / (dt0 + dt1) + (x2 - x1) / dt1
+    t2 = (x2 - x1) / dt1 - (x3 - x1) / (dt1 + dt2) + (x3 - x2) / dt2
+    _hermite[x1, x2, t1 * dt1, t2 * dt1, w]
+
+--- of a curve's lengths, the measure at which `u` of its whole length
+--- is reached (three's getUtoTmapping: a search, then a straight line
+--- between the two steps about it)
+fn _measure_at[lengths, u]
+    count = len[lengths]
+    target = u * lengths[count - 1]
+    low = 0
+    high = count - 1
+    while low lte high
+        i = low + (high - low) / 2
+        gap = lengths[i] - target
+        if gap lt 0.0
+            low = i + 1
+        else if gap gt 0.0
+            high = i - 1
+        else
+            high = i
+            break
+    i = high
+    if lengths[i] eq target
+        return (0.0 + i) / (0.0 + (count - 1))
+    before = lengths[i]
+    segment = lengths[i + 1] - before
+    ((0.0 + i) + (target - before) / segment) / (0.0 + (count - 1))
+
+--- the point `u` of the way along the curve by its length: three numbers
+fn point_at[curve, u]
+    if curve.form eq 'line'
+        return point_on[curve, u]
+    point_on[curve, _measure_at[curve.lengths, u]]
+
+--- the way the curve goes at `u` of its length (a unit direction): a
+--- line's own way, another's from two points a ten-thousandth either side
+fn tangent_at[curve, u]
+    if curve.form eq 'line'
+        points = curve.points
+        return _unit[points[3] - points[0], points[4] - points[1], points[5] - points[2]]
+    t = _measure_at[curve.lengths, u]
+    t1 = max[0.0, t - 0.0001]
+    t2 = min[1.0, t + 0.0001]
+    a = point_on[curve, t1]
+    b = point_on[curve, t2]
+    _unit[b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+
+--- a curve's frames at even steps along it (three numbers a step): the
+--- way it goes there, and a normal and a binormal across it
+struct Frames [tangents, normals, binormals]
+
+--- the curve's frames at `segments` + 1 even steps along it by length,
+--- each normal turned from the last no more than the curve turns (three's
+--- Frenet frames) — and, closed, twisted evenly so the last meets the first
+fn frenet_frames[curve, segments, closed = false]
+    tangents = []
+    for i in range[segments + 1]
+        t = tangent_at[curve, (0.0 + i) / (0.0 + segments)]
+        tangents = _three_onto[tangents, t[0], t[1], t[2]]
+    --- (the first normal: across the tangent, from the axis it leans on least)
+    tx = abs[tangents[0]]
+    ty = abs[tangents[1]]
+    tz = abs[tangents[2]]
+    least = 1.0 / 0.0
+    ax = 0.0
+    ay = 0.0
+    az = 0.0
+    if tx lte least
+        least = tx
+        ax = 1.0
+    if ty lte least
+        least = ty
+        ax = 0.0
+        ay = 1.0
+    if tz lte least
+        ax = 0.0
+        ay = 0.0
+        az = 1.0
+    w = _cross[tangents[0], tangents[1], tangents[2], ax, ay, az]
+    w = _unit[w[0], w[1], w[2]]
+    n = _cross[tangents[0], tangents[1], tangents[2], w[0], w[1], w[2]]
+    b = _cross[tangents[0], tangents[1], tangents[2], n[0], n[1], n[2]]
+    normals = _three_onto[[], n[0], n[1], n[2]]
+    binormals = _three_onto[[], b[0], b[1], b[2]]
+    nx = n[0]
+    ny = n[1]
+    nz = n[2]
+    for i in range[1, segments + 1]
+        k = i * 3
+        px = tangents[k - 3]
+        py = tangents[k - 2]
+        pz = tangents[k - 1]
+        cx = tangents[k]
+        cy = tangents[k + 1]
+        cz = tangents[k + 2]
+        axis = _cross[px, py, pz, cx, cy, cz]
+        if sqrt[axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]] gt _epsilon[]
+            axis = _unit[axis[0], axis[1], axis[2]]
+            theta = acos[max[-1.0, min[1.0, px * cx + py * cy + pz * cz]]]
+            m = _turned[nx, ny, nz, axis[0], axis[1], axis[2], theta]
+            nx = m[0]
+            ny = m[1]
+            nz = m[2]
+        normals = _three_onto[normals, nx, ny, nz]
+        binormal = _cross[cx, cy, cz, nx, ny, nz]
+        binormals = _three_onto[binormals, binormal[0], binormal[1], binormal[2]]
+    if closed
+        last = segments * 3
+        theta = acos[max[-1.0, min[1.0, normals[0] * normals[last] + normals[1] * normals[last + 1] + normals[2] * normals[last + 2]]]]
+        theta = theta / (0.0 + segments)
+        twist = _cross[normals[0], normals[1], normals[2], normals[last], normals[last + 1], normals[last + 2]]
+        if tangents[0] * twist[0] + tangents[1] * twist[1] + tangents[2] * twist[2] gt 0.0
+            theta = -theta
+        for i in range[1, segments + 1]
+            k = i * 3
+            m = _turned[normals[k], normals[k + 1], normals[k + 2], tangents[k], tangents[k + 1], tangents[k + 2], theta * (0.0 + i)]
+            normals[k] = m[0]
+            normals[k + 1] = m[1]
+            normals[k + 2] = m[2]
+            binormal = _cross[tangents[k], tangents[k + 1], tangents[k + 2], m[0], m[1], m[2]]
+            binormals[k] = binormal[0]
+            binormals[k + 1] = binormal[1]
+            binormals[k + 2] = binormal[2]
+    Frames[tangents, normals, binormals]
+
+--- a tube along a curve: `tubular_segments` along it, `radial_segments`
+--- about it, each ring about the curve's frame there; closed, its last
+--- ring is its first
+fn tube[curve, tubular_segments = 64, radius = 1.0, radial_segments = 8, closed = false]
+    along = tubular_segments
+    around = radial_segments
+    framed = frenet_frames[curve, along, closed]
+    across = framed.normals
+    beside = framed.binormals
+    positions = []
+    normals = []
+    for i in range[along + 1]
+        which = i
+        if i eq along and closed
+            which = 0
+        here = point_at[curve, (0.0 + which) / (0.0 + along)]
+        k = which * 3
+        for j in range[around + 1]
+            v = (0.0 + j) / (0.0 + around) * pi * 2.0
+            s = sin[v]
+            co = -cos[v]
+            n = _unit[co * across[k] + s * beside[k], co * across[k + 1] + s * beside[k + 1], co * across[k + 2] + s * beside[k + 2]]
+            normals = _three_onto[normals, n[0], n[1], n[2]]
+            positions = _three_onto[positions, here[0] + radius * n[0], here[1] + radius * n[1], here[2] + radius * n[2]]
+    uvs = []
+    for i in range[along + 1]
+        for j in range[around + 1]
+            uvs = _two_onto[uvs, (0.0 + i) / (0.0 + along), (0.0 + j) / (0.0 + around)]
+    indices = []
+    for j in range[1, along + 1]
+        for i in range[1, around + 1]
+            a = (around + 1) * (j - 1) + (i - 1)
+            b = (around + 1) * j + (i - 1)
+            c = (around + 1) * j + i
+            d = (around + 1) * (j - 1) + i
+            indices = _indices_onto[indices, a, b, d]
+            indices = _indices_onto[indices, b, c, d]
+    Geometry[positions, normals, uvs, indices, []]
+
+--- ---- paths in the plane ----
+
+--- a piece of a path: its form (`line`, `quadratic`, `cubic`, `spline`
+--- or `ellipse`) and its numbers — a line's, a curve's and a spline's
+--- points (two numbers each, from where it begins), or an ellipse's
+--- centre, radii, angles, whether it turns clockwise (1) and its rotation
+struct Piece [form, numbers]
+
+--- a path in the plane: its pieces, and the point it has reached
+struct Path [pieces, x, y]
+
+--- a shape's outline: its path, and the paths of its holes
+struct Outline [path, holes]
+
+--- a path begun at a point
+fn path_from[x = 0.0, y = 0.0]
+    Path[[], 0.0 + x, 0.0 + y]
+
+--- a path through the points (x, y each): to the first, then a line to
+--- each of the rest
+fn path_through[points]
+    numbers = _floats[points]
+    p = path_from[numbers[0], numbers[1]]
+    i = 2
+    while i + 1 lt len[numbers]
+        p = line_to[p, numbers[i], numbers[i + 1]]
+        i = i + 2
+    p
+
+--- the path moved on to a point without drawing
+fn move_to[p, x, y]
+    p.x = 0.0 + x
+    p.y = 0.0 + y
+    p
+
+--- a line from where the path is to the point
+fn line_to[p, x, y]
+    p.pieces = push[p.pieces, Piece['line', _two_onto[_two_onto[[], p.x, p.y], 0.0 + x, 0.0 + y]]]
+    p.x = 0.0 + x
+    p.y = 0.0 + y
+    p
+
+--- a quadratic curve drawn towards (cx, cy), to (x, y)
+fn quadratic_to[p, cx, cy, x, y]
+    numbers = _two_onto[_two_onto[_two_onto[[], p.x, p.y], 0.0 + cx, 0.0 + cy], 0.0 + x, 0.0 + y]
+    p.pieces = push[p.pieces, Piece['quadratic', numbers]]
+    p.x = 0.0 + x
+    p.y = 0.0 + y
+    p
+
+--- a cubic curve drawn towards (ax, ay) and (bx, by), to (x, y)
+fn cubic_to[p, ax, ay, bx, by, x, y]
+    numbers = _two_onto[_two_onto[_two_onto[_two_onto[[], p.x, p.y], 0.0 + ax, 0.0 + ay], 0.0 + bx, 0.0 + by], 0.0 + x, 0.0 + y]
+    p.pieces = push[p.pieces, Piece['cubic', numbers]]
+    p.x = 0.0 + x
+    p.y = 0.0 + y
+    p
+
+--- a spline through the points (x, y each) from where the path is
+fn spline_to[p, points]
+    numbers = _floats[points]
+    p.pieces = push[p.pieces, Piece['spline', concat[_two_onto[[], p.x, p.y], numbers]]]
+    p.x = numbers[len[numbers] - 2]
+    p.y = numbers[len[numbers] - 1]
+    p
+
+--- an arc about a centre given from where the path is
+fn arc[p, x, y, radius, start_angle, end_angle, clockwise = false]
+    absolute_arc[p, x + p.x, y + p.y, radius, start_angle, end_angle, clockwise]
+
+--- an arc about a centre
+fn absolute_arc[p, x, y, radius, start_angle, end_angle, clockwise = false]
+    absolute_ellipse[p, x, y, radius, radius, start_angle, end_angle, clockwise, 0.0]
+
+--- an ellipse's arc about a centre given from where the path is
+fn ellipse[p, x, y, x_radius, y_radius, start_angle, end_angle, clockwise = false, rotation = 0.0]
+    absolute_ellipse[p, x + p.x, y + p.y, x_radius, y_radius, start_angle, end_angle, clockwise, rotation]
+
+--- an ellipse's arc about a centre, from one angle to another (clockwise
+--- or not), the ellipse turned by `rotation`; a path already drawing is
+--- joined to its start by a line
+fn absolute_ellipse[p, x, y, x_radius, y_radius, start_angle, end_angle, clockwise = false, rotation = 0.0]
+    turning = 0.0
+    if clockwise
+        turning = 1.0
+    numbers = _two_onto[_two_onto[_two_onto[_two_onto[[], 0.0 + x, 0.0 + y], 0.0 + x_radius, 0.0 + y_radius], 0.0 + start_angle, 0.0 + end_angle], turning, 0.0 + rotation]
+    if len[p.pieces] gt 0
+        begins = _ellipse_point[numbers, 0.0]
+        if begins[0] ne p.x or begins[1] ne p.y
+            p = line_to[p, begins[0], begins[1]]
+    p.pieces = push[p.pieces, Piece['ellipse', numbers]]
+    finish_point = _ellipse_point[numbers, 1.0]
+    p.x = finish_point[0]
+    p.y = finish_point[1]
+    p
+
+--- an outline of a path, with no holes yet
+fn outline[p]
+    Outline[p, []]
+
+--- the outline with a hole of the path's shape
+fn holed[o, p]
+    o.holes = push[o.holes, p]
+    o
+
+--- a piece's point at `t` along it: two numbers
+fn _piece_point[form, numbers, t]
+    if form eq 'line'
+        if t eq 1.0
+            return [numbers[2], numbers[3]]
+        return [(numbers[2] - numbers[0]) * t + numbers[0], (numbers[3] - numbers[1]) * t + numbers[1]]
+    if form eq 'quadratic'
+        return [_quadratic[t, numbers[0], numbers[2], numbers[4]], _quadratic[t, numbers[1], numbers[3], numbers[5]]]
+    if form eq 'cubic'
+        return [_cubic[t, numbers[0], numbers[2], numbers[4], numbers[6]], _cubic[t, numbers[1], numbers[3], numbers[5], numbers[7]]]
+    if form eq 'spline'
+        return _spline_point_2d[numbers, t]
+    _ellipse_point[numbers, t]
+
+--- a spline in the plane through its points (the ends their own
+--- neighbours), at `t`
+fn _spline_point_2d[numbers, t]
+    n = len[numbers] / 2
+    p = (0.0 + (n - 1)) * t
+    whole = floor[p]
+    weight = p - whole
+    i0 = whole - 1
+    if whole eq 0
+        i0 = whole
+    i2 = whole + 1
+    if whole gt n - 2
+        i2 = n - 1
+    i3 = whole + 2
+    if whole gt n - 3
+        i3 = n - 1
+    [_catmull_rom[weight, numbers[i0 * 2], numbers[whole * 2], numbers[i2 * 2], numbers[i3 * 2]], _catmull_rom[weight, numbers[i0 * 2 + 1], numbers[whole * 2 + 1], numbers[i2 * 2 + 1], numbers[i3 * 2 + 1]]]
+
+--- one coordinate of a plane spline's segment from p1 to p2 at `t`
+fn _catmull_rom[t, p0, p1, p2, p3]
+    v0 = (p2 - p0) * 0.5
+    v1 = (p3 - p1) * 0.5
+    t2 = t * t
+    t3 = t * t2
+    (2.0 * p1 - 2.0 * p2 + v0 + v1) * t3 + (-3.0 * p1 + 3.0 * p2 - 2.0 * v0 - v1) * t2 + v0 * t + p1
+
+--- an ellipse's point at `t` of the way from its start angle to its end
+fn _ellipse_point[numbers, t]
+    two_pi = pi * 2.0
+    delta = numbers[5] - numbers[4]
+    unmoved = abs[delta] lt _epsilon[]
+    while delta lt 0.0
+        delta = delta + two_pi
+    while delta gt two_pi
+        delta = delta - two_pi
+    if delta lt _epsilon[]
+        if unmoved
+            delta = 0.0
+        else
+            delta = two_pi
+    if numbers[6] gt 0.5 and not unmoved
+        if delta eq two_pi
+            delta = -two_pi
+        else
+            delta = delta - two_pi
+    angle = numbers[4] + t * delta
+    x = numbers[0] + numbers[2] * cos[angle]
+    y = numbers[1] + numbers[3] * sin[angle]
+    if numbers[7] ne 0.0
+        co = cos[numbers[7]]
+        s = sin[numbers[7]]
+        tx = x - numbers[0]
+        ty = y - numbers[1]
+        x = tx * co - ty * s + numbers[0]
+        y = tx * s + ty * co + numbers[1]
+    [x, y]
+
+--- the path's points (x, y each): each piece at even steps — a line its
+--- two ends, an ellipse twice `divisions`, a spline `divisions` a point —
+--- a point the same as the one before it left out
+fn path_points[p, divisions = 12]
+    out = []
+    seen = false
+    lx = 0.0
+    ly = 0.0
+    for piece in p.pieces
+        steps = divisions
+        if piece.form eq 'ellipse'
+            steps = divisions * 2
+        else if piece.form eq 'line'
+            steps = 1
+        else if piece.form eq 'spline'
+            steps = divisions * (len[piece.numbers] / 2)
+        for d in range[steps + 1]
+            pt = _piece_point[piece.form, piece.numbers, (0.0 + d) / (0.0 + steps)]
+            if not (seen and pt[0] eq lx and pt[1] eq ly)
+                out = _two_onto[out, pt[0], pt[1]]
+                lx = pt[0]
+                ly = pt[1]
+                seen = true
+    out
+
+--- the area points (x, y each) go round, less than 0 where they go
+--- clockwise
+fn _area_of[xy]
+    n = len[xy] / 2
+    a = 0.0
+    p = n - 1
+    q = 0
+    while q lt n
+        a = a + (xy[p * 2] * xy[q * 2 + 1] - xy[q * 2] * xy[p * 2 + 1])
+        p = q
+        q = q + 1
+    a * 0.5
+
+--- whether points (x, y each) go round clockwise
+fn _clockwise[xy]
+    _area_of[xy] lt 0.0
+
+--- the points the other way round
+fn _reversed_points[xy]
+    out = []
+    i = len[xy] / 2 - 1
+    while i gte 0
+        out = _two_onto[out, xy[i * 2], xy[i * 2 + 1]]
+        i = i - 1
+    out
+
+--- the points without a last one that closes them on the first
+fn _trimmed[xy]
+    n = len[xy] / 2
+    if n gt 2 and xy[n * 2 - 2] eq xy[0] and xy[n * 2 - 1] eq xy[1]
+        return slice[xy, 0, n * 2 - 2]
+    xy
+
+--- ---- shapes ----
+
+--- an outline's shape, flat at z = 0 and facing +z, cut into triangles;
+--- its curves drawn in `curve_segments` (an ellipse in twice as many)
+fn shape[o, curve_segments = 12]
+    _shaped_into[_empty[], o, curve_segments]
+
+--- several outlines' shapes as one geometry, a group each
+fn shapes[outlines, curve_segments = 12]
+    g = _empty[]
+    for i in range[len[outlines]]
+        begun = len[g.indices]
+        g = _shaped_into[g, outlines[i], curve_segments]
+        g.groups = _indices_onto[g.groups, begun, len[g.indices] - begun, i]
+    g
+
+--- the geometry with an outline's shape added to it: its outline and
+--- holes made to go the ways three's are, each without a last point on
+--- its first, cut into triangles
+fn _shaped_into[g, o, curve_segments]
+    base = len[g.positions] / 3
+    outer = path_points[o.path, curve_segments]
+    holes = []
+    for h in o.holes
+        holes = push[holes, path_points[h, curve_segments]]
+    --- (the outline goes clockwise and its holes the other way)
+    if not _clockwise[outer]
+        outer = _reversed_points[outer]
+    hole_list = []
+    for h in holes
+        if _clockwise[h]
+            hole_list = push[hole_list, _trimmed[_reversed_points[h]]]
+        else
+            hole_list = push[hole_list, _trimmed[h]]
+    outer = _trimmed[outer]
+    triangles = _cut[outer, hole_list]
+    every = outer
+    for h in hole_list
+        every = concat[every, h]
+    positions = g.positions
+    normals = g.normals
+    uvs = g.uvs
+    for i in range[len[every] / 2]
+        x = every[i * 2]
+        y = every[i * 2 + 1]
+        positions = _three_onto[positions, x, y, 0.0]
+        normals = _three_onto[normals, 0.0, 0.0, 1.0]
+        uvs = _two_onto[uvs, x, y]
+    indices = g.indices
+    for k in triangles
+        indices = push[indices, k + base]
+    g.positions = positions
+    g.normals = normals
+    g.uvs = uvs
+    g.indices = indices
+    g
+
+--- ---- cutting an outline into triangles (earcut) ----
+
+--- earcut's working state: its rings of nodes, four numbers a node — the
+--- node before it and after it about its ring, its vertex, and whether
+--- it is a Steiner point (1: a hole of one point) — the triangles cut so
+--- far (three vertices each), and the node a step answered
+struct Ears [nodes, triangles, got]
+
+--- the outline (x, y each) with its holes after it (each hole's first
+--- vertex in `hole_at`) cut into triangles: three vertices each, as
+--- earcut cuts them — ears cut off its rings in turn, each hole bridged
+--- into the outline first, the leftmost first
+fn _cut[outer, hole_list]
+    xy = outer
+    hole_at = []
+    at = len[outer] / 2
+    for h in hole_list
+        hole_at = push[hole_at, at]
+        at = at + len[h] / 2
+        xy = concat[xy, h]
+    _earcut[xy, hole_at]
+
+--- the triangles of points (x, y each), the outline's first and its
+--- holes' after it
+fn _earcut[xy, hole_at]
+    ears = Ears[[], [], -1]
+    outer_end = len[xy]
+    if len[hole_at] gt 0
+        outer_end = hole_at[0] * 2
+    ears = _linked[ears, xy, 0, outer_end, true]
+    outer = ears.got
+    if outer lt 0
+        return ears.triangles
+    nodes = ears.nodes
+    if nodes[outer * 4 + 1] eq nodes[outer * 4]
+        return ears.triangles
+    if len[hole_at] gt 0
+        ears = _bridged[ears, xy, hole_at, outer]
+        outer = ears.got
+    ears = _cut_ears[ears, xy, outer, 0]
+    ears.triangles
+
+--- where a node is across
+fn _x_of[xy, nodes, p]
+    xy[nodes[p * 4 + 2] * 2]
+
+--- where a node is up
+fn _y_of[xy, nodes, p]
+    xy[nodes[p * 4 + 2] * 2 + 1]
+
+--- which way three nodes turn: less than 0 one way, more the other
+fn _turn[xy, nodes, p, q, r]
+    px = _x_of[xy, nodes, p]
+    py = _y_of[xy, nodes, p]
+    qx = _x_of[xy, nodes, q]
+    qy = _y_of[xy, nodes, q]
+    rx = _x_of[xy, nodes, r]
+    ry = _y_of[xy, nodes, r]
+    (qy - py) * (rx - qx) - (qx - px) * (ry - qy)
+
+--- whether two nodes are at the same point
+fn _same_place[xy, nodes, a, b]
+    _x_of[xy, nodes, a] eq _x_of[xy, nodes, b] and _y_of[xy, nodes, a] eq _y_of[xy, nodes, b]
+
+--- a node of a vertex put into a ring after `last` (or a ring of its own)
+fn _inserted[nodes, vertex, last]
+    p = len[nodes] / 4
+    nodes = push[push[push[push[nodes, p], p], vertex], 0]
+    if last gte 0
+        ahead = nodes[last * 4 + 1]
+        nodes[p * 4 + 1] = ahead
+        nodes[p * 4] = last
+        nodes[ahead * 4] = p
+        nodes[last * 4 + 1] = p
+    nodes
+
+--- the node taken out of its ring (its own links left as they were)
+fn _removed[nodes, p]
+    behind = nodes[p * 4]
+    ahead = nodes[p * 4 + 1]
+    nodes[ahead * 4] = behind
+    nodes[behind * 4 + 1] = ahead
+    nodes
+
+--- twice the area the points from `begin` to `finish` go round
+fn _signed_area[xy, begin, finish]
+    total = 0.0
+    j = finish - 2
+    i = begin
+    while i lt finish
+        total = total + (xy[j] - xy[i]) * (xy[i + 1] + xy[j + 1])
+        j = i
+        i = i + 2
+    total
+
+--- a ring of the points from `begin` to `finish` (numbers, two a point),
+--- going the way asked; a last node on its first left out
+fn _linked[ears, xy, begin, finish, clockwise]
+    nodes = ears.nodes
+    last = -1
+    if clockwise eq (_signed_area[xy, begin, finish] gt 0.0)
+        i = begin
+        while i lt finish
+            nodes = _inserted[nodes, i / 2, last]
+            last = len[nodes] / 4 - 1
+            i = i + 2
+    else
+        i = finish - 2
+        while i gte begin
+            nodes = _inserted[nodes, i / 2, last]
+            last = len[nodes] / 4 - 1
+            i = i - 2
+    if last gte 0 and _same_place[xy, nodes, last, nodes[last * 4 + 1]]
+        nodes = _removed[nodes, last]
+        last = nodes[last * 4 + 1]
+    ears.nodes = nodes
+    ears.got = last
+    ears
+
+--- the ring from `begin` with the nodes on top of the next and those in a
+--- straight line with their neighbours taken out (`finish`: where to stop
+--- looking, -1 for `begin`); it answers a node still in the ring
+fn _filtered[ears, xy, begin, finish]
+    if begin lt 0
+        ears.got = begin
+        return ears
+    stop = finish
+    if stop lt 0
+        stop = begin
+    nodes = ears.nodes
+    p = begin
+    while true
+        again = false
+        ahead = nodes[p * 4 + 1]
+        if nodes[p * 4 + 3] eq 0 and (_same_place[xy, nodes, p, ahead] or _turn[xy, nodes, nodes[p * 4], p, ahead] eq 0.0)
+            nodes = _removed[nodes, p]
+            p = nodes[p * 4]
+            stop = p
+            if p eq nodes[p * 4 + 1]
+                break
+            again = true
+        else
+            p = ahead
+        if not (again or p ne stop)
+            break
+    ears.nodes = nodes
+    ears.got = stop
+    ears
+
+--- ears cut off the ring from `start_ear` while there are any; where none
+--- is left, the ring is cleaned and tried again (pass 1), its small
+--- crossings cured (pass 2), and at last split in two
+fn _cut_ears[ears, xy, start_ear, pass]
+    if start_ear lt 0
+        return ears
+    ear = start_ear
+    stop = ear
+    nodes = ears.nodes
+    triangles = ears.triangles
+    while nodes[ear * 4] ne nodes[ear * 4 + 1]
+        behind = nodes[ear * 4]
+        ahead = nodes[ear * 4 + 1]
+        if _is_ear[xy, nodes, ear]
+            triangles = _indices_onto[triangles, nodes[behind * 4 + 2], nodes[ear * 4 + 2], nodes[ahead * 4 + 2]]
+            nodes = _removed[nodes, ear]
+            ear = nodes[ahead * 4 + 1]
+            stop = ear
+        else
+            ear = ahead
+            if ear eq stop
+                ears.nodes = nodes
+                ears.triangles = triangles
+                if pass eq 0
+                    ears = _filtered[ears, xy, ear, -1]
+                    return _cut_ears[ears, xy, ears.got, 1]
+                if pass eq 1
+                    ears = _filtered[ears, xy, ear, -1]
+                    ears = _cured[ears, xy, ears.got]
+                    return _cut_ears[ears, xy, ears.got, 2]
+                return _split_cut[ears, xy, ear]
+    ears.nodes = nodes
+    ears.triangles = triangles
+    ears
+
+--- whether the node is an ear: a corner turning the ring's way with no
+--- other corner inside it
+fn _is_ear[xy, nodes, ear]
+    a = nodes[ear * 4]
+    c = nodes[ear * 4 + 1]
+    if _turn[xy, nodes, a, ear, c] gte 0.0
+        return false
+    ax = _x_of[xy, nodes, a]
+    ay = _y_of[xy, nodes, a]
+    bx = _x_of[xy, nodes, ear]
+    by = _y_of[xy, nodes, ear]
+    cx = _x_of[xy, nodes, c]
+    cy = _y_of[xy, nodes, c]
+    x0 = min[ax, min[bx, cx]]
+    y0 = min[ay, min[by, cy]]
+    x1 = max[ax, max[bx, cx]]
+    y1 = max[ay, max[by, cy]]
+    p = nodes[c * 4 + 1]
+    while p ne a
+        px = _x_of[xy, nodes, p]
+        py = _y_of[xy, nodes, p]
+        if px gte x0 and px lte x1 and py gte y0 and py lte y1
+            if _inside_but_first[ax, ay, bx, by, cx, cy, px, py] and _turn[xy, nodes, nodes[p * 4], p, nodes[p * 4 + 1]] gte 0.0
+                return false
+        p = nodes[p * 4 + 1]
+    true
+
+--- whether a point is inside the triangle a, b, c (or on its edge)
+fn _inside_triangle[ax, ay, bx, by, cx, cy, px, py]
+    (cx - px) * (ay - py) gte (ax - px) * (cy - py) and (ax - px) * (by - py) gte (bx - px) * (ay - py) and (bx - px) * (cy - py) gte (cx - px) * (by - py)
+
+--- whether a point other than the triangle's first corner is inside it
+fn _inside_but_first[ax, ay, bx, by, cx, cy, px, py]
+    not (ax eq px and ay eq py) and _inside_triangle[ax, ay, bx, by, cx, cy, px, py]
+
+--- the ring's small crossings (two edges a node apart that cross) cut
+--- off as triangles
+fn _cured[ears, xy, begin]
+    nodes = ears.nodes
+    triangles = ears.triangles
+    first = begin
+    p = begin
+    while true
+        a = nodes[p * 4]
+        ahead = nodes[p * 4 + 1]
+        b = nodes[ahead * 4 + 1]
+        if not _same_place[xy, nodes, a, b]
+            if _crosses[xy, nodes, a, p, ahead, b] and _locally_inside[xy, nodes, a, b] and _locally_inside[xy, nodes, b, a]
+                triangles = _indices_onto[triangles, nodes[a * 4 + 2], nodes[p * 4 + 2], nodes[b * 4 + 2]]
+                nodes = _removed[nodes, p]
+                nodes = _removed[nodes, ahead]
+                p = b
+                first = b
+        p = nodes[p * 4 + 1]
+        if p eq first
+            break
+    ears.nodes = nodes
+    ears.triangles = triangles
+    _filtered[ears, xy, p, -1]
+
+--- the ring split in two along a diagonal inside it, each cut on its own
+fn _split_cut[ears, xy, begin]
+    nodes = ears.nodes
+    a = begin
+    while true
+        b = nodes[nodes[a * 4 + 1] * 4 + 1]
+        while b ne nodes[a * 4]
+            if nodes[a * 4 + 2] ne nodes[b * 4 + 2] and _valid_diagonal[xy, nodes, a, b]
+                ears = _split[ears, a, b]
+                c = ears.got
+                ears = _filtered[ears, xy, a, ears.nodes[a * 4 + 1]]
+                a2 = ears.got
+                ears = _filtered[ears, xy, c, ears.nodes[c * 4 + 1]]
+                c2 = ears.got
+                ears = _cut_ears[ears, xy, a2, 0]
+                return _cut_ears[ears, xy, c2, 0]
+            b = nodes[b * 4 + 1]
+        a = nodes[a * 4 + 1]
+        if a eq begin
+            break
+    ears
+
+--- the ring split by the diagonal from `a` to `b`: copies of the two
+--- nodes make the other ring; it answers `b`'s copy
+fn _split[ears, a, b]
+    nodes = ears.nodes
+    a2 = len[nodes] / 4
+    b2 = a2 + 1
+    nodes = push[push[push[push[nodes, -1], -1], nodes[a * 4 + 2]], 0]
+    nodes = push[push[push[push[nodes, -1], -1], nodes[b * 4 + 2]], 0]
+    after_a = nodes[a * 4 + 1]
+    before_b = nodes[b * 4]
+    nodes[a * 4 + 1] = b
+    nodes[b * 4] = a
+    nodes[a2 * 4 + 1] = after_a
+    nodes[after_a * 4] = a2
+    nodes[b2 * 4 + 1] = a2
+    nodes[a2 * 4] = b2
+    nodes[before_b * 4 + 1] = b2
+    nodes[b2 * 4] = before_b
+    ears.nodes = nodes
+    ears.got = b2
+    ears
+
+--- each hole made a ring and joined to the outline by a bridge, the
+--- holes taken by their leftmost points from the left
+fn _bridged[ears, xy, hole_at, outer]
+    queue = []
+    for i in range[len[hole_at]]
+        begin = hole_at[i] * 2
+        finish = len[xy]
+        if i lt len[hole_at] - 1
+            finish = hole_at[i + 1] * 2
+        ears = _linked[ears, xy, begin, finish, false]
+        held = ears.got
+        nodes = ears.nodes
+        if held eq nodes[held * 4 + 1]
+            nodes[held * 4 + 3] = 1
+            ears.nodes = nodes
+        queue = push[queue, _leftmost[xy, ears.nodes, held]]
+    queue = _in_order[xy, ears.nodes, queue]
+    node = outer
+    for hole in queue
+        ears = _hole_joined[ears, xy, hole, node]
+        node = ears.got
+    ears.got = node
+    ears
+
+--- the leftmost node of a ring (the lowest of those)
+fn _leftmost[xy, nodes, begin]
+    p = begin
+    best = begin
+    while true
+        px = _x_of[xy, nodes, p]
+        bx = _x_of[xy, nodes, best]
+        if px lt bx or (px eq bx and _y_of[xy, nodes, p] lt _y_of[xy, nodes, best])
+            best = p
+        p = nodes[p * 4 + 1]
+        if p eq begin
+            break
+    best
+
+--- the holes' leftmost nodes in order: by x, then y, then the slope of
+--- the edge leaving them (a stable sort, as JavaScript's is)
+fn _in_order[xy, nodes, queue]
+    out = []
+    for q in queue
+        k = len[out]
+        while k gt 0 and _before_in_order[xy, nodes, out[k - 1], q] gt 0.0
+            k = k - 1
+        out = concat[push[slice[out, 0, k], q], slice[out, k, len[out]]]
+    out
+
+--- how far `a` comes after `b` in the holes' order: by x, then by y,
+--- then by the slope of the edge leaving each (less than 0 for before)
+fn _before_in_order[xy, nodes, a, b]
+    result = _x_of[xy, nodes, a] - _x_of[xy, nodes, b]
+    if result eq 0.0
+        result = _y_of[xy, nodes, a] - _y_of[xy, nodes, b]
+        if result eq 0.0
+            an = nodes[a * 4 + 1]
+            bn = nodes[b * 4 + 1]
+            a_slope = (_y_of[xy, nodes, an] - _y_of[xy, nodes, a]) / (_x_of[xy, nodes, an] - _x_of[xy, nodes, a])
+            b_slope = (_y_of[xy, nodes, bn] - _y_of[xy, nodes, b]) / (_x_of[xy, nodes, bn] - _x_of[xy, nodes, b])
+            result = a_slope - b_slope
+    result
+
+--- a hole joined to the outline by a bridge to its leftmost node
+fn _hole_joined[ears, xy, hole, outer]
+    bridge = _bridge[xy, ears.nodes, hole, outer]
+    if bridge lt 0
+        ears.got = outer
+        return ears
+    ears = _split[ears, bridge, hole]
+    back = ears.got
+    ears = _filtered[ears, xy, back, ears.nodes[back * 4 + 1]]
+    _filtered[ears, xy, bridge, ears.nodes[bridge * 4 + 1]]
+
+--- the outline's node a hole's leftmost node can be bridged to: the
+--- nearest edge to its left along its line, then of the nodes in the
+--- triangle that edge's end makes with it, the one at the least angle
+fn _bridge[xy, nodes, hole, outer]
+    p = outer
+    hx = _x_of[xy, nodes, hole]
+    hy = _y_of[xy, nodes, hole]
+    qx = 0.0 - 1.0 / 0.0
+    m = -1
+    if _same_place[xy, nodes, hole, p]
+        return p
+    while true
+        ahead = nodes[p * 4 + 1]
+        if _same_place[xy, nodes, hole, ahead]
+            return ahead
+        px = _x_of[xy, nodes, p]
+        py = _y_of[xy, nodes, p]
+        nx = _x_of[xy, nodes, ahead]
+        ny = _y_of[xy, nodes, ahead]
+        if hy lte py and hy gte ny and ny ne py
+            x = px + (hy - py) * (nx - px) / (ny - py)
+            if x lte hx and x gt qx
+                qx = x
+                m = ahead
+                if px lt nx
+                    m = p
+                if x eq hx
+                    return m
+        p = ahead
+        if p eq outer
+            break
+    if m lt 0
+        return -1
+    stop = m
+    mx = _x_of[xy, nodes, m]
+    my = _y_of[xy, nodes, m]
+    least = 1.0 / 0.0
+    p = m
+    while true
+        px = _x_of[xy, nodes, p]
+        py = _y_of[xy, nodes, p]
+        ax = qx
+        cx = hx
+        if hy lt my
+            ax = hx
+            cx = qx
+        if hx gte px and px gte mx and hx ne px and _inside_triangle[ax, hy, mx, my, cx, hy, px, py]
+            steepness = abs[hy - py] / (hx - px)
+            if _locally_inside[xy, nodes, p, hole]
+                here = _x_of[xy, nodes, m]
+                if steepness lt least or (steepness eq least and (px gt here or (px eq here and _sector_holds[xy, nodes, m, p])))
+                    m = p
+                    least = steepness
+        p = nodes[p * 4 + 1]
+        if p eq stop
+            break
+    m
+
+--- whether `p` lies in the corner the outline makes at `m`
+fn _sector_holds[xy, nodes, m, p]
+    _turn[xy, nodes, nodes[m * 4], m, nodes[p * 4]] lt 0.0 and _turn[xy, nodes, nodes[p * 4 + 1], m, nodes[m * 4 + 1]] lt 0.0
+
+--- whether a diagonal from `a` to `b` is inside the ring and crosses none
+--- of its edges
+fn _valid_diagonal[xy, nodes, a, b]
+    vb = nodes[b * 4 + 2]
+    if nodes[nodes[a * 4 + 1] * 4 + 2] eq vb or nodes[nodes[a * 4] * 4 + 2] eq vb
+        return false
+    if _crosses_ring[xy, nodes, a, b]
+        return false
+    if _locally_inside[xy, nodes, a, b] and _locally_inside[xy, nodes, b, a] and _middle_inside[xy, nodes, a, b]
+        if _turn[xy, nodes, nodes[a * 4], a, nodes[b * 4]] ne 0.0 or _turn[xy, nodes, a, nodes[b * 4], b] ne 0.0
+            return true
+    _same_place[xy, nodes, a, b] and _turn[xy, nodes, nodes[a * 4], a, nodes[a * 4 + 1]] gt 0.0 and _turn[xy, nodes, nodes[b * 4], b, nodes[b * 4 + 1]] gt 0.0
+
+--- the sign of a number: 1, -1, or 0
+fn _sense[v]
+    if v gt 0.0
+        return 1
+    if v lt 0.0
+        return -1
+    0
+
+--- whether the segment p1-q1 crosses (or touches) p2-q2
+fn _crosses[xy, nodes, p1, q1, p2, q2]
+    o1 = _sense[_turn[xy, nodes, p1, q1, p2]]
+    o2 = _sense[_turn[xy, nodes, p1, q1, q2]]
+    o3 = _sense[_turn[xy, nodes, p2, q2, p1]]
+    o4 = _sense[_turn[xy, nodes, p2, q2, q1]]
+    if o1 ne o2 and o3 ne o4
+        return true
+    if o1 eq 0 and _on_segment[xy, nodes, p1, p2, q1]
+        return true
+    if o2 eq 0 and _on_segment[xy, nodes, p1, q2, q1]
+        return true
+    if o3 eq 0 and _on_segment[xy, nodes, p2, p1, q2]
+        return true
+    o4 eq 0 and _on_segment[xy, nodes, p2, q1, q2]
+
+--- whether q, in a line with p and r, lies between them
+fn _on_segment[xy, nodes, p, q, r]
+    px = _x_of[xy, nodes, p]
+    py = _y_of[xy, nodes, p]
+    qx = _x_of[xy, nodes, q]
+    qy = _y_of[xy, nodes, q]
+    rx = _x_of[xy, nodes, r]
+    ry = _y_of[xy, nodes, r]
+    qx lte max[px, rx] and qx gte min[px, rx] and qy lte max[py, ry] and qy gte min[py, ry]
+
+--- whether the segment a-b crosses an edge of the ring not at its ends
+fn _crosses_ring[xy, nodes, a, b]
+    a_vertex = nodes[a * 4 + 2]
+    b_vertex = nodes[b * 4 + 2]
+    p = a
+    while true
+        ahead = nodes[p * 4 + 1]
+        here_vertex = nodes[p * 4 + 2]
+        ahead_vertex = nodes[ahead * 4 + 2]
+        if here_vertex ne a_vertex and ahead_vertex ne a_vertex and here_vertex ne b_vertex and ahead_vertex ne b_vertex and _crosses[xy, nodes, p, ahead, a, b]
+            return true
+        p = ahead
+        if p eq a
+            break
+    false
+
+--- whether the diagonal from `a` to `b` leaves `a` inside the ring
+fn _locally_inside[xy, nodes, a, b]
+    behind = nodes[a * 4]
+    ahead = nodes[a * 4 + 1]
+    if _turn[xy, nodes, behind, a, ahead] lt 0.0
+        return _turn[xy, nodes, a, b, ahead] gte 0.0 and _turn[xy, nodes, a, behind, b] gte 0.0
+    _turn[xy, nodes, a, b, behind] lt 0.0 or _turn[xy, nodes, a, ahead, b] lt 0.0
+
+--- whether the middle of the diagonal from `a` to `b` is inside the ring
+fn _middle_inside[xy, nodes, a, b]
+    p = a
+    inside = false
+    mx = (_x_of[xy, nodes, a] + _x_of[xy, nodes, b]) / 2.0
+    my = (_y_of[xy, nodes, a] + _y_of[xy, nodes, b]) / 2.0
+    while true
+        ahead = nodes[p * 4 + 1]
+        px = _x_of[xy, nodes, p]
+        py = _y_of[xy, nodes, p]
+        nx = _x_of[xy, nodes, ahead]
+        ny = _y_of[xy, nodes, ahead]
+        if (py gt my) ne (ny gt my) and ny ne py
+            if mx lt (nx - px) * (my - py) / (ny - py) + px
+                inside = not inside
+        p = ahead
+        if p eq a
+            break
+    inside
+
+--- ---- extrusions ----
+
+--- an outline's shape stood out `depth` along z in `steps`, its edges
+--- bevelled (when `bevel`): `thickness` deep and `size` across, out by
+--- `offset`, in `bevel_segments`. Its faces (group 0) and sides (group
+--- 1) for each outline in turn; no indices, each face its own normal
+fn extrude[outlines, depth = 1.0, steps = 1, bevel = true, thickness = 0.2, size = 0.1, offset = 0.0, bevel_segments = 3, curve_segments = 12]
+    _extruded[outlines, depth, steps, bevel, thickness, size, offset, bevel_segments, curve_segments, line_curve[0.0, 0.0, 0.0, 0.0, 0.0, 1.0], false]
+
+--- outlines carried along a curve in `steps`, the shape across the
+--- curve's frames (x along its normal, y its binormal); no bevel
+fn extrude_along[outlines, curve, steps = 1, curve_segments = 12]
+    _extruded[outlines, 1.0, steps, false, 0.0, 0.0, 0.0, 0, curve_segments, curve, true]
+
+--- outlines extruded one after another into one geometry, its normals
+--- each face's own
+fn _extruded[outlines, depth, steps, bevel, thickness, size, offset, bevel_segments, curve_segments, curve, along]
+    g = _empty[]
+    for o in outlines
+        g = _extruded_into[g, o, depth, steps, bevel, thickness, size, offset, bevel_segments, curve_segments, curve, along]
+    g.normals = _flat_normals[g.positions]
+    g
+
+--- the way a corner moves as its edges are bevelled (three's getBevelVec):
+--- along the two edges' inward normals' meeting, at most √2 long
+fn _bevel_way[x, y, px, py, nx, ny]
+    tiny = _epsilon[]
+    prev_x = x - px
+    prev_y = y - py
+    next_x = nx - x
+    next_y = ny - y
+    prev_square = prev_x * prev_x + prev_y * prev_y
+    collinear = prev_x * next_y - prev_y * next_x
+    tx = 0.0
+    ty = 0.0
+    shrink = 1.0
+    if abs[collinear] gt tiny
+        prev_long = sqrt[prev_square]
+        next_long = sqrt[next_x * next_x + next_y * next_y]
+        prev_shift_x = px - prev_y / prev_long
+        prev_shift_y = py + prev_x / prev_long
+        next_shift_x = nx - next_y / next_long
+        next_shift_y = ny + next_x / next_long
+        along = ((next_shift_x - prev_shift_x) * next_y - (next_shift_y - prev_shift_y) * next_x) / (prev_x * next_y - prev_y * next_x)
+        tx = prev_shift_x + prev_x * along - x
+        ty = prev_shift_y + prev_y * along - y
+        square = tx * tx + ty * ty
+        if square lte 2.0
+            return [tx, ty]
+        shrink = sqrt[square / 2.0]
+    else
+        alike = false
+        if prev_x gt tiny
+            if next_x gt tiny
+                alike = true
+        else if prev_x lt -tiny
+            if next_x lt -tiny
+                alike = true
+        else if _sense[prev_y] eq _sense[next_y]
+            alike = true
+        if alike
+            tx = -prev_y
+            ty = prev_x
+            shrink = sqrt[prev_square]
+        else
+            tx = prev_x
+            ty = prev_y
+            shrink = sqrt[prev_square / 2.0]
+    [tx / shrink, ty / shrink]
+
+--- each point's bevel way about a closed ring of points
+fn _ways_of[points]
+    count = len[points] / 2
+    out = []
+    for i in range[count]
+        j = i - 1
+        if j lt 0
+            j = count - 1
+        k = i + 1
+        if k eq count
+            k = 0
+        w = _bevel_way[points[i * 2], points[i * 2 + 1], points[j * 2], points[j * 2 + 1], points[k * 2], points[k * 2 + 1]]
+        out = _two_onto[out, w[0], w[1]]
+    out
+
+--- the points with each one on top of the one before it (by a hair, as
+--- far as their size goes) left out, round the ring
+fn _merged[xy]
+    count = len[xy] / 2
+    if count eq 0
+        return xy
+    points = xy
+    tiny = 0.0000000001
+    tiny_square = tiny * tiny
+    prev_x = points[0]
+    prev_y = points[1]
+    i = 1
+    while i lte count
+        here = i % count
+        cx = points[here * 2]
+        cy = points[here * 2 + 1]
+        dx = cx - prev_x
+        dy = cy - prev_y
+        scale = max[max[max[abs[cx], abs[cy]], abs[prev_x]], abs[prev_y]]
+        if dx * dx + dy * dy lte tiny_square * scale * scale
+            points = concat[slice[points, 0, here * 2], slice[points, here * 2 + 2, len[points]]]
+            count = count - 1
+        else
+            prev_x = cx
+            prev_y = cy
+            i = i + 1
+    points
+
+--- the points moved along their ways by `amount`
+fn _moved[points, ways, amount]
+    out = []
+    for i in range[len[points]]
+        out = push[out, points[i] + ways[i] * amount]
+    out
+
+--- the geometry with an outline's extrusion added: its points moved
+--- along their bevel ways for each round of the bevel at the back, the
+--- steps along the depth (or the curve's frames) and the rounds at the
+--- front; then its faces, cut once, at the back and the front; then each
+--- edge of the outline and its holes, layer by layer
+fn _extruded_into[g, o, depth, steps, bevel, thickness, size, offset, bevel_segments, curve_segments, curve, along]
+    rounds = bevel_segments
+    deep = thickness
+    wide = size
+    out = offset
+    if not bevel
+        rounds = 0
+        deep = 0.0
+        wide = 0.0
+        out = 0.0
+    spaced = []
+    framed = Frames[[], [], []]
+    if along
+        for s in range[steps + 1]
+            pt = point_at[curve, (0.0 + s) / (0.0 + steps)]
+            spaced = _three_onto[spaced, pt[0], pt[1], pt[2]]
+        framed = frenet_frames[curve, steps, curve.form eq 'spline' and curve.closed]
+    across = framed.normals
+    beside = framed.binormals
+    contour = path_points[o.path, curve_segments]
+    holes = []
+    for h in o.holes
+        holes = push[holes, path_points[h, curve_segments]]
+    --- (an outline going anticlockwise is turned round, and with it any hole
+    --- going clockwise; one already going clockwise keeps its holes as they are)
+    if not _clockwise[contour]
+        contour = _reversed_points[contour]
+        turned = []
+        for h in holes
+            if _clockwise[h]
+                turned = push[turned, _reversed_points[h]]
+            else
+                turned = push[turned, h]
+        holes = turned
+    contour = _merged[contour]
+    merged = []
+    for h in holes
+        merged = push[merged, _merged[h]]
+    holes = merged
+    every = contour
+    for h in holes
+        every = concat[every, h]
+    vlen = len[every] / 2
+    contour_ways = _ways_of[contour]
+    hole_ways = []
+    every_ways = contour_ways
+    for h in holes
+        w = _ways_of[h]
+        hole_ways = push[hole_ways, w]
+        every_ways = concat[every_ways, w]
+    held = []
+    faces = []
+    if rounds eq 0
+        contour = _trimmed[contour]
+        trimmed = []
+        for h in holes
+            trimmed = push[trimmed, _trimmed[h]]
+        holes = trimmed
+        faces = _cut[contour, holes]
+    else
+        shrunk = []
+        grown = []
+        for layer in range[rounds]
+            t = (0.0 + layer) / (0.0 + rounds)
+            z = deep * cos[t * pi / 2.0]
+            amount = wide * sin[t * pi / 2.0] + out
+            moved = _moved[contour, contour_ways, amount]
+            for i in range[len[moved] / 2]
+                held = _three_onto[held, moved[i * 2], moved[i * 2 + 1], -z]
+            if layer eq 0
+                shrunk = moved
+            for h in range[len[holes]]
+                moved_hole = _moved[holes[h], hole_ways[h], amount]
+                for i in range[len[moved_hole] / 2]
+                    held = _three_onto[held, moved_hole[i * 2], moved_hole[i * 2 + 1], -z]
+                if layer eq 0
+                    grown = push[grown, _trimmed[moved_hole]]
+        faces = _cut[_trimmed[shrunk], grown]
+    amount = wide + out
+    base_points = every
+    if bevel
+        base_points = _moved[every, every_ways, amount]
+    for s in range[steps + 1]
+        for i in range[vlen]
+            vx = base_points[i * 2]
+            vy = base_points[i * 2 + 1]
+            if not along
+                if s eq 0
+                    held = _three_onto[held, vx, vy, 0.0]
+                else
+                    held = _three_onto[held, vx, vy, depth / (0.0 + steps) * (0.0 + s)]
+            else
+                k = s * 3
+                held = _three_onto[held, spaced[k] + across[k] * vx + beside[k] * vy, spaced[k + 1] + across[k + 1] * vx + beside[k + 1] * vy, spaced[k + 2] + across[k + 2] * vx + beside[k + 2] * vy]
+    layer = rounds - 1
+    while layer gte 0
+        t = (0.0 + layer) / (0.0 + rounds)
+        z = deep * cos[t * pi / 2.0]
+        amount = wide * sin[t * pi / 2.0] + out
+        moved = _moved[contour, contour_ways, amount]
+        for i in range[len[moved] / 2]
+            held = _three_onto[held, moved[i * 2], moved[i * 2 + 1], depth + z]
+        for h in range[len[holes]]
+            moved_hole = _moved[holes[h], hole_ways[h], amount]
+            for i in range[len[moved_hole] / 2]
+                held = _three_onto[held, moved_hole[i * 2], moved_hole[i * 2 + 1], depth + z]
+        layer = layer - 1
+    positions = g.positions
+    uvs = g.uvs
+    groups = g.groups
+    --- (the faces: the back one turned round, the front one at the last layer)
+    begun = len[positions] / 3
+    front = vlen * steps
+    if bevel
+        front = vlen * (steps + rounds * 2)
+    for f in range[len[faces] / 3]
+        positions = _corners_onto[positions, held, faces[f * 3 + 2], faces[f * 3 + 1], faces[f * 3]]
+        uvs = _top_uvs_onto[uvs, held, faces[f * 3 + 2], faces[f * 3 + 1], faces[f * 3]]
+    for f in range[len[faces] / 3]
+        positions = _corners_onto[positions, held, faces[f * 3] + front, faces[f * 3 + 1] + front, faces[f * 3 + 2] + front]
+        uvs = _top_uvs_onto[uvs, held, faces[f * 3] + front, faces[f * 3 + 1] + front, faces[f * 3 + 2] + front]
+    groups = _indices_onto[groups, begun, len[positions] / 3 - begun, 0]
+    --- (the sides: each edge of the outline and of its holes, layer by layer)
+    begun = len[positions] / 3
+    layers = steps + rounds * 2
+    rings = push[[], contour]
+    for h in holes
+        rings = push[rings, h]
+    at = 0
+    for r in rings
+        count = len[r] / 2
+        i = count - 1
+        while i gte 0
+            j = i
+            k = i - 1
+            if k lt 0
+                k = count - 1
+            for s in range[layers]
+                a = at + j + vlen * s
+                b = at + k + vlen * s
+                c = at + k + vlen * (s + 1)
+                d = at + j + vlen * (s + 1)
+                positions = _corners_onto[positions, held, a, b, d]
+                positions = _corners_onto[positions, held, b, c, d]
+                uvs = _side_uvs_onto[uvs, held, a, b, c, d]
+            i = i - 1
+        at = at + count
+    groups = _indices_onto[groups, begun, len[positions] / 3 - begun, 1]
+    g.positions = positions
+    g.uvs = uvs
+    g.groups = groups
+    g
+
+--- three of the held points' positions put onto the positions
+fn _corners_onto[positions, held, a, b, c]
+    positions = _three_onto[positions, held[a * 3], held[a * 3 + 1], held[a * 3 + 2]]
+    positions = _three_onto[positions, held[b * 3], held[b * 3 + 1], held[b * 3 + 2]]
+    _three_onto[positions, held[c * 3], held[c * 3 + 1], held[c * 3 + 2]]
+
+--- a face's uvs: each corner's x and y
+fn _top_uvs_onto[uvs, held, a, b, c]
+    uvs = _two_onto[uvs, held[a * 3], held[a * 3 + 1]]
+    uvs = _two_onto[uvs, held[b * 3], held[b * 3 + 1]]
+    _two_onto[uvs, held[c * 3], held[c * 3 + 1]]
+
+--- a side's uvs for its two triangles (a, b, d and b, c, d): along x or
+--- y, whichever its edge runs more along, and down z
+fn _side_uvs_onto[uvs, held, a, b, c, d]
+    ax = held[a * 3]
+    ay = held[a * 3 + 1]
+    az = held[a * 3 + 2]
+    bx = held[b * 3]
+    by = held[b * 3 + 1]
+    bz = held[b * 3 + 2]
+    cx = held[c * 3]
+    cy = held[c * 3 + 1]
+    cz = held[c * 3 + 2]
+    dx = held[d * 3]
+    dy = held[d * 3 + 1]
+    dz = held[d * 3 + 2]
+    ua = ay
+    ub = by
+    uc = cy
+    ud = dy
+    if abs[ay - by] lt abs[ax - bx]
+        ua = ax
+        ub = bx
+        uc = cx
+        ud = dx
+    uvs = _two_onto[uvs, ua, 1.0 - az]
+    uvs = _two_onto[uvs, ub, 1.0 - bz]
+    uvs = _two_onto[uvs, ud, 1.0 - dz]
+    uvs = _two_onto[uvs, ub, 1.0 - bz]
+    uvs = _two_onto[uvs, uc, 1.0 - cz]
+    _two_onto[uvs, ud, 1.0 - dz]
+
+--- ---- polyhedra ----
+
+--- a polyhedron of corners (three numbers each) and triangular faces
+--- (three corners each), each face cut `detail` times along its edges and
+--- its corners pushed out onto the sphere of `radius`: no indices; flat
+--- normals at detail 0, round ones after
+fn polyhedron[corners, faces, radius = 1.0, detail = 0]
+    points = _floats[corners]
+    order = _ints[faces]
+    held = []
+    for f in range[len[order] / 3]
+        a = order[f * 3] * 3
+        b = order[f * 3 + 1] * 3
+        c = order[f * 3 + 2] * 3
+        held = _subdivided[held, points[a], points[a + 1], points[a + 2], points[b], points[b + 1], points[b + 2], points[c], points[c + 1], points[c + 2], detail]
+    positions = []
+    for i in range[len[held] / 3]
+        u = _unit[held[i * 3], held[i * 3 + 1], held[i * 3 + 2]]
+        positions = _three_onto[positions, u[0] * radius, u[1] * radius, u[2] * radius]
+    uvs = _sphere_uvs[positions]
+    normals = []
+    if detail eq 0
+        normals = _flat_normals[positions]
+    else
+        normals = _normalized[_single[positions]]
+    Geometry[positions, normals, uvs, [], []]
+
+--- a face cut into rows of smaller triangles, `detail` + 1 along each
+--- edge, onto the points held
+fn _subdivided[held, ax, ay, az, bx, by, bz, cx, cy, cz, detail]
+    cols = detail + 1
+    rows = []
+    for i in range[cols + 1]
+        f = (0.0 + i) / (0.0 + cols)
+        ajx = ax + (cx - ax) * f
+        ajy = ay + (cy - ay) * f
+        ajz = az + (cz - az) * f
+        bjx = bx + (cx - bx) * f
+        bjy = by + (cy - by) * f
+        bjz = bz + (cz - bz) * f
+        count = cols - i
+        row = []
+        for j in range[count + 1]
+            if j eq 0 and i eq cols
+                row = _three_onto[row, ajx, ajy, ajz]
+            else
+                k = (0.0 + j) / (0.0 + count)
+                row = _three_onto[row, ajx + (bjx - ajx) * k, ajy + (bjy - ajy) * k, ajz + (bjz - ajz) * k]
+        rows = push[rows, row]
+    for i in range[cols]
+        this_row = rows[i]
+        next_row = rows[i + 1]
+        for j in range[2 * (cols - i) - 1]
+            k = j / 2
+            if j % 2 eq 0
+                held = _point_onto[held, this_row, k + 1]
+                held = _point_onto[held, next_row, k]
+                held = _point_onto[held, this_row, k]
+            else
+                held = _point_onto[held, this_row, k + 1]
+                held = _point_onto[held, next_row, k + 1]
+                held = _point_onto[held, next_row, k]
+    held
+
+--- the `k`th point of a row of points put onto the points held
+fn _point_onto[held, row, k]
+    _three_onto[held, row[k * 3], row[k * 3 + 1], row[k * 3 + 2]]
+
+--- how far round the y axis a point is, as three measures it
+fn _azimuth[x, z]
+    atan2[z, -x]
+
+--- how far up or down from the middle a point is, as three measures it
+fn _inclination[x, y, z]
+    atan2[-y, sqrt[x * x + z * z]]
+
+--- a polyhedron's uvs from where on the sphere each corner is: round it
+--- by its azimuth, down it by its inclination — a corner on the seam
+--- taken to its face's side of it, a pole to its face's azimuth
+fn _sphere_uvs[positions]
+    uvs = []
+    for i in range[len[positions] / 3]
+        x = positions[i * 3]
+        y = positions[i * 3 + 1]
+        z = positions[i * 3 + 2]
+        u = _azimuth[x, z] / 2.0 / pi + 0.5
+        v = _inclination[x, y, z] / pi + 0.5
+        uvs = _two_onto[uvs, u, 1.0 - v]
+    for f in range[len[positions] / 9]
+        i = f * 9
+        j = f * 6
+        mx = (positions[i] + positions[i + 3] + positions[i + 6]) * (1.0 / 3.0)
+        mz = (positions[i + 2] + positions[i + 5] + positions[i + 8]) * (1.0 / 3.0)
+        azimuth = _azimuth[mx, mz]
+        for k in range[3]
+            at = j + k * 2
+            if azimuth lt 0.0 and uvs[at] eq 1.0
+                uvs[at] = uvs[at] - 1.0
+            if positions[i + k * 3] eq 0.0 and positions[i + k * 3 + 2] eq 0.0
+                uvs[at] = azimuth / 2.0 / pi + 0.5
+    for f in range[len[uvs] / 6]
+        j = f * 6
+        x0 = uvs[j]
+        x1 = uvs[j + 2]
+        x2 = uvs[j + 4]
+        if max[x0, max[x1, x2]] gt 0.9 and min[x0, min[x1, x2]] lt 0.1
+            if x0 lt 0.2
+                uvs[j] = uvs[j] + 1.0
+            if x1 lt 0.2
+                uvs[j + 2] = uvs[j + 2] + 1.0
+            if x2 lt 0.2
+                uvs[j + 4] = uvs[j + 4] + 1.0
+    uvs
+
+--- the regular tetrahedron: four faces
+fn tetrahedron[radius = 1.0, detail = 0]
+    corners = [1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0]
+    polyhedron[corners, [2, 1, 0, 0, 3, 2, 1, 3, 0, 2, 3, 1], radius, detail]
+
+--- the regular octahedron: a corner on each way of each axis, eight faces
+fn octahedron[radius = 1.0, detail = 0]
+    corners = [1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0]
+    polyhedron[corners, [0, 2, 4, 0, 4, 3, 0, 3, 5, 0, 5, 2, 1, 2, 5, 1, 5, 3, 1, 3, 4, 1, 4, 2], radius, detail]
+
+--- the regular icosahedron: twenty faces, its corners at (±1, ±φ, 0)
+--- and the same turned through the axes (φ the golden ratio)
+fn icosahedron[radius = 1.0, detail = 0]
+    t = (1.0 + sqrt[5.0]) / 2.0
+    corners = [-1.0, t, 0.0, 1.0, t, 0.0, -1.0, -t, 0.0, 1.0, -t, 0.0, 0.0, -1.0, t, 0.0, 1.0, t, 0.0, -1.0, -t, 0.0, 1.0, -t, t, 0.0, -1.0, t, 0.0, 1.0, -t, 0.0, -1.0, -t, 0.0, 1.0]
+    faces = [0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11, 1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8, 3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9, 4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1]
+    polyhedron[corners, faces, radius, detail]
+
+--- the regular dodecahedron: twelve pentagons of three triangles each,
+--- its corners a cube's and (0, ±1/φ, ±φ) turned through the axes
+fn dodecahedron[radius = 1.0, detail = 0]
+    t = (1.0 + sqrt[5.0]) / 2.0
+    r = 1.0 / t
+    corners = [-1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 0.0, -r, -t, 0.0, -r, t, 0.0, r, -t, 0.0, r, t, -r, -t, 0.0, -r, t, 0.0, r, -t, 0.0, r, t, 0.0, -t, 0.0, -r, t, 0.0, -r, -t, 0.0, r, t, 0.0, r]
+    faces = [3, 11, 7, 3, 7, 15, 3, 15, 13, 7, 19, 17, 7, 17, 6, 7, 6, 15, 17, 4, 8, 17, 8, 10, 17, 10, 6, 8, 0, 16, 8, 16, 2, 8, 2, 10, 0, 12, 1, 0, 1, 18, 0, 18, 16, 6, 10, 2, 6, 2, 13, 6, 13, 15, 2, 16, 18, 2, 18, 3, 2, 3, 13, 18, 1, 9, 18, 9, 11, 18, 11, 3, 4, 14, 12, 4, 12, 0, 4, 0, 8, 11, 9, 5, 11, 5, 19, 11, 19, 7, 19, 5, 14, 19, 14, 4, 19, 4, 17, 1, 12, 14, 1, 14, 5, 1, 5, 9]
+    polyhedron[corners, faces, radius, detail]
+
+--- ---- lines ----
+
+--- the geometry's edges where its faces meet at more than `threshold`
+--- degrees (and those with no face beyond them): two corners each, as
+--- three's EdgesGeometry finds them — corners told apart to a ten
+--- thousandth, the edges found on a second face first, then those left
+fn edges[g, threshold = 1.0]
+    positions = _single[g.positions]
+    indices = g.indices
+    count = len[positions] / 3
+    if len[indices] gt 0
+        count = len[indices]
+    limit = cos[pi / 180.0 * threshold]
+    slots = map['' = 0]
+    from_at = []
+    to_at = []
+    ways = []
+    living = []
+    out = []
+    i = 0
+    while i + 2 lt count
+        first = i
+        second = i + 1
+        third = i + 2
+        if len[indices] gt 0
+            first = indices[i]
+            second = indices[i + 1]
+            third = indices[i + 2]
+        corners = _indices_onto[[], first, second, third]
+        n = _face_normal[positions, first, second, third]
+        places = push[push[push[[], _rounded_place[positions, first]], _rounded_place[positions, second]], _rounded_place[positions, third]]
+        if places[0] ne places[1] and places[1] ne places[2] and places[2] ne places[0]
+            for j in range[3]
+                ahead = (j + 1) % 3
+                forward_key = '`places[j]`_`places[ahead]`'
+                back = '`places[ahead]`_`places[j]`'
+                found = -1
+                if back in slots
+                    found = slots[back]
+                if found gte 0 and living[found]
+                    s = found * 3
+                    if n[0] * ways[s] + n[1] * ways[s + 1] + n[2] * ways[s + 2] lte limit
+                        out = _corner_onto[out, positions, corners[j]]
+                        out = _corner_onto[out, positions, corners[ahead]]
+                    living[found] = false
+                else if not (forward_key in slots)
+                    slots[forward_key] = len[living]
+                    from_at = push[from_at, corners[j]]
+                    to_at = push[to_at, corners[ahead]]
+                    ways = _three_onto[ways, n[0], n[1], n[2]]
+                    living = push[living, true]
+        i = i + 3
+    for k in range[len[living]]
+        if living[k]
+            out = _corner_onto[out, positions, from_at[k]]
+            out = _corner_onto[out, positions, to_at[k]]
+    Geometry[out, [], [], [], []]
+
+--- a vertex's three numbers put onto a list
+fn _corner_onto[out, positions, k]
+    _three_onto[out, positions[k * 3], positions[k * 3 + 1], positions[k * 3 + 2]]
+
+--- a corner's place to a ten thousandth, as words
+fn _rounded_place[positions, k]
+    '`floor[positions[k * 3] * 10000.0 + 0.5]`,`floor[positions[k * 3 + 1] * 10000.0 + 0.5]`,`floor[positions[k * 3 + 2] * 10000.0 + 0.5]`'
+
+--- a triangle's unit normal (none where it has no area)
+fn _face_normal[positions, a, b, c]
+    tx = positions[c * 3] - positions[b * 3]
+    ty = positions[c * 3 + 1] - positions[b * 3 + 1]
+    tz = positions[c * 3 + 2] - positions[b * 3 + 2]
+    vx = positions[a * 3] - positions[b * 3]
+    vy = positions[a * 3 + 1] - positions[b * 3 + 1]
+    vz = positions[a * 3 + 2] - positions[b * 3 + 2]
+    n = _cross[tx, ty, tz, vx, vy, vz]
+    square = n[0] * n[0] + n[1] * n[1] + n[2] * n[2]
+    if square gt 0.0
+        k = 1.0 / sqrt[square]
+        return [n[0] * k, n[1] * k, n[2] * k]
+    [0.0, 0.0, 0.0]
+
+--- every edge of every triangle once: two corners each, in the order
+--- three's WireframeGeometry gives them (an indexed geometry group by group)
+fn wireframe[g]
+    positions = _single[g.positions]
+    indices = g.indices
+    seen = map['' = true]
+    out = []
+    if len[indices] gt 0
+        groups = g.groups
+        if len[groups] eq 0
+            groups = _indices_onto[[], 0, len[indices], 0]
+        for o in range[len[groups] / 3]
+            begin = groups[o * 3]
+            finish = begin + groups[o * 3 + 1]
+            i = begin
+            while i lt finish
+                for j in range[3]
+                    a = indices[i + j]
+                    b = indices[i + (j + 1) % 3]
+                    here = _place_words[positions, a]
+                    there = _place_words[positions, b]
+                    one_way = '`here`-`there`'
+                    other_way = '`there`-`here`'
+                    if not (one_way in seen or other_way in seen)
+                        seen[one_way] = true
+                        seen[other_way] = true
+                        out = _corner_onto[out, positions, a]
+                        out = _corner_onto[out, positions, b]
+                i = i + 3
+    else
+        for t in range[len[positions] / 9]
+            for j in range[3]
+                a = t * 3 + j
+                b = t * 3 + (j + 1) % 3
+                here = _place_words[positions, a]
+                there = _place_words[positions, b]
+                one_way = '`here`-`there`'
+                other_way = '`there`-`here`'
+                if not (one_way in seen or other_way in seen)
+                    seen[one_way] = true
+                    seen[other_way] = true
+                    out = _corner_onto[out, positions, a]
+                    out = _corner_onto[out, positions, b]
+    Geometry[out, [], [], [], []]
+
+--- a corner's place exactly, as words (a zero of either sign the same)
+fn _place_words[positions, k]
+    '`positions[k * 3] + 0.0`,`positions[k * 3 + 1] + 0.0`,`positions[k * 3 + 2] + 0.0`'
+
+--- ---- SVG's paths ----
+
+--- an SVG path's words (its `d`): each command letter and each number on
+--- its own
+fn _svg_words[d]
+    s = replace[replace[replace[d, ',', ' '], '\n', ' '], '\t', ' ']
+    for letter in ['M', 'm', 'L', 'l', 'H', 'h', 'V', 'v', 'C', 'c', 'S', 's', 'Q', 'q', 'T', 't', 'A', 'a', 'Z', 'z']
+        s = replace[s, letter, ' `letter` ']
+    s = replace[replace[replace[s, '-', ' -'], 'e -', 'e-'], 'E -', 'E-']
+    out = []
+    for w in split[s, ' ']
+        if w ne ''
+            out = push[out, w]
+    out
+
+fn _is_command[w]
+    w in ['M', 'm', 'L', 'l', 'H', 'h', 'V', 'v', 'C', 'c', 'S', 's', 'Q', 'q', 'T', 't', 'A', 'a', 'Z', 'z']
+
+--- how many numbers a command takes each time
+fn _svg_count[k]
+    low = lower[k]
+    if low eq 'h' or low eq 'v'
+        return 1
+    if low eq 'c'
+        return 6
+    if low eq 's' or low eq 'q'
+        return 4
+    if low eq 'a'
+        return 7
+    if low eq 'z'
+        return 0
+    2
+
+--- the paths an SVG path's `d` draws, one a subpath (each `M` begins
+--- one): its moves, lines (L, H, V), cubic curves (C, and S whose first
+--- handle mirrors the last), quadratic curves (Q, and T likewise), each
+--- given from the origin (capitals) or from where the path is (small
+--- letters), and closes (Z) — as three's SVGLoader reads a path. SVG's y
+--- runs down the page, and so do the paths' (turn them over, as three's
+--- examples do, with a scale of -1 in y). Elliptical arcs (A) are drawn
+--- as lines to their ends
+fn svg_paths[d]
+    words = _svg_words[d]
+    out = []
+    p = path_from[0.0, 0.0]
+    begun = false
+    start_x = 0.0
+    start_y = 0.0
+    hx = 0.0
+    hy = 0.0
+    last = ''
+    command = 'M'
+    i = 0
+    while i lt len[words]
+        w = words[i]
+        if _is_command[w]
+            command = w
+            i = i + 1
+            if lower[w] eq 'z'
+                if begun
+                    if p.x ne start_x or p.y ne start_y
+                        p = line_to[p, start_x, start_y]
+                    out = push[out, p]
+                    begun = false
+                p = path_from[start_x, start_y]
+                last = 'z'
+                continue
+        n = _svg_count[command]
+        if n eq 0 or i + n gt len[words]
+            i = i + 1
+            continue
+        v = []
+        j = 0
+        while j lt n
+            got = float[words[i + j]]
+            x = 0.0
+            if got.ok
+                x = 0.0 + got
+            v = push[v, x]
+            j = j + 1
+        i = i + n
+        relative = command ne upper_of[command]
+        ox = 0.0
+        oy = 0.0
+        if relative
+            ox = p.x
+            oy = p.y
+        k = upper_of[command]
+        if k eq 'M'
+            if begun and len[p.pieces] gt 0
+                out = push[out, p]
+            p = path_from[ox + v[0], oy + v[1]]
+            start_x = p.x
+            start_y = p.y
+            begun = true
+            --- (numbers after a move are lines)
+            command = 'L'
+            if relative
+                command = 'l'
+        if k eq 'L'
+            p = line_to[p, ox + v[0], oy + v[1]]
+        if k eq 'H'
+            p = line_to[p, ox + v[0], p.y]
+        if k eq 'V'
+            p = line_to[p, p.x, oy + v[0]]
+        if k eq 'A'
+            p = line_to[p, ox + v[5], oy + v[6]]
+        if k eq 'C'
+            p = cubic_to[p, ox + v[0], oy + v[1], ox + v[2], oy + v[3], ox + v[4], oy + v[5]]
+            hx = ox + v[2]
+            hy = oy + v[3]
+        if k eq 'S'
+            ax = p.x
+            ay = p.y
+            if last eq 'C' or last eq 'S'
+                ax = 2.0 * p.x - hx
+                ay = 2.0 * p.y - hy
+            p = cubic_to[p, ax, ay, ox + v[0], oy + v[1], ox + v[2], oy + v[3]]
+            hx = ox + v[0]
+            hy = oy + v[1]
+        if k eq 'Q'
+            p = quadratic_to[p, ox + v[0], oy + v[1], ox + v[2], oy + v[3]]
+            hx = ox + v[0]
+            hy = oy + v[1]
+        if k eq 'T'
+            ax = p.x
+            ay = p.y
+            if last eq 'Q' or last eq 'T'
+                ax = 2.0 * p.x - hx
+                ay = 2.0 * p.y - hy
+            p = quadratic_to[p, ax, ay, ox + v[0], oy + v[1]]
+            hx = ax
+            hy = ay
+        last = k
+        begun = true
+    if begun and len[p.pieces] gt 0
+        out = push[out, p]
+    out
+
+--- a command letter as a capital
+fn upper_of[w]
+    capitals = ['M', 'L', 'H', 'V', 'C', 'S', 'Q', 'T', 'A', 'Z']
+    for k in capitals
+        if lower[k] eq w
+            return k
+    w
+
+--- ---- surfaces of a field (marching cubes) ----
+
+--- the surface where a field of numbers, sampled on a grid `n` points a
+--- side across a cube `size` wide about the origin (x fastest, then y,
+--- then z), comes to `level`: the inside where it is above. Each cell of
+--- the grid is cut into six tetrahedra about its long diagonal and the
+--- surface found in each (marching tetrahedra: the same surface three's
+--- MarchingCubes finds, with no table of cases), each triangle's corners
+--- placed between grid points in proportion to the field there, facing
+--- out (down the field's slope, where it falls)
+fn marched[samples, n, size, level]
+    step = size / (n - 1)
+    half = size / 2.0
+    slopes = _field_slopes[samples, n]
+    positions = []
+    normals = []
+    corners = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+    tetras = [[0, 5, 1, 6], [0, 1, 2, 6], [0, 2, 3, 6], [0, 3, 7, 6], [0, 7, 4, 6], [0, 4, 5, 6]]
+    z = 0
+    while z lt n - 1
+        y = 0
+        while y lt n - 1
+            x = 0
+            while x lt n - 1
+                ids = []
+                for k in corners
+                    ids = push[ids, (x + k[0]) + (y + k[1]) * n + (z + k[2]) * n * n]
+                above = 0
+                for g in ids
+                    if samples[g] gt level
+                        above = above + 1
+                if above gt 0 and above lt 8
+                    for tet in tetras
+                        made = _tetra_surface[samples, slopes, n, step, half, level, [ids[tet[0]], ids[tet[1]], ids[tet[2]], ids[tet[3]]]]
+                        positions = concat[positions, made[0]]
+                        normals = concat[normals, made[1]]
+                x = x + 1
+            y = y + 1
+        z = z + 1
+    Geometry[positions, normals, [], [], []]
+
+--- each grid point's slope, by the difference across it (at the edges,
+--- to the one beside it): three numbers each
+fn _field_slopes[samples, n]
+    out = []
+    i = 0
+    total = n * n * n
+    while i lt total
+        x = i % n
+        y = (i / n) % n
+        z = i / (n * n)
+        out = push[push[push[out, _difference[samples, n, x, y, z, 1, 0, 0]], _difference[samples, n, x, y, z, 0, 1, 0]], _difference[samples, n, x, y, z, 0, 0, 1]]
+        i = i + 1
+    out
+
+fn _difference[samples, n, x, y, z, dx, dy, dz]
+    ax = min[n - 1, x + dx]
+    ay = min[n - 1, y + dy]
+    az = min[n - 1, z + dz]
+    bx = max[0, x - dx]
+    by = max[0, y - dy]
+    bz = max[0, z - dz]
+    apart = (ax - bx) + (ay - by) + (az - bz)
+    (samples[ax + ay * n + az * n * n] - samples[bx + by * n + bz * n * n]) / max[1, apart]
+
+--- a grid point's place
+fn _grid_point[g, n, step, half]
+    [(0.0 + g % n) * step - half, (0.0 + (g / n) % n) * step - half, (0.0 + g / (n * n)) * step - half]
+
+--- where the surface crosses between two grid points, and the way it
+--- faces there
+fn _crossing[samples, slopes, n, step, half, level, a, b]
+    va = samples[a]
+    vb = samples[b]
+    k = 0.5
+    if vb ne va
+        k = (level - va) / (vb - va)
+    pa = _grid_point[a, n, step, half]
+    pb = _grid_point[b, n, step, half]
+    at = [pa[0] + (pb[0] - pa[0]) * k, pa[1] + (pb[1] - pa[1]) * k, pa[2] + (pb[2] - pa[2]) * k]
+    s = [slopes[a * 3] + (slopes[b * 3] - slopes[a * 3]) * k, slopes[a * 3 + 1] + (slopes[b * 3 + 1] - slopes[a * 3 + 1]) * k, slopes[a * 3 + 2] + (slopes[b * 3 + 2] - slopes[a * 3 + 2]) * k]
+    size = sqrt[s[0] * s[0] + s[1] * s[1] + s[2] * s[2]]
+    facing = [0.0, 1.0, 0.0]
+    if size gt 0.0
+        facing = [0.0 - s[0] / size, 0.0 - s[1] / size, 0.0 - s[2] / size]
+    [at, facing]
+
+--- the surface in one tetrahedron (its four grid points): none, one
+--- triangle or two, as [positions, normals]
+fn _tetra_surface[samples, slopes, n, step, half, level, four]
+    inside = []
+    outside = []
+    for g in four
+        if samples[g] gt level
+            inside = push[inside, g]
+        else
+            outside = push[outside, g]
+    if len[inside] eq 0 or len[inside] eq 4
+        return [[], []]
+    cuts = []
+    if len[inside] eq 1 or len[inside] eq 3
+        lone = inside
+        rest = outside
+        if len[inside] eq 3
+            lone = outside
+            rest = inside
+        for r in rest
+            cuts = push[cuts, _crossing[samples, slopes, n, step, half, level, lone[0], r]]
+        return _facing_out[[cuts[0], cuts[1], cuts[2]]]
+    a = _crossing[samples, slopes, n, step, half, level, inside[0], outside[0]]
+    b = _crossing[samples, slopes, n, step, half, level, inside[0], outside[1]]
+    c = _crossing[samples, slopes, n, step, half, level, inside[1], outside[1]]
+    d = _crossing[samples, slopes, n, step, half, level, inside[1], outside[0]]
+    one = _facing_out[[a, b, c]]
+    two = _facing_out[[a, c, d]]
+    [concat[one[0], two[0]], concat[one[1], two[1]]]
+
+--- a triangle's corners in the order that faces it the way its corners
+--- do, as [positions, normals]
+fn _facing_out[three]
+    p0 = three[0][0]
+    p1 = three[1][0]
+    p2 = three[2][0]
+    e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]]
+    e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]]
+    flat = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
+    f0 = three[0][1]
+    f1 = three[1][1]
+    f2 = three[2][1]
+    toward = (f0[0] + f1[0] + f2[0]) * flat[0] + (f0[1] + f1[1] + f2[1]) * flat[1] + (f0[2] + f1[2] + f2[2]) * flat[2]
+    order = [0, 1, 2]
+    if toward lt 0.0
+        order = [0, 2, 1]
+    positions = []
+    normals = []
+    for k in order
+        corner = three[k]
+        positions = push[push[push[positions, corner[0][0]], corner[0][1]], corner[0][2]]
+        normals = push[push[push[normals, corner[1][0]], corner[1][1]], corner[1][2]]
+    [positions, normals]
+
+--- a field of balls (metaballs): at each grid point the sum over the
+--- balls (x, y, z and strength, four numbers each) of strength over the
+--- squared distance, sampled `n` a side across `size` about the origin,
+--- for `marched`
+fn ball_field[balls, n, size]
+    step = size / (n - 1)
+    half = size / 2.0
+    out = []
+    total = n * n * n
+    i = 0
+    while i lt total
+        p = _grid_point[i, n, step, half]
+        v = 0.0
+        k = 0
+        while k + 3 lt len[balls]
+            dx = p[0] - balls[k]
+            dy = p[1] - balls[k + 1]
+            dz = p[2] - balls[k + 2]
+            v = v + balls[k + 3] / (dx * dx + dy * dy + dz * dz + 0.0001)
+            k = k + 4
+        out = push[out, v]
+        i = i + 1
+    out
+
+--- the geometry moved by `x`, `y` and `z`: each corner's place (three's
+--- BufferGeometry.translate)
+fn translated[g, x, y, z]
+    out = []
+    n = len[g.positions] / 3
+    i = 0
+    while i lt n
+        out = push[push[push[out, g.positions[i * 3] + x], g.positions[i * 3 + 1] + y], g.positions[i * 3 + 2] + z]
+        i = i + 1
+    g.positions = out
+    g
+
+--- an arrow from `from` pointing `way` (a unit direction), `length` long
+--- with a head `head_length` long and `head_width` across (three's are a
+--- fifth of the length and a fifth of that), in a colour, lit by
+--- nothing, as three's ArrowHelper draws one: a line for its shaft and a
+--- cone of five sides for its head
+fn arrow[c, from, way, length, color, head_length, head_width]
+    if not space.made['lory.geometry.arrow.line']
+        c = space.mesh_form[c, 'lory.geometry.arrow.line', space.polyline[[0.0, 0.0, 0.0, 0.0, 1.0, 0.0]]]
+        c = space.mesh_form[c, 'lory.geometry.arrow.head', space_form[translated[cone[0.5, 1.0, 5, 1], 0.0, -0.5, 0.0]]]
+    turn = [0.0, 0.0, 0.0, 1.0]
+    if way[1] lt -0.99999
+        turn = [1.0, 0.0, 0.0, 0.0]
+    if way[1] gte -0.99999 and way[1] lte 0.99999
+        size = sqrt[way[2] * way[2] + way[0] * way[0]]
+        turn = space.quaternion_of_axis[[way[2] / size, 0.0, 0.0 - way[0] / size], acos[way[1]]]
+    whole = space.compose[from, turn, [1.0, 1.0, 1.0]]
+    shaft = space.times[whole, space.compose[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], [1.0, max[0.0001, length - head_length], 1.0]]]
+    head = space.times[whole, space.compose[[0.0, length, 0.0], [0.0, 0.0, 0.0, 1.0], [head_width, head_length, head_width]]]
+    c = space.draw[c, 'lory.geometry.arrow.line', shaft, space.basic[color]]
+    space.draw[c, 'lory.geometry.arrow.head', head, space.basic[color]]
+
+--- ---- drawn in Lory's space ----
+
+--- the geometry as space draws it (`space.mesh_form`): its vertices as
+--- they are and its triangles by its indices where it has them, as three
+--- hands a BufferGeometry to WebGL
+fn space_form[g]
+    s = space.Shape[g.positions, g.normals, g.uvs]
+    if len[g.indices] eq 0
+        return space.triangles[s]
+    space.indexed[s, g.indices]
+
+--- a geometry's segments (its edges' or its wireframe's: two corners
+--- each) as lines space draws (three's LineSegments)
+fn space_segments[g]
+    if len[g.indices] eq 0
+        return space.segments[g.positions]
+    space.by_index[space.segments[g.positions], g.indices]
+
+--- the geometry as space holds a shape (`space.mesh`): its triangles one
+--- after another, an indexed geometry's corners read out by its indices
+fn space_shape[g]
+    indices = g.indices
+    if len[indices] eq 0
+        return space.Shape[g.positions, g.normals, g.uvs]
+    positions = g.positions
+    normals = g.normals
+    uvs = g.uvs
+    at = []
+    facing = []
+    uv = []
+    for k in indices
+        at = _three_onto[at, positions[k * 3], positions[k * 3 + 1], positions[k * 3 + 2]]
+        facing = _three_onto[facing, normals[k * 3], normals[k * 3 + 1], normals[k * 3 + 2]]
+        uv = _two_onto[uv, uvs[k * 2], uvs[k * 2 + 1]]
+    space.Shape[at, facing, uv]
+
+--- a geometry's segments (its edges' or its wireframe's: two corners
+--- each) drawn as Lory's lines, `width` pixels wide in a colour, where the
+--- scene's eye sees them (call it after `space.scene`), `matrix` placing
+--- them: on a screen, over the scene and inside its box (`space_segments`
+--- draws them in the scene instead, behind what is nearer); a segment
+--- reaching behind the eye is left out
+fn lines_drawn[c, g, matrix, width, color]
+    m = lory.mul[c.eye, matrix]
+    bx = 0.0
+    by = 0.0
+    bw = 0.0 + lory.width[c]
+    bh = 0.0 + lory.height[c]
+    if c.box[2] gt 0.0
+        frame = c.box
+        bx = frame[0]
+        by = frame[1]
+        bw = frame[2]
+        bh = frame[3]
+    was = lory.clipped[c]
+    c = lory.clip[c, bx, by, bw, bh]
+    points = g.positions
+    k = 0
+    while k + 5 lt len[points]
+        a = _projected[m, points[k], points[k + 1], points[k + 2]]
+        b = _projected[m, points[k + 3], points[k + 4], points[k + 5]]
+        if a[2] gt 0.0 and b[2] gt 0.0
+            c = lory.line[c, bx + (a[0] + 1.0) * 0.5 * bw, by + (1.0 - a[1]) * 0.5 * bh, bx + (b[0] + 1.0) * 0.5 * bw, by + (1.0 - b[1]) * 0.5 * bh, width, color]
+        k = k + 6
+    lory.unclip[c, was]
+
+--- a point seen through a matrix: where it lands across and up the
+--- screen (-1 to 1), and how far in front of the eye it is
+fn _projected[m, x, y, z]
+    cx = m[0] * x + m[4] * y + m[8] * z + m[12]
+    cy = m[1] * x + m[5] * y + m[9] * z + m[13]
+    cw = m[3] * x + m[7] * y + m[11] * z + m[15]
+    if cw eq 0.0
+        return [0.0, 0.0, 0.0]
+    [cx / cw, cy / cw, cw]
+
+--- ---- what three's layouts come to ----
+
+--- a frame of no input, for drawing in a test
+fn _still_frame[]
+    json['{"t": 0, "width": 800, "height": 600, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 800, "height": 600, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+--- how far the farthest of a geometry's normals is from being of length one
+fn _worst_normal[g]
+    n = g.normals
+    worst = 0.0
+    for i in range[len[n] / 3]
+        l = sqrt[n[i * 3] * n[i * 3] + n[i * 3 + 1] * n[i * 3 + 1] + n[i * 3 + 2] * n[i * 3 + 2]]
+        worst = max[worst, abs[l - 1.0]]
+    worst
+
+test a_box_is_six_faces_of_four_corners_each_a_group_of_its_own[]
+    g = box[]
+    vertex_count[g] eq 24
+    len[g.indices] eq 36
+    triangle_count[g] eq 12
+    len[g.groups] eq 18
+    --- (the +x face first, the -z face last: a group of two triangles each)
+    g.groups[0] eq 0 and g.groups[1] eq 6 and g.groups[2] eq 0
+    g.groups[15] eq 30 and g.groups[16] eq 6 and g.groups[17] eq 5
+    g.positions[0] eq 0.5 and g.positions[1] eq 0.5 and g.positions[2] eq 0.5
+    g.normals[0] eq 1.0 and g.normals[1] eq 0.0 and g.normals[2] eq 0.0
+    g.uvs[0] eq 0.0 and g.uvs[1] eq 1.0
+    --- (cut 2, 3 and 4 times: each face a grid of its own two ways' cuts)
+    vertex_count[box[2.0, 3.0, 4.0, 2, 3, 4]] eq 94
+
+test a_plane_faces_up_the_z_axis_from_its_top_left_corner[]
+    g = plane[2.0, 3.0, 4, 5]
+    vertex_count[g] eq 30
+    len[g.indices] eq 120
+    g.positions[0] eq -1.0 and g.positions[1] eq 1.5 and g.positions[2] eq 0.0
+    g.normals[2] eq 1.0 and g.normals[len[g.normals] - 1] eq 1.0
+    g.uvs[0] eq 0.0 and g.uvs[1] eq 1.0
+    len[g.groups] eq 0
+
+test a_circle_is_a_fan_about_its_centre_of_at_least_three_segments[]
+    g = circle[1.0, 8]
+    vertex_count[g] eq 10
+    g.indices[0] eq 1 and g.indices[1] eq 2 and g.indices[2] eq 0
+    g.uvs[0] eq 0.5 and g.uvs[1] eq 0.5
+    vertex_count[circle[1.0, 2]] eq 5
+    ring[].positions[0] eq 0.5
+    vertex_count[ring[0.5, 1.0, 32, 1]] eq 66
+    len[ring[0.5, 1.0, 12, 4].indices] eq 12 * 4 * 6
+
+test a_sphere_has_one_triangle_a_segment_at_each_pole[]
+    g = sphere[1.0, 8, 6]
+    vertex_count[g] eq 63
+    len[g.indices] eq 240
+    --- (a pole's uvs are moved half a segment, to the middle of its fan)
+    g.uvs[0] eq 0.0625 and g.uvs[1] eq 1.0
+    g.uvs[len[g.uvs] - 2] eq 0.9375 and g.uvs[len[g.uvs] - 1] eq 0.0
+    _worst_normal[g] lt 0.000000000001
+    --- (its upper half keeps both triangles where it is cut off)
+    len[sphere[1.0, 8, 6, 0.0, 6.283185307179586, 0.0, 1.5707963267948966].indices] eq 264
+
+test a_cylinder_is_its_side_then_its_top_and_bottom_and_a_cone_has_no_top[]
+    g = cylinder[]
+    vertex_count[g] eq 196
+    len[g.indices] eq 384
+    g.groups[0] eq 0 and g.groups[1] eq 192 and g.groups[2] eq 0
+    g.groups[3] eq 192 and g.groups[4] eq 96 and g.groups[5] eq 1
+    g.groups[6] eq 288 and g.groups[7] eq 96 and g.groups[8] eq 2
+    open = cylinder[1.0, 1.0, 1.0, 8, 2, true]
+    len[open.groups] eq 3
+    k = cone[]
+    vertex_count[k] eq 131
+    len[k.indices] eq 192
+    k.groups[5] eq 2
+    _worst_normal[k] lt 0.000000000001
+
+test a_torus_a_knot_and_a_capsule_are_grids_about_their_tubes[]
+    vertex_count[torus[]] eq 637
+    len[torus[].indices] eq 3456
+    vertex_count[torus_knot[]] eq 585
+    len[torus_knot[].indices] eq 3072
+    _worst_normal[torus_knot[]] lt 0.000000000001
+    c = capsule[]
+    vertex_count[c] eq 90
+    len[c.indices] eq 432
+    --- (from the bottom of its lower cap to the top of its upper one)
+    c.positions[1] eq -1.5
+    c.positions[len[c.positions] - 2] eq 1.5
+
+test a_lathe_turns_its_outline_about_the_y_axis[]
+    g = lathe[[0.0, -0.5, 0.5, 0.0, 0.0, 0.5]]
+    vertex_count[g] eq 39
+    len[g.indices] eq 144
+    --- (the first turn is the outline itself, at phi 0: x out along z)
+    g.positions[3] eq 0.0 and g.positions[4] eq 0.0 and g.positions[5] eq 0.5
+    _worst_normal[g] lt 0.000000000001
+
+test curves_answer_their_points_by_measure_and_by_length[]
+    l = line_curve[0.0, 0.0, 0.0, 1.0, 2.0, 3.0]
+    a = point_at[l, 0.5]
+    a[0] eq 0.5 and a[1] eq 1.0 and a[2] eq 1.5
+    b = point_at[l, 1.0]
+    b[0] eq 1.0 and b[1] eq 2.0 and b[2] eq 3.0
+    abs[curve_length[l] - sqrt[14.0]] lt 0.000000000001
+    t = tangent_at[l, 0.3]
+    abs[t[2] - 3.0 / sqrt[14.0]] lt 0.000000000001
+    h = helix_curve[1.0, 3.0, 2.0]
+    start = point_on[h, 0.0]
+    start[0] eq 1.0 and start[1] eq -1.5 and start[2] eq 0.0
+    point_on[h, 1.0][1] eq 1.5
+    --- (a spline goes through its points: the second of five a quarter along)
+    s = spline_curve[[-2.0, 0.0, 0.0, -1.0, 1.0, 0.5, 0.0, 0.0, 1.0, 1.0, -1.0, 0.5, 2.0, 0.0, 0.0]]
+    q = point_on[s, 0.25]
+    q[0] eq -1.0 and q[1] eq 1.0 and q[2] eq 0.5
+    e = point_on[s, 1.0]
+    abs[e[0] - 2.0] lt 0.000000000001 and abs[e[1]] lt 0.000000000001
+
+test frames_turn_with_the_curve_and_no_more[]
+    f = frenet_frames[line_curve[0.0, 0.0, 0.0, 1.0, 2.0, 3.0], 4]
+    n = f.normals
+    t = f.tangents
+    len[n] eq 15
+    --- (along a straight line, every normal is the first)
+    n[12] eq n[0] and n[13] eq n[1] and n[14] eq n[2]
+    abs[n[0] * t[0] + n[1] * t[1] + n[2] * t[2]] lt 0.000000000001
+    g = tube[line_curve[0.0, 0.0, 0.0, 1.0, 2.0, 3.0], 4, 0.2, 6]
+    vertex_count[g] eq 35
+    len[g.indices] eq 144
+    --- (each ring is the tube's radius from the curve)
+    p = g.positions
+    abs[sqrt[p[0] * p[0] + p[1] * p[1] + p[2] * p[2]] - 0.2] lt 0.000000000001
+
+test a_path_is_its_pieces_at_even_steps_and_an_arc_is_joined_to_it[]
+    p = path_points[path_through[[0.0, 0.0, 1.0, 0.0, 1.0, 1.0]]]
+    len[p] eq 6
+    p[2] eq 1.0 and p[3] eq 0.0 and p[5] eq 1.0
+    --- (a whole circle in twice the divisions, its last point its first again)
+    len[path_points[absolute_arc[path_from[], 0.0, 0.0, 1.0, 0.0, 6.283185307179586], 12]] eq 50
+    joined = absolute_arc[line_to[path_from[], 2.0, 0.0], 0.0, 0.0, 1.0, 0.0, 3.141592653589793]
+    len[joined.pieces] eq 3
+    joined.pieces[1].form eq 'line'
+
+test a_shape_is_cut_into_triangles_that_cover_it_and_not_its_holes[]
+    framed = holed[outline[path_through[[0.0, 0.0, 4.0, 0.0, 4.0, 4.0, 0.0, 4.0]]], path_through[[1.0, 1.0, 1.0, 3.0, 3.0, 3.0, 3.0, 1.0]]]
+    g = shape[framed]
+    vertex_count[g] eq 8
+    len[g.indices] eq 24
+    p = g.positions
+    covered = 0.0
+    for f in range[len[g.indices] / 3]
+        a = g.indices[f * 3] * 3
+        b = g.indices[f * 3 + 1] * 3
+        c = g.indices[f * 3 + 2] * 3
+        covered = covered + abs[(p[b] - p[a]) * (p[c + 1] - p[a + 1]) - (p[c] - p[a]) * (p[b + 1] - p[a + 1])] / 2.0
+    --- (four by four, less the two by two hole)
+    covered eq 12.0
+    triangle = outline[path_through[[0.0, 0.5, -0.5, -0.5, 0.5, -0.5]]]
+    len[shape[triangle].indices] eq 3
+    len[shapes[[triangle, framed]].groups] eq 6
+
+test an_extrusion_is_its_two_faces_then_its_sides_each_facing_out[]
+    square = outline[path_through[[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0]]]
+    g = extrude[[square], 1.0, 1, false]
+    vertex_count[g] eq 36
+    len[g.indices] eq 0
+    g.groups[0] eq 0 and g.groups[1] eq 12 and g.groups[2] eq 0
+    g.groups[3] eq 12 and g.groups[4] eq 24 and g.groups[5] eq 1
+    --- (the back face at z = 0 faces back, the front one at z = 1 forward)
+    g.positions[2] eq 0.0 and g.normals[2] eq -1.0
+    g.positions[20] eq 1.0 and g.normals[20] eq 1.0
+    _worst_normal[g] lt 0.0000001
+    --- (bevelled: three rounds at each end make seven layers of sides)
+    vertex_count[extrude[[outline[path_through[[-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5]]]]]] eq 180
+
+test polyhedra_lie_on_their_sphere_and_are_flat_until_cut[]
+    g = icosahedron[2.0, 1]
+    vertex_count[g] eq 240
+    far = 0.0
+    p = g.positions
+    for i in range[len[p] / 3]
+        far = max[far, abs[sqrt[p[i * 3] * p[i * 3] + p[i * 3 + 1] * p[i * 3 + 1] + p[i * 3 + 2] * p[i * 3 + 2]] - 2.0]]
+    far lt 0.000000000001
+    t = tetrahedron[]
+    vertex_count[t] eq 12
+    --- (uncut, a face's three corners share its normal)
+    t.normals[0] eq t.normals[3] and t.normals[3] eq t.normals[6]
+    t.normals[1] eq t.normals[4] and t.normals[2] eq t.normals[8]
+    vertex_count[octahedron[1.0, 1]] eq 96
+    vertex_count[dodecahedron[]] eq 108
+    len[dodecahedron[].indices] eq 0
+
+test edges_are_where_faces_meet_at_more_than_the_angle[]
+    vertex_count[edges[box[]]] eq 24
+    --- (a flat plane has only its rim: two segments a side)
+    vertex_count[edges[plane[1.0, 1.0, 2, 2]]] eq 16
+    vertex_count[edges[sphere[1.0, 8, 6], 1.0]] eq 176
+    vertex_count[edges[sphere[1.0, 8, 6], 30.0]] eq 96
+    --- (a wireframe has every edge of every triangle once)
+    vertex_count[wireframe[plane[1.0, 1.0, 1, 1]]] eq 10
+    vertex_count[wireframe[plane[1.0, 1.0, 3, 2]]] eq 46
+
+test space_holds_a_geometry_as_its_triangles_one_after_another[]
+    s = space_shape[box[]]
+    len[s.at] eq 108
+    len[s.facing] eq 108
+    len[s.uv] eq 72
+    s.at[0] eq 0.5 and s.at[1] eq 0.5 and s.at[2] eq 0.5
+    --- (a geometry of no indices is already one)
+    len[space_shape[dodecahedron[]].at] eq 324
+
+test lines_are_drawn_where_the_eye_sees_them_and_not_behind_it[]
+    c = lory.begin[_still_frame[]]
+    o = space.orbit[c, 'geometry.lines', [0.0, 0.0, 0.0], 5.0]
+    c = space.scene[c, o, space.daylight[]]
+    before = len[c.verts]
+    c = lines_drawn[c, edges[box[]], lory.identity[], 1.0, lory.white[]]
+    --- (twelve edges, each a line of six corners of sixteen numbers)
+    len[c.verts] - before eq 12 * 6 * 16
+    eye = space.eye_of[o]
+    behind = Geometry[[eye[0] * 2.0, eye[1] * 2.0, eye[2] * 2.0, eye[0] * 2.0 + 1.0, eye[1] * 2.0, eye[2] * 2.0], [], [], [], []]
+    after = lines_drawn[c, behind, lory.identity[], 1.0, lory.white[]]
+    len[after.verts] eq len[c.verts]
+
+test an_svg_path_reads_its_moves_lines_curves_and_closes[]
+    paths = svg_paths['M10,20 L30 20 h10 v-5 l-10-5 Z m50 0 c0 10 20 10 20 0 s20 -10 20 0 q10 5 20 0 t20 0 z']
+    len[paths] eq 2
+    first = paths[0]
+    len[first.pieces] eq 5
+    first.pieces[0].form eq 'line'
+    first.pieces[0].numbers eq [10.0, 20.0, 30.0, 20.0]
+    first.pieces[2].numbers eq [40.0, 20.0, 40.0, 15.0]
+    first.pieces[3].numbers eq [40.0, 15.0, 30.0, 10.0]
+    first.pieces[4].numbers eq [30.0, 10.0, 10.0, 20.0]
+    second = paths[1]
+    second.pieces[0].form eq 'cubic'
+    second.pieces[0].numbers eq [60.0, 20.0, 60.0, 30.0, 80.0, 30.0, 80.0, 20.0]
+    second.pieces[1].numbers eq [80.0, 20.0, 80.0, 10.0, 100.0, 10.0, 100.0, 20.0]
+    second.pieces[2].form eq 'quadratic'
+    second.pieces[3].numbers eq [120.0, 20.0, 130.0, 15.0, 140.0, 20.0]
+    len[svg_paths['M0-1.5e-1L2,3'][0].pieces] eq 1
+    svg_paths['M0-1.5e-1L2,3'][0].pieces[0].numbers eq [0.0, -0.15, 2.0, 3.0]
+
+test a_field_of_one_ball_marches_to_a_closed_sphere[]
+    n = 14
+    g = marched[ball_field[[0.0, 0.0, 0.0, 1.0], n, 4.0], n, 4.0, 1.0]
+    count = len[g.positions] / 3
+    count gt 300
+    count % 3 eq 0
+    --- (every corner a metre from the middle, give or take the straight
+    --- line drawn between grid points 0.31 apart across a field falling
+    --- as the square of the distance — at most 0.1 here; each facing out)
+    near = true
+    out_facing = true
+    i = 0
+    while i lt count
+        x = g.positions[i * 3]
+        y = g.positions[i * 3 + 1]
+        z = g.positions[i * 3 + 2]
+        r = sqrt[x * x + y * y + z * z]
+        if abs[r - 1.0] gt 0.12
+            near = false
+        if x * g.normals[i * 3] + y * g.normals[i * 3 + 1] + z * g.normals[i * 3 + 2] lt 0.0
+            out_facing = false
+        i = i + 1
+    near
+    out_facing
+    --- (its triangles wound to face out, so its volume comes out a ball's)
+    volume = 0.0
+    t = 0
+    while t lt count / 3
+        k = t * 9
+        a = [g.positions[k], g.positions[k + 1], g.positions[k + 2]]
+        b = [g.positions[k + 3], g.positions[k + 4], g.positions[k + 5]]
+        c = [g.positions[k + 6], g.positions[k + 7], g.positions[k + 8]]
+        volume = volume + (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0
+        t = t + 1
+    abs[volume - 4.0 / 3.0 * pi] lt 0.25

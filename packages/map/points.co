@@ -1,0 +1,328 @@
+--- Many points on a map: gathered into clusters where they stand close
+--- at the zoom shown, or spread into a heatmap of where they are thick.
+---
+--- Clusters are made once for every whole zoom, from the highest down:
+--- at each zoom, the groups of the zoom above that stand within `radius`
+--- CSS pixels of a group not yet taken join it, at the middle of their
+--- points (weighted by how many each holds). So a cluster comes apart, as
+--- the map zooms in, into the groups it was made of, and the zoom it
+--- comes apart at is known. The map shows every point alone at its
+--- highest zoom.
+---
+--- A heatmap adds, for every point, a bell of heat about it `radius` CSS
+--- pixels wide to a grid over the view, and colours the grid from clear
+--- through blue, teal and yellow to red where the heat is greatest.
+use math
+use lory
+use geo
+
+--- points: their places, where they fall on the world's picture at zoom
+--- 0, and which feature of the map's each is
+struct Points [lats, lngs, xs, ys, which]
+
+--- a group of points at a zoom: its middle place and where that falls at
+--- zoom 0, how many points it holds, the zoom it comes apart at (-1 for
+--- a point alone), and the point it is where it holds one (-1 for more)
+struct Group [lat, lng, x, y, count, splits, index]
+
+--- the groups at every whole zoom from `highest` down to `lowest`: the
+--- radius they were gathered by, how many points there were, and the
+--- groups of each zoom one after another (those of zoom `highest - k`
+--- from `level_from[k]`)
+struct Tree [radius, count, lowest, highest, groups, level_from]
+
+fn _no_groups[]
+    slice[[Group[0.0, 0.0, 0.0, 0.0, 0, -1.0, -1]], 0, 0]
+
+--- no points
+fn no_points[]
+    Points[[], [], [], [], slice[[0], 0, 0]]
+
+--- the points at places (each its own feature, by its place in the list)
+fn points_at[lats, lngs]
+    xs = []
+    ys = []
+    which = slice[[0], 0, 0]
+    for i in range[len[lats]]
+        p = geo.project[lats[i], lngs[i], 0.0]
+        xs = push[xs, p.x]
+        ys = push[ys, p.y]
+        which = push[which, i]
+    Points[lats, lngs, xs, ys, which]
+
+--- no groups at any zoom
+fn no_tree[]
+    Tree[0.0, -1, 0.0, 0.0, _no_groups[], slice[[0], 0, 0]]
+
+--- the groups the points make at every whole zoom from `lowest` to
+--- `highest`, gathered within `radius` CSS pixels
+fn tree[pts, radius, lowest, highest]
+    groups = _no_groups[]
+    level_from = slice[[0], 0, 0]
+    --- (the highest zoom: every point alone)
+    level_from = push[level_from, 0]
+    for i in range[len[pts.xs]]
+        groups = push[groups, Group[pts.lats[i], pts.lngs[i], pts.xs[i], pts.ys[i], 1, -1.0, i]]
+    z = highest - 1.0
+    above = groups
+    while z gte lowest
+        level = _gathered[above, z, radius]
+        level_from = push[level_from, len[groups]]
+        for g in level
+            groups = push[groups, g]
+        above = level
+        z = z - 1.0
+    Tree[radius, len[pts.xs], lowest, highest, groups, level_from]
+
+--- the groups of the zoom above gathered at zoom `z`: each not yet taken,
+--- in turn, takes those within `radius` pixels of it at that zoom (found
+--- among the groups sorted by where they fall across the world)
+fn _gathered[above, z, radius]
+    n = len[above]
+    reach = radius / 2.0 ^ z
+    reach2 = reach * reach
+    xs = for g in above
+        g.x
+    order = argsort[xs]
+    at = for i in range[n]
+        0
+    for k in range[n]
+        at[order[k]] = k
+    taken = for i in range[n]
+        false
+    out = _no_groups[]
+    for i in range[n]
+        if not taken[i]
+            taken[i] = true
+            g = above[i]
+            sum_x = g.x * g.count
+            sum_y = g.y * g.count
+            total = g.count
+            joined = 0
+            --- (those to the east of it, then those to the west, while near
+            --- enough across)
+            k = at[i] + 1
+            while k lt n and xs[order[k]] - g.x lte reach
+                j = order[k]
+                if not taken[j]
+                    dx = above[j].x - g.x
+                    dy = above[j].y - g.y
+                    if dx * dx + dy * dy lte reach2
+                        taken[j] = true
+                        sum_x = sum_x + above[j].x * above[j].count
+                        sum_y = sum_y + above[j].y * above[j].count
+                        total = total + above[j].count
+                        joined = joined + 1
+                k = k + 1
+            k = at[i] - 1
+            while k gte 0 and g.x - xs[order[k]] lte reach
+                j = order[k]
+                if not taken[j]
+                    dx = above[j].x - g.x
+                    dy = above[j].y - g.y
+                    if dx * dx + dy * dy lte reach2
+                        taken[j] = true
+                        sum_x = sum_x + above[j].x * above[j].count
+                        sum_y = sum_y + above[j].y * above[j].count
+                        total = total + above[j].count
+                        joined = joined + 1
+                k = k - 1
+            if joined eq 0
+                out = push[out, g]
+            else
+                x = sum_x / total
+                y = sum_y / total
+                p = geo.unproject[x, y, 0.0]
+                out = push[out, Group[p.lat, p.lng, x, y, total, z + 1.0, -1]]
+    out
+
+--- the groups shown at a zoom: those of its whole zoom (rounded down),
+--- held to the zooms the tree was made for
+fn groups_at[t, zoom]
+    if t.count lt 0 or len[t.level_from] eq 0
+        return _no_groups[]
+    z = max[t.lowest, min[t.highest, geo.js_floor[zoom]]]
+    k = int[t.highest - z]
+    k = min[k, len[t.level_from] - 1]
+    from = t.level_from[k]
+    upto = len[t.groups]
+    if k + 1 lt len[t.level_from]
+        upto = t.level_from[k + 1]
+    slice[t.groups, from, upto]
+
+--- the radius a cluster of `count` points is drawn with, in CSS pixels
+--- (larger by a step for each tenfold more points)
+fn cluster_radius[count]
+    14.0 + 4.0 * ln[0.0 + max[1, count]] / ln[10.0]
+
+--- the colour a cluster of `count` points is drawn in: blue for a few,
+--- amber for tens, red for hundreds or more
+fn cluster_color[count]
+    if count lt 10
+        return lory.rgba[51.0, 136.0, 255.0, 1.0]
+    if count lt 100
+        return lory.rgba[240.0, 160.0, 30.0, 1.0]
+    lory.rgba[226.0, 69.0, 80.0, 1.0]
+
+--- the clusters among the groups drawn (the points alone are not: the map
+--- draws them as their own features): a disc of the group's colour in a
+--- paler ring, its count in white (`k` the view's scale against zoom
+--- 0, its top left (ox, oy) in its zoom's pixels, drawn in the box at
+--- (bx, by) with `s` canvas pixels a CSS pixel)
+fn draw_clusters[c, groups, k, ox, oy, bx, by, s]
+    for g in groups
+        if g.count gt 1
+            x = bx + (g.x * k - ox) * s
+            y = by + (g.y * k - oy) * s
+            r = cluster_radius[g.count] * s
+            color = cluster_color[g.count]
+            c = lory.circle[c, x, y, r + 5.0 * s, lory.fade[color, 0.35]]
+            c = lory.circle[c, x, y, r, lory.fade[color, 0.9]]
+            c = lory.text_centered[c, x, y, '`g.count`', 12.0 * s, lory.white[]]
+    c
+
+--- the group under a point of the view (CSS pixels from its top left):
+--- its place in the list, or -1 (a cluster's disc and ring, the last
+--- drawn first)
+fn cluster_under[groups, k, ox, oy, x, y]
+    i = len[groups] - 1
+    while i gte 0
+        g = groups[i]
+        if g.count gt 1
+            dx = g.x * k - ox - x
+            dy = g.y * k - oy - y
+            r = cluster_radius[g.count] + 5.0
+            if dx * dx + dy * dy lte r * r
+                return i
+        i = i - 1
+    -1
+
+--- ---- a heatmap ----
+
+--- the colour of heat `t` (0 to 1): clear, then blue, teal, yellow, red
+fn heat_color[t]
+    stops = [0.0, 0.25, 0.5, 0.75, 1.0]
+    rs = [40.0, 65.0, 0.0, 255.0, 230.0]
+    gs = [80.0, 105.0, 200.0, 210.0, 40.0]
+    bs = [220.0, 225.0, 170.0, 0.0, 30.0]
+    alphas = [0.0, 0.55, 0.7, 0.8, 0.9]
+    h = max[0.0, min[1.0, t]]
+    i = 0
+    while i lt 3 and h gt stops[i + 1]
+        i = i + 1
+    f = (h - stops[i]) / (stops[i + 1] - stops[i])
+    lory.rgba[rs[i] + (rs[i + 1] - rs[i]) * f, gs[i] + (gs[i + 1] - gs[i]) * f, bs[i] + (bs[i + 1] - bs[i]) * f, alphas[i] + (alphas[i + 1] - alphas[i]) * f]
+
+--- the heat at every corner of a grid over a view `w` by `h` CSS pixels,
+--- `cell` pixels apart (row by row): each point's bell, 0.4 at its
+--- middle, fading to nothing `radius` pixels away
+fn heat_grid[pts, k, ox, oy, w, h, radius, cell]
+    cols = int[geo.js_ceil[w / cell]] + 1
+    rows = int[geo.js_ceil[h / cell]] + 1
+    heat = for i in range[cols * rows]
+        0.0
+    sigma = radius / 3.0
+    spread = 2.0 * sigma * sigma
+    r2 = radius * radius
+    for p in range[len[pts.xs]]
+        px = pts.xs[p] * k - ox
+        py = pts.ys[p] * k - oy
+        if px gt 0.0 - radius and px lt w + radius and py gt 0.0 - radius and py lt h + radius
+            i0 = int[max[0.0, geo.js_floor[(px - radius) / cell]]]
+            i1 = int[min[0.0 + cols - 1, geo.js_ceil[(px + radius) / cell]]]
+            j0 = int[max[0.0, geo.js_floor[(py - radius) / cell]]]
+            j1 = int[min[0.0 + rows - 1, geo.js_ceil[(py + radius) / cell]]]
+            j = j0
+            while j lte j1
+                i = i0
+                while i lte i1
+                    dx = i * cell - px
+                    dy = j * cell - py
+                    d2 = dx * dx + dy * dy
+                    if d2 lt r2
+                        heat[j * cols + i] = heat[j * cols + i] + 0.4 * exp[0.0 - d2 / spread]
+                    i = i + 1
+                j = j + 1
+    heat
+
+--- the points' heat drawn over the view (as `draw_clusters` places it,
+--- `w` by `h` CSS pixels), each point spread `radius` CSS pixels
+fn draw_heat[c, pts, k, ox, oy, bx, by, w, h, s, radius]
+    if len[pts.xs] eq 0
+        return c
+    cell = max[4.0, min[12.0, radius / 4.0]]
+    cols = int[geo.js_ceil[w / cell]] + 1
+    rows = int[geo.js_ceil[h / cell]] + 1
+    heat = heat_grid[pts, k, ox, oy, w, h, radius, cell]
+    j = 0
+    while j lt rows - 1
+        i = 0
+        while i lt cols - 1
+            a = heat[j * cols + i]
+            b = heat[j * cols + i + 1]
+            d = heat[(j + 1) * cols + i]
+            e2 = heat[(j + 1) * cols + i + 1]
+            if max[max[a, b], max[d, e2]] gte 0.01
+                x0 = bx + i * cell * s
+                y0 = by + j * cell * s
+                x1 = x0 + cell * s
+                y1 = y0 + cell * s
+                ca = heat_color[a]
+                cb = heat_color[b]
+                cd = heat_color[d]
+                ce = heat_color[e2]
+                c = lory.shaded[c, x0, y0, ca, x1, y0, cb, x0, y1, cd]
+                c = lory.shaded[c, x1, y0, cb, x1, y1, ce, x0, y1, cd]
+            i = i + 1
+        j = j + 1
+    c
+
+test points_close_together_are_one_cluster_until_the_map_zooms_in[]
+    --- (two points a kilometre apart in Paris, one in Lyon)
+    pts = points_at[[48.8566, 48.8656, 45.764], [2.3522, 2.3522, 4.8357]]
+    t = tree[pts, 60.0, 0.0, 18.0]
+    far = groups_at[t, 3.0]
+    len[far] eq 1
+    far[0].count eq 3
+    near = groups_at[t, 8.0]
+    len[near] eq 2
+    paris = for g in near
+        if g.count eq 2
+            g.splits
+        else
+            0.0
+    --- (a kilometre is 60 pixels at about zoom 13: apart from there)
+    13.0 in paris or 14.0 in paris
+    len[groups_at[t, 18.0]] eq 3
+    len[groups_at[t, 25.0]] eq 3
+
+test a_cluster_stands_at_the_middle_of_its_points[]
+    pts = points_at[[10.0, 10.0, 10.0], [20.0, 20.001, 20.002]]
+    t = tree[pts, 60.0, 0.0, 18.0]
+    g = groups_at[t, 5.0][0]
+    g.count eq 3
+    abs[g.lng - 20.001] lt 0.0000001
+    abs[g.lat - 10.0] lt 0.0000001
+    g.index eq -1
+    groups_at[t, 18.0][2].index eq 2
+
+test a_cluster_is_found_under_the_pointer[]
+    pts = points_at[[0.0, 0.0], [0.0, 0.01]]
+    t = tree[pts, 60.0, 0.0, 18.0]
+    groups = groups_at[t, 4.0]
+    k = geo.world[4.0] / 256.0
+    p = geo.project[0.0, 0.005, 4.0]
+    cluster_under[groups, k, p.x - 100.0, p.y - 100.0, 100.0, 100.0] eq 0
+    cluster_under[groups, k, p.x - 100.0, p.y - 100.0, 160.0, 100.0] eq -1
+
+test heat_is_greatest_where_the_points_are_thick[]
+    pts = points_at[[0.0, 0.0, 0.0], [0.0, 0.0, 30.0]]
+    k = geo.world[2.0] / 256.0
+    centre = geo.project[0.0, 0.0, 2.0]
+    heat = heat_grid[pts, k, centre.x - 40.0, centre.y - 40.0, 80.0, 80.0, 20.0, 5.0]
+    --- (17 corners a row; the two points together at (40, 40), the
+    --- third too far east to warm it)
+    abs[heat[8 * 17 + 8] - 0.8] lt 0.000001
+    heat[0] eq 0.0
+    heat_color[0.0].a eq 0.0
+    heat_color[1.0].r gt 0.9

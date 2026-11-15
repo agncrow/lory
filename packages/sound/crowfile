@@ -1,0 +1,8 @@
+--- Sound: audio a program makes itself, held to Tone.js. Lory, beside it
+--- in this repository, is linked in crow_modules/ as Kite's is, by a
+--- relative link the repository keeps (`crow install` would link the same
+--- folder by its absolute path):
+---
+---     ln -s ../../lory crow_modules/lory
+name = 'sound'
+deps = map[lory = '../lory']

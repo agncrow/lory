@@ -1,0 +1,1191 @@
+--- Charts standing out of a wall — a page's surface in a room, as Lory's
+--- window shows one — in the wall's own pixels: a grid of charts laid as
+--- the page lays them, bars and lines as blocks and ribbons standing out
+--- of it, and candles folded from a day's bars, which are asked of the app
+--- that answers them, standing over their volume with the VWAP a ribbon
+--- before them, a trade's fills, levels and stretches held, and the candle
+--- under the pointer said. Each chart's words are laid once and kept
+--- (`lory.keep_words`), and its shapes built again only when what they
+--- show moves; candles done as a chart plays are added to its shapes, not
+--- built again with them.
+---
+--- An app words its charts as `Cell`s in `Grid`s (`cell` gives one of a
+--- kind to fill in; Myna's room reads them from its pages' chart widgets)
+--- and, each frame, once the wall is drawn in the room's scene and before
+--- what stands over it:
+---
+---     w = wall.answered[w, c]        the app's answers taken in
+---     c = wall.asked[c, w, grids]    bars not asked for yet asked
+---     w = wall.noted[w]              and held as asked
+---     c = wall.drawn[c, w, grids, there, shows, edges]
+---     p = wall.picked[]              the bar the pointer is on
+---
+--- with `w` what the wall holds between frames (`fresh[]` at first; its
+--- `given`, when the charts were last given — a playing chart's head moves
+--- on from there), `there` whether the pointer is on the wall, `shows` the
+--- part of the wall in view and `edges` the planes what stands out of it
+--- is cut by (`xr.edges` of a window's panel; `no_edges[]` for none).
+---
+--- A chart of candles asks `bars` for its day (`?day=…&symbol=…`); a grid
+--- of small ones asks `candles` once for every symbol's
+--- (`?day=…&span=…&from=…&to=…`); the answers are read as `candles.day_of`
+--- and `candles.batch_of` read them.
+use math
+use memory
+use lory
+use lory.space
+use lory.xr
+use lory.solid
+use candles
+
+--- one chart of a grid, as an app words it (`form` is its kind: `bars`, `line`, `candles`, `mini`): its labels, values and tips,
+--- its colour and unit, a range fixed (`ranged`), whether its bars are
+--- offered (`pick`), and words that change whenever its own do (`stamp`:
+--- its shapes and words are laid again when they change; Myna's room
+--- gives a chart's JSON); and, of candles: the day and the symbol, the seconds
+--- a candle holds (`span`; `base`, the seconds of the candles a small
+--- chart asks for), the window of the day and the second reached (`from`,
+--- `to`, `head`; `playing`: the head moves with the clock), only so many
+--- seconds before the head (`last`), the candles in view (`visible`),
+--- whether the VWAP and the volume are shown, a small chart's edge colour,
+--- and the trades: fills (their second, price, words and whether bought),
+--- levels (price, words, colour) and stretches held (from, to, tone)
+struct Cell [id, form, title, note, labels, values, tips, color, unit, area, dots, pick, ranged, y0, y1, stamp, day, symbol, span, base, from, to, head, playing, last, visible, vwap, volume, edge, mark_s, mark_p, mark_w, mark_up, level_p, level_w, level_c, band_from, band_to, band_tone]
+
+--- a grid of charts on the wall: the caller's own number for it (`n`; a
+--- page's widget, in Myna's room), its box on the wall (its height as the
+--- page lays it now), its grid (a chart's least width, the most columns,
+--- a chart's height), its charts, and where its app answers a day's bars
+--- and every symbol's candles ('' where it names none)
+struct Grid [n, x, y, w, h, min_w, max_cols, cell_h, cells, bars, candles]
+
+--- a list of names a frame leaves for the function after it: the bars it
+--- asked for
+struct Keys [list]
+
+--- what a wall's charts hold between frames: how the asking for each
+--- chart's bars stands (`days`, by the bars' key: `asked`, `ok`, `none`,
+--- or why it failed), and when the charts were last given (`given`, in
+--- the frame's milliseconds: a playing chart's head moves on from there)
+struct Wall [days, given]
+
+fn _no_texts[]
+    slice[[''], 0, 0]
+
+fn _no_numbers[]
+    slice[[0.0], 0, 0]
+
+fn _no_flags[]
+    slice[[false], 0, 0]
+
+--- what a wall holds before any chart was given it
+fn fresh[]
+    Wall[map['' = ''], 0.0]
+
+--- a chart of a kind (`bars`, `line`, `candles`, `mini`), its words else
+--- as an app that says nothing more has them — for the app to fill in
+--- (its `stamp` among them) before it hands it to a grid
+fn cell[id, form, title]
+    Cell[id, form, title, '', _no_texts[], _no_numbers[], _no_texts[], 'blue', 'count', false, false, false, false, 0.0, 0.0, '', '', '', 60.0, 60.0, 0.0, 86400.0, 86400.0, false, 0.0, 0.0, false, false, '', _no_numbers[], _no_numbers[], _no_texts[], _no_flags[], _no_numbers[], _no_texts[], _no_texts[], _no_numbers[], _no_numbers[], _no_texts[]]
+
+--- none of each, typed
+fn no_cells[]
+    slice[[cell['', '', '']], 0, 0]
+
+fn no_grids[]
+    slice[[Grid[0, 0.0, 0.0, 0.0, 0.0, 420.0, 0, 300.0, no_cells[], '', '']], 0, 0]
+
+fn no_edges[]
+    _no_numbers[]
+
+--- ---- a chart's colours ----
+
+fn _ink[]
+    lory.Color[0.898, 0.9059, 0.9216, 1.0]
+
+fn _muted[]
+    lory.Color[0.6118, 0.6392, 0.6863, 1.0]
+
+fn _green[]
+    lory.Color[0.1333, 0.7725, 0.3686, 1.0]
+
+fn _red[]
+    lory.Color[0.9373, 0.2667, 0.2667, 1.0]
+
+fn _blue[]
+    lory.Color[0.3765, 0.6471, 0.9804, 1.0]
+
+fn _amber[]
+    lory.Color[0.9647, 0.7647, 0.2627, 1.0]
+
+fn _rail[]
+    lory.Color[0.2118, 0.2588, 0.3137, 1.0]
+
+fn tone_of[name]
+    if name eq 'red'
+        return _red[]
+    if name eq 'green'
+        return _green[]
+    if name eq 'grey'
+        return _muted[]
+    _blue[]
+
+--- a colour that keeps some of itself in the shade (a chart's blocks are
+--- lit, and its colours are what it says)
+fn lit[color]
+    space.glowing[space.plain[color], lory.Color[color.r * 0.35, color.g * 0.35, color.b * 0.35, 1.0]]
+
+--- the columns and rows a grid's charts fall into, as a page's own chart
+--- program lays them (finchdash's charts/main.co): as many columns of a
+--- chart's least width as the grid is wide for, but no more than it has
+--- charts, nor than its most — a chart's width and height, and the gap
+struct Lay [cols, rows, cell_w, cell_h, gap]
+
+fn laid[k]
+    n = len[k.cells]
+    gap = 10.0
+    cols = 1
+    if n gt 0
+        fit = int[floor[(k.w + gap) / (k.min_w + gap)]]
+        cols = max[1, min[fit, n]]
+        if k.max_cols gt 0
+            cols = min[cols, k.max_cols]
+    rows = 0
+    if n gt 0
+        rows = (n + cols - 1) / cols
+    Lay[cols, rows, (k.w - gap * (0.0 + cols - 1)) / (0.0 + cols), k.cell_h, gap]
+
+--- how tall a grid of charts stands: its rows, and the gaps between them
+--- (a grid of none as tall as it stands)
+fn needed[k]
+    lay = laid[k]
+    if lay.rows lt 1
+        return k.h
+    (0.0 + lay.rows) * lay.cell_h + (0.0 + lay.rows - 1) * lay.gap
+
+--- chart `i`'s box on the wall (left, top, width, height)
+fn cell_box[k, lay, i]
+    row = i / lay.cols
+    col = i - row * lay.cols
+    [k.x + (0.0 + col) * (lay.cell_w + lay.gap), k.y + (0.0 + row) * (lay.cell_h + lay.gap), lay.cell_w, lay.cell_h]
+
+--- where a chart's marks are plotted inside its box: under its heading,
+--- left of its scale's words, over its labels
+fn plot_of[box]
+    [box[0] + 14.0, box[1] + 42.0, max[10.0, box[2] - 14.0 - 64.0], max[10.0, box[3] - 42.0 - 28.0]]
+
+--- the range a chart's values are drawn in
+struct Scale [lo, hi]
+
+fn scale_of[cell]
+    lo = 0.0
+    hi = 0.0
+    first = true
+    for v in cell.values
+        if v eq v
+            if first or v lt lo
+                lo = v
+            if first or v gt hi
+                hi = v
+            first = false
+    if cell.form eq 'bars' or cell.area
+        lo = min[lo, 0.0]
+        hi = max[hi, 0.0]
+    else
+        room = (hi - lo) * 0.08
+        lo = lo - room
+        hi = hi + room
+    if cell.ranged
+        lo = cell.y0
+        hi = cell.y1
+    if hi lte lo
+        hi = lo + 1.0
+    Scale[lo, hi]
+
+--- a value's height in a plot `ph` tall
+fn _up[sc, v, ph]
+    max[0.0, min[ph, (v - sc.lo) / (sc.hi - sc.lo) * ph]]
+
+--- what a shape held on the page was built from, as words. Kept in the
+--- program's memory under the shape's name, not in what the charts hold:
+--- a chart is drawn by functions that take the canvas and give it back,
+--- and nothing held is handed through them (a canvas and what is held,
+--- wrapped together and taken apart a chart, cost a frame more than all
+--- its drawing)
+struct Built [from]
+
+fn _stale[name, sig]
+    recall['kite.wall.built.`name`', Built['']].from ne sig
+
+--- a shape handed to the page under a name, and what it was built from
+--- remembered
+fn _held_shape[c, name, sig, g]
+    remember['kite.wall.built.`name`', Built[sig]]
+    space.mesh[c, name, solid.shape[g]]
+
+--- where point `i` of `n` lies across a plot `pw` wide
+fn _across[i, n, pw]
+    if n lt 2
+        return pw / 2.0
+    (0.0 + i) / (0.0 + n - 1) * pw
+
+--- a chart of bars or of a line, its shapes built (when its numbers
+--- changed) and drawn standing out of the wall at its plot
+fn solid_drawn[c, cell, plot]
+    pw = plot[2]
+    ph = plot[3]
+    sc = scale_of[cell]
+    n = len[cell.values]
+    sig = '`round[pw]`x`round[ph]`|`cell.stamp`'
+    name = 'cell:`cell.id`'
+    rail_name = '`name`:rail'
+    one_name = '`name`:one'
+    two_name = '`name`:two'
+    if _stale[rail_name, sig]
+        zero = _up[sc, 0.0, ph]
+        rail = solid.geo[]
+        for t in solid.ticks[sc.lo, sc.hi, 4]
+            y = _up[sc, t, ph]
+            rail = solid.block[rail, 0.0, y - 0.5, 0.5, pw, y + 0.5, 1.5]
+        if cell.form eq 'bars' or cell.area
+            rail = solid.block[rail, 0.0, zero - 1.0, 1.0, pw, zero + 1.0, 3.0]
+        one = solid.geo[]
+        two = solid.geo[]
+        if cell.form eq 'bars'
+            slot = pw / max[1.0, 0.0 + n]
+            for i in range[n]
+                v = cell.values[i]
+                if v eq v
+                    x0 = (0.0 + i) * slot + slot * 0.19
+                    x1 = x0 + slot * 0.62
+                    y = _up[sc, v, ph]
+                    foot = min[zero, y]
+                    top = max[zero, y]
+                    if top - foot lt 1.5
+                        top = foot + 1.5
+                    if cell.color eq 'sign' and v lt 0.0
+                        two = solid.block[two, x0, foot, 3.0, x1, top, 30.0]
+                    else
+                        one = solid.block[one, x0, foot, 3.0, x1, top, 30.0]
+        else
+            xs = _no_numbers[]
+            ys = _no_numbers[]
+            for i in range[n]
+                v = cell.values[i]
+                if v eq v
+                    xs = push[xs, _across[i, n, pw]]
+                    ys = push[ys, _up[sc, v, ph]]
+            one = solid.ribbon[one, xs, ys, 3.5, 12.0, 18.0]
+            if cell.area
+                two = solid.curtain[two, xs, ys, zero, 4.0]
+            if cell.dots
+                for i in range[len[xs]]
+                    one = solid.block[one, xs[i] - 3.0, ys[i] - 3.0, 12.0, xs[i] + 3.0, ys[i] + 3.0, 22.0]
+        c = _held_shape[c, rail_name, sig, rail]
+        c = _held_shape[c, one_name, sig, one]
+        c = _held_shape[c, two_name, sig, two]
+    at = xr.spot[c, plot[0], plot[1] + ph]
+    first = tone_of[cell.color]
+    second = _red[]
+    if cell.color eq 'sign'
+        first = _green[]
+        if cell.form ne 'bars'
+            --- (a line coloured by its sign is the colour of where it ends)
+            final = 0.0
+            for v in cell.values
+                if v eq v
+                    final = v
+            if final lt 0.0
+                first = _red[]
+    if cell.form ne 'bars'
+        second = lory.Color[first.r * 0.3, first.g * 0.3, first.b * 0.3, 1.0]
+    c = space.draw[c, rail_name, at, space.shown[_rail[]]]
+    if cell.form ne 'bars' and cell.area
+        c = space.draw[c, two_name, at, space.shown[second]]
+    if cell.form eq 'bars' and cell.color eq 'sign'
+        c = space.draw[c, two_name, at, lit[second]]
+    space.draw[c, one_name, at, lit[first]]
+
+--- the bar or the point of a chart the wall's x is at: -1 for none
+fn index_at[cell, plot, x]
+    n = len[cell.values]
+    rel = x - plot[0]
+    if n lt 1 or rel lt 0.0 or rel gt plot[2]
+        return -1
+    if cell.form eq 'bars'
+        return max[0, min[n - 1, int[rel / (plot[2] / (0.0 + n))]]]
+    max[0, min[n - 1, int[rel / plot[2] * (0.0 + n - 1) + 0.5]]]
+
+--- a chart's words on the wall: its heading and note, its scale down the
+--- right, its labels along the foot
+fn worded[c, cell, box, plot]
+    c = lory.text[c, box[0] + 14.0, box[1] + 24.0, cell.title, 15.0, _ink[]]
+    if cell.note ne ''
+        c = lory.text[c, box[0] + 24.0 + lory.measure[c, cell.title, 15.0], box[1] + 24.0, cell.note, 11.0, _muted[]]
+    sc = scale_of[cell]
+    for t in solid.ticks[sc.lo, sc.hi, 4]
+        y = plot[1] + plot[3] - _up[sc, t, plot[3]]
+        c = lory.text_right[c, box[0] + box[2] - 8.0, y + 4.0, solid.worded[t, cell.unit], 11.0, _muted[]]
+    n = len[cell.labels]
+    if n gt 0
+        every = max[1, n / 6]
+        slot = plot[2] / (0.0 + n)
+        for i in range[n]
+            if i - (i / every) * every eq 0
+                x = plot[0] + _across[i, n, plot[2]]
+                if cell.form eq 'bars'
+                    x = plot[0] + (0.0 + i) * slot + slot / 2.0
+                c = lory.text_centered[c, x, box[1] + box[3] - 12.0, cell.labels[i], 10.0, _muted[]]
+    c
+
+--- the bar or point under the pointer said and capped in amber
+fn pointed[c, cell, box, plot, i]
+    sc = scale_of[cell]
+    n = len[cell.values]
+    v = cell.values[i]
+    words = solid.worded[v, cell.unit]
+    if i lt len[cell.labels]
+        label = cell.labels[i]
+        words = '`label`: `words`'
+    if i lt len[cell.tips]
+        if cell.tips[i] ne ''
+            words = cell.tips[i]
+    c = lory.text_right[c, box[0] + box[2] - 8.0, box[1] + 24.0, words, 12.0, _amber[]]
+    if v ne v
+        return c
+    at = xr.spot[c, plot[0], plot[1] + plot[3]]
+    y = _up[sc, v, plot[3]]
+    if cell.form eq 'bars'
+        slot = plot[2] / (0.0 + n)
+        zero = _up[sc, 0.0, plot[3]]
+        foot = min[zero, y]
+        top = max[max[zero, y], foot + 1.5]
+        cap = lory.mul[at, lory.mul[lory.translation[(0.0 + i) * slot + slot * 0.19 - 1.5, foot - 1.5, 30.0], lory.scaling[slot * 0.62 + 3.0, top - foot + 3.0, 2.0]]]
+        return space.draw[c, 'wall:unit', cap, space.shown[_amber[]]]
+    nub = lory.mul[at, lory.mul[lory.translation[_across[i, n, plot[2]] - 5.0, y - 5.0, 18.0], lory.scaling[10.0, 10.0, 6.0]]]
+    space.draw[c, 'wall:unit', nub, space.shown[_amber[]]]
+
+--- ---- candles: an app's bars, asked for and drawn ----
+
+--- what a chart shows of its bars: what it was folded from, the candles,
+--- and the price its change is told from (the close before the day, or
+--- the day's first price)
+struct Fold [sig, k, since]
+
+fn _day_key[cell]
+    if cell.form eq 'mini'
+        return '`_batch_key[cell]`|`cell.symbol`'
+    '`cell.day`|`cell.symbol`'
+
+fn _batch_key[cell]
+    'm|`cell.day`|`round[cell.base]`|`round[cell.from]`|`round[cell.to]`'
+
+--- the app's answers to the charts' askings taken in: a day's bars kept
+--- under a name of their own in the program's memory (they are many, and
+--- what is held is taken up and put down every frame), and in what is
+--- held only how each asking stands
+fn answered[w, c]
+    for back in lory.said[c]
+        if '`back.what`' eq 'answer'
+            id = '`back.id`'
+            if starts[id, 'day:']
+                key = slice[id, 4, len[id]]
+                if 'failed' in back
+                    w.days[key] = 'the app did not answer'
+                else
+                    d = candles.day_of[int[0.0 + back.status], '`back.body`']
+                    remember['kite.wall.day.`key`', d]
+                    w.days[key] = d.state
+                    if d.state eq 'failed'
+                        w.days[key] = d.why
+            if starts[id, 'batch:']
+                bkey = slice[id, 6, len[id]]
+                if 'failed' in back
+                    w.days[bkey] = 'the app did not answer'
+                else
+                    b = candles.batch_of[int[0.0 + back.status], '`back.body`']
+                    w.days[bkey] = 'ok'
+                    for i in range[len[b.names]]
+                        name = b.names[i]
+                        one = b.days[i]
+                        remember['kite.wall.day.`bkey`|`name`', one]
+                        w.days['`bkey`|`name`'] = one.state
+    w
+
+--- the bars each chart of the grids needs asked of its app, once: what
+--- this frame asks for is left for `noted`
+fn asked[c, w, grids]
+    asked_now = _no_texts[]
+    for k in grids
+        for cell in k.cells
+            if cell.form eq 'candles' and k.bars ne '' and cell.day ne '' and cell.symbol ne ''
+                key = _day_key[cell]
+                if not (key in w.days) and not (key in asked_now)
+                    asked_now = push[asked_now, key]
+                    c = lory.request[c, 'day:`key`', 'GET', '`k.bars`?day=`cell.day`&symbol=`cell.symbol`', '']
+            if cell.form eq 'mini' and k.candles ne '' and cell.day ne ''
+                bkey = _batch_key[cell]
+                if not (bkey in w.days) and not (bkey in asked_now)
+                    asked_now = push[asked_now, bkey]
+                    c = lory.request[c, 'batch:`bkey`', 'GET', '`k.candles`?day=`cell.day`&span=`round[cell.base]`&from=`round[cell.from]`&to=`round[cell.to]`', '']
+    remember['kite.wall.asked', Keys[asked_now]]
+    c
+
+--- what a frame asked for held as asked
+fn noted[w]
+    for key in recall['kite.wall.asked', Keys[_no_texts[]]].list
+        w.days[key] = 'asked'
+    w
+
+--- how the asking for a chart's bars stands: `ok`, `asked`, `none`, or why
+--- it failed ('' where the page named no place to ask)
+fn _standing[w, k, cell]
+    key = _day_key[cell]
+    if key in w.days
+        return w.days[key]
+    if cell.form eq 'mini'
+        bkey = _batch_key[cell]
+        if bkey in w.days
+            if w.days[bkey] eq 'ok'
+                return 'none'
+            return w.days[bkey]
+        if k.candles eq ''
+            return ''
+        return 'asked'
+    if k.bars eq ''
+        return ''
+    'asked'
+
+fn _dim[col, by]
+    lory.Color[col.r * by, col.g * by, col.b * by, 1.0]
+
+--- ---- a chart's candles held ----
+
+--- how a chart's candles done are held in its shapes: what they were
+--- built under (`whole`), the candle at their left (`o0`, its place among
+--- the day's candles), the first candle not yet in them (`upto`), and how
+--- many more they have room for
+struct Candled [whole, o0, upto, room]
+
+fn _no_candled[]
+    Candled['', 0, 0, 0]
+
+--- room for this many candles past those a chart's shapes are built with
+--- (a playing chart of seconds is built again when they are taken, some
+--- three minutes on)
+fn _more[]
+    160
+
+--- a step of a number that moves as a chart plays — its slot, its depth,
+--- its scale — `per` steps to e (at seven, some fifteen per cent): shapes
+--- are built at a step's number, and a matrix carries them to the number
+--- itself until it moves a step
+fn _step_of[v, per]
+    round[ln[max[v, 0.000001]] * per]
+
+fn _at_step[at, per]
+    exp[(0.0 + at) / per]
+
+--- what held candles (`was`) want for the day's candles `first` up to
+--- `last` (not taking it) under `whole`: 0 nothing, 1 the new ones added
+--- (a few, where there is room for them and the last held is still in
+--- the window), 2 built again
+fn _to_do[was, whole, first, last]
+    if was.whole ne whole or was.o0 gt first or was.upto gt last
+        return 2
+    if was.upto eq last
+        return 0
+    if was.upto gt first and last - was.upto lte 16 and last - was.upto lte was.room
+        return 1
+    2
+
+--- a chart's candles done held in shapes a colour (bodies and their
+--- volumes), built from the window's first and added to as candles are
+--- done: a playing chart hands over its new candle, not its window again
+--- (all of it a second had been a headset's frame twice over)
+fn candles_held[c, cell, kk, sp, key, slot, thin, done, under]
+    name = 'cell:`cell.id`'
+    first = kk.first
+    last = first + done
+    slot_at = _step_of[slot, 7.0]
+    most_at = _step_of[sp.most, 7.0]
+    thin_at = _step_of[thin, 5.0]
+    slot_b = _at_step[slot_at, 7.0]
+    most_b = _at_step[most_at, 7.0]
+    thin_b = _at_step[thin_at, 5.0]
+    whole = '`key`|`cell.span`|`slot_at`|`most_at`|`thin_at`|`under gt 0.0`'
+    was = recall['kite.wall.candled.`cell.id`', _no_candled[]]
+    todo = _to_do[was, whole, first, last]
+    if todo eq 2
+        up = candles.bodies_of[kk, slot_b, most_b, thin_b, true, 0, done, 0]
+        down = candles.bodies_of[kk, slot_b, most_b, thin_b, false, 0, done, 0]
+        c = space.mesh_with_room[c, '`name`:up', solid.shape[up], solid.corners[up] + _more[] * 60]
+        c = space.mesh_with_room[c, '`name`:down', solid.shape[down], solid.corners[down] + _more[] * 60]
+        if under gt 0.0
+            vup = candles.volumes_of[kk, slot_b, true, 0, done, 0]
+            vdown = candles.volumes_of[kk, slot_b, false, 0, done, 0]
+            c = space.mesh_with_room[c, '`name`:vup', solid.shape[vup], solid.corners[vup] + _more[] * 30]
+            c = space.mesh_with_room[c, '`name`:vdown', solid.shape[vdown], solid.corners[vdown] + _more[] * 30]
+        remember['kite.wall.candled.`cell.id`', Candled[whole, first, last, _more[]]]
+    if todo eq 1
+        from = was.upto - first
+        origin = was.o0 - first
+        c = space.append[c, '`name`:up', solid.shape[candles.bodies_of[kk, slot_b, most_b, thin_b, true, from, done, origin]]]
+        c = space.append[c, '`name`:down', solid.shape[candles.bodies_of[kk, slot_b, most_b, thin_b, false, from, done, origin]]]
+        if under gt 0.0
+            c = space.append[c, '`name`:vup', solid.shape[candles.volumes_of[kk, slot_b, true, from, done, origin]]]
+            c = space.append[c, '`name`:vdown', solid.shape[candles.volumes_of[kk, slot_b, false, from, done, origin]]]
+        remember['kite.wall.candled.`cell.id`', Candled[whole, was.o0, last, was.room - (last - was.upto)]]
+    c
+
+--- a chart's VWAP held the same way, a ribbon in pixels (its prices `ky`
+--- pixels apart, at a step of its own), and the growing candle's piece
+--- of it laid apart: it moves as the candle grows
+fn line_held[c, cell, kk, key, slot, ky, done]
+    name = 'cell:`cell.id`'
+    first = kk.first
+    last = first + done
+    slot_at = _step_of[slot, 7.0]
+    ky_at = _step_of[ky, 10.0]
+    slot_b = _at_step[slot_at, 7.0]
+    ky_b = _at_step[ky_at, 10.0]
+    whole = '`key`|`cell.span`|`slot_at`|`ky_at`'
+    was = recall['kite.wall.lined.`cell.id`', _no_candled[]]
+    todo = _to_do[was, whole, first, last]
+    o0 = was.o0
+    if todo eq 2
+        o0 = first
+        g = candles.mean_line_of[kk, slot_b, 0.0, ky_b, 0.0, 0, done, 0]
+        c = space.mesh_with_room[c, '`name`:line', solid.shape[g], solid.corners[g] + _more[] * 18]
+        remember['kite.wall.lined.`cell.id`', Candled[whole, first, last, _more[]]]
+    if todo eq 1
+        g = candles.mean_line_of[kk, slot_b, 0.0, ky_b, 0.0, was.upto - first - 1, done, was.o0 - first]
+        c = space.append[c, '`name`:line', solid.shape[g]]
+        remember['kite.wall.lined.`cell.id`', Candled[whole, was.o0, last, was.room - (last - was.upto)]]
+    n = len[kk.s]
+    if kk.growing and n gt 1
+        tail = '`whole`|`o0`|`last`|`round[kk.vw[n - 2] * ky_b]`|`round[kk.vw[n - 1] * ky_b]`'
+        if _stale['`name`:tail', tail]
+            c = _held_shape[c, '`name`:tail', tail, candles.mean_line_of[kk, slot_b, 0.0, ky_b, 0.0, n - 2, n, o0 - first]]
+    c
+
+--- a chart's held candles drawn where they stand now: moved along from
+--- where they were begun, stretched from the step they were built at, and
+--- what has slid out of the window cut at the plot's left edge (the
+--- wall's own cut, `edges`, given back after)
+fn candles_shown[c, cell, kk, sp, slot, ky, lift, under, base, priced, plot, edges]
+    name = 'cell:`cell.id`'
+    first = kk.first
+    held = recall['kite.wall.candled.`cell.id`', _no_candled[]]
+    lined = recall['kite.wall.lined.`cell.id`', _no_candled[]]
+    sx = slot / _at_step[_step_of[slot, 7.0], 7.0]
+    slid = held.o0 lt first or (cell.vwap and lined.o0 lt first)
+    if slid
+        c = space.cut[c, _cut_left[c, edges, plot[0], plot[1]]]
+    moved = lory.mul[lory.translation[(0.0 + held.o0 - first) * slot, 0.0, 0.0], lory.scaling[sx, 1.0, 1.0]]
+    c = space.draw[c, '`name`:up', lory.mul[priced, moved], lit[_green[]]]
+    c = space.draw[c, '`name`:down', lory.mul[priced, moved], lit[_red[]]]
+    if under gt 0.0
+        shares = lory.mul[base, lory.scaling[1.0, under * 0.92 / sp.most, 1.0]]
+        c = space.draw[c, '`name`:vup', lory.mul[shares, moved], space.shown[_dim[_green[], 0.55]]]
+        c = space.draw[c, '`name`:vdown', lory.mul[shares, moved], space.shown[_dim[_red[], 0.55]]]
+    if cell.vwap
+        ky_b = _at_step[_step_of[ky, 10.0], 10.0]
+        along = lory.mul[base, lory.mul[lory.translation[(0.0 + lined.o0 - first) * slot, lift - sp.lo * ky, 0.0], lory.scaling[sx, ky / ky_b, 1.0]]]
+        c = space.draw[c, '`name`:line', along, space.shown[_amber[]]]
+        if kk.growing and len[kk.s] gt 1
+            c = space.draw[c, '`name`:tail', along, space.shown[_amber[]]]
+    if slid
+        c = _cut_back[c, edges]
+    c
+
+--- four planes as given, or, where none are, four that keep everything
+fn _planes_of[edges]
+    if len[edges] eq 16
+        return edges
+    [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+
+--- the wall's own cut given back after a chart's
+fn _cut_back[c, edges]
+    if len[edges] eq 16
+        return space.cut[c, edges]
+    space.uncut[c]
+
+--- the planes the wall is cut by (`edges`: a window's, or none) with the
+--- left one moved in to the page's `x` (a plot's left edge; `y` any
+--- height on it)
+fn _cut_left[c, edges, x, y]
+    planes = _planes_of[edges]
+    m = xr.spot[c, x, y]
+    planes[0] = m[0]
+    planes[1] = m[1]
+    planes[2] = m[2]
+    planes[3] = 0.0 - (m[0] * m[12] + m[1] * m[13] + m[2] * m[14])
+    planes
+
+--- where a second of the day lies across the candles, in pixels
+fn _at_second[kk, sec, span, slot]
+    if len[kk.s] eq 0
+        return 0.0
+    (sec - kk.s[0]) / span * slot
+
+--- a chart of candles drawn: its bars folded up to the second it has
+--- reached (a playing chart's head moves with the clock), its candles
+--- standing out of the wall — thick where much was traded — over their
+--- volume, the VWAP a ribbon before them, the trades' levels, fills and
+--- held stretches, and the candle under the pointer said
+fn candles_drawn[c, w, k, cell, box, there, x, y, edges]
+    small = cell.form eq 'mini'
+    plot = plot_of[box]
+    if small
+        plot = [box[0] + 8.0, box[1] + 30.0, max[10.0, box[2] - 16.0], max[10.0, box[3] - 38.0]]
+    place = '`round[box[0]]`,`round[box[1]]`,`round[box[2]]`,`round[box[3]]`|`lory.lettering[c]`'
+    --- (the pointer on the plot: the candle under it is said at the top
+    --- right, in the note's place — the two together are wider than a
+    --- chart of two side by side)
+    pointed = there and not small and x gte plot[0] and x lt plot[0] + plot[2] and y gte plot[1] and y lt plot[1] + plot[3]
+    headed = '`place`|`cell.title`|`cell.note`|`pointed`'
+    had = lory.kept_words['head:`cell.id`', headed]
+    if len[had] gt 0
+        c.verts = lory.put_words[c.verts, had]
+    else
+        before = len[c.verts]
+        lacking = c.missing
+        c = lory.text[c, box[0] + 14.0, box[1] + 24.0, cell.title, 15.0, _ink[]]
+        if cell.note ne '' and not small and not pointed
+            titled = lory.measure[c, cell.title, 15.0]
+            c = lory.text[c, box[0] + 24.0 + titled, box[1] + 24.0, cell.note, 11.0, _muted[]]
+        c = lory.keep_words[c, 'head:`cell.id`', headed, before, lacking]
+    if small and cell.edge ne ''
+        c = edged[c, box, lory.hex[cell.edge]]
+    stands = _standing[w, k, cell]
+    if stands ne 'ok'
+        words = stands
+        if stands eq 'asked'
+            words = 'reading the bars…'
+        if stands eq 'none'
+            words = 'no bars for `cell.symbol` on `cell.day`'
+        if stands eq ''
+            words = 'this chart names no place to ask for its bars'
+        return lory.text[c, plot[0] + 4.0, plot[1] + 24.0, words, 12.0, _muted[]]
+    head = cell.head
+    if cell.playing
+        head = min[cell.to, cell.head + (lory.time[c] - w.given) / 1000.0]
+    head = floor[head]
+    lo = cell.from
+    if cell.last gt 0.0
+        lo = max[lo, head - cell.last]
+    keep = int[cell.visible]
+    if keep lt 1 or keep gt 160
+        keep = 160
+    if small
+        keep = min[keep, 60]
+    wide = 1.0
+    if small
+        wide = cell.base
+    key = _day_key[cell]
+    sig = '`key`|`cell.span`|`lo`|`head`|`keep`'
+    fold_name = 'kite.wall.fold.`cell.id`'
+    fold = recall[fold_name, Fold['', candles.no_candles[], 0.0]]
+    if fold.sig ne sig
+        --- (the day's bars are many: taken up only when the chart must be
+        --- folded again, a second of a playing head or a new window)
+        d = recall['kite.wall.day.`key`', candles.no_day['none', '']]
+        since = 0.0
+        if len[d.o] gt 0
+            since = d.o[0]
+        if d.prev gt 0.0
+            since = d.prev
+        fold = Fold[sig, candles.folded[d, cell.span, lo, head, keep, wide], since]
+        remember[fold_name, fold]
+    kk = fold.k
+    n = len[kk.s]
+    if n eq 0
+        return lory.text[c, plot[0] + 4.0, plot[1] + 24.0, 'no bars yet at `candles.clock[head, true]`', 12.0, _muted[]]
+    sp = candles.span_of[kk]
+    pw = plot[2]
+    ph = plot[3]
+    under = 0.0
+    if cell.volume and not small
+        under = ph * 0.2
+    lift = under
+    if under gt 0.0
+        lift = under + 6.0
+    ky = (ph - lift) / (sp.hi - sp.lo)
+    slot = pw / (0.0 + n)
+    done = n
+    if kk.growing
+        done = n - 1
+    thin = (sp.hi - sp.lo) * 0.004
+    name = 'cell:`cell.id`'
+    c = candles_held[c, cell, kk, sp, key, slot, thin, done, under]
+    if cell.vwap
+        c = line_held[c, cell, kk, key, slot, ky, done]
+    --- (what is drawn in the wall's pixels over the candles, each shape
+    --- built again only when what it shows moved: a playing head moves a
+    --- second at a time, the chart folded again each time, and most of
+    --- what is over the candles stays where it was — the rail while the
+    --- scale holds, the VWAP until its end moves a pixel, the held
+    --- stretches until an end moves one, the fills until one comes in)
+    scale = '`round[ky * 1000.0]`|`round[sp.lo * 10000.0]`|`round[sp.hi * 10000.0]`|`round[pw]`|`round[ph]`|`round[lift]`'
+    scaled = '`sig`|`scale`'
+    if _stale['`name`:scaled', scaled]
+        remember['kite.wall.built.`name`:scaled', Built[scaled]]
+        if _stale['`name`:rail', scale]
+            rail = solid.geo[]
+            for t in solid.ticks[sp.lo, sp.hi, 4]
+                ty = lift + (t - sp.lo) * ky
+                rail = solid.block[rail, 0.0, ty - 0.5, 0.5, pw, ty + 0.5, 1.5]
+            if under gt 0.0
+                rail = solid.block[rail, 0.0, under + 2.0, 0.5, pw, under + 3.0, 1.5]
+            c = _held_shape[c, '`name`:rail', scale, rail]
+        stretches = scale
+        for i in range[len[cell.band_from]]
+            x0 = max[0.0, min[pw, _at_second[kk, cell.band_from[i], cell.span, slot]]]
+            x1 = max[0.0, min[pw, _at_second[kk, min[cell.band_to[i], head], cell.span, slot] + slot]]
+            if x1 gt x0
+                stretches = '`stretches`|`cell.band_tone[i]` `round[x0]` `round[x1]`'
+        if _stale['`name`:won', stretches]
+            won = solid.geo[]
+            lost = solid.geo[]
+            held_on = solid.geo[]
+            for i in range[len[cell.band_from]]
+                x0 = max[0.0, min[pw, _at_second[kk, cell.band_from[i], cell.span, slot]]]
+                x1 = max[0.0, min[pw, _at_second[kk, min[cell.band_to[i], head], cell.span, slot] + slot]]
+                if x1 gt x0
+                    if cell.band_tone[i] eq 'won'
+                        won = solid.block[won, x0, lift, 0.6, x1, ph, 2.2]
+                    else
+                        if cell.band_tone[i] eq 'lost'
+                            lost = solid.block[lost, x0, lift, 0.6, x1, ph, 2.2]
+                        else
+                            held_on = solid.block[held_on, x0, lift, 0.6, x1, ph, 2.2]
+            c = _held_shape[c, '`name`:won', stretches, won]
+            c = _held_shape[c, '`name`:lost', stretches, lost]
+            c = _held_shape[c, '`name`:open', stretches, held_on]
+        fills = scale
+        for i in range[len[cell.mark_s]]
+            mx = _at_second[kk, cell.mark_s[i], cell.span, slot] + slot * 0.5
+            my = lift + (cell.mark_p[i] - sp.lo) * ky
+            if mx gte 0.0 and mx lte pw and cell.mark_s[i] lte head
+                fills = '`fills`|`cell.mark_up[i]` `round[mx]` `round[my]`'
+        if _stale['`name`:buys', fills]
+            buys = solid.geo[]
+            sells = solid.geo[]
+            for i in range[len[cell.mark_s]]
+                mx = _at_second[kk, cell.mark_s[i], cell.span, slot] + slot * 0.5
+                my = lift + (cell.mark_p[i] - sp.lo) * ky
+                if mx gte 0.0 and mx lte pw and cell.mark_s[i] lte head
+                    if cell.mark_up[i]
+                        buys = solid.wedge[buys, mx, max[2.0, my - 20.0], 11.0, true, 20.0, 62.0]
+                    else
+                        sells = solid.wedge[sells, mx, min[ph - 2.0, my + 20.0], 11.0, false, 20.0, 62.0]
+            c = _held_shape[c, '`name`:buys', fills, buys]
+            c = _held_shape[c, '`name`:sells', fills, sells]
+    base = xr.spot[c, plot[0], plot[1] + ph]
+    priced = lory.mul[base, lory.mul[lory.translation[0.0, lift - sp.lo * ky, 0.0], lory.scaling[1.0, ky, 1.0]]]
+    c = space.draw[c, '`name`:rail', base, space.shown[_rail[]]]
+    c = space.draw[c, '`name`:won', base, space.shown[lory.Color[0.0706, 0.2078, 0.1412, 1.0]]]
+    c = space.draw[c, '`name`:lost', base, space.shown[lory.Color[0.2275, 0.0824, 0.0941, 1.0]]]
+    c = space.draw[c, '`name`:open', base, space.shown[lory.Color[0.0784, 0.149, 0.2471, 1.0]]]
+    c = candles_shown[c, cell, kk, sp, slot, ky, lift, under, base, priced, plot, edges]
+    c = space.draw[c, '`name`:buys', base, lit[_green[]]]
+    c = space.draw[c, '`name`:sells', base, lit[_red[]]]
+    --- (the candle still growing, drawn as it stands this second)
+    last = n - 1
+    if kk.growing
+        gx = (0.0 + last) * slot
+        foot = min[kk.o[last], kk.c[last]]
+        top = max[max[kk.o[last], kk.c[last]], foot + thin]
+        deep = candles.depth[kk.v[last], sp.most]
+        tint = _red[]
+        if kk.c[last] gte kk.o[last]
+            tint = _green[]
+        c = space.draw[c, 'wall:unit', lory.mul[priced, lory.mul[lory.translation[gx + slot * 0.18, foot, 6.0], lory.scaling[slot * 0.64, top - foot, deep]]], lit[tint]]
+        c = space.draw[c, 'wall:unit', lory.mul[priced, lory.mul[lory.translation[gx + slot * 0.5 - 0.9, kk.l[last], 6.0 + deep * 0.3], lory.scaling[1.8, max[kk.h[last] - kk.l[last], thin], deep * 0.4]]], lit[tint]]
+        if under gt 0.0
+            c = space.draw[c, 'wall:unit', lory.mul[base, lory.mul[lory.translation[gx + slot * 0.18, 0.0, 1.0], lory.scaling[slot * 0.64, kk.v[last] * under * 0.92 / sp.most, 4.0]]], space.shown[_dim[tint, 0.55]]]
+    --- (the trades' levels: a rail across at each price, its words at the right)
+    for i in range[len[cell.level_p]]
+        ly = lift + (cell.level_p[i] - sp.lo) * ky
+        if ly gt lift and ly lt ph
+            tone = lory.hex[cell.level_c[i]]
+            c = space.draw[c, 'wall:unit', lory.mul[base, lory.mul[lory.translation[0.0, ly - 1.0, 2.0], lory.scaling[pw, 2.0, 3.0]]], space.shown[tone]]
+            if not small
+                c = lory.text[c, plot[0] + 4.0, plot[1] + ph - ly - 4.0, cell.level_w[i], 10.0, tone]
+    --- (the words: the prices down the right, the clock along the foot,
+    --- the last price and how far it is from the close before)
+    --- (each laid again only when what it says or where it stands moved:
+    --- the prices with the scale, the clocks with the candles)
+    if not small
+        priced_at = '`place`|`scale`'
+        had = lory.kept_words['prices:`cell.id`', priced_at]
+        if len[had] gt 0
+            c.verts = lory.put_words[c.verts, had]
+        else
+            before = len[c.verts]
+            lacking = c.missing
+            for t in solid.ticks[sp.lo, sp.hi, 4]
+                c = lory.text_right[c, box[0] + box[2] - 8.0, plot[1] + ph - (lift + (t - sp.lo) * ky) + 4.0, candles.price[t], 11.0, _muted[]]
+            c = lory.keep_words[c, 'prices:`cell.id`', priced_at, before, lacking]
+        clocked_at = '`place`|`cell.span`|`round[slot * 100.0]`|`n`|`kk.s[0]`|`kk.s[n - 1]`'
+        had = lory.kept_words['clocks:`cell.id`', clocked_at]
+        if len[had] gt 0
+            c.verts = lory.put_words[c.verts, had]
+        else
+            before = len[c.verts]
+            lacking = c.missing
+            --- (a clock every fifth of the candles, or wider apart where a
+            --- clock is wider than that many slots: they ran into each other)
+            every = max[1, n / 5]
+            every = max[every, ceil[(lory.measure[c, candles.clock[kk.s[0], cell.span lt 60.0], 10.0] + 10.0) / slot]]
+            for i in range[n]
+                if i - (i / every) * every eq 0
+                    c = lory.text_centered[c, plot[0] + (0.0 + i) * slot + slot * 0.5, box[1] + box[3] - 12.0, candles.clock[kk.s[i], cell.span lt 60.0], 10.0, _muted[]]
+            c = lory.keep_words[c, 'clocks:`cell.id`', clocked_at, before, lacking]
+    --- (from the close before the day, or, where none is known, the
+    --- day's first price: the same for every chart of the symbol)
+    from_price = kk.o[0]
+    if fold.since gt 0.0
+        from_price = fold.since
+    moved = 0.0
+    if from_price gt 0.0
+        moved = (kk.c[last] - from_price) / from_price * 100.0
+    said = '`candles.price[kk.c[last]]`  `solid.short[moved]`%'
+    said_in = _red[]
+    tone = 'red'
+    if moved gte 0.0
+        said = '`candles.price[kk.c[last]]`  +`solid.short[moved]`%'
+        said_in = _green[]
+        tone = 'green'
+    inside = there and x gte plot[0] and x lt plot[0] + pw and y gte plot[1] and y lt plot[1] + ph
+    if inside and not small
+        i = max[0, min[n - 1, int[(x - plot[0]) / slot]]]
+        said = '`candles.clock[kk.s[i], true]`  O `candles.price[kk.o[i]]`  H `candles.price[kk.h[i]]`  L `candles.price[kk.l[i]]`  C `candles.price[kk.c[i]]`  V `solid.short[kk.v[i]]`'
+        said_in = _amber[]
+        tone = 'amber'
+        c = space.draw[c, 'wall:unit', lory.mul[base, lory.mul[lory.translation[(0.0 + i) * slot + slot * 0.5 - 0.7, 0.0, 56.0], lory.scaling[1.4, ph, 1.5]]], space.shown[_amber[]]]
+    --- (laid when it changes — a second at most while the head plays —
+    --- and put into each frame after as it was laid; a candle's numbers
+    --- too wide to stand beside the title stand under it)
+    told_at = '`place`|`tone`|`said`'
+    had = lory.kept_words['said:`cell.id`', told_at]
+    if len[had] gt 0
+        c.verts = lory.put_words[c.verts, had]
+        return c
+    before = len[c.verts]
+    lacking = c.missing
+    said_y = box[1] + 24.0
+    if inside and not small
+        titled = lory.measure[c, cell.title, 15.0]
+        if lory.measure[c, said, 12.0] gt box[2] - 22.0 - titled - 16.0
+            said_y = box[1] + 44.0
+    c = lory.text_right[c, box[0] + box[2] - 8.0, said_y, said, 12.0, said_in]
+    lory.keep_words[c, 'said:`cell.id`', told_at, before, lacking]
+
+--- a small chart's edge: four rails around its box, in the colour the
+--- page gave it (a symbol in its gate, a symbol in focus)
+fn edged[c, box, color]
+    at = xr.spot[c, box[0], box[1] + box[3]]
+    look = space.shown[color]
+    c = space.draw[c, 'wall:unit', lory.mul[at, lory.scaling[box[2], 2.0, 3.0]], look]
+    c = space.draw[c, 'wall:unit', lory.mul[at, lory.mul[lory.translation[0.0, box[3] - 2.0, 0.0], lory.scaling[box[2], 2.0, 3.0]]], look]
+    c = space.draw[c, 'wall:unit', lory.mul[at, lory.scaling[2.0, box[3], 3.0]], look]
+    space.draw[c, 'wall:unit', lory.mul[at, lory.mul[lory.translation[box[2] - 2.0, 0.0, 0.0], lory.scaling[2.0, box[3], 3.0]]], look]
+
+--- every chart of the grids in view drawn, after the wall is drawn in the
+--- room's scene: `there`, whether the pointer is on the wall; `shows`, the
+--- part of the wall in view (its top and its bottom, in its pixels);
+--- `edges`, the planes what stands out of the wall is cut by (a window's,
+--- `xr.edges`; `no_edges[]` for none). The bar under the pointer that is
+--- offered is left for `picked`
+fn drawn[c, w, grids, there, shows, edges]
+    if not space.made['wall:unit']
+        c = space.mesh[c, 'wall:unit', solid.shape[solid.block[solid.geo[], 0.0, 0.0, 0.0, 1.0, 1.0, 1.0]]]
+    x = lory.pointer_x[c]
+    y = lory.pointer_y[c]
+    pick = _no_pick[]
+    for k in grids
+        lay = laid[k]
+        for i in range[len[k.cells]]
+            cell = k.cells[i]
+            box = cell_box[k, lay, i]
+            plot = plot_of[box]
+            if box[1] + box[3] gt shows[0] and box[1] lt shows[1]
+                if cell.form eq 'bars' or cell.form eq 'line'
+                    c = solid_drawn[c, cell, plot]
+                    whole = '`round[box[0]]`,`round[box[1]]`,`round[box[2]]`,`round[box[3]]`|`lory.lettering[c]`|`cell.stamp`'
+                    had = lory.kept_words['cell:`cell.id`', whole]
+                    if len[had] gt 0
+                        c.verts = lory.put_words[c.verts, had]
+                    else
+                        before = len[c.verts]
+                        lacking = c.missing
+                        c = worded[c, cell, box, plot]
+                        c = lory.keep_words[c, 'cell:`cell.id`', whole, before, lacking]
+                    if there and x gte box[0] and x lt box[0] + box[2] and y gte box[1] and y lt box[1] + box[3]
+                        hit = index_at[cell, plot, x]
+                        if hit gte 0
+                            c = pointed[c, cell, box, plot, hit]
+                            if cell.pick
+                                pick = Pick[k.n, cell.id, hit]
+                else
+                    c = candles_drawn[c, w, k, cell, box, there, x, y, edges]
+                    if cell.pick and there and x gte box[0] and x lt box[0] + box[2] and y gte box[1] and y lt box[1] + box[3]
+                        pick = Pick[k.n, cell.id, 0]
+    remember['kite.wall.picked', pick]
+    c
+
+--- the bar a chart offers that the pointer was on as the charts were last
+--- drawn: its grid's number, its chart's id and its own (`n` -1: none; a
+--- chart of candles offered whole is its bar 0)
+struct Pick [n, id, at]
+
+fn _no_pick[]
+    Pick[-1, '', -1]
+
+fn picked[]
+    recall['kite.wall.picked', _no_pick[]]
+
+
+--- ---- tests ----
+
+--- a frame's canvas and what the wall holds, together
+struct Both [c, w]
+
+--- the app's answers taken in, the bars asked for and held as asked, for
+--- a test to read
+fn _fetched[c, w, grids]
+    w = answered[w, c]
+    c = asked[c, w, grids]
+    w = noted[w]
+    Both[c, w]
+
+fn _screen[said]
+    json['{"t": 1000, "width": 1200, "height": 800, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1200, "height": 800, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": [`said`]}']
+
+--- a wall to draw on: a room of one panel 1400 by 1000, its scene begun
+fn _room[said]
+    c = xr.begin_room[_screen[said], xr.room[1, 1400.0, 1000.0]]
+    space.scene[c, space.Orbit[0.0, 0.0, 3.0, [0.0, 0.0, 0.0], false, 0.0, 0.0, 0.0, 0.0], space.daylight[]]
+
+--- the wall's charts drawn with nothing pointed at, the whole wall in view
+fn _drawn[c, w, grids]
+    drawn[c, w, grids, false, [0.0, 1000.0], xr.edges[c, 0]]
+
+fn _bars_grid[]
+    pnl = cell['pnl', 'bars', 'Daily P&L']
+    pnl.labels = ['a', 'b', 'c']
+    pnl.values = [10.0, -20.0, 5.0]
+    pnl.tips = ['ten', '', '']
+    pnl.color = 'sign'
+    pnl.unit = 'usd'
+    pnl.pick = true
+    pnl.stamp = 'pnl 1'
+    cum = cell['cum', 'line', 'Cumulative']
+    cum.labels = ['a', 'b', 'c']
+    cum.values = [10.0, -10.0, -5.0]
+    cum.color = 'sign'
+    cum.unit = 'usd'
+    cum.area = true
+    cum.stamp = 'cum 1'
+    win = cell['win', 'line', 'Win %']
+    win.values = [50.0, 40.0]
+    win.unit = 'pct'
+    win.ranged = true
+    win.y0 = 0.0
+    win.y1 = 100.0
+    win.stamp = 'win 1'
+    Grid[0, 300.0, 100.0, 900.0, 400.0, 420.0, 2, 190.0, [pnl, cum, win], '', '']
+
+--- a grid's charts are laid as a page lays them: two to a row here, the
+--- third under the first, the grid as tall as its two rows and the gap;
+--- no more columns than it has charts (two where four would fit stand two
+--- wide); a grid of none as tall as it stands
+test a_grid_is_laid_as_a_page_lays_it[]
+    g = _bars_grid[]
+    lay = laid[g]
+    lay.cols eq 2
+    lay.rows eq 2
+    lay.cell_w eq 445.0
+    cell_box[g, lay, 2] eq [300.0, 300.0, 445.0, 190.0]
+    needed[g] eq 390.0
+    two = Grid[0, 0.0, 0.0, 900.0, 160.0, 200.0, 4, 160.0, [cell['a', 'mini', 'A'], cell['b', 'mini', 'B']], '', '']
+    laid[two].cols eq 2
+    laid[two].cell_w eq 445.0
+    five = Grid[0, 0.0, 0.0, 900.0, 160.0, 200.0, 4, 160.0, [cell['a', 'mini', 'A'], cell['b', 'mini', 'B'], cell['c', 'mini', 'C'], cell['d', 'mini', 'D'], cell['e', 'mini', 'E']], '', '']
+    laid[five].cols eq 4
+    laid[five].rows eq 2
+    none = Grid[0, 0.0, 0.0, 900.0, 160.0, 200.0, 4, 160.0, no_cells[], '', '']
+    laid[none].rows eq 0
+    needed[none] eq 160.0
+
+--- a chart's scale holds its values (and naught, for bars), or the range
+--- it fixed; the pointer's x finds its bar
+test a_charts_scale_and_the_bar_the_pointer_is_at[]
+    g = _bars_grid[]
+    scale_of[g.cells[0]].lo eq -20.0
+    scale_of[g.cells[0]].hi eq 10.0
+    scale_of[g.cells[2]].hi eq 100.0
+    plot = plot_of[cell_box[g, laid[g], 0]]
+    index_at[g.cells[0], plot, plot[0] + plot[2] * 0.5] eq 1
+    index_at[g.cells[0], plot, plot[0] - 5.0] eq -1
+
+--- a chart's shapes are handed to the page once: a second frame of the
+--- same numbers hands none; nothing pointed at, no bar is picked
+test a_charts_shapes_are_built_when_its_numbers_change[]
+    g = _bars_grid[]
+    first = _drawn[_room[''], fresh[], [g]]
+    space.made['cell:pnl:one'] eq true
+    space.made['cell:pnl:two'] eq true
+    space.made['wall:unit'] eq true
+    len[first.asks] gt 0
+    again = _drawn[_room[''], fresh[], [g]]
+    len[again.asks] eq 0
+    picked[].n eq -1
+
+fn _candle_cell[head]
+    one = cell['one', 'candles', 'AA · 1 m']
+    one.day = '2026-11-06'
+    one.symbol = 'AA'
+    one.from = 14400.0
+    one.to = 34200.0
+    one.head = 0.0 + head
+    one.visible = 120.0
+    one.vwap = true
+    one.volume = true
+    one.mark_s = [14401.0]
+    one.mark_p = [10.2]
+    one.mark_w = ['B 100']
+    one.mark_up = [true]
+    one.level_p = [10.5]
+    one.level_w = ['stop']
+    one.level_c = ['#ef4444']
+    one.band_from = [14400.0]
+    one.band_to = [14460.0]
+    one.band_tone = ['won']
+    one.stamp = 'one `head`'
+    one
+
+fn _candle_grid[head]
+    Grid[0, 300.0, 100.0, 900.0, 390.0, 380.0, 3, 390.0, [_candle_cell[head]], '/app/bars', '/app/candles']
+
+fn _bars_answer[]
+    body = encode['{"s": [14400, 14401, 14402, 14460, 14461], "o": [10, 10.5, 10.2, 11, 11.5], "h": [10.6, 10.8, 10.4, 11.6, 12], "l": [9.9, 10.1, 10, 10.9, 11.4], "c": [10.5, 10.2, 10.3, 11.5, 11.9], "v": [100, 200, 100, 50, 150], "prev": 9.5}']
+    '{"what": "answer", "id": "day:2026-11-06|AA", "status": 200, "body": `body`}'
+
+fn _asked_urls[c]
+    found = _no_texts[]
+    for call in lory.batch[c]
+        if call[0] eq '@request'
+            found = push[found, slice[call[3], 1, len[call[3]]]]
+    found
+
+fn _calls_named[c, name]
+    n = 0
+    for call in lory.batch[c]
+        if call[0] eq name
+            n = n + 1
+    n
+
+--- a chart of candles asks the app for its day's bars once, and when they
+--- come folds them to its head and builds its shapes: a body a colour, the
+--- volume, the VWAP, the fills and the stretch held; a candle done as the
+--- head moves on is added to the shapes held, none made again
+test a_chart_of_candles_asks_for_its_bars_and_stands_out[]
+    g = _candle_grid[14461]
+    got = _fetched[_room[''], fresh[], [g]]
+    got.w.days['2026-11-06|AA'] eq 'asked'
+    _asked_urls[got.c] eq ['/app/bars?day=2026-11-06&symbol=AA']
+    --- (asked once: the next frame asks nothing)
+    again = _fetched[_room[''], got.w, [g]]
+    len[_asked_urls[again.c]] eq 0
+    --- (the answer: the bars are kept, and the chart is built from them)
+    came = _fetched[_room[_bars_answer[]], again.w, [g]]
+    came.w.days['2026-11-06|AA'] eq 'ok'
+    st = _drawn[came.c, came.w, [g]]
+    space.made['cell:one:up'] eq true
+    space.made['cell:one:line'] eq true
+    space.made['cell:one:buys'] eq true
+    space.made['cell:one:won'] eq true
+    held = recall['kite.wall.candled.one', _no_candled[]]
+    held.o0 eq 0
+    held.upto eq 1
+    --- (the head on past 14460's minute: that candle is done, and only it
+    --- is handed over, added to the shapes held — none is made again)
+    moved_on = _drawn[_room[''], came.w, [_candle_grid[14520]]]
+    recall['kite.wall.candled.one', _no_candled[]].upto eq 2
+    recall['kite.wall.lined.one', _no_candled[]].upto eq 2
+    _calls_named[moved_on, 'bufferSubData'] eq 3
+    _calls_named[moved_on, 'bufferData'] eq 0
+
+--- held candles are added to while the new ones are few and follow them,
+--- and built again when the window jumps, reaches back, or runs past them
+test held_candles_are_added_to_or_built_again[]
+    was = Candled['w', 10, 20, 5]
+    _to_do[was, 'w', 12, 20] eq 0
+    _to_do[was, 'w', 12, 22] eq 1
+    _to_do[was, 'w', 12, 26] eq 2
+    _to_do[was, 'x', 12, 22] eq 2
+    _to_do[was, 'w', 9, 22] eq 2
+    _to_do[was, 'w', 12, 19] eq 2
+    _to_do[was, 'w', 20, 22] eq 2
+    --- (a step carries a number within some seven per cent of it)
+    abs[_at_step[_step_of[37.0, 7.0], 7.0] / 37.0 - 1.0] lt 0.08
+
+--- a chart whose window has slid on is cut at its plot's left edge: a
+--- point right of it is kept, one left of it cut, the wall's other edges
+--- as they were; a wall cut by nothing keeps the rest of the room
+test a_plots_left_edge_cuts_what_slid_out_of_it[]
+    c = _room['']
+    edges = xr.edges[c, 0]
+    planes = _cut_left[c, edges, 300.0, 200.0]
+    kept = xr.spot[c, 310.0, 250.0]
+    gone = xr.spot[c, 290.0, 250.0]
+    planes[0] * kept[12] + planes[1] * kept[13] + planes[2] * kept[14] + planes[3] gt 0.0
+    planes[0] * gone[12] + planes[1] * gone[13] + planes[2] * gone[14] + planes[3] lt 0.0
+    slice[planes, 4, 16] eq slice[edges, 4, 16]
+    open = _cut_left[c, no_edges[], 300.0, 200.0]
+    slice[open, 4, 16] eq [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    slice[open, 0, 4] eq slice[planes, 0, 4]
+
+fn _mini_grid[]
+    aa = cell['m-AA', 'mini', 'AA']
+    aa.day = '2026-11-06'
+    aa.symbol = 'AA'
+    aa.from = 14400.0
+    aa.to = 34200.0
+    aa.head = 14560.0
+    aa.vwap = true
+    aa.edge = '#22c55e'
+    aa.pick = true
+    aa.stamp = 'm-AA'
+    zz = cell['m-ZZ', 'mini', 'ZZ']
+    zz.day = '2026-11-06'
+    zz.symbol = 'ZZ'
+    zz.from = 14400.0
+    zz.to = 34200.0
+    zz.head = 14560.0
+    zz.pick = true
+    zz.stamp = 'm-ZZ'
+    Grid[0, 300.0, 100.0, 900.0, 160.0, 200.0, 4, 160.0, [aa, zz], '/app/bars', '/app/candles']
+
+fn _batch_answer[]
+    body = encode['{"t0": 0, "symbols": ["AA", "BB"], "counts": [3, 1], "s": [14400, 14460, 14520, 14400], "o": [1, 2, 3, 5], "h": [2, 3, 4, 6], "l": [1, 2, 3, 5], "c": [2, 3, 4, 6], "v": [10, 20, 30, 30], "pv": [15, 50, 105, 165]}']
+    '{"what": "answer", "id": "batch:m|2026-11-06|60|14400|34200", "status": 200, "body": `body`}'
+
+--- a grid of small charts asks once for every symbol's candles, each
+--- small chart stands out when they come, and a symbol the answer does
+--- not hold says it has no bars
+test small_charts_share_one_asking[]
+    g = _mini_grid[]
+    got = _fetched[_room[''], fresh[], [g]]
+    _asked_urls[got.c] eq ['/app/candles?day=2026-11-06&span=60&from=14400&to=34200']
+    _standing[got.w, g, g.cells[0]] eq 'asked'
+    came = _fetched[_room[_batch_answer[]], got.w, [g]]
+    _standing[came.w, g, g.cells[0]] eq 'ok'
+    _standing[came.w, g, g.cells[1]] eq 'none'
+    st = _drawn[came.c, came.w, [g]]
+    space.made['cell:m-AA:up'] eq true
+    --- (the head at 14560: the candles of 14400 and 14460 are whole, 14520's is not)
+    recall['kite.wall.fold.m-AA', Fold['', candles.no_candles[], 0.0]].k.s eq [14400.0, 14460.0]

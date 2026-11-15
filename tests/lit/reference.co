@@ -1,0 +1,324 @@
+--- Lory's Lit examples (examples/lit) held to Lit's own. reference.json is
+--- what each of Lit's examples showed in headless Chrome, as
+--- reference.mjs wrote it again in plain JavaScript and drove it, and each
+--- block below opens the same examples in Lory, takes the same steps at
+--- the same times (a press, words typed, a change told, a box ticked, the
+--- clock moved on) and holds what Lory shows after each to what Lit's page
+--- showed: the words in order, what each field holds, which boxes are
+--- ticked, the controls shown but off, the looks the reference names (a
+--- colour, a ground, an edge, padding, an opacity, an address), and that
+--- every control Lit's page names is shown. An example of
+--- @lit-labs/motion is held besides to the animations Lit's page started
+--- (each element's role, start, delay, duration, easing and fill), to
+--- what each element showed at each step's time (its opacity and how much
+--- of the move it started from was left) and, for the layouts that use no
+--- font, to the boxes it came to rest in. Its words are held as a whole,
+--- in any order, since Lory draws them on one stage. Run from the
+--- repository's root: `crow test tests/lit/reference.co`.
+---
+--- The chances an example draws (coins tossed, a roulette loaded, a list
+--- shuffled) are the ones Lit's page drew, handed to Lory's example as it
+--- opens, and the async task's request is answered from the same table
+--- the reference's `fetch` answered from, at the time Lory asks.
+use lory
+use lory.gui
+use examples.lit.shared
+use examples.lit.gallery
+use examples.lit.transitions
+
+--- What a block held: how many values, and the ones that differ.
+struct Tally [held, wrong]
+
+fn _reference[]
+    json[read['tests/lit/reference.json']]
+
+fn _no_texts[]
+    slice[[''], 0, 0]
+
+fn _begun[]
+    Tally[0, _no_texts[]]
+
+--- One value held: Lit's and Lory's, each as text.
+fn _with[k, label, want, got]
+    k.held = k.held + 1
+    if want ne got
+        k.wrong = push[k.wrong, '`label`: Lit has `want`, Lory has `got`']
+    k
+
+--- One number held, to within `near`.
+fn _near[k, label, want, got, near]
+    k.held = k.held + 1
+    if abs[want - got] gt near
+        k.wrong = push[k.wrong, '`label`: Lit has `want`, Lory has `got`']
+    k
+
+--- The block's verdict: every value held the same (the first forty
+--- differences shown when one is not), and how many values were held,
+--- which each block holds to the count it had when it was written, so a
+--- reading that came to compare less would fail too.
+fn _verdict[k, what]
+    log['`what`: `k.held` values held, `len[k.wrong]` differ']
+    shown = _no_texts[]
+    for w in k.wrong
+        if len[shown] lt 40
+            shown = push[shown, w]
+    assert[len[k.wrong] eq 0, join[shown, '\n']]
+    k.held
+
+fn _words[j]
+    out = _no_texts[]
+    for x in j
+        out = push[out, '`x`']
+    out
+
+fn _numbers[j]
+    out = shared.no_numbers[]
+    for x in j
+        out = push[out, 0.0 + x]
+    out
+
+--- A JSON value as text: null as 'null', a truth as 'true' or 'false'.
+fn _text[j]
+    kind = type[j]
+    if kind eq 'error'
+        return 'null'
+    if kind eq 'bool'
+        if j
+            return 'true'
+        return 'false'
+    '`j`'
+
+fn _truth[b]
+    if b
+        return 'true'
+    'false'
+
+--- A number of a look, or none (-1e9) where it is not one.
+fn _number_or_none[words]
+    n = float[words]
+    if not n.ok
+        return -1000000000.0
+    0.0 + n
+
+--- ---- the steps ----
+
+--- The event of Lory's a step of Lit's page is: a press, words typed
+--- (`edit`), a change told (`submit`), a date picked whole (`edit`, which
+--- a date field tells as it is typed whole), a box ticked (`toggle`, with
+--- its new state). On a stage of motion a press names the element pressed.
+fn _event_of[name, step, before]
+    what = '`step[0]`'
+    id = '`step[1]`'
+    if what eq 'type' or what eq 'pick'
+        return gui.Event[id, 'edit', '`step[2]`', 0.0]
+    if what eq 'commit'
+        value = ''
+        if id in before.fields
+            value = before.fields[id]
+        return gui.Event[id, 'submit', value, 0.0]
+    if what eq 'check'
+        on = 1.0
+        if id in before.checks and before.checks[id]
+            on = 0.0
+        return gui.Event[id, 'toggle', '', on]
+    if gallery.moving[name] and name ne 'motion-circle' and name ne 'motion-todos'
+        return gui.Event['stage', 'press', id, 0.0]
+    gui.Event[id, 'press', '', 0.0]
+
+--- The example with its request answered, where it makes one by `t`: the
+--- answer the reference's `fetch` gave for that address.
+fn _served[s, t, npm]
+    asking = gallery.request_of[s, t]
+    if asking[0] eq ''
+        return s
+    s = gallery.asked[s]
+    name = slice[asking[1], len['https://registry.npmjs.org/'], len[asking[1]]]
+    if name in npm
+        return gallery.heard[s, asking[0], 200, encode[npm[name]]]
+    gallery.heard[s, asking[0], 404, 'Not found']
+
+--- ---- what is shown ----
+
+fn _sorted_words[words]
+    sort[words]
+
+--- What Lory shows held to what Lit's page showed after a step.
+fn _facts_held[k, label, want, got, whole]
+    wanted = _words[want.words]
+    shown = got.words
+    if whole
+        wanted = sort[wanted]
+        shown = sort[shown]
+    k = _with[k, '`label` words', join[wanted, ' '], join[shown, ' ']]
+    for id in keys[want.fields]
+        held = '(none)'
+        if id in got.fields
+            held = got.fields[id]
+        k = _with[k, '`label` field `id`', '`want.fields[id]`', held]
+    for id in keys[want.checks]
+        held = '(none)'
+        if id in got.checks
+            held = _truth[got.checks[id]]
+        k = _with[k, '`label` box `id`', _text[want.checks[id]], held]
+    k = _with[k, '`label` off', join[sort[_words[want.off]], ' '], join[sort[got.off], ' ']]
+    if not whole
+        for id in want.ids
+            k = _with[k, '`label` shows `id`', 'true', _truth['`id`' in got.ids or '`id`' in got.off or '`id`' in got.looks]]
+    for id in keys[want.looks]
+        k = _looks_held[k, '`label` look of `id`', want.looks[id], got, id]
+    k
+
+fn _looks_held[k, label, want, got, id]
+    l = map['' = '']
+    if id in got.looks
+        l = shared.looks_of[got.looks[id]]
+    for key in keys[want]
+        wanted = '`want[key]`'
+        held = '(none)'
+        if key in l
+            held = l[key]
+        a = _number_or_none[wanted]
+        b = _number_or_none[held]
+        if a gt -1000000000.0 and b gt -1000000000.0
+            k = _near[k, '`label` `key`', a, b, 0.05]
+        else
+            k = _with[k, '`label` `key`', wanted, held]
+    k
+
+--- ---- motion ----
+
+--- Whether an element is one the example moves (the others, a button or a
+--- section, are drawn still).
+fn _moved_one[name, id]
+    if name eq 'motion-circle'
+        return id eq 'circle'
+    if name eq 'motion-logo'
+        return starts[id, 'letter-']
+    if name eq 'motion-list'
+        return starts[id, 'item-']
+    if name eq 'motion-grid'
+        return starts[id, 'cell-']
+    if name eq 'motion-todos'
+        return starts[id, 'todo-'] and (ends[id, '-left'] or ends[id, '-right'])
+    starts[id, 'card-'] or starts[id, 'detail']
+
+--- What each element moved showed at a step's time, held to Lit's: the
+--- same elements, each with its opacity and the share of its move left.
+fn _seen_held[k, label, name, want, s, t]
+    wanted = _no_texts[]
+    for one in want
+        if _moved_one[name, '`one[0]`']
+            wanted = push[wanted, '`one[0]`']
+    got = transitions.seen_all[s, t]
+    shown = _no_texts[]
+    for one in got
+        if _moved_one[name, one.id]
+            shown = push[shown, one.id]
+    k = _with[k, '`label` elements', join[wanted, ' '], join[shown, ' ']]
+    if join[wanted, ' '] ne join[shown, ' ']
+        return k
+    i = 0
+    for one in want
+        if _moved_one[name, '`one[0]`']
+            mine = got[0]
+            for g in got
+                if g.id eq '`one[0]`'
+                    mine = g
+            k = _near[k, '`label` `one[0]` opacity', 0.0 + one[1], mine.opacity, 0.01]
+            if type[one[2]] eq 'error'
+                k = _with[k, '`label` `one[0]` moving', 'false', _truth[mine.moving]]
+            else
+                k = _with[k, '`label` `one[0]` moving', 'true', _truth[mine.moving]]
+                if mine.moving
+                    k = _near[k, '`label` `one[0]` left', 0.0 + one[2], mine.left, 0.01]
+        i = i + 1
+    k
+
+--- The boxes the elements came to rest in, held to Lit's on the sides
+--- the reference names (`x`, `y`, `w`, `h`).
+fn _rest_held[k, name, want, sides, s]
+    order = 'xywh'
+    for id in keys[want]
+        if _moved_one[name, id]
+            held = id in s.boxes
+            k = _with[k, '`name` rests `id`', 'true', _truth[held]]
+            if held
+                b = s.boxes[id]
+                mine = [b.x, b.y, b.w, b.h]
+                i = 0
+                while i lt 4
+                    side = slice[order, i, i + 1]
+                    if side in sides
+                        k = _near[k, '`name` rests `id` `side`', 0.0 + want[id][i], mine[i], 0.6]
+                    i = i + 1
+    k
+
+--- ---- one example ----
+
+--- An example of Lit's playground opened in Lory and taken through the
+--- reference's steps, each step's facts (and, for motion, what moved)
+--- held to Lit's.
+fn _example_held[k, name]
+    r = _reference[]
+    j = r.examples[name]
+    s = gallery.opened[name, _numbers[j.draws], '2026-11-14', 43200.0]
+    if name eq 'motion-list'
+        s = shared.set_list[s, 'orders', _words[j.orders]]
+    moving = gallery.moving[name]
+    t = 0.0
+    steps = j.steps
+    i = 0
+    while i lt len[steps]
+        step = steps[i]
+        what = '`step.do[0]`'
+        before = gallery.facts[s, t]
+        if what eq 'wait'
+            t = 0.0 + step.at
+        else if what ne 'open'
+            pressed = what eq 'press'
+            if not (pressed and '`step.do[1]`' in before.off)
+                s = gallery.answered[s, _event_of[name, step.do, before], t]
+        s = _served[s, t, r.npm]
+        label = '`name` step `i` (`encode[step.do]` at `t`)'
+        k = _facts_held[k, label, step.facts, gallery.facts[s, t], moving]
+        if moving
+            k = _seen_held[k, label, name, j.samples[i].seen, gallery.ticked[s, t], t]
+        i = i + 1
+    if moving
+        s = gallery.ticked[s, t]
+        --- (in any order: the library starts those of one frame in the
+        --- order its elements update)
+        k = _with[k, '`name` started', join[sort[_words[j.started]], '\n'], join[sort[transitions.started_of[s]], '\n']]
+        if 'rects' in j
+            rested = gallery.ticked[s, t + 5000.0]
+            k = _rest_held[k, name, j.rects, '`j.compared`', rested]
+    k
+
+fn _group_held[names, what]
+    k = _begun[]
+    for name in names
+        k = _example_held[k, name]
+    _verdict[k, what]
+
+--- ---- the blocks ----
+
+test basics_and_templates_show_what_lits_do[]
+    _group_held[['hello-world', 'full-component', 'properties-basic', 'properties-has-changed', 'properties-custom-converter', 'expressions', 'templates-conditional', 'repeating-and-conditional', 'slotting-children', 'element-composition', 'template-composition'], 'basics and templates'] eq 179
+
+test the_directives_show_what_lits_do[]
+    _group_held[['directive-async-append', 'directive-async-replace', 'directive-cache', 'directive-class-map', 'directive-guard', 'directive-if-defined', 'directive-live', 'directive-ref', 'directive-repeat', 'directive-style-map', 'directive-template-content', 'directive-unsafe-html', 'directive-unsafe-svg', 'directive-until'], 'directives'] eq 559
+
+test managing_data_and_the_react_wrappers_show_what_lits_do[]
+    _group_held[['async-task', 'context-basics', 'context-consume-provide', 'signals', 'react-basics', 'react-events', 'react-slots', 'react-refs'], 'managing data and react'] eq 255
+
+test the_motion_examples_move_as_lits_do[]
+    _group_held[['motion-circle', 'motion-logo', 'motion-list', 'motion-grid', 'motion-carousel', 'motion-hero', 'motion-todos'], 'motion'] eq 2209
+
+test the_documentations_examples_show_what_lits_do[]
+    _group_held[['docs-events', 'docs-clock', 'docs-batching', 'docs-slots', 'docs-localize'], 'documentation'] eq 115
+
+test every_example_is_drawn_on_a_page_beside_the_menu[]
+    for name in gallery.names[]
+        s = gallery.opened[name, shared.no_numbers[], '2026-11-14', 43200.0]
+        shown = gallery.shown_on[shared.blank_canvas[], s, 0.0]
+        'menu-`name`' in shown.boxes

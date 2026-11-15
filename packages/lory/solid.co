@@ -1,0 +1,200 @@
+--- The solid things a chart is made of when it stands out of a wall:
+--- blocks (a candle's body, a bar, a slab of volume), ribbons (a line, a
+--- VWAP), wedges (a fill's mark) — gathered into one shape a colour, so a
+--- chart of a hundred candles is a few meshes, handed to the page once and
+--- again only when its bars change (`space.mesh` keeps a name's buffer).
+--- A shape's units are the wall's pixels: x across, y up, z out of the wall.
+--- And a scale's marks for such a chart: round steps, and a value worded
+--- shortly with its unit.
+---
+---     use lory.solid
+---
+---     g = solid.geo[]
+---     g = solid.block[g, 0.0, 0.0, 0.0, 10.0, 40.0, 6.0]
+---     c = space.mesh[c, 'bars', solid.shape[g]]
+use math
+use lory
+use space
+
+--- the corners and the facings gathered so far (three numbers a corner)
+struct Geo [at, facing]
+
+fn geo[]
+    Geo[[], []]
+
+fn _corner[at, x, y, z]
+    at = push[at, 0.0 + x]
+    at = push[at, 0.0 + y]
+    at = push[at, 0.0 + z]
+    at
+
+--- a face of four corners, as two triangles
+fn _face[at, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz]
+    at = _corner[at, ax, ay, az]
+    at = _corner[at, bx, by, bz]
+    at = _corner[at, cx, cy, cz]
+    at = _corner[at, ax, ay, az]
+    at = _corner[at, cx, cy, cz]
+    at = _corner[at, dx, dy, dz]
+    at
+
+--- one facing, written for a face's six corners
+fn _six[facing, x, y, z]
+    for i in range[6]
+        facing = _corner[facing, x, y, z]
+    facing
+
+fn _three[facing, x, y, z]
+    for i in range[3]
+        facing = _corner[facing, x, y, z]
+    facing
+
+--- a block between two corners: its front, its two sides, its top and its
+--- foot (its back lies against the wall, never seen)
+fn block[g, x0, y0, z0, x1, y1, z1]
+    g.at = _face[g.at, x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1]
+    g.facing = _six[g.facing, 0.0, 0.0, 1.0]
+    g.at = _face[g.at, x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1]
+    g.facing = _six[g.facing, 1.0, 0.0, 0.0]
+    g.at = _face[g.at, x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0]
+    g.facing = _six[g.facing, -1.0, 0.0, 0.0]
+    g.at = _face[g.at, x0, y1, z1, x1, y1, z1, x1, y1, z0, x0, y1, z0]
+    g.facing = _six[g.facing, 0.0, 1.0, 0.0]
+    g.at = _face[g.at, x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1]
+    g.facing = _six[g.facing, 0.0, -1.0, 0.0]
+    g
+
+--- a ribbon along the points (xs, ys): `wide` across, its front at `z1`
+--- and its back at `z0` — a band standing off the wall
+fn ribbon[g, xs, ys, wide, z0, z1]
+    n = min[len[xs], len[ys]]
+    half = wide / 2.0
+    for i in range[n - 1]
+        ax = xs[i]
+        ay = ys[i]
+        bx = xs[i + 1]
+        by = ys[i + 1]
+        dx = bx - ax
+        dy = by - ay
+        long = sqrt[dx * dx + dy * dy]
+        if long gt 0.0001
+            --- (across the ribbon: the line's normal, in the wall's plane)
+            nx = 0.0 - dy / long * half
+            ny = dx / long * half
+            g.at = _face[g.at, ax - nx, ay - ny, z1, bx - nx, by - ny, z1, bx + nx, by + ny, z1, ax + nx, ay + ny, z1]
+            g.facing = _six[g.facing, 0.0, 0.0, 1.0]
+            g.at = _face[g.at, ax + nx, ay + ny, z1, bx + nx, by + ny, z1, bx + nx, by + ny, z0, ax + nx, ay + ny, z0]
+            g.facing = _six[g.facing, nx / half, ny / half, 0.0]
+            g.at = _face[g.at, ax - nx, ay - ny, z0, bx - nx, by - ny, z0, bx - nx, by - ny, z1, ax - nx, ay - ny, z1]
+            g.facing = _six[g.facing, 0.0 - nx / half, 0.0 - ny / half, 0.0]
+    g
+
+--- a curtain under the points down to `foot`: the area a line stands over,
+--- a thin sheet at depth `z`
+fn curtain[g, xs, ys, foot, z]
+    n = min[len[xs], len[ys]]
+    for i in range[n - 1]
+        g.at = _face[g.at, xs[i], foot, z, xs[i + 1], foot, z, xs[i + 1], ys[i + 1], z, xs[i], ys[i], z]
+        g.facing = _six[g.facing, 0.0, 0.0, 1.0]
+    g
+
+--- a wedge at (x, y): a mark `size` across pointing up (or down), from the
+--- wall's `z0` out to `z1`
+fn wedge[g, x, y, size, up, z0, z1]
+    half = size / 2.0
+    tip = y + size
+    if not up
+        tip = y - size
+    g.at = _corner[g.at, x - half, y, z1]
+    g.at = _corner[g.at, x + half, y, z1]
+    g.at = _corner[g.at, x, tip, z1]
+    g.facing = _three[g.facing, 0.0, 0.0, 1.0]
+    g.at = _face[g.at, x + half, y, z1, x + half, y, z0, x, tip, z0, x, tip, z1]
+    g.facing = _six[g.facing, 0.8, 0.6, 0.0]
+    g.at = _face[g.at, x - half, y, z0, x - half, y, z1, x, tip, z1, x, tip, z0]
+    g.facing = _six[g.facing, -0.8, 0.6, 0.0]
+    g.at = _face[g.at, x - half, y, z0, x + half, y, z0, x + half, y, z1, x - half, y, z1]
+    g.facing = _six[g.facing, 0.0, -1.0, 0.0]
+    g
+
+--- how many corners are gathered
+fn corners[g]
+    len[g.at] / 3
+
+--- what is gathered, as a shape for `space.mesh` (no picture: its uv all 0)
+fn shape[g]
+    uv = []
+    for i in range[corners[g] * 2]
+        uv = push[uv, 0.0]
+    space.Shape[g.at, g.facing, uv]
+
+--- ---- a scale's marks ----
+
+--- a round step near `rough`: 1, 2 or 5 times a power of ten
+fn nice[rough]
+    if rough lte 0.0
+        return 1.0
+    mag = 10.0 ^ floor[log10[rough]]
+    lead = rough / mag
+    if lead lt 1.5
+        return mag
+    if lead lt 3.5
+        return 2.0 * mag
+    if lead lt 7.5
+        return 5.0 * mag
+    10.0 * mag
+
+--- the round values from `lo` to `hi`, about `n` of them
+fn ticks[lo, hi, n]
+    out = []
+    if hi lte lo
+        return push[out, 0.0 + lo]
+    by = nice[(hi - lo) / max[1.0, 0.0 + n]]
+    v = ceil[lo / by] * by
+    while v lte hi + by * 0.0001
+        out = push[out, v]
+        v = v + by
+    out
+
+--- a number said shortly: 1.2K, 3.4M, and cents under ten
+fn short[v]
+    size = abs[v]
+    if size gte 1000000.0
+        return '`fmt[v / 1000000.0, decimals = 1]`M'
+    if size gte 10000.0
+        return '`fmt[v / 1000.0, decimals = 0]`K'
+    if size gte 1000.0
+        return '`fmt[v / 1000.0, decimals = 1]`K'
+    --- (each written into words: `fmt` alone may fail, and words that may
+    --- have failed are none Lory can draw)
+    if size gte 100.0
+        return '`fmt[v, decimals = 0]`'
+    if size gte 10.0
+        return '`fmt[v, decimals = 1]`'
+    '`fmt[v, decimals = 2]`'
+
+--- a value with its unit: dollars, a percentage, shares, a count
+fn worded[v, unit]
+    if unit eq 'usd'
+        if v lt 0.0
+            return '-$`short[0.0 - v]`'
+        return '$`short[v]`'
+    if unit eq 'pct'
+        return '`short[v]`%'
+    short[v]
+
+test a_block_is_five_faces_and_a_scale_is_round[]
+    g = block[geo[], 0.0, 0.0, 0.0, 10.0, 20.0, 5.0]
+    corners[g] eq 30
+    len[g.facing] eq 90
+    len[shape[g].uv] eq 60
+    r = ribbon[geo[], [0.0, 10.0, 20.0], [0.0, 5.0, 0.0], 2.0, 0.0, 1.0]
+    corners[r] eq 36
+    w = wedge[geo[], 0.0, 0.0, 6.0, true, 0.0, 2.0]
+    corners[w] eq 21
+    nice[0.3] eq 0.2
+    nice[42.0] eq 50.0
+    ticks[0.0, 100.0, 4] eq [0.0, 20.0, 40.0, 60.0, 80.0, 100.0]
+    worded[-434.97, 'usd'] eq '-$435'
+    worded[21.4, 'pct'] eq '21.4%'
+    short[427012.0] eq '427K'

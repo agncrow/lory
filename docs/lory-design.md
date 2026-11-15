@@ -5,8 +5,9 @@ far). Written from a conversation with Vijay. What he decided is marked
 *(Vijay)*. He approved the Crow changes below, the two reversed rulings
 and the web build target, and asked that every open question be decided
 by recommendation. Those decisions are under "Decisions" at the end.
-Lory is a package of its own repository (agncrow/lory), under the
-Business Source License 1.1 as Magpie and Myna are.
+Lory is a package of its own repository (agncrow/lory), licensed MIT or
+Apache-2.0 as Crow is (Vijay, 2026-11-14; it had been under the Business
+Source License 1.1, as Magpie and Myna are).
 
 ## The goal
 
@@ -244,7 +245,8 @@ the gate. No phase starts before the one before it passes.
 ## Decisions (by recommendation, 2026-11-07)
 
 1. **Where it lives:** a package, `packages/lory` of agncrow/lory, BSL 1.1
-   *(Vijay)*.
+   *(Vijay)*. Since 2026-11-14 it is MIT or Apache-2.0, as Crow is, and the
+   repository is public *(Vijay)*.
 2. **Its name:** Lory, after the lorikeet: the `(o.o)` face in VR goggles,
    in a lorikeet's colours *(Vijay)*.
 3. **How a page says it is drawn:** by being built for the web. One way: a
@@ -268,7 +270,12 @@ the gate. No phase starts before the one before it passes.
    `row`, `grid`, `text`, `button`, `input`, `slider`, `toggle`, `select`,
    `table`, `chart`, `panel`. Its spacing scale, font sizes and line
    heights are layout.co's, and a test holds Lory's boxes to layout.co's
-   for the same tree.
+   for the same tree. A control the program draws stands in the tree as
+   these do (`gui.drawn`, Vijay, 2026-11-14). Its node holds the
+   program's function, which Lory calls in the same pass, where the
+   control stands. It is handed the control's box and what the reader is
+   doing to it (hover, press, focus, the pointer, keys), and Lory takes
+   back its drawing and its events.
 8. **State between frames** is process memory (`use memory`: `remember`,
    `recall`, `revise`), Crow's existing way to keep a value across calls.
    A frame's function reads the state, applies the frame's input, draws,
@@ -277,4 +284,22 @@ the gate. No phase starts before the one before it passes.
    since the last frame (pointer down, move and up, the wheel, keys, text
    typed, the headset's controllers and hands as rays and buttons), and
    `frame.pointer` says where each pointer is.
+10. **What is drawn over the rest** (2026-11-14, by recommendation): a
+    `gui.layer` is met in the tree's pass but drawn after it, over
+    everything, taking no room where it stands. It is placed as Floating
+    UI places a Radix popover (offset, then shift with limitShift, then
+    flip), and a test holds it to that library's answers.
+    - The pointer cannot reach what is under a layer. It uses the boxes
+      layers had last frame, among the layers still in the tree, so a
+      press is never sent to a control a layer covers.
+    - A modal layer blocks everything, keeps Tab and keys to itself, and
+      dims the page.
+    - Escape and a press outside dismiss a layer, and the program hears
+      it as an event. A layer is open while the program puts it in the
+      tree, or while Lory holds it, opened by the control `opens` names.
+    - Focus moves in as a layer opens and back as it closes.
+    - The components (menus, dialogs, popovers, toasts, pickers) are
+      compositions of these layers in modules of their own (`lory.menus`,
+      `lory.overlays`, and the rest, docs/components/README.md). None of
+      them reaches into gui.co.
 
