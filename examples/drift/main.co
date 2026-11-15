@@ -79,6 +79,15 @@ fn step[p, dt, aim, to]
         p.sparks = game.burst[p.sparks, p.x, p.y, 60, 320.0, lory.hex['#ffb347']]
     p
 
+--- the sparks, kept in the game's units, drawn scaled to the frame as
+--- everything else is (`k` pixels a unit, from `ox`, `oy`), each fading
+--- and shrinking as its time runs out
+fn sparks_drawn[c, sparks, k, ox, oy]
+    for s in sparks
+        share = s.life / s.full
+        c = lory.circle[c, ox + s.x * k, oy + s.y * k, 3.0 * k * (0.4 + 0.6 * share), lory.fade[s.color, share]]
+    c
+
 --- the sky, what falls, the lantern and the score, in the game's units
 --- scaled to the frame (`k` pixels each, from `ox`, `oy`)
 fn picture[c, p, k, ox, oy]
@@ -98,7 +107,7 @@ fn picture[c, p, k, ox, oy]
         else
             c = lory.circle[c, ox + f.x * k, oy + f.y * k, f.r * 2.4 * k, lory.fade[lory.hex['#ffe08a'], 0.2]]
             c = lory.circle[c, ox + f.x * k, oy + f.y * k, f.r * k, lory.hex['#fff3c4']]
-    c = game.drawn[c, p.sparks, 3.0 * k]
+    c = sparks_drawn[c, p.sparks, k, ox, oy]
     if not p.over
         glow = 0.25 + 0.06 * sin[lory.time[c] / 180.0]
         c = lory.circle[c, ox + p.x * k, oy + p.y * k, 60.0 * k, lory.fade[lory.hex['#ffb347'], glow]]
@@ -211,3 +220,17 @@ test a_frame_draws_the_sky_and_asks_for_no_more_than_it_needs[]
     c = lory.begin[frame]
     c = picture[c, fresh[0], 2.0, 0.0, 0.0]
     len[c.verts] / lory.floats[] gt 6 * 60
+
+--- a spark is drawn where the game's units put it on the frame, as the
+--- lantern and what falls are: on a frame of two pixels a unit, its disc
+--- is centred at twice its place from the game's corner (sparks had been
+--- drawn at their place in units as pixels, so on a phone's or a
+--- retina screen's frame they flew far from the catch that threw them)
+test a_spark_is_drawn_where_the_games_units_put_it[]
+    seed[2]
+    s = game.burst[[], 100.0, 50.0, 1, 0.0, lory.white[]]
+    c = lory.begin[json['{"t": 0, "width": 800, "height": 1400, "ratio": 2, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 800, "height": 1400, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']]
+    c = sparks_drawn[c, s, 2.0, 10.0, 20.0]
+    f = lory.floats[]
+    abs[(c.verts[0] + c.verts[4 * f]) / 2.0 - 210.0] lt 0.001
+    abs[(c.verts[1] + c.verts[4 * f + 1]) / 2.0 - 120.0] lt 0.001
