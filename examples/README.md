@@ -38,3 +38,4 @@ name opens the example's source.
 | [materials](materials/) | Metal and non-metal balls of rising roughness, a box, the sun's shadows, and a ball drawn at the detail its distance asks for. |
 | [babylon](babylon/) | Babylon.js's first Playground scene, stated in Lory's words and held to Babylon's picture. |
 | [drift](drift/) | Lantern Drift, an original game: catch the motes of light and dodge the embers. Play with the keys, by dragging, or with a headset's stick or ray. |
+| [runner](runner/) | Gloam Run, an original game: run from the Gloam through a wood at dusk, jumping rocks, logs, stumps and crates and sliding under bats and branches; a knock lets it close in, and wisps of light push it back. Play with the keys or by tapping (the left third slides), or with a headset's trigger and grip. |

@@ -1,0 +1,9 @@
+--- Gloam Run: Lory and Lory's games, linked in crow_modules/ as the other
+--- examples' packages are, by relative links the repository keeps
+--- (`crow install` would link the same folders by their absolute paths;
+--- the game's own `lory = '../lory'` is the Lory named here):
+---
+---     ln -s ../../../packages/lory crow_modules/lory
+---     ln -s ../../../packages/game crow_modules/game
+name = 'lory_runner'
+deps = map[lory = '../../packages/lory', game = '../../packages/game']

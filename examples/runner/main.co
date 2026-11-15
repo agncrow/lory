@@ -1,0 +1,1103 @@
+--- Gloam Run, a game drawn by Lory: a runner flees the Gloam, a beast of
+--- shadow, through a wood at dusk. Jump the rocks, logs, stumps and crates
+--- (Space, ↑ or W, or a tap; held, a jump goes higher) and slide under the
+--- bats and the low branches (↓ or S, or a press held on the left third of
+--- the drawing; in the air a slide brings the runner down fast). In a
+--- headset the trigger jumps, and the grip or the stick pulled back
+--- slides. A knock stumbles the runner and lets the Gloam close in; a
+--- clean run gains ground slowly, and a wisp of light caught pushes the
+--- Gloam back. When it reaches the runner the run is over, and a press
+--- begins the next. The wood quickens as the run goes on; P pauses.
+use sys
+use math
+use memory
+use lory
+use game
+use lory.xr
+
+--- ---- the game's units ----
+
+--- the drawing shows at least 760 units across and 540 down, the ground
+--- 420 down from the top and the runner 280 in from the left; a wider
+--- drawing shows more of the wood ahead, a taller one more sky
+fn _least_wide[]
+    760.0
+
+fn _tall[]
+    540.0
+
+fn _ground[]
+    420.0
+
+fn _at[]
+    280.0
+
+--- units in a metre (a run is counted in metres)
+fn _metre[]
+    40.0
+
+--- the steps a second the game takes, whatever the frame rate
+fn _rate[]
+    120.0
+
+--- ---- the chase ----
+
+--- something in the way: what it is (`rock`, `rocks`, `log`, `stump`,
+--- `crate`, `bat` or `branch`), its left side, its width and height, how
+--- far above the ground it starts, whether it has knocked the runner, and
+--- a clock of its own (a bat's wings)
+struct Thing [what, x, w, h, lift, hit, phase]
+
+--- a wisp of light: where it is and how far above the ground
+struct Wisp [x, lift]
+
+--- a chase: the runner's height above the ground and its speed upward,
+--- whether it stands on the ground, the moment left to jump after running
+--- off it (`coyote`) and a jump asked for and not made yet (`buffer`),
+--- whether it slides, its stride, the seconds run, the distance run (in
+--- units), how far behind the Gloam is (`gap`, eight at most, none when it
+--- has caught the runner; `shown` as drawn, eased toward it), what is in
+--- the way and the wisps, the distance to the next thing, the sparks, the
+--- moments left of a knock's stumble, of being unhurt after it and of the
+--- shake, the best run, the wisps caught, counts of jumps, knocks and the
+--- Gloam's heartbeats and the time to its next (a frame's sounds are asked
+--- by what the counts say), whether the run is over and for how long,
+--- whether it began, whether it is paused, the width shown, and the keys
+--- held at the last frame
+struct Chase [y, vy, grounded, coyote, buffer, sliding, stride, played, far, gap, shown, things, wisps, next, sparks, stumble, hurt, shake, best, caught, jumps, knocks, beats, beat, over, since, started, paused, seen, downs]
+
+fn fresh[best]
+    Chase[0.0, 0.0, true, 0.0, 0.0, false, 0.0, 0.0, 0.0, 6.0, 6.0, [], [], 700.0, [], 0.0, 0.0, 0.0, best, 0, 0, 0, 0, 0.0, false, 0.0, false, false, 960.0, []]
+
+--- how hard the run has grown: 0 as it begins, 1 after a hundred seconds
+fn hardness[r]
+    min[1.0, r.played / 100.0]
+
+--- how fast the wood goes by, in units a second, before a knock slows it:
+--- quicker as the run goes on, up to a top pace
+fn _cruise[r]
+    min[760.0, 380.0 + 5.0 * r.played]
+
+--- how fast the wood goes by now: slower for a moment after a knock
+fn pace[r]
+    _cruise[r] * (1.0 - 0.45 * r.stumble / 0.7)
+
+--- the metres run
+fn meters[r]
+    floor[r.far / _metre[]]
+
+--- the runner's box as [left, foot, width, height], in units across and
+--- up from the ground: low and long while sliding
+fn _runner_box[r]
+    if r.sliding
+        return [_at[] - 22.0, r.y, 44.0, 30.0]
+    [_at[] - 12.0, r.y, 24.0, 72.0]
+
+--- how far above the ground a thing is now (a bat rises and falls)
+fn _lift[t]
+    if t.what eq 'bat'
+        return t.lift + 7.0 * sin[t.phase * 5.0]
+    t.lift
+
+--- whether a thing meets the runner's box (each a little smaller than it
+--- is drawn, so that a graze is no knock)
+fn _meets[b, t]
+    game.boxes_meet[b[0], b[1], b[2], b[3], t.x + 4.0, _lift[t] + 2.0, t.w - 8.0, t.h - 4.0]
+
+--- a thing of its kind, its left side at `x`: the low ones to jump, a
+--- stump and a stack of crates to jump high, a bat and a branch to slide
+--- beneath
+fn _made[what, x]
+    if what eq 'rocks'
+        return Thing[what, x, 120.0, 34.0, 0.0, false, 0.0]
+    if what eq 'log'
+        return Thing[what, x, 100.0, 36.0, 0.0, false, 0.0]
+    if what eq 'stump'
+        return Thing[what, x, 44.0, 58.0, 0.0, false, 0.0]
+    if what eq 'crate'
+        return Thing[what, x, 56.0, 80.0, 0.0, false, 0.0]
+    if what eq 'bat'
+        return Thing[what, x, 40.0, 30.0, 52.0, false, 0.0]
+    if what eq 'branch'
+        return Thing[what, x, 70.0, 700.0, 50.0, false, 0.0]
+    Thing['rock', x, 46.0, 34.0, 0.0, false, 0.0]
+
+--- what may come at a hardness: rocks and logs from the start, then bats
+--- and stumps, branches, and at last crates and rows of rocks
+fn _kinds[d]
+    out = ['rock', 'rock', 'log']
+    if d gte 0.08
+        out = push[out, 'bat']
+        out = push[out, 'stump']
+    if d gte 0.2
+        out = push[out, 'branch']
+        out = push[out, 'bat']
+    if d gte 0.4
+        out = push[out, 'crate']
+        out = push[out, 'rocks']
+    out
+
+--- three wisps over a thing to jump, or under one to slide beneath
+fn _wisps_for[wisps, t]
+    mid = t.x + t.w / 2.0
+    if t.what eq 'bat' or t.what eq 'branch'
+        for i in range[3]
+            wisps = push[wisps, Wisp[mid - 50.0 + 50.0 * i, 16.0]]
+        return wisps
+    high = t.h + 40.0
+    wisps = push[wisps, Wisp[mid - 70.0, high]]
+    wisps = push[wisps, Wisp[mid, high + 24.0]]
+    push[wisps, Wisp[mid + 70.0, high]]
+
+--- the next thing at the wood's right edge, wisps with it now and then,
+--- and the distance to the one after: never less than three quarters of
+--- a second at the pace, enough to clear a thing and land, and less as
+--- the run grows harder
+fn spawned[r]
+    d = hardness[r]
+    kinds = _kinds[d]
+    t = _made[kinds[floor[rand[] * len[kinds]]], r.seen + 60.0]
+    t.phase = rand[] * 6.0
+    r.things = push[r.things, t]
+    if rand[] lt 0.3
+        r.wisps = _wisps_for[r.wisps, t]
+    r.next = t.w + _cruise[r] * (1.0 + 0.9 * rand[]) * (1.0 - 0.25 * d)
+    r
+
+--- the colour a thing's chips fly in when it knocks the runner
+fn _chips[t]
+    if t.what eq 'rock' or t.what eq 'rocks'
+        return lory.hex['#9aa6c0']
+    if t.what eq 'bat'
+        return lory.hex['#b18cff']
+    if t.what eq 'branch'
+        return lory.hex['#5fbf6f']
+    lory.hex['#d08a4a']
+
+--- the chase a step of `dt` seconds later, a jump held (`jump`) and a
+--- slide held (`duck`); a jump newly asked for is the chase's `buffer`
+fn step[r, dt, jump, duck]
+    if r.over
+        r.since = r.since + dt
+        r.shake = max[0.0, r.shake - dt]
+        r.sparks = game.moved[r.sparks, dt, 500.0]
+        r.shown = game.toward[r.shown, -1.4, 5.0, dt]
+        return r
+    r.played = r.played + dt
+    --- (a jump asked for a moment before landing is made on landing, and
+    --- one asked for a moment after running off the ground is still made)
+    r.buffer = max[0.0, r.buffer - dt]
+    if r.grounded
+        r.coyote = 0.1
+    else
+        r.coyote = max[0.0, r.coyote - dt]
+    if r.buffer gt 0.0 and r.coyote gt 0.0
+        r.vy = 830.0
+        r.grounded = false
+        r.coyote = 0.0
+        r.buffer = 0.0
+        r.jumps = r.jumps + 1
+    --- (in the air the runner is pulled down harder once a jump is let
+    --- go, and hardest with a slide held, which brings it down fast)
+    if not r.grounded
+        g = 2600.0
+        if r.vy gt 0.0 and not jump
+            g = 5600.0
+        if duck
+            g = 7600.0
+        r.vy = r.vy - g * dt
+        r.y = r.y + r.vy * dt
+        if r.y lte 0.0
+            r.y = 0.0
+            r.vy = 0.0
+            r.grounded = true
+            r.sparks = game.burst[r.sparks, _at[], _ground[], 6, 70.0, lory.hex['#b49b86']]
+    r.sliding = duck and r.grounded
+    --- (the wood goes by)
+    dx = pace[r] * dt
+    r.far = r.far + dx
+    r.stride = r.stride + dx / 24.0
+    r.stumble = max[0.0, r.stumble - dt]
+    r.hurt = max[0.0, r.hurt - dt]
+    r.shake = max[0.0, r.shake - dt]
+    r.next = r.next - dx
+    if r.next lte 0.0
+        r = spawned[r]
+    b = _runner_box[r]
+    knocked = false
+    kept = []
+    for t in r.things
+        t.x = t.x - dx
+        t.phase = t.phase + dt
+        if not t.hit and not knocked and r.hurt lte 0.0 and _meets[b, t]
+            t.hit = true
+            knocked = true
+            r.sparks = game.burst[r.sparks, _at[] + 12.0, _ground[] - r.y - 36.0, 26, 260.0, _chips[t]]
+        if t.x + t.w gt -100.0
+            kept = push[kept, t]
+    r.things = kept
+    lit = 0
+    left = []
+    for w in r.wisps
+        w.x = w.x - dx
+        if game.circle_meets_box[w.x, w.lift, 14.0, b[0], b[1], b[2], b[3]]
+            lit = lit + 1
+            r.sparks = game.burst[r.sparks, w.x, _ground[] - w.lift, 14, 140.0, lory.hex['#c9f6ff']]
+        else
+            if w.x gt -60.0
+                left = push[left, w]
+    r.wisps = left
+    --- (dust and chips fly where they were thrown as the wood goes by)
+    flown = []
+    for s in game.moved[r.sparks, dt, 500.0]
+        s.x = s.x - dx
+        flown = push[flown, s]
+    r.sparks = flown
+    --- (a knock lets the Gloam close in; a clean run gains on it slowly,
+    --- slower as the run grows harder, and a wisp pushes it back)
+    if knocked
+        r.gap = r.gap - 2.6
+        r.stumble = 0.7
+        r.hurt = 1.2
+        r.shake = 0.3
+        r.knocks = r.knocks + 1
+    r.gap = min[8.0, r.gap + 1.0 * lit + dt * 0.2 * (1.0 - 0.8 * hardness[r])]
+    r.caught = r.caught + lit
+    r.shown = game.toward[r.shown, r.gap, 5.0, dt]
+    --- (the Gloam's heart is heard when it is near, quicker the nearer)
+    if r.gap lt 2.5
+        r.beat = r.beat - dt
+        if r.beat lte 0.0
+            r.beats = r.beats + 1
+            r.beat = 0.3 + 0.2 * r.gap
+    if r.gap lte 0.0
+        r.over = true
+        r.since = 0.0
+        r.best = max[r.best, meters[r]]
+        r.sparks = game.burst[r.sparks, _at[], _ground[] - 40.0, 50, 300.0, lory.hex['#9b5cff']]
+    r
+
+--- ---- input ----
+
+--- what the reader asks of a frame: whether anything was pressed (to
+--- begin, to go on, to run again), a jump held and a jump newly asked
+--- for, a slide held, a pause asked for, whether the page lost the
+--- keyboard, and the keys held now
+struct Moves [go, up, hop, down, rest, lost, held]
+
+--- the keys that jump, and the ones that slide
+fn _jump_keys[]
+    ['Space', 'ArrowUp', 'KeyW']
+
+fn _slide_keys[]
+    ['ArrowDown', 'KeyS']
+
+--- the frame's input as the game reads it; `before`, the keys held at the
+--- last frame (a key held down repeats its press, which is no new jump)
+fn moves_of[c, before]
+    go = false
+    hop = false
+    rest = false
+    lost = false
+    for ev in lory.events[c]
+        if ev.on eq 'key' and not (ev.code in before)
+            if ev.code in _jump_keys[]
+                go = true
+                hop = true
+            if ev.code eq 'Enter'
+                go = true
+            if ev.code eq 'KeyP' or ev.code eq 'Escape'
+                rest = true
+        if ev.on eq 'down'
+            go = true
+            if ev.device eq 'ray' or ev.x gte lory.width[c] / 3.0
+                hop = true
+        if ev.on eq 'blur'
+            lost = true
+    up = false
+    down = false
+    for code in _jump_keys[]
+        if lory.held_key[c, code]
+            up = true
+    for code in _slide_keys[]
+        if lory.held_key[c, code]
+            down = true
+    --- (a finger or the mouse held on the drawing's left third slides,
+    --- and elsewhere jumps: a left thumb slides while a right one jumps)
+    for p in c.frame.pointers
+        if p.down eq true
+            if 0.0 + p.x lt lory.width[c] / 3.0
+                down = true
+            else
+                up = true
+    --- (in a headset the trigger jumps, and the grip or a stick pulled
+    --- back slides)
+    if c.xr and lory.pressed[c]
+        up = true
+    for side in ['left', 'right']
+        grasp = xr.hand[c, side]
+        if grasp.grip gt 0.5 or grasp.along gt 0.6
+            down = true
+    Moves[go, up, hop, down, rest, lost, c.held.pressing]
+
+--- ---- the frame ----
+
+--- how the game's units fit the frame: `k` pixels a unit, the game's top
+--- left at (`ox`, `oy`) — its ground kept near the frame's foot, at least
+--- 760 units shown across — shaken a moment after a knock; the frame's
+--- time; the units shown across, and the frame's top in the game's units
+struct Fit [k, ox, oy, t, wide, top]
+
+fn fitted[c, shake]
+    k = max[0.0001, min[lory.width[c] / _least_wide[], lory.height[c] / _tall[]]]
+    oy = lory.height[c] - _tall[] * k
+    jolt = shake / 0.3
+    jx = sin[lory.time[c] * 0.09] * 7.0 * jolt * k
+    jy = cos[lory.time[c] * 0.13] * 5.0 * jolt * k
+    Fit[k, jx, oy + jy, lory.time[c], lory.width[c] / k, 0.0 - oy / k]
+
+--- the sounds a frame asks for what its steps did: a jump, a knock, a
+--- wisp caught, a beat of the Gloam's heart, the end of the run
+fn heard[c, was, after]
+    if after.jumps gt was.jumps
+        c = lory.tone[c, 620.0, 0.09, 'triangle', 0.08]
+    if after.knocks gt was.knocks
+        c = game.sound[c, 'hit']
+    if after.caught gt was.caught
+        c = game.sound[c, 'pick']
+    if after.beats gt was.beats
+        c = lory.tone[c, 58.0, 0.14, 'sine', 0.4]
+    if after.over and not was.over
+        c = game.sound[c, 'over']
+    c
+
+fn draw[frame]
+    c = lory.begin[frame]
+    r = recall['gloam', fresh[0]]
+    v = fitted[c, r.shake]
+    a = moves_of[c, r.downs]
+    r.downs = a.held
+    r.seen = v.wide
+    if not r.started or (r.over and r.since gt 0.7)
+        if a.go
+            r = fresh[r.best]
+            r.started = true
+            r.seen = v.wide
+            r.downs = a.held
+            c = game.sound[c, 'start']
+    else
+        if r.paused
+            if a.go or a.rest
+                r.paused = false
+        else
+            if (a.rest or a.lost) and not r.over
+                r.paused = true
+            else
+                if a.hop
+                    r.buffer = 0.14
+    --- (before the first run the runner jogs on the spot as the wood goes
+    --- slowly by)
+    if not r.started
+        r.stride = r.stride + lory.dt[c] * 9.0
+        r.far = r.far + lory.dt[c] * 90.0
+    was = r
+    n = game.steps[c, 'gloam', _rate[]]
+    if r.started and not r.paused
+        for i in range[n]
+            r = step[r, 1.0 / _rate[], a.up, a.down]
+    c = heard[c, was, r]
+    remember['gloam', r]
+    c = lory.title[c, 'Gloam Run — `meters[r]` m']
+    lory.end[picture[c, r, v]]
+
+sys.frames[draw]
+
+--- ---- drawing ----
+
+--- a point of the game's units in the frame's pixels: `x` across, `y`
+--- down from the game's top, `h` up from the ground
+fn _px[v, x]
+    v.ox + x * v.k
+
+fn _py[v, y]
+    v.oy + y * v.k
+
+fn _ph[v, h]
+    v.oy + (_ground[] - h) * v.k
+
+--- shapes in the game's units, placed by their height above the ground: a
+--- box by its left and its foot, a rounded one, a disc, a triangle
+fn _rect[c, v, x, h, w, tall, color]
+    lory.rect[c, _px[v, x], _ph[v, h + tall], w * v.k, tall * v.k, color]
+
+fn _round[c, v, x, h, w, tall, radius, color]
+    lory.round_rect[c, _px[v, x], _ph[v, h + tall], w * v.k, tall * v.k, radius * v.k, color]
+
+fn _disc[c, v, x, h, radius, color]
+    lory.circle[c, _px[v, x], _ph[v, h], radius * v.k, color]
+
+fn _tri[c, v, x0, h0, x1, h1, x2, h2, color]
+    lory.triangle[c, _px[v, x0], _ph[v, h0], _px[v, x1], _ph[v, h1], _px[v, x2], _ph[v, h2], color]
+
+--- a limb: a line `w` units wide with round ends
+fn _limb[c, v, x0, h0, x1, h1, w, color]
+    c = lory.line[c, _px[v, x0], _ph[v, h0], _px[v, x1], _ph[v, h1], w * v.k, color]
+    c = lory.circle[c, _px[v, x0], _ph[v, h0], w * v.k / 2.0, color]
+    lory.circle[c, _px[v, x1], _ph[v, h1], w * v.k / 2.0, color]
+
+--- a number from 0 to 1 that looks drawn at random, the same for the same
+--- `n`: where the wood's hills, trees and stars stand
+fn _noise[n]
+    s = sin[0.0 + n * 12.9898] * 43758.5453
+    s - floor[s]
+
+--- a band across the frame, its colour going from `above` to `below`
+fn _band[c, y0, y1, wide, above, below]
+    c = lory.shaded[c, 0.0, y0, above, wide, y0, above, 0.0, y1, below]
+    lory.shaded[c, wide, y0, above, wide, y1, below, 0.0, y1, below]
+
+--- the sky at dusk: deep blue above, a glow at the trees' feet, stars and
+--- the moon
+fn _sky[c, v]
+    foot = _ph[v, 0.0]
+    mid = _ph[v, 230.0]
+    wide = lory.width[c]
+    c = _band[c, 0.0, mid, wide, lory.hex['#0e0b26'], lory.hex['#3d1f4f']]
+    c = _band[c, mid, foot, wide, lory.hex['#3d1f4f'], lory.hex['#d9775a']]
+    for i in range[36]
+        x = _noise[i * 3 + 1] * v.wide
+        y = v.top + _noise[i * 3 + 2] * (260.0 - v.top)
+        twinkle = 0.35 + 0.35 * sin[v.t / 700.0 + 7.0 * _noise[i * 3]]
+        c = lory.circle[c, _px[v, x], _py[v, y], (0.8 + 1.2 * _noise[i * 5]) * v.k, lory.fade[lory.white[], twinkle]]
+    mx = v.wide * 0.78
+    my = 110.0
+    c = lory.circle[c, _px[v, mx], _py[v, my], 110.0 * v.k, lory.fade[lory.hex['#ffe7c2'], 0.05]]
+    c = lory.circle[c, _px[v, mx], _py[v, my], 70.0 * v.k, lory.fade[lory.hex['#ffe7c2'], 0.08]]
+    c = lory.circle[c, _px[v, mx], _py[v, my], 40.0 * v.k, lory.hex['#fbe8c8']]
+    c = lory.circle[c, _px[v, mx - 12.0], _py[v, my - 8.0], 8.0 * v.k, lory.hex['#ecd3ad']]
+    c = lory.circle[c, _px[v, mx + 13.0], _py[v, my + 10.0], 6.0 * v.k, lory.hex['#ecd3ad']]
+    lory.circle[c, _px[v, mx + 6.0], _py[v, my - 18.0], 4.0 * v.k, lory.hex['#ecd3ad']]
+
+--- the ground under a line from (x0, h0) to (x1, h1), filled
+fn _slope[c, v, x0, h0, x1, h1, color]
+    c = _tri[c, v, x0, h0, x1, h1, x1, -2.0, color]
+    _tri[c, v, x0, h0, x1, -2.0, x0, -2.0, color]
+
+--- a ridge of hills against the sky: peaks `apart` units apart, `low` to
+--- `high` above the ground, gone `by` units along (the farther a ridge,
+--- the slower it goes by)
+fn _ridge[c, v, by, apart, low, high, color, salt]
+    first = floor[by / apart] - 1
+    for i in range[floor[v.wide / apart] + 3]
+        j = first + i
+        x0 = (0.0 + j) * apart - by
+        h0 = low + (high - low) * _noise[j * 7 + salt]
+        h1 = low + (high - low) * _noise[(j + 1) * 7 + salt]
+        xm = x0 + apart * (0.35 + 0.3 * _noise[j * 3 + salt])
+        hm = 0.55 * min[h0, h1]
+        c = _slope[c, v, x0, h0, xm, hm, color]
+        c = _slope[c, v, xm, hm, x0 + apart, h1, color]
+    c
+
+--- pines against the sky, `apart` units apart where the noise allows one,
+--- gone `by` units along
+fn _pines[c, v, by, apart, color, salt]
+    first = floor[by / apart] - 1
+    for i in range[floor[v.wide / apart] + 3]
+        j = first + i
+        n = _noise[j * 13 + salt]
+        if n gt 0.3
+            x = (0.0 + j) * apart - by + apart * 0.5 * _noise[j * 5 + salt]
+            tall = 60.0 + 100.0 * n
+            half = tall * 0.3
+            c = _rect[c, v, x - 3.0, 0.0, 6.0, tall * 0.3, color]
+            for k in range[3]
+                foot = tall * (0.18 + 0.24 * k)
+                spread = half * (1.0 - 0.25 * k)
+                c = _tri[c, v, x - spread, foot, x + spread, foot, x, foot + tall * 0.42, color]
+    c
+
+--- mist low over the ground, drifting slower than the wood
+fn _mist[c, v, by]
+    apart = 300.0
+    first = floor[by / apart] - 1
+    for i in range[floor[v.wide / apart] + 3]
+        j = first + i
+        x = (0.0 + j) * apart - by
+        c = _round[c, v, x, 2.0 + 18.0 * _noise[j * 17], 260.0, 26.0, 13.0, lory.fade[lory.hex['#e9d8ff'], 0.025]]
+    c
+
+--- the ground: a path of earth, its edge lit by the sky, grass and stones
+--- going by with the wood
+fn _earth[c, v, by]
+    gy = _ph[v, 0.0]
+    c = lory.rect[c, 0.0, gy, lory.width[c], lory.height[c] - gy + 20.0, lory.hex['#1b1222']]
+    c = lory.rect[c, 0.0, gy, lory.width[c], 4.0 * v.k, lory.hex['#6a4a66']]
+    c = lory.rect[c, 0.0, gy + 4.0 * v.k, lory.width[c], 24.0 * v.k, lory.hex['#2a1b30']]
+    apart = 38.0
+    first = floor[by / apart] - 1
+    for i in range[floor[v.wide / apart] + 3]
+        j = first + i
+        x = (0.0 + j) * apart - by
+        n = _noise[j * 11 + 5]
+        if n gt 0.45
+            c = _tri[c, v, x, 0.0, x + 4.0, 0.0, x + 1.0 + 3.0 * n, 6.0 + 8.0 * n, lory.hex['#3f5a45']]
+            c = _tri[c, v, x + 3.0, 0.0, x + 7.0, 0.0, x + 7.0 + 3.0 * n, 5.0 + 6.0 * n, lory.hex['#35503c']]
+        if n lt 0.18
+            c = _round[c, v, x, -14.0 - 30.0 * n, 7.0 + 8.0 * n, 4.0 + 3.0 * n, 3.0, lory.hex['#3a2c40']]
+    c
+
+--- a rock: grey, lit from above
+fn _rock[c, v, x, w, tall]
+    c = _round[c, v, x, 0.0, w, tall, tall * 0.45, lory.hex['#5d6680']]
+    c = _round[c, v, x + w * 0.15, tall * 0.45, w * 0.5, tall * 0.4, tall * 0.2, lory.hex['#77829e']]
+    _round[c, v, x + w * 0.2, tall * 0.62, w * 0.22, tall * 0.18, tall * 0.09, lory.hex['#98a3bc']]
+
+--- a crate: boards and a cross brace
+fn _crate[c, v, x, h, w, tall]
+    wood = lory.hex['#6e4a2a']
+    c = _rect[c, v, x, h, w, tall, lory.hex['#b07a46']]
+    c = lory.outline[c, _px[v, x], _ph[v, h + tall], w * v.k, tall * v.k, 3.0 * v.k, wood]
+    c = lory.line[c, _px[v, x + 3.0], _ph[v, h + 3.0], _px[v, x + w - 3.0], _ph[v, h + tall - 3.0], 3.0 * v.k, wood]
+    lory.line[c, _px[v, x + 3.0], _ph[v, h + tall - 3.0], _px[v, x + w - 3.0], _ph[v, h + 3.0], 3.0 * v.k, wood]
+
+--- a bat about (x, h), its wings beating
+fn _bat[c, v, x, h, flap]
+    tip = 14.0 * sin[flap * 14.0]
+    body = lory.hex['#5b4378']
+    wing = lory.hex['#4a3566']
+    c = _disc[c, v, x, h, 24.0, lory.fade[lory.hex['#b18cff'], 0.14]]
+    c = _tri[c, v, x - 4.0, h + 2.0, x - 28.0, h + 6.0 + tip, x - 16.0, h - 6.0, wing]
+    c = _tri[c, v, x + 4.0, h + 2.0, x + 28.0, h + 6.0 + tip, x + 16.0, h - 6.0, wing]
+    c = _disc[c, v, x, h, 9.0, body]
+    c = _tri[c, v, x - 7.0, h + 5.0, x - 4.0, h + 13.0, x - 1.0, h + 6.0, body]
+    c = _tri[c, v, x + 7.0, h + 5.0, x + 4.0, h + 13.0, x + 1.0, h + 6.0, body]
+    c = _disc[c, v, x - 3.0, h + 2.0, 1.8, lory.hex['#ff5470']]
+    _disc[c, v, x + 3.0, h + 2.0, 1.8, lory.hex['#ff5470']]
+
+--- a branch hanging from above the frame, leaves at its low end
+fn _branch[c, v, x, t]
+    mid = x + t.w / 2.0
+    low = t.lift
+    above = _ground[] - v.top + 40.0
+    bark = lory.hex['#4a2f22']
+    leaves = lory.hex['#2f5d3a']
+    lighter = lory.hex['#3f7a4a']
+    c = _limb[c, v, mid + 50.0, above, mid + 6.0, low + 30.0, 16.0, bark]
+    c = _limb[c, v, mid + 20.0, low + 90.0, mid - 30.0, low + 62.0, 7.0, bark]
+    c = _disc[c, v, mid - 22.0, low + 22.0, 20.0, leaves]
+    c = _disc[c, v, mid + 18.0, low + 20.0, 20.0, leaves]
+    c = _disc[c, v, mid, low + 36.0, 24.0, leaves]
+    c = _disc[c, v, mid - 34.0, low + 60.0, 16.0, leaves]
+    c = _disc[c, v, mid - 8.0, low + 28.0, 12.0, lighter]
+    _disc[c, v, mid + 20.0, low + 30.0, 9.0, lighter]
+
+--- one thing in the way, drawn
+fn _thing[c, v, t]
+    x = t.x
+    if t.what eq 'rock'
+        return _rock[c, v, x, t.w, t.h]
+    if t.what eq 'rocks'
+        c = _rock[c, v, x, 50.0, 34.0]
+        c = _rock[c, v, x + 38.0, 46.0, 26.0]
+        return _rock[c, v, x + 72.0, 48.0, 32.0]
+    if t.what eq 'log'
+        c = _round[c, v, x, 0.0, t.w, t.h, 14.0, lory.hex['#8a5636']]
+        c = _round[c, v, x + 6.0, 21.0, t.w - 28.0, 5.0, 2.5, lory.hex['#a8704a']]
+        c = _round[c, v, x + 10.0, 9.0, t.w - 40.0, 4.0, 2.0, lory.hex['#6e4128']]
+        c = _disc[c, v, x + t.w - 17.0, 18.0, 17.0, lory.hex['#d8aa78']]
+        c = lory.ring[c, _px[v, x + t.w - 17.0], _ph[v, 18.0], 10.0 * v.k, 2.0 * v.k, lory.hex['#9a6a44']]
+        return _disc[c, v, x + t.w - 17.0, 18.0, 3.0, lory.hex['#9a6a44']]
+    if t.what eq 'stump'
+        bark = lory.hex['#7a4a2e']
+        c = _rect[c, v, x, 0.0, t.w, t.h - 6.0, bark]
+        c = _rect[c, v, x + 8.0, 4.0, 4.0, t.h - 16.0, lory.hex['#5e3820']]
+        c = _rect[c, v, x + 26.0, 8.0, 4.0, t.h - 22.0, lory.hex['#5e3820']]
+        c = _round[c, v, x - 2.0, t.h - 12.0, t.w + 4.0, 12.0, 6.0, lory.hex['#d0a070']]
+        c = _round[c, v, x + 8.0, t.h - 9.0, t.w - 16.0, 6.0, 3.0, lory.hex['#b08050']]
+        c = _tri[c, v, x - 10.0, 0.0, x + 4.0, 0.0, x + 4.0, 16.0, bark]
+        return _tri[c, v, x + t.w + 10.0, 0.0, x + t.w - 4.0, 0.0, x + t.w - 4.0, 14.0, bark]
+    if t.what eq 'crate'
+        c = _crate[c, v, x, 0.0, t.w, t.h / 2.0]
+        return _crate[c, v, x + 4.0, t.h / 2.0, t.w - 8.0, t.h / 2.0]
+    if t.what eq 'bat'
+        return _bat[c, v, x + t.w / 2.0, _lift[t] + t.h / 2.0, t.phase]
+    _branch[c, v, x, t]
+
+--- the wisps, each glowing and hovering
+fn _wisps_drawn[c, v, r]
+    for w in r.wisps
+        pulse = 0.5 + 0.5 * sin[v.t / 160.0 + w.x / 40.0]
+        hover = w.lift + 4.0 * sin[v.t / 300.0 + w.x / 70.0]
+        c = _disc[c, v, w.x, hover, 22.0 + 4.0 * pulse, lory.fade[lory.hex['#8fe9ff'], 0.12]]
+        c = _disc[c, v, w.x, hover, 11.0, lory.fade[lory.hex['#bff4ff'], 0.5]]
+        c = _disc[c, v, w.x, hover, 6.0, lory.hex['#f2fdff']]
+    c
+
+--- the sparks, kept in the game's units down from its top, each fading
+--- and shrinking as its time runs out
+fn _sparks_drawn[c, v, sparks]
+    for s in sparks
+        share = s.life / s.full
+        c = lory.circle[c, _px[v, s.x], _py[v, s.y], 3.0 * v.k * (0.4 + 0.6 * share), lory.fade[s.color, share]]
+    c
+
+--- ---- the runner ----
+
+--- a leg from the hip: the thigh swung `swing` from straight down
+--- (forward above 0), the shin folded back `bend` from it at the knee, and
+--- a shoe square to the shin
+fn _leg[c, v, hx, hh, swing, bend, color, shoe]
+    kx = hx + 18.0 * sin[swing]
+    kh = hh - 18.0 * cos[swing]
+    shin = swing - bend
+    fx = kx + 18.0 * sin[shin]
+    fh = kh - 18.0 * cos[shin]
+    c = _limb[c, v, hx, hh, kx, kh, 9.0, color]
+    c = _limb[c, v, kx, kh, fx, fh, 7.5, color]
+    _limb[c, v, fx, fh, fx + 8.0 * cos[shin], fh + 8.0 * sin[shin], 6.0, shoe]
+
+--- an arm from the shoulder, swung `swing` from straight down and bent up
+--- at the elbow, and its hand
+fn _arm[c, v, sx, sh, swing, color]
+    ex = sx + 14.0 * sin[swing]
+    eh = sh - 14.0 * cos[swing]
+    fore = swing + 1.5
+    hx = ex + 12.0 * sin[fore]
+    hh = eh - 12.0 * cos[fore]
+    c = _limb[c, v, sx, sh, ex, eh, 7.0, color]
+    c = _limb[c, v, ex, eh, hx, hh, 6.0, color]
+    _disc[c, v, hx, hh, 3.6, lory.hex['#f1c27d']]
+
+--- a red scarf flying back from (x, h), rippling with the time
+fn _scarf[c, v, x, h, ms]
+    ax = x
+    ah = h
+    for i in range[5]
+        bx = ax - 7.0
+        bh = h + 1.5 * sin[ms / 70.0 - 0.9 * i] * (0.4 + 0.3 * i) - 0.8 * i
+        c = _limb[c, v, ax, ah, bx, bh, 5.0 - 0.5 * i, lory.hex['#ff5a5f']]
+        ax = bx
+        ah = bh
+    c
+
+--- a figure whose feet are at (x, h): its body leaning `tilt` radians from
+--- upright (forward above 0) from hips `hips` units up; its legs' swings
+--- and knee bends, the near leg's then the far one's (`[swing, bend,
+--- swing, bend]`), and its upper arms' swings, near then far
+fn _figure[c, v, x, h, tilt, hips, legs, arms, ms]
+    hx = x
+    hh = h + hips
+    sx = hx + 26.0 * sin[tilt]
+    sh = hh + 26.0 * cos[tilt]
+    nod = tilt * 0.6
+    cx = sx + 11.0 * sin[nod]
+    ch = sh + 11.0 * cos[nod]
+    jacket = lory.hex['#2ec4b6']
+    --- (its shadow on the ground, smaller as it rises)
+    c = _round[c, v, x - 18.0 + h * 0.05, -3.0, 36.0 - h * 0.1, 6.0, 3.0, lory.fade[lory.black[], max[0.05, 0.35 - h / 500.0]]]
+    --- (the far leg and arm, in shade, behind the body)
+    c = _leg[c, v, hx, hh, legs[2], legs[3], lory.hex['#2a2c40'], lory.hex['#bcb6a6']]
+    c = _arm[c, v, sx, sh, arms[1], lory.hex['#1f8a80']]
+    c = _scarf[c, v, sx - 2.0, sh + 2.0, ms]
+    c = _limb[c, v, hx, hh, sx, sh, 14.0, jacket]
+    c = _disc[c, v, cx - 1.5, ch + 1.5, 9.5, lory.hex['#3a2418']]
+    c = _disc[c, v, cx + 1.0, ch - 0.5, 8.5, lory.hex['#f1c27d']]
+    c = _disc[c, v, cx + 4.5, ch + 1.0, 1.4, lory.hex['#2a1a10']]
+    c = _leg[c, v, hx, hh, legs[0], legs[1], lory.hex['#3d405b'], lory.hex['#f8f4e3']]
+    _arm[c, v, sx, sh, arms[0], jacket]
+
+--- the runner: legs and arms swinging in its stride, tucked as a jump
+--- rises and reaching down as it falls, laid back in a slide, fallen when
+--- caught; blinking a while after a knock
+fn _runner[c, v, r]
+    if r.hurt gt 0.0 and floor[r.hurt * 12.0] % 2 eq 1
+        return c
+    x = _at[]
+    if r.over
+        return _figure[c, v, x - 10.0, 0.0, -1.35, 10.0, [1.6, 0.2, 1.2, 0.9], [2.2, 1.6], v.t]
+    if r.sliding
+        return _figure[c, v, x, 0.0, -1.05, 12.0, [1.45, 0.05, 0.95, 1.5], [-2.5, 0.8], v.t]
+    if not r.grounded
+        if r.vy gt 0.0
+            return _figure[c, v, x, r.y, 0.2, 38.0, [1.15, 1.7, -0.45, 0.6], [-0.9, 1.4], v.t]
+        return _figure[c, v, x, r.y, 0.12, 38.0, [0.55, 0.5, -0.15, 1.0], [-0.4, 2.4], v.t]
+    q = r.stride
+    bob = 3.0 * abs[sin[q]]
+    legs = [0.85 * sin[q], 0.25 + 1.35 * max[0.0, cos[q]], 0.85 * sin[q + pi], 0.25 + 1.35 * max[0.0, cos[q + pi]]]
+    _figure[c, v, x, bob, 0.28, 36.0, legs, [0.9 * sin[q + pi], 0.9 * sin[q]], v.t]
+
+--- ---- the Gloam ----
+
+--- the Gloam, `r.shown` behind the runner: the dark it brings, legs
+--- bounding, fur that bristles, arms that reach, eyes, and a mouth that
+--- gnashes — nearer, longer-armed and redder-eyed as it gains
+fn _gloam[c, v, r]
+    gx = _at[] - 80.0 - r.shown * 26.0
+    bound = r.stride * 0.75
+    gh = 70.0 + 6.0 * abs[sin[bound]]
+    size = 62.0
+    near = 1.0 - min[1.0, max[0.0, r.shown] / 4.0]
+    ms = v.t
+    for i in range[4]
+        c = _disc[c, v, gx, gh, size * (2.0 - 0.22 * i), lory.fade[lory.hex['#1a0526'], 0.12 + 0.05 * i]]
+    hide = lory.hex['#160a20']
+    for i in range[2]
+        q = bound + pi * i
+        lx = gx - 20.0 + 30.0 * i
+        fx = lx + 26.0 * sin[q]
+        fh = max[0.0, 12.0 - 14.0 * cos[q]]
+        c = _limb[c, v, lx, gh - 30.0, fx, fh, 20.0, hide]
+        c = _tri[c, v, fx - 4.0, fh, fx + 18.0, fh - 2.0, fx + 8.0, fh + 8.0, hide]
+    --- (fur about its back, bristling)
+    for i in range[18]
+        ang = 0.5 + 3.4 * i / 17.0
+        wob = 0.5 + 0.5 * sin[ms / 90.0 + 1.7 * i]
+        reach = size + 14.0 + 12.0 * wob
+        c = _tri[c, v, gx + size * cos[ang - 0.16], gh + size * sin[ang - 0.16], gx + size * cos[ang + 0.16], gh + size * sin[ang + 0.16], gx + reach * cos[ang + 0.25], gh + reach * sin[ang + 0.25], lory.hex['#2b1240']]
+    c = _disc[c, v, gx, gh, size, lory.hex['#1d0b2b']]
+    c = _disc[c, v, gx + 8.0, gh + 6.0, size * 0.82, lory.hex['#24103a']]
+    --- (arms reaching for the runner, longer the nearer it is)
+    grab = 30.0 + 40.0 * near + 8.0 * sin[bound * 2.0]
+    for i in range[2]
+        ah = gh - 8.0 - 18.0 * i
+        hx = gx + size * 0.7 + grab
+        hh = ah + 6.0 * sin[bound + pi * i]
+        c = _limb[c, v, gx + size * 0.5, ah, hx, hh, 13.0, lory.hex['#4a2368']]
+        for k in range[3]
+            c = _tri[c, v, hx, hh + 5.0 - 5.0 * k, hx + 4.0, hh + 7.0 - 5.0 * k, hx + 16.0, hh + 3.0 - 6.0 * k, lory.hex['#d8d0e8']]
+    --- (eyes: green, and redder as it gains)
+    glare = lory.mix[lory.hex['#c6ff4a'], lory.hex['#ff3b30'], near]
+    for i in range[2]
+        ex = gx + 26.0 + 20.0 * i
+        eh = gh + 22.0 - 4.0 * i
+        er = 9.0 - 1.5 * i
+        c = _disc[c, v, ex, eh, er * 2.4, lory.fade[glare, 0.18]]
+        c = _disc[c, v, ex, eh, er, glare]
+        c = _round[c, v, ex + 1.5, eh - er * 0.75, 2.6, er * 1.5, 1.3, lory.hex['#12051c']]
+    --- (a mouth that gnashes)
+    gape = 0.5 + 0.5 * sin[ms / 110.0]
+    mw = 36.0
+    mh = 8.0 + 16.0 * gape
+    mx = gx + 12.0
+    mb = gh - 14.0 - mh
+    c = _round[c, v, mx, mb, mw, mh, 6.0, lory.hex['#5a0a1a']]
+    for i in range[5]
+        tx = mx + 2.0 + 6.6 * i
+        c = _tri[c, v, tx, mb + mh, tx + 6.0, mb + mh, tx + 3.0, mb + mh - 7.0, lory.hex['#f2ecf8']]
+        c = _tri[c, v, tx + 2.0, mb, tx + 8.0, mb, tx + 5.0, mb + 6.0, lory.hex['#f2ecf8']]
+    c
+
+--- the frame's left edge reddens and throbs as the Gloam gains
+fn _dread[c, v, r]
+    if r.shown gte 3.0
+        return c
+    near = (3.0 - max[0.0, r.shown]) / 3.0
+    throb = 0.75 + 0.25 * sin[v.t / 90.0]
+    red = lory.hex['#ff1f3d']
+    edge = lory.width[c] * 0.45
+    tall = lory.height[c]
+    strong = lory.fade[red, 0.42 * near * throb]
+    faint = lory.fade[red, 0.0]
+    c = lory.shaded[c, 0.0, 0.0, strong, edge, 0.0, faint, 0.0, tall, strong]
+    lory.shaded[c, edge, 0.0, faint, edge, tall, faint, 0.0, tall, strong]
+
+--- ---- words ----
+
+--- `n` of a thing: `1 wisp`, `3 wisps`
+fn _counted[n, one, many]
+    if n eq 1
+        return '1 `one`'
+    '`n` `many`'
+
+--- the metres run and the best, the wisps caught, and a bar of how far
+--- behind the Gloam is, emptying as it gains
+fn _hud[c, v, r]
+    k = v.k
+    c = lory.text[c, _px[v, 22.0], _py[v, 16.0], '`meters[r]` m', 28.0 * k, lory.white[]]
+    c = lory.text[c, _px[v, 22.0], _py[v, 52.0], 'best `r.best` m', 15.0 * k, lory.hex['#c9b8e8']]
+    c = lory.circle[c, _px[v, v.wide - 92.0], _py[v, 32.0], 12.0 * k, lory.fade[lory.hex['#8fe9ff'], 0.25]]
+    c = lory.circle[c, _px[v, v.wide - 92.0], _py[v, 32.0], 6.0 * k, lory.hex['#f2fdff']]
+    c = lory.text[c, _px[v, v.wide - 74.0], _py[v, 19.0], '× `r.caught`', 22.0 * k, lory.white[]]
+    w = 220.0
+    x = v.wide / 2.0 - w / 2.0
+    share = max[0.0, min[1.0, r.shown / 8.0]]
+    tint = lory.hex['#4ade80']
+    if r.shown lt 5.0
+        tint = lory.hex['#facc15']
+    if r.shown lt 2.5
+        tint = lory.hex['#f43f5e']
+    c = lory.text_centered[c, _px[v, v.wide / 2.0], _py[v, 22.0], 'the Gloam is behind you', 13.0 * k, lory.hex['#c9b8e8']]
+    c = lory.round_rect[c, _px[v, x], _py[v, 36.0], w * k, 12.0 * k, 6.0 * k, lory.fade[lory.white[], 0.15]]
+    if share gt 0.0
+        c = lory.round_rect[c, _px[v, x], _py[v, 36.0], w * share * k, 12.0 * k, 6.0 * k, tint]
+    c
+
+--- a dark panel across the middle of the game, from `y` down `tall` units
+fn _panel[c, v, y, tall]
+    w = min[640.0, v.wide - 40.0]
+    lory.round_rect[c, _px[v, (v.wide - w) / 2.0], _py[v, y], w * v.k, tall * v.k, 18.0 * v.k, lory.fade[lory.hex['#0b0716'], 0.86]]
+
+--- the words over the wood: how to play before the first run, a pause,
+--- and the end of a run
+fn _overlay[c, v, r]
+    k = v.k
+    mid = _px[v, v.wide / 2.0]
+    soft = lory.hex['#c9b8e8']
+    if not r.started
+        c = _panel[c, v, 70.0, 290.0]
+        c = lory.text_centered[c, mid, _py[v, 118.0], 'Gloam Run', 46.0 * k, lory.white[]]
+        c = lory.text_centered[c, mid, _py[v, 166.0], 'The Gloam is at your heels. Run!', 19.0 * k, lory.hex['#e9d8ff']]
+        c = lory.text_centered[c, mid, _py[v, 210.0], 'Jump: Space, ↑ or W, or tap — hold it to jump higher', 15.0 * k, soft]
+        c = lory.text_centered[c, mid, _py[v, 236.0], 'Slide: ↓ or S, or hold the left third of the screen', 15.0 * k, soft]
+        c = lory.text_centered[c, mid, _py[v, 262.0], 'Catch the wisps of light: they push the Gloam back', 15.0 * k, soft]
+        return lory.text_centered[c, mid, _py[v, 314.0], 'Press Space or tap to run', 19.0 * k, lory.hex['#8fe9ff']]
+    if r.paused
+        c = _panel[c, v, 150.0, 120.0]
+        c = lory.text_centered[c, mid, _py[v, 190.0], 'Paused', 34.0 * k, lory.white[]]
+        return lory.text_centered[c, mid, _py[v, 236.0], 'Press Space or tap to run on', 16.0 * k, soft]
+    if r.over and r.since gt 0.7
+        wisps = _counted[r.caught, 'wisp', 'wisps']
+        knocks = _counted[r.knocks, 'knock', 'knocks']
+        c = _panel[c, v, 100.0, 220.0]
+        c = lory.text_centered[c, mid, _py[v, 146.0], 'The Gloam caught you', 34.0 * k, lory.white[]]
+        c = lory.text_centered[c, mid, _py[v, 196.0], '`meters[r]` m — best `r.best` m', 21.0 * k, lory.hex['#e9d8ff']]
+        c = lory.text_centered[c, mid, _py[v, 232.0], '`wisps` caught, `knocks`', 15.0 * k, soft]
+        return lory.text_centered[c, mid, _py[v, 280.0], 'Press Space or tap to run again', 18.0 * k, lory.hex['#8fe9ff']]
+    c
+
+--- the whole picture: the sky, two ridges and the pines going by slower
+--- the farther they are, the mist and the ground, the wisps, what is in
+--- the way, the sparks, the runner and the Gloam, the dread at the edge,
+--- and the words
+fn picture[c, r, v]
+    c = lory.clear[c, lory.hex['#0e0b26']]
+    c = _sky[c, v]
+    c = _ridge[c, v, r.far * 0.05, 170.0, 70.0, 200.0, lory.hex['#3a2350'], 3]
+    c = _ridge[c, v, r.far * 0.12, 120.0, 40.0, 120.0, lory.hex['#2a1840'], 11]
+    c = _pines[c, v, r.far * 0.3, 64.0, lory.hex['#1a1030'], 7]
+    c = _mist[c, v, r.far * 0.5]
+    c = _earth[c, v, r.far]
+    c = _wisps_drawn[c, v, r]
+    for t in r.things
+        c = _thing[c, v, t]
+    c = _sparks_drawn[c, v, r.sparks]
+    c = _runner[c, v, r]
+    c = _gloam[c, v, r]
+    c = _dread[c, v, r]
+    c = _hud[c, v, r]
+    _overlay[c, v, r]
+
+--- ---- tests ----
+
+--- a frame as the page hands it, `t` ms in, `w` by `h` pixels, with these
+--- events and pointers (each JSON)
+fn _frame[t, w, h, events, pointers]
+    json['{"t": `t`, "width": `w`, "height": `h`, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": `w`, "height": `h`, "projection": [], "camera": []}], "input": [`events`], "pointers": [`pointers`], "controllers": [], "said": []}']
+
+--- a run begun with nothing coming but what a test puts in its way
+fn _quiet[]
+    r = fresh[0]
+    r.started = true
+    r.next = 1000000.0
+    r
+
+--- the run `n` steps of 1/120 s on, a jump and a slide held as given
+fn _ran[r, n, jump, duck]
+    for i in range[n]
+        r = step[r, 1.0 / _rate[], jump, duck]
+    r
+
+--- the highest the runner rises on a jump, held or let go at once
+fn _peak[held]
+    r = _quiet[]
+    r.buffer = 0.14
+    high = 0.0
+    for i in range[120]
+        r = step[r, 1.0 / _rate[], held, false]
+        high = max[high, r.y]
+    high
+
+--- a rock coming is a knock for a runner who stands, and the Gloam closes
+--- in; a runner who jumps it clears it, and gains ground
+test a_jump_clears_a_rock_and_standing_still_is_a_knock[]
+    r = _quiet[]
+    r.things = [_made['rock', _at[] + 120.0]]
+    stood = _ran[r, 120, false, false]
+    stood.knocks eq 1
+    stood.gap lt r.gap - 2.0
+    r.buffer = 0.14
+    jumped = _ran[r, 120, true, false]
+    jumped.jumps eq 1
+    jumped.knocks eq 0
+    jumped.gap gt r.gap
+    len[jumped.things] eq 1
+
+--- a bat and a low branch knock a runner who stands, and a runner who
+--- slides passes beneath them
+test sliding_passes_under_a_bat_and_a_branch_that_knock_a_runner_who_stands[]
+    for what in ['bat', 'branch']
+        r = _quiet[]
+        r.things = [_made[what, _at[] + 120.0]]
+        _ran[r, 120, false, false].knocks eq 1
+        _ran[r, 120, false, true].knocks eq 0
+
+--- three knocks close together let the Gloam reach the runner: the run is
+--- over, and its metres are the best when they beat it
+test three_knocks_close_together_let_the_gloam_catch_the_runner[]
+    r = _quiet[]
+    r.best = 50
+    r.far = 4000.0
+    r.things = [_made['log', _at[] + 100.0], _made['log', _at[] + 800.0], _made['log', _at[] + 1500.0]]
+    r = _ran[r, 1200, false, false]
+    r.knocks eq 3
+    r.over
+    --- (and the frame stops shaking once it is over)
+    r.shake eq 0.0
+    r.best eq meters[r]
+    r.best gt 100
+
+--- a clean run gains on the Gloam slowly, a wisp caught pushes it back at
+--- once, and it is never more than eight behind
+test a_clean_run_gains_ground_slowly_and_a_wisp_pushes_the_gloam_back[]
+    r = _quiet[]
+    r.gap = 3.0
+    clean = _ran[r, 600, false, false]
+    clean.gap gt 3.9
+    clean.gap lt 4.1
+    r.wisps = [Wisp[_at[] + 60.0, 30.0]]
+    lit = _ran[r, 120, false, false]
+    lit.caught eq 1
+    len[lit.wisps] eq 0
+    lit.gap gt 4.1
+    r.gap = 7.9
+    _ran[r, 600, false, false].gap eq 8.0
+
+--- the wood quickens as the run goes on, up to a top pace, and goes by
+--- slower for a moment after a knock
+test the_wood_quickens_and_a_knock_slows_it_for_a_moment[]
+    r = _quiet[]
+    pace[r] eq 380.0
+    r.played = 40.0
+    pace[r] eq 580.0
+    r.played = 500.0
+    pace[r] eq 760.0
+    r.stumble = 0.7
+    pace[r] lt 760.0 * 0.6
+
+--- a jump held rises over a crate, one let go at once over a rock or a log
+--- but not a stump, and either comes down within a second
+test a_jump_held_goes_higher_than_a_tap_and_both_come_down[]
+    _peak[true] gt 120.0
+    _peak[false] gt 40.0
+    _peak[false] lt 60.0
+    r = _quiet[]
+    r.buffer = 0.14
+    r = _ran[r, 120, true, false]
+    r.grounded
+    r.y eq 0.0
+
+--- a jump asked for just before landing is made on landing
+test a_jump_asked_for_just_before_landing_is_made_on_landing[]
+    r = _quiet[]
+    r.grounded = false
+    r.y = 5.0
+    r.vy = -300.0
+    r.buffer = 0.14
+    r = _ran[r, 6, true, false]
+    r.jumps eq 1
+    r.vy gt 0.0
+
+--- what comes is far enough apart at every pace to clear a thing and land
+--- before the next, rocks and logs from the start and every kind once the
+--- run is hard
+test what_comes_is_spaced_to_be_cleared_and_grows_harder[]
+    seed[5]
+    for played in [0.0, 30.0, 60.0, 120.0]
+        r = _quiet[]
+        r.played = played
+        for i in range[100]
+            r.things = []
+            r = spawned[r]
+            r.next - r.things[0].w gte 0.74 * _cruise[r]
+            r.things[0].x eq r.seen + 60.0
+    r = _quiet[]
+    early = []
+    for i in range[200]
+        r.things = []
+        r = spawned[r]
+        if not (r.things[0].what in early)
+            early = push[early, r.things[0].what]
+    len[early] eq 2
+    r.played = 120.0
+    late = []
+    for i in range[200]
+        r.things = []
+        r = spawned[r]
+        if not (r.things[0].what in late)
+            late = push[late, r.things[0].what]
+    len[late] eq 7
+
+--- a jump key or a tap right of the drawing's left third jumps, a key
+--- held down is no new jump, and a key or a press held on the left third
+--- slides
+test a_key_or_a_tap_jumps_and_a_press_on_the_left_slides[]
+    forget['lory']
+    space = '{"type": "key", "key": " ", "code": "Space"}'
+    c = lory.begin[_frame[0, 900, 540, space, '']]
+    a = moves_of[c, []]
+    a.go
+    a.hop
+    a.up
+    not a.down
+    done = lory.end[c]
+    c = lory.begin[_frame[16, 900, 540, space, '']]
+    a = moves_of[c, a.held]
+    not a.hop
+    a.up
+    done = lory.end[c]
+    c = lory.begin[_frame[32, 900, 540, '{"type": "keyup", "key": " ", "code": "Space"}', '']]
+    a = moves_of[c, a.held]
+    not a.up
+    done = lory.end[c]
+    c = lory.begin[_frame[48, 900, 540, '{"type": "key", "key": "ArrowDown", "code": "ArrowDown"}', '']]
+    a = moves_of[c, a.held]
+    a.down
+    not a.hop
+    done = lory.end[c]
+    forget['lory']
+    c = lory.begin[_frame[64, 900, 540, '{"type": "down", "device": "touch", "id": 7, "x": 100, "y": 300, "button": 0}', '{"x": 100, "y": 300, "down": true}']]
+    a = moves_of[c, []]
+    a.go
+    not a.hop
+    a.down
+    not a.up
+    done = lory.end[c]
+    c = lory.begin[_frame[80, 900, 540, '{"type": "down", "device": "touch", "id": 8, "x": 700, "y": 300, "button": 0}', '{"x": 700, "y": 300, "down": true}']]
+    a = moves_of[c, []]
+    a.hop
+    a.up
+    not a.down
+
+--- a frame asks for the sounds of what its steps did: a jump's
+test a_frame_asks_for_the_sounds_of_what_happened[]
+    c = lory.begin[_frame[0, 900, 540, '', '']]
+    r = _quiet[]
+    r.buffer = 0.14
+    c = heard[c, r, _ran[r, 2, true, false]]
+    len[c.asks] eq 1
+    c.asks[0][0] eq '@tone'
+    c.asks[0][1] eq '620'
+
+--- a frame draws the wood, the runner and the Gloam, and a press begins
+--- the run
+test a_frame_draws_the_wood_and_a_press_begins_the_run[]
+    forget['gloam']
+    forget['lory']
+    c = lory.begin[_frame[0, 1280, 720, '', '']]
+    c = picture[c, fresh[0], fitted[c, 0.0]]
+    len[c.verts] / lory.floats[] gt 1200
+    done = draw[_frame[0, 1280, 720, '', '']]
+    not recall['gloam', fresh[0]].started
+    done = draw[_frame[16, 1280, 720, '{"type": "down", "device": "mouse", "id": 1, "x": 800, "y": 300, "button": 0}', '']]
+    recall['gloam', fresh[0]].started
