@@ -1,5 +1,4 @@
---- Sound: audio a program makes itself, sample by sample, as Tone.js makes
---- it, and hands to the page to play. A program renders what it means to
+--- Sound: audio a program makes itself, sample by sample, and hands to the page to play. A program renders what it means to
 --- hear — synths (`sound.synth`), their envelopes (`sound.envelope`),
 --- filters (`sound.filter`), effects (`sound.effect`, `sound.dynamics`),
 --- where a sound stands around the listener (`sound.channel`) — into
@@ -11,14 +10,14 @@
 ---     c = sound.play[c, tune, 0.0]
 ---     lory.end[c]
 ---
---- The page only plays: it makes an AudioBuffer of the samples and starts
+--- The page only plays: it makes an audio buffer of the samples and starts
 --- it `when` seconds from now on its audio clock (the page's `@sound`
 --- call). What is heard is what the program computed, so a test holds the
---- samples themselves, and `sound.analysis` measures them as Tone's
---- Analyser and Meter measure what they are given.
+--- samples themselves, and `sound.analysis` measures them, as an analyser
+--- and a meter would.
 ---
 --- This module holds what every part shares: a sound's samples, the call
---- that plays them, Tone's notation for time (`4n`, `8t`, `1m`, `2:1:0`,
+--- that plays them, a notation for time (`4n`, `8t`, `1m`, `2:1:0`,
 --- ticks) and pitch (`C4`, `A4`, MIDI numbers), and levels in decibels.
 
 use sys
@@ -30,7 +29,7 @@ use lory
 struct Sound [rate, left, right, stereo]
 
 --- a tempo: beats a minute, beats a bar (a bar's quarter notes: 4 in 4/4,
---- 3 in 3/4, 3.5 in 7/8) and ticks a beat (192, as Tone's transport counts)
+--- 3 in 3/4, 3.5 in 7/8) and ticks a beat (192)
 struct Tempo [bpm, signature, ppq]
 
 --- ---- sounds ----
@@ -200,7 +199,7 @@ fn metered[bpm, signature]
     Tempo[0.0 + bpm, 0.0 + signature, 192]
 
 --- a time signature as its top and bottom (6 and 8 for 6/8) made a bar's
---- quarter notes, as Tone's transport takes `[6, 8]`
+--- quarter notes
 fn signature_of[top, bottom]
     (0.0 + top) / bottom * 4.0
 
@@ -219,13 +218,13 @@ fn _number[words]
 fn _quarter[t]
     60.0 / t.bpm
 
---- what words written in Tone's time notation stand for, and whether they
+--- what words written in time notation stand for, and whether they
 --- are notation: `[amount, 1.0]`, or `[0.0, 0.0]` where they are not. The
---- forms are tried in Tone's order — `4hz` a cycle's time, `48i` ticks,
+--- forms are tried in this order — `4hz` a cycle's time, `48i` ticks,
 --- `2m` bars, `4n` a quarter note (`1n` a whole bar, `8n.` dotted), a bare
 --- number, `1.5s`, `8t` a triplet, `2:1:0` bars, beats and sixteenths —
 --- and `beats` says what a beat is in the answer's units, so one reading
---- serves both seconds (a beat is `60 / bpm` of them) and Tone's Ticks (a
+--- serves both seconds (a beat is `60 / bpm` of them) and ticks (a
 --- beat is 192 of them, a bare number is ticks, seconds are cut to the
 --- tick)
 fn _reading[words, t, beat, in_ticks]
@@ -279,11 +278,11 @@ fn _reading[words, t, beat, in_ticks]
 fn beats_of_seconds[seconds_in, t]
     seconds_in / _quarter[t]
 
---- whether words are Tone's time notation (`4n`, `1m`, `2:1:0`, `0.5`)
+--- whether words are time notation (`4n`, `1m`, `2:1:0`, `0.5`)
 fn is_time[words]
     _reading[words, tempo[120.0], 0.5, false][1] gt 0.5
 
---- Tone's time notation as seconds at a tempo (`4n` is half a second at
+--- time notation as seconds at a tempo (`4n` is half a second at
 --- 120 beats a minute); words that are no notation are no time (NaN).
 --- `+0.5` is half a second after now, as `seconds_after` reads it
 fn seconds[words, t]
@@ -300,12 +299,12 @@ fn seconds_after[words, t, now_at]
         return now_at + seconds[slice[w, 1, len[w]], t]
     seconds[w, t]
 
---- Tone's time notation as ticks at a tempo (`4n` is 192), the seconds it
+--- time notation as ticks at a tempo (`4n` is 192), the seconds it
 --- stands for counted in ticks
 fn ticks_of[words, t]
     seconds[words, t] / _quarter[t] * t.ppq
 
---- words read as Tone's Ticks read them, in ticks: notation as
+--- words read as ticks: notation as
 --- `ticks_of` reads it, but a bare number is whole ticks (`3` is three,
 --- `0.5` none), seconds are cut down to the tick, and `4hz` is a quarter
 --- of a tick (NaN where the words are no notation)
@@ -319,12 +318,12 @@ fn ticks[words, t]
 fn seconds_of_ticks[count, t]
     count / t.ppq * _quarter[t]
 
---- seconds as whole ticks at a tempo, as Tone's Ticks count them (cut
+--- seconds as whole ticks at a tempo (cut
 --- down to the tick)
 fn ticks_of_seconds[seconds_in, t]
     floor[seconds_in / _quarter[t] * t.ppq]
 
---- a time written as bars, beats and sixteenths (`1:2:0.5`), as Tone's
+--- a time written as bars, beats and sixteenths (`1:2:0.5`), as the
 --- transport shows its position: quarters kept to four places, a
 --- sixteenth's fraction to three
 fn bars_beats[seconds_in, t]
@@ -336,14 +335,13 @@ fn bars_beats[seconds_in, t]
     beat = floor[quarters] - floor[floor[quarters] / t.signature] * t.signature
     '`bars`:`_shown[beat]`:`_shown[sixteenths]`'
 
---- a number shown as Tone shows one: a whole number without its point
+--- a number shown plainly: a whole number without its point
 fn _shown[x]
     if x eq floor[x]
         return str[floor[x]]
     str[x]
 
---- the note value nearest a time (`4n`, `8t`, `16n.`, `1m`, or `0`), as
---- Tone's `toNotation` answers
+--- the note value nearest a time (`4n`, `8t`, `16n.`, `1m`, or `0`)
 fn notation_of[seconds_in, t]
     names = ['1m']
     for power in range[1, 9]
@@ -413,7 +411,7 @@ fn _note_number[words]
         return [0.0, 0.0]
     [_pitch_class[m.groups[1]] + (_number[m.groups[2]] + 1.0) * 12.0, 1.0]
 
---- Tone's pitch notation as a frequency: a note (`C4`, `F#5`, `Bb-1`), a
+--- pitch notation as a frequency: a note (`C4`, `F#5`, `Bb-1`), a
 --- MIDI number (`60midi`), cycles a second (`440hz`, `440`), or a time
 --- whose cycle it is (`4n` is 2 Hz at 120 beats a minute)
 fn hz[words]
@@ -432,7 +430,7 @@ fn hz[words]
         return _number[m.groups[1]]
     1.0 / seconds[w, tempo[120.0]]
 
---- Tone's pitch notation as a MIDI number, to the nearest note
+--- pitch notation as a MIDI number, to the nearest note
 fn midi[words]
     midi_of_hz[hz[words]]
 
@@ -457,7 +455,7 @@ fn harmonized[f, intervals]
 
 --- ---- tests ----
 
-test notation_reads_as_tone_reads_it[]
+test time_notation_reads_as_seconds_and_ticks[]
     t = tempo[120.0]
     seconds['4n', t] eq 0.5
     seconds['8n', t] eq 0.25
@@ -474,7 +472,7 @@ test notation_reads_as_tone_reads_it[]
     not is_time['quarter']
     seconds['1n', metered[120.0, 3.0]] eq 1.5
 
-test pitch_reads_as_tone_reads_it[]
+test pitch_notation_reads_as_frequencies_and_notes[]
     hz['A4'] eq 440.0
     abs[hz['C4'] - 261.6255653005986] lt 0.000000001
     midi['C4'] eq 60

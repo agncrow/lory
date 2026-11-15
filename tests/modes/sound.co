@@ -6,11 +6,10 @@
 --- dynamics, the analyser and the meter, places heard about a listener,
 --- and the controls' layouts. The renders are short (hundredths of a
 --- second at 8 kHz, or at 16 kHz where a filter's top frequency asks it,
---- as a pluck's and Freeverb's dampening do). A number is written as the fewest digits that read
---- back as the same float, so the two runs write the same line only when
---- every bit of every number is the same. tests/sound/reference.co and
---- renders.co hold the interpreter's numbers to Tone.js itself. Run from
---- the repository's root:
+--- as a pluck's and the damped reverb's dampening do). A number is
+--- written as the fewest digits that read back as the same float, so the
+--- two runs write the same line only when every bit of every number is
+--- the same. Run from the repository's root:
 ---
 ---     tests/modes.sh crow tests/modes/sound.co
 
@@ -84,7 +83,7 @@ log['player: `_every[source.played[pl, 0.0, 0.02, rate], 8]`']
 
 --- ---- filters and signals ----
 
-freqs = filter.tone_frequencies[12]
+freqs = filter.response_frequencies[12]
 for kind in ['lowpass', 'highpass', 'bandpass', 'notch', 'allpass', 'peaking', 'lowshelf', 'highshelf']
     f = filter.with_gain[filter.with_q[filter.filter[kind, 900.0], 2.0], 4.0]
     log['filter `kind`: `_line[filter.frequency_response[f, 16000.0, freqs]]`']
@@ -98,7 +97,7 @@ log['abs: `_line[signal.size_of[ramp]]`; gain to audio: `_line[signal.gain_to_au
 
 --- ---- synths, effects and dynamics, rendered short ----
 
-for name in ['Synth', 'MonoSynth', 'FMSynth', 'AMSynth', 'DuoSynth', 'MembraneSynth', 'MetalSynth', 'NoiseSynth', 'PluckSynth']
+for name in ['synth', 'mono_synth', 'fm_synth', 'am_synth', 'duo_synth', 'membrane_synth', 'metal_synth', 'noise_synth', 'pluck_synth']
     s = synth.played[synth.named[name], [synth.hit[0.0, 220.0, 0.03, 1.0]], 16000.0]
     log['synth `name`: `len[s.left]` samples, RMS `analysis.rms[s.left]`, every 40th `_every[slice[s.left, 0, 400], 40]`']
 tone = sound.mono[16000.0, sin[(0.0 + range[960]) * (2.0 * pi * 440.0 / 16000.0)] * 0.5]

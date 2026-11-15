@@ -6,12 +6,6 @@
 --- pinch, by the keys and by a box drawn with Shift, and flown from place
 --- to place.
 ---
---- It is Leaflet's (1.9.4) behaviour, written anew in Crow and held to the
---- numbers Leaflet answers (tests/map/reference.co): its projection, its
---- zooms and their snapping, its fitBounds, its scale bar, its flyTo, its
---- wheel, its double click, its throw, its tiles and their addresses; its
---- controls, popups and tooltips are laid out by its style sheet's sizes.
----
 --- A map is a record the program keeps between frames by its id, as
 --- Lory's controls keep theirs (`use memory`); its shapes and its tiles
 --- are kept under names of their own, so the record stays light.
@@ -41,7 +35,7 @@
 --- among the tree's events.
 ---
 --- The box a program hands a map is in the canvas's pixels; a map's
---- insides are CSS pixels, as Leaflet's are.
+--- insides are CSS pixels.
 use math
 use memory
 use lory
@@ -136,7 +130,7 @@ fn _no_flight[]
 fn _still[]
     Motion['', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, _no_flight[]]
 
---- a map with Leaflet's defaults: the whole world at zoom 0, zooms from 0
+--- a map with the defaults: the whole world at zoom 0, zooms from 0
 --- to its tiles' highest snapped to whole ones, the buttons, the scale
 --- bar and the credit shown, every hand moving it, no tiles, no layers
 fn fresh[id]
@@ -182,11 +176,11 @@ fn _css_h[m]
 --- the point of the world's picture at a zoom at the top left of a view of
 --- a place, on a whole pixel of the canvas (so a still view's tiles fall
 --- on the screen's pixels; on a page of one pixel a CSS pixel this is
---- Leaflet's pixel origin)
+--- the pixel origin)
 fn _origin[m, lat, lng, zoom]
     s = m.box.s
     p = geo.project[lat, lng, zoom]
-    geo.Point[geo.js_round[(p.x - _css_w[m] / 2.0) * s] / s, geo.js_round[(p.y - _css_h[m] / 2.0) * s] / s]
+    geo.Point[geo.round_half_up[(p.x - _css_w[m] / 2.0) * s] / s, geo.round_half_up[(p.y - _css_h[m] / 2.0) * s] / s]
 
 --- what the map's view shows, its pixels reckoned as it is drawn
 fn seen_of[m]
@@ -194,7 +188,7 @@ fn seen_of[m]
     geo.Seen[m.lat, m.lng, m.zoom, _css_w[m], _css_h[m], o.x, o.y]
 
 --- the highest zoom a map allows: its own, or its tiles' where it has
---- none (a Leaflet map takes its layers')
+--- none
 fn highest[m]
     if m.limits.highest gte 0.0
         return m.limits.highest
@@ -223,8 +217,8 @@ fn _held_in[m]
     m.lng = p.lng
     m
 
---- the map showing a place at a zoom, at once (Leaflet's setView without
---- its animation)
+--- the map showing a place at a zoom, at once, without an
+--- animation
 fn at[m, lat, lng, zoom]
     m.made = true
     m.motion = _still[]
@@ -247,7 +241,7 @@ fn zoom_steps[m, snap, delta]
     m.limits.delta = delta
     m
 
---- the map's view held inside a box of places (Leaflet's maxBounds), a
+--- the map's view held inside a box of places, a
 --- drag held `viscosity` firmly at its edge (0 to 1)
 fn bounded[m, south, west, north, east, viscosity = 0.0]
     m.limits.bounded = true
@@ -263,7 +257,7 @@ fn unbounded[m]
     m.limits.bounded = false
     m
 
---- the map flying to a place at a zoom along Leaflet's path, out and in
+--- the map flying to a place at a zoom along a smooth path, out and in
 --- again, in `seconds` (0: as long as its path is, 0.8 s a unit of it);
 --- it sets off when the map is next shown
 fn fly_to[m, lat, lng, zoom, seconds = 0.0]
@@ -272,7 +266,7 @@ fn fly_to[m, lat, lng, zoom, seconds = 0.0]
     m.motion = Motion['fly', -1.0, m.lat, m.lng, m.zoom, lat, lng, to, seconds, 2.0, _no_flight[]]
     m
 
---- the map flying to show a box of places (Leaflet's flyToBounds), kept
+--- the map flying to show a box of places, kept
 --- `padding` CSS pixels clear of the map's edge
 fn fly_to_bounds[m, south, west, north, east, padding = 0.0]
     v = _fitted[m, south, west, north, east, padding]
@@ -294,13 +288,13 @@ fn ease_to[m, lat, lng, zoom, seconds = 0.25]
     m
 
 --- the view that fits a box of places in the map's box, `padding` CSS
---- pixels kept clear all round (Leaflet's fitBounds)
+--- pixels kept clear all round
 fn _fitted[m, south, west, north, east, padding]
     b = geo.Bounds[min[south, north], min[west, east], max[south, north], max[west, east]]
     geo.fit[b, _css_w[m], _css_h[m], m.zoom, m.limits.snap, m.limits.lowest, highest[m], padding, padding, padding, padding]
 
 --- the map showing a box of places, `padding` CSS pixels clear of its
---- edge, zoomed there as Leaflet zooms (drawn where it may be)
+--- edge, zoomed there (drawn where it may be)
 fn fit_bounds[m, south, west, north, east, padding = 0.0]
     m.made = true
     v = _fitted[m, south, west, north, east, padding]
@@ -325,9 +319,9 @@ fn pan_by[m, dx, dy]
     _pan_by[m, dx, dy, -1.0]
 
 --- the view moved to another, drawn as a zoom from the one to the other
---- where Leaflet animates one (at most four zooms apart, the point both
+--- where it can be animated (at most four zooms apart, the point both
 --- views keep within reach), and as a pan where the zoom is the same; a
---- zoom asked while one is drawn is let go, as Leaflet lets it go
+--- zoom asked while one is drawn is let go
 fn _zoom_to[m, lat, lng, zoom, when]
     time_asked = when
     if time_asked lt 0.0
@@ -346,8 +340,8 @@ fn _zoom_to[m, lat, lng, zoom, when]
         scale = geo.zoom_scale[to, m.zoom]
         v = seen_of[m]
         q = geo.project[p.lat, p.lng, m.zoom]
-        off_x = (geo.js_round[q.x] - v.ox - w / 2.0) / (1.0 - 1.0 / scale)
-        off_y = (geo.js_round[q.y] - v.oy - h / 2.0) / (1.0 - 1.0 / scale)
+        off_x = (geo.round_half_up[q.x] - v.ox - w / 2.0) / (1.0 - 1.0 / scale)
+        off_y = (geo.round_half_up[q.y] - v.oy - h / 2.0) / (1.0 - 1.0 / scale)
         near = abs[off_x] lte w and abs[off_y] lte h and abs[to - m.zoom] lte 4.0
     if near
         m.motion = Motion['zoom', when, m.lat, m.lng, m.zoom, p.lat, p.lng, to, 0.25, 2.0, _no_flight[]]
@@ -360,7 +354,7 @@ fn _zoom_to[m, lat, lng, zoom, when]
 
 --- the view panned to a place at its zoom: slid there in a quarter of a
 --- second where it is within a view's size, at once where it is not
---- (Leaflet's panTo), and not at all where it is under a pixel away
+--- and not at all where it is under a pixel away
 fn _pan_to_at[m, lat, lng, when]
     v = seen_of[m]
     q = geo.point_of[v, lat, lng]
@@ -374,18 +368,18 @@ fn _pan_to_at[m, lat, lng, when]
     m.motion = Motion['pan', when, m.lat, m.lng, m.zoom, lat, lng, m.zoom, 0.25, 2.0, _no_flight[]]
     m
 
---- the view's middle slid by CSS pixels (Leaflet's panBy): in a quarter
+--- the view's middle slid by CSS pixels: in a quarter
 --- of a second, easing out, or at once where that is farther than a
 --- view's size
 fn _pan_by[m, dx, dy, when]
     c = geo.project[m.lat, m.lng, m.zoom]
-    to = geo.unproject[c.x + geo.js_round[dx], c.y + geo.js_round[dy], m.zoom]
+    to = geo.unproject[c.x + geo.round_half_up[dx], c.y + geo.round_half_up[dy], m.zoom]
     if m.box.w eq 0.0 or abs[dx] gt _css_w[m] or abs[dy] gt _css_h[m]
         m.motion = _still[]
         m.lat = to.lat
         m.lng = to.lng
         return m
-    if geo.js_round[dx] eq 0.0 and geo.js_round[dy] eq 0.0
+    if geo.round_half_up[dx] eq 0.0 and geo.round_half_up[dy] eq 0.0
         return m
     m.motion = Motion['pan', when, m.lat, m.lng, m.zoom, to.lat, to.lng, m.zoom, 0.25, 2.0, _no_flight[]]
     m
@@ -414,7 +408,7 @@ fn bounds_shown[m]
     geo.bounds_of[seen_of[m]]
 
 --- the scale bar's numbers for the map as it stands (100 CSS pixels at
---- most, Leaflet's)
+--- most)
 fn scale_shown[m]
     geo.scale_of[seen_of[m], 100.0]
 
@@ -443,7 +437,7 @@ fn no_tiles[m]
 
 --- ---- styles ----
 
---- the style shapes are drawn in where no other is given: Leaflet's blue
+--- the style shapes are drawn in where no other is given: a blue
 --- stroke 3 pixels wide, its fill a fifth as opaque, points as markers
 fn style[]
     features.style[]
@@ -635,8 +629,8 @@ fn bind_tooltip[m, id, words]
     m
 
 --- the features that are kept and the map whose popup and pointer no
---- longer point at those taken away (Leaflet closes a layer's popup and
---- tooltip as it is removed)
+--- longer point at those taken away (a layer's popup and tooltip close as
+--- it is removed)
 fn _taken_away[m, l, kept]
     gone = true
     for f in kept
@@ -656,7 +650,7 @@ fn _taken_away[m, l, kept]
     m
 
 --- a layer's features all taken away, the layer kept in its place among
---- the others and drawn as it was (Leaflet's clearLayers)
+--- the others and drawn as it was
 fn clear_layer[m, name]
     l = layers_of[m.id]
     kept = features.no_features[]
@@ -666,11 +660,11 @@ fn clear_layer[m, name]
     _taken_away[m, l, kept]
 
 --- a layer's features replaced by GeoJSON text's, in a style, where the
---- layer stood (Mapbox's setData: a layer of live data drawn anew)
+--- layer stood (a layer of live data drawn anew)
 fn set_geojson[m, name, words, s]
     add_geojson[clear_layer[m, name], name, words, s]
 
---- a feature taken off the map, a marker or a shape (Leaflet's remove)
+--- a feature taken off the map, a marker or a shape
 fn remove_feature[m, id]
     l = layers_of[m.id]
     kept = features.no_features[]
@@ -701,7 +695,6 @@ fn _shown_or_not[m, name, hidden]
 
 --- a layer hidden: neither drawn nor found under the pointer, its
 --- features kept for when it is shown again, and its open popup closed
---- (Leaflet's removeLayer of a group, Mapbox's visibility `none`)
 fn hide_layer[m, name]
     _shown_or_not[m, name, true]
 
@@ -734,7 +727,7 @@ fn _closed[m]
     _tell[m, 'closed', m.popup.owner, m.popup.lat, m.popup.lng]
 
 --- where a feature's popup points from its place, in CSS pixels: a
---- marker's head (Leaflet's pin: 1 right, 34 up; a picture's or an
+--- marker's head (the pin's: 1 right, 34 up; a picture's or an
 --- icon's: its top middle), a shape's place itself
 fn _popup_anchor[f]
     if not _is_point[f] or f.style.circles
@@ -744,7 +737,7 @@ fn _popup_anchor[f]
     geo.Point[f.style.icon_w / 2.0 - f.style.icon_x, 0.0 - f.style.icon_y]
 
 --- where a feature's tooltip points from its place: beside a marker's
---- head (Leaflet's pin: 16 right, 28 up; a picture's or an icon's right
+--- head (the pin's: 16 right, 28 up; a picture's or an icon's right
 --- side), a shape's place itself
 fn _tooltip_anchor[f]
     if not _is_point[f] or f.style.circles
@@ -754,7 +747,7 @@ fn _tooltip_anchor[f]
     geo.Point[f.style.icon_w - f.style.icon_x, f.style.icon_h / 2.0 - f.style.icon_y]
 
 --- a feature's popup opened: at a point's place, or where a shape was
---- pressed (as Leaflet opens a path's)
+--- pressed
 fn _open_popup_of[m, f, lat, lng]
     a = _popup_anchor[f]
     p = geo.Place[lat, lng]
@@ -763,8 +756,7 @@ fn _open_popup_of[m, f, lat, lng]
     m.popup = Popup[true, p.lat, p.lng, f.popup, a.x, a.y, f.id, true]
     _tell[m, 'popup', f.id, p.lat, p.lng]
 
---- the popup's words in lines at most 301 CSS pixels wide, as Leaflet's
---- popup wraps them
+--- the popup's words in lines at most 301 CSS pixels wide
 fn _popup_lines[c, m, s]
     _lines[c, m.popup.words, 13.0 * s, 301.0 * s]
 
@@ -786,7 +778,7 @@ fn _lines[c, words, size, most]
     out
 
 --- the popup's box about the point (ax, ay) of the canvas its tip points
---- at: left, top, width, height in the canvas's pixels (Leaflet's: 13 px
+--- at: left, top, width, height in the canvas's pixels (13 px
 --- words, 50 to 300 px of them and a pixel, a margin of 13, 24, 13 and
 --- 20 px inside a pixel's padding, its foot 32 px above the point)
 fn _popup_rect[c, lines, ax, ay, s]
@@ -797,7 +789,7 @@ fn _popup_rect[c, lines, ax, ay, s]
     inner = min[300.0 * s, max[50.0 * s, wide]] + 1.0 * s
     bw = inner + 46.0 * s
     bh = len[lines] * 16.9 * s + 28.0 * s
-    left = ax - geo.js_round[bw / s / 2.0] * s
+    left = ax - geo.round_half_up[bw / s / 2.0] * s
     top = ay - 32.0 * s - bh
     [left, top, bw, bh]
 
@@ -813,7 +805,7 @@ fn _popup_box[c, m]
     [(r[0] - m.box.x) / s, (r[1] - m.box.y) / s, r[2] / s, r[3] / s]
 
 --- a popup just opened shown whole: the map panned so that it stands 5
---- CSS pixels inside the map's edge (Leaflet's autoPan)
+--- CSS pixels inside the map's edge
 fn _autopan[c, m, when]
     if not m.popup.shown or not m.popup.fresh
         return m
@@ -1034,7 +1026,7 @@ fn _steps[shift]
 
 --- a press let go without a drag: a control's act, a feature's click and
 --- its popup, a cluster zoomed into, or the map's click. Any of them
---- closes the open popup first, as Leaflet's preclick closes it, but for
+--- closes the open popup first, but for
 --- a marker whose popup it is: that marker pressed again closes it
 fn _clicked[m, l, x, y, popup_box, shift, when]
     act = _control_at[m, x, y, popup_box]
@@ -1073,7 +1065,7 @@ fn _clicked[m, l, x, y, popup_box, shift, when]
     _tell[m, 'click', '', p.lat, p.lng]
 
 --- how far a drag may move the picture before the map's box of places
---- holds it (Leaflet's offset limit), taken where the drag starts
+--- holds it, taken where the drag starts
 fn _drag_limits[m, hd]
     hd.limited = m.limits.bounded and m.limits.viscosity gt 0.0
     if hd.limited
@@ -1125,7 +1117,7 @@ fn _read_input[m, l, c, when, popup_box]
                 hd.ids = push[hd.ids, ev.id]
                 hd.txs = push[hd.txs, x]
                 hd.tys = push[hd.tys, y]
-                --- (two fingers: a pinch from where they are, as Leaflet's)
+                --- (two fingers: a pinch from where they are)
                 if len[hd.ids] eq 2 and o.pinch and not _zooming[m, when]
                     dx = hd.txs[1] - hd.txs[0]
                     dy = hd.tys[1] - hd.tys[0]
@@ -1182,8 +1174,8 @@ fn _read_input[m, l, c, when, popup_box]
         if ev.on eq 'move' and hd.down and o.dragging
             dx = x - hd.x0
             dy = y - hd.y0
-            --- (a drag begins three pixels from the press, Leaflet's
-            --- clickTolerance, and the picture then follows the pointer)
+            --- (a drag begins three pixels from the press, and the
+            --- picture then follows the pointer)
             if not hd.moved and abs[dx] + abs[dy] gte 3.0
                 hd.moved = true
                 hd = _drag_limits[m, hd]
@@ -1242,7 +1234,7 @@ fn _read_input[m, l, c, when, popup_box]
                 to = m.zoom - m.limits.delta
             p = camera.zoom_around[seen_of[m], x, y, to]
             m = _zoom_to[m, p.lat, p.lng, to, when]
-        --- (Leaflet's wheel: its pixels, three of them a pixel on a Mac,
+        --- (the wheel's pixels, three of them a pixel on a Mac,
         --- gathered for 40 ms from the first)
         if ev.on eq 'wheel' and inside and o.wheel_zoom
             hd.wheel = hd.wheel - ev.dy / (3.0 * s)
@@ -1282,7 +1274,7 @@ fn _read_input[m, l, c, when, popup_box]
 
 --- a key pressed while the map has the keyboard: the arrows pan 80 CSS
 --- pixels (Shift: 240), + and - zoom a step (Shift: three), Escape
---- closes the popup (Leaflet's keyboard)
+--- closes the popup
 fn _key[m, ev, when]
     by = 80.0
     if ev.shift
@@ -1497,10 +1489,9 @@ fn _placed[given, zoom, ox, oy]
 
 --- the tiles of the view drawn, those it lacks asked for, and what is
 --- held of them kept: while a zoom is drawn, the tiles of the zoom it
---- goes to over the view it ends at (zooming out, the view it leaves:
---- Leaflet's), and while the view moves, new tiles asked for at most five
---- times a second, or as the tiles' zoom changes (Leaflet's
---- updateInterval)
+--- goes to over the view it ends at (zooming out, the view it leaves),
+--- and while the view moves, new tiles asked for at most five times a
+--- second, or as the tiles' zoom changes
 fn _draw_tiles[c, m, spot, ox, oy, when]
     t = m.tiles
     held = recall['map.`m.id`.tiles', grid.held_none[t.slots]]
@@ -1600,8 +1591,8 @@ fn _draw_popup[c, m, zoom, ox, oy]
 
 --- the tooltip of the feature the pointer is over: its words in a small
 --- white box beside it, on the right where the feature stands left of
---- the map's middle and on the left where it stands right of it
---- (Leaflet's direction `auto`), a little arrow pointing at it
+--- the map's middle and on the left where it stands right of it,
+--- a little arrow pointing at it
 fn _draw_tooltip[c, m, l, zoom, ox, oy]
     if m.hover eq '' or m.hand.down
         return c
@@ -1661,7 +1652,7 @@ fn _draw_controls[c, m]
         c = _draw_credits[c, m]
     c
 
---- Leaflet's zoom buttons as a page of touch has them: two of 30 CSS
+--- the zoom buttons as a page of touch has them: two of 30 CSS
 --- pixels, a line between, in an edge of 2 pixels of a fifth of black,
 --- 10 pixels in from the corner; a button greyed where the zoom has come
 --- to its end, and lit while the pointer is over it
@@ -1712,7 +1703,7 @@ fn _scale_line[c, m, left, top, wide, words, first]
     c = lory.text[c, left + 8.0 * s, text_top + lift + 1.0 * s, words, size, lory.white[]]
     lory.text[c, left + 7.0 * s, text_top + lift, words, size, lory.hex['#333333']]
 
---- Leaflet's scale bar: a line in metres over one in feet or miles, each
+--- the scale bar: a line in metres over one in feet or miles, each
 --- as wide as its round length is on the ground across the view's
 --- middle, 5 CSS pixels in from the bottom left corner
 fn _draw_scale_bar[c, m]
@@ -1992,7 +1983,7 @@ test a_marker_pressed_opens_its_popup_and_a_press_on_the_map_closes_it[]
     not m.popup.shown
     'closed' in _acts[happened['popup']]
 
---- as Leaflet's: a marker pressed while its own popup is open closes
+--- a marker pressed while its own popup is open closes
 --- it; another marker pressed closes the open popup before its click
 --- opens its own
 test a_marker_pressed_again_closes_its_popup_and_another_s_replaces_it[]
@@ -2063,7 +2054,7 @@ test a_layer_is_drawn_anew_from_new_data_and_a_feature_taken_away[]
     len[layers_of['live'].features] eq 0
     layers_of['live'].names eq ['road', 'markers']
 
---- Leaflet's zoom control: a press on + or - zooms a step about the
+--- the zoom control: a press on + or - zooms a step about the
 --- middle, and the button of an end the zoom has come to does nothing
 test the_zoom_buttons_zoom_a_step_and_stop_at_the_ends[]
     forget_map['buttons']
@@ -2081,8 +2072,7 @@ test the_zoom_buttons_zoom_a_step_and_stop_at_the_ends[]
     m.lat eq 10.0
     m.lng eq 20.0
 
---- a hand turned off leaves the view as it was (Leaflet's handlers
---- disabled): a drag, the wheel, a double click and the keys
+--- a hand turned off leaves the view as it was: a drag, the wheel, a double click and the keys
 test a_hand_turned_off_leaves_the_view_as_it_was[]
     forget_map['still']
     m = keep[hands[at[of['still'], 10.0, 20.0, 5.0], dragging = false, wheel = false, double = false, keyboard = false, box = false, pinch = false]]
@@ -2157,8 +2147,7 @@ test a_tooltip_shows_while_the_pointer_rests_on_its_feature[]
     of['tip'].hover eq ''
 
 --- a popup opened near the map's edge pans the map until it stands
---- 5 pixels inside it (Leaflet's autoPan), to the nearest whole pixel
---- (Leaflet's panBy moves whole pixels)
+--- 5 pixels inside it, to the nearest whole pixel
 test a_popup_opened_at_the_edge_pans_the_map_to_show_it_whole[]
     forget_map['edge']
     m = at[of['edge'], 0.0, 0.0, 5.0]

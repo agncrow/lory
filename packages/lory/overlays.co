@@ -1,11 +1,8 @@
 --- Lory's overlays: the dialog and the alert dialog that asks before it
 --- acts, the popover, the hover card, the tooltip, toasts and snackbars,
 --- sheets along a side of the page, the banner and the dimmer. Each
---- answers the pointer and the keys as the library it follows does
---- (Radix's Dialog, AlertDialog, Popover, HoverCard, Tooltip and Toast;
---- Vuetify's VSnackbar and VSnackbarQueue, VBottomSheet and VBanner;
---- Semantic UI's Dimmer), number for number where the library gives one:
---- docs/components/menus.md says which, and where each number comes from.
+--- answers the pointer and the keys, with the times, distances and
+--- curves given by its functions below.
 ---
 --- An overlay stands in a gui layer: laid after the page, as a portal is,
 --- its box among the boxes `gui.show` answers and its events among the
@@ -70,7 +67,7 @@ fn _face[d, tone, words]
         c = lory.round_outline[c, d.x, d.y, d.w, d.h, r, 1.0 * s, look.edge]
     lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, words, 14.0 * s, ink]
 
---- a close button (Radix's demos' cross, 25 CSS pixels square): pressed,
+--- a close button (a cross, 25 CSS pixels square): pressed,
 --- or Enter or space typed on it, it tells `dismiss` (`close`, naming
 --- `target`); the close button of a layer Lory holds open (`held`) asks
 --- it closed, and it closes as the next frame is built
@@ -114,8 +111,8 @@ fn _closings_done[]
 --- ---- the dimming under a modal overlay ----
 
 --- a layer over the whole page, drawn before the overlay that follows
---- it, dimmed `k` of the way to gui's scrim (`shade` 0), or to Semantic
---- UI's dimming (1 its black, 2 its white): it keeps the pointer from the
+--- it, dimmed `k` of the way to gui's scrim (`shade` 0), or to a
+--- dimmer's (1 its black, 2 its white): it keeps the pointer from the
 --- page, as a modal overlay's dimming does
 fn _scrim[c, id, k, shade = 0.0]
     s = lory.px[c]
@@ -140,9 +137,9 @@ fn _come[n, k, from]
         return n
     gui.scaled[gui.faded[n, k], from + (1.0 - from) * k]
 
---- ---- a dialog (Radix's Dialog) and an alert dialog (its AlertDialog) ----
+--- ---- a dialog and an alert dialog ----
 
---- the curve and the time Radix's demos open and close a dialog on
+--- the curve and the time a dialog opens and closes on
 --- (cubic-bezier(0.16, 1, 0.3, 1), 150 ms: its overlay fades in, its
 --- content fades in grown from 0.96)
 fn dialog_time[]
@@ -172,7 +169,7 @@ fn dialog[c, id, title, kids, open, words = '', wide = 440.0, dismiss = true]
     box = gui.layer[id, [_come[body, seen.value, 0.96]], place = 'center', modal = open, dismiss = dismiss and open, focused = open, wide = wide, pad = 24.0]
     gui.column[[_scrim[c, id, seen.value], box], gap = 0.0]
 
---- a dialog that asks before an act (Radix's AlertDialog): its `title`,
+--- a dialog that asks before an act (an alert dialog): its `title`,
 --- its `words`, a Cancel button and the act's button (`danger`: in the
 --- danger's tone). Open, the focus is on Cancel; a press on the dimming
 --- does not close it. Cancel and Escape tell `dismiss` (`cancel`,
@@ -209,10 +206,10 @@ fn _cancel_drawn[d]
     d.c = _face[d, '', parts[4]]
     d
 
---- ---- a popover (Radix's Popover) ----
+--- ---- a popover ----
 
 --- a button that opens a panel of `kids` on its `side`, `align`ed and
---- `gap` away (Radix's demos' sideOffset 5), held open by Lory: a press
+--- `gap` away (5 by default), held open by Lory: a press
 --- on the button opens it and, open, closes it; open, it takes the focus
 --- to its first control; Escape, a press outside and its close button
 --- close it, and the focus goes back to the button. Its events are gui's
@@ -223,7 +220,7 @@ fn popover[id, words, kids, side = 'bottom', align = 'center', gap = 5.0, wide =
     panel = gui.overlay[gui.column[kids, gap = 10.0], _closer[id, '`id`:panel'], anchor = 'top_right']
     gui.row[[gui.opens[gui.button[id, words], '`id`:panel'], gui.layer['`id`:panel', [panel], at = id, side = side, align = align, gap = gap, held = true, focused = true, wide = wide, pad = 14.0]], gap = 0.0]
 
---- ---- a hover card (Radix's HoverCard) ----
+--- ---- a hover card ----
 
 --- what each hover card holds between frames: whether it is open, the
 --- pointer over its link and over its card, when it began to wait to
@@ -251,7 +248,7 @@ fn _card_kept[id, card]
     held.by[id] = card
     remember['lory.overlays.cards', held]
 
---- the waits Radix's HoverCard keeps by default: the pointer resting on
+--- the waits a hover card keeps by default: the pointer resting on
 --- the link 700 ms opens its card, and off both 300 ms closes it
 fn card_open_delay[]
     700.0
@@ -264,7 +261,7 @@ fn card_open[id]
     _card_of[id].open
 
 --- a link (`words`, in the accent's tone) whose card of `kids` opens
---- under it (`side`, `align`ed, `gap` away; Radix's demos' sideOffset 5)
+--- under it (`side`, `align`ed, `gap` away; 5 by default)
 --- once the pointer has rested on it `open_delay` ms, and closes once the
 --- pointer has been off the link and the card `close_delay` ms (on the
 --- card it stays: its controls can be reached). The focus on the link
@@ -369,9 +366,9 @@ fn _link_drawn[d]
 fn _inside[x, y, b]
     x gte b[0] and x lt b[0] + b[2] and y gte b[1] and y lt b[1] + b[3]
 
---- ---- tooltips (Radix's Tooltip and its Provider) ----
+--- ---- tooltips ----
 
---- the waits Radix's Tooltip keeps by default: the pointer resting on a
+--- the waits a tooltip keeps by default: the pointer resting on a
 --- control 700 ms opens its tip; once one has been open, another opens at
 --- once until 300 ms after the last closed; the pointer leaving toward
 --- the tip keeps it inside the hull of the tip and the points 5 CSS
@@ -412,7 +409,7 @@ fn tip_open[]
     _tips[].open
 
 --- the control `n` (it needs an id) with a tooltip of `words` on its
---- `side`, `gap` away (Radix's demos' sideOffset 5): the pointer resting
+--- `side`, `gap` away (5 by default): the pointer resting
 --- on it `delay` ms opens it (at once while another has just been open),
 --- the focus coming to it by the keys opens it at once; it closes as the
 --- pointer leaves (unless on its way to the tip: `hoverable`), a press on
@@ -594,7 +591,7 @@ fn _bubble[d]
 
 --- the side of `box` nearest the point (x, y) left it by: top, bottom,
 --- left or right (where two are as near, the first of left, right, top
---- and bottom, as Radix answers it)
+--- and bottom)
 fn exit_side[x, y, box]
     top = abs[box[1] - y]
     bottom = abs[box[1] + box[3] - y]
@@ -689,8 +686,7 @@ fn _half[xs, ys, from, to, step]
 fn _turn[ax, ay, bx, by, cx, cy]
     (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
 
---- ---- toasts (Radix's Toast) and snackbars (Vuetify's VSnackbar and
---- VSnackbarQueue) ----
+--- ---- toasts and snackbars ----
 
 --- one notice: its id (its events name it), its title, its words, an
 --- act's words ('' for none), its tone ('' plain, 'accent', 'danger',
@@ -700,11 +696,10 @@ struct Notice [id, title, words, act, tone, lasts]
 fn notice[id, title, words = '', act = '', tone = '', lasts = 5000.0]
     Notice[id, title, words, act, tone, lasts]
 
---- the numbers held to the libraries: a toast's time and its swipe's
---- threshold, the move a swipe begins past (a mouse's, a touch's), the key
---- that takes the focus to the toasts (Radix's Toast); a snackbar's time
---- and the swipe that closes it (Vuetify's VSnackbar), the gap of its
---- queue
+--- a notice's numbers: a toast's time and its swipe's threshold, the
+--- move a swipe begins past (a mouse's, a touch's), the key that takes
+--- the focus to the toasts; a snackbar's time and the swipe that closes
+--- it, the gap of its queue
 fn toast_time[]
     5000.0
 
@@ -756,10 +751,10 @@ fn time_left[id, notice_id]
 
 --- the notices the program holds, at a `place` of the page (gui's
 --- corners), `most` of them at once, the first given first: the rest wait
---- their turn (Vuetify's queue holds them so). Each shows its `lasts`
+--- their turn in a queue. Each shows its `lasts`
 --- (5000 ms by default), the time counted while the stack is not paused:
 --- the pointer on it, the focus in it, or the window without the keyboard
---- pause every one and keep what each has left (Radix's viewport). A
+--- pause every one and keep what each has left. A
 --- notice swiped toward `swipe` past `threshold` CSS pixels closes; short
 --- of it, it goes back. F8 takes the focus to the newest; with the focus,
 --- Escape closes it and Enter does its act. Its events, each naming the
@@ -769,10 +764,10 @@ fn time_left[id, notice_id]
 fn toasts[c, id, notices, place = 'bottom_right', most = 3, swipe = 'right', threshold = 50.0, wide = 360.0]
     _stacked[c, id, notices, place, most, swipe, threshold, wide, 'toast', 10.0]
 
---- snackbars (Vuetify's VSnackbar in a VSnackbarQueue): `most` (one by
+--- snackbars, in a queue: `most` (one by
 --- default) at the foot of the page, the rest waiting; each shows its
 --- `lasts`, and the pointer on it or the focus in it holds it, its time
---- starting again once they leave (as Vuetify's does), as the window
+--- starting again once they leave, as the window
 --- without the keyboard does; a touch swiped 50 CSS pixels up or down
 --- closes it. Its events are a toast's
 fn snackbars[c, id, notices, most = 1, wide = 560.0]
@@ -840,8 +835,8 @@ fn _act_box[w, h, act_wide]
 fn _shut_box[w]
     [w - 30.0, 6.0, 22.0, 22.0]
 
---- whether a move of (dx, dy) goes toward `way` past `threshold` (Radix's
---- test: along the swipe's axis more than across it, and past it)
+--- whether a move of (dx, dy) goes toward `way` past `threshold` (along
+--- the swipe's axis more than across it, and past it)
 fn swiped_past[dx, dy, way, threshold]
     across = abs[dx] gt abs[dy]
     if way eq 'left' or way eq 'right'
@@ -961,7 +956,7 @@ fn _notice_drawn[d]
 --- the swipe of the notice pressed, the pointer moved to (x, y): its move
 --- toward `way` kept (nothing the other way); once that passes the
 --- start's few pixels the swipe has begun, and a move first past them
---- any other way lets the press go (Radix's toast, number for number)
+--- any other way lets the press go
 fn _swipe_moved[st, x, y, way, device]
     mx = x - st.from_x
     my = y - st.from_y
@@ -1033,11 +1028,10 @@ fn _notice_painted[d, parts, shift_x, shift_y, act_box, shut_box, style]
         c = icons.draw[c, 'cross-2', x + (shut_box[0] + 3.5) * s, y + (shut_box[1] + 3.5) * s, 15.0 * s, look.muted]
     c
 
---- ---- sheets (a dialog along a side: Radix's Dialog as its demos lay
---- it, Vuetify's VBottomSheet) ----
+--- ---- sheets (a dialog along a side of the page) ----
 
---- the time a sheet comes in and goes, on its curve (Vuetify's bottom
---- sheet: 0.2 s, its standard curve, cubic-bezier(0.4, 0, 0.2, 1)),
+--- the time a sheet comes in and goes, on its curve (0.2 s, the
+--- standard curve, cubic-bezier(0.4, 0, 0.2, 1)),
 --- sliding its whole size
 fn sheet_time[]
     200.0
@@ -1101,7 +1095,7 @@ fn _sheet_ground[d]
     d.c = c
     d
 
---- ---- a banner (Vuetify's VBanner) ----
+--- ---- a banner ----
 
 --- one of a banner's acts: its id and its words
 struct Act [id, words]
@@ -1109,7 +1103,7 @@ struct Act [id, words]
 fn banner_act[id, words]
     Act[id, words]
 
---- a strip across its column (Vuetify's VBanner): an icon in its `tone`,
+--- a strip across its column: an icon in its `tone`,
 --- its `words`, and its acts' buttons at its end, a rule under it; a
 --- press on an act tells gui's `press` ('`id`:`act`'); the program takes
 --- it away
@@ -1141,9 +1135,9 @@ fn _banner_mark[d]
     d.c = icons.draw[c, parts[0], d.x + 10.0 * s, d.y + 10.0 * s, 20.0 * s, tone]
     d
 
---- ---- a dimmer (Semantic UI's Dimmer) ----
+--- ---- a dimmer ----
 
---- Semantic UI's dimmer: 0.85 of black (of white, `inverted`), coming and
+--- a dimmer: 0.85 of black (of white, `inverted`), coming and
 --- going over 0.5 s on a straight line
 fn dim_time[]
     500.0
@@ -1178,7 +1172,7 @@ fn dimmer[c, id, kids, active, words = '', inverted = false, closable = true]
     gui.overlay[probed, dim, anchor = 'top_left']
 
 --- the whole page dimmed while it is `active`, its `kids` in its middle
---- (Semantic UI's page dimmer): the page is not reached; Escape and a
+--- (a page dimmer): the page is not reached; Escape and a
 --- press on the dimming tell `dismiss` where it is `closable`
 fn page_dimmer[c, id, kids, active, inverted = false, closable = true]
     seen = motion.presence[c, 'lory.overlays/`id`', active, dim_time[], dim_time[], 'linear']
@@ -1316,7 +1310,7 @@ fn _alert_page[t, given, open]
     c = _frame_at[t, given]
     gui.show[c, gui.column[[gui.button['opener', 'Delete'], alert_dialog[c, 'sure', 'Are you sure?', 'This cannot be undone.', 'Delete account', open, danger = true]]]]
 
---- an alert dialog's focus goes to Cancel (Radix's AlertDialog), a press
+--- an alert dialog's focus goes to Cancel, a press
 --- outside does nothing; its act tells `choose`, Cancel and Escape tell
 --- `dismiss`
 test an_alert_dialog_focuses_cancel_and_a_press_outside_does_not_close_it[]
@@ -1365,45 +1359,44 @@ test a_popover_opens_on_its_button_and_closes_on_escape_outside_and_its_close_bu
 
 fn _card_page[t, given]
     c = _frame_at[t, given]
-    gui.show[c, gui.column[[hover_card[c, 'radix', '@radix_ui', [gui.text['Radix'], gui.button['follow', 'Follow']]], gui.button['after', 'After']]]]
+    gui.show[c, gui.column[[hover_card[c, 'profile', '@lory_site', [gui.text['Lory'], gui.button['follow', 'Follow']]], gui.button['after', 'After']]]]
 
 --- the pointer resting on a hover card's link 700 ms opens its card
---- (Radix's openDelay), and off the link and the card 300 ms closes it
---- (its closeDelay); on the card it stays; a touch opens nothing
+--- and off the link and the card 300 ms closes it; on the card it stays; a touch opens nothing
 test a_hover_card_opens_after_700_ms_and_closes_300_ms_after_the_pointer_leaves[]
     _begun[]
     _card_page[1000.0, '[]']
     _card_page[1016.0, _move[40.0, 36.0]]
     _told_words[_card_page[1715.0, '[]']] eq ''
-    _told_words[_card_page[1716.0, '[]']] eq 'radix/open//1'
-    box = _card_page[1732.0, '[]'].boxes['radix:card']
+    _told_words[_card_page[1716.0, '[]']] eq 'profile/open//1'
+    box = _card_page[1732.0, '[]'].boxes['profile:card']
     box[1] eq 24.0 + 24.0 + 5.0
     _card_page[1748.0, _move[40.0, 300.0]]
     _told_words[_card_page[2047.0, '[]']] eq ''
-    _told_words[_card_page[2048.0, '[]']] eq 'radix/dismiss/leave/0'
+    _told_words[_card_page[2048.0, '[]']] eq 'profile/dismiss/leave/0'
     _card_page[2064.0, _move[40.0, 36.0]]
     _card_page[2764.0, '[]']
-    card_open['radix']
+    card_open['profile']
     --- (onto the card: it stays; off it, it goes 300 ms later)
     _card_page[2780.0, '[]']
     _card_page[2796.0, _move[40.0, 80.0]]
     _card_page[3200.0, '[]']
-    card_open['radix']
+    card_open['profile']
     _card_page[3216.0, _move[600.0, 600.0]]
     _card_page[3515.0, '[]']
-    card_open['radix']
-    _told_words[_card_page[3516.0, '[]']] eq 'radix/dismiss/leave/0'
+    card_open['profile']
+    _told_words[_card_page[3516.0, '[]']] eq 'profile/dismiss/leave/0'
     _card_page[4000.0, _one_event['down', 40.0, 36.0, 'touch']]
     _card_page[5000.0, '[]']
-    not card_open['radix']
+    not card_open['profile']
 
 fn _tips_page[t, given]
     c = _frame_at[t, given]
     gui.show[c, gui.row[[tooltip[c, gui.button['bold', 'Bold'], 'Bold (Ctrl+B)'], tooltip[c, gui.button['italic', 'Italic'], 'Italic (Ctrl+I)']]]]
 
---- the pointer resting on a control 700 ms opens its tip (Radix's
---- delayDuration); while one is open, and for 300 ms after the last
---- closes, another opens at once (its skipDelayDuration), then the wait
+--- the pointer resting on a control 700 ms opens its tip; while one is
+--- open, and for 300 ms after the last closes, another opens at once,
+--- then the wait
 --- comes back; a press on the control closes its tip, and the pointer
 --- staying does not open it again; Escape closes it; the focus brought
 --- by the keys opens it at once
@@ -1493,7 +1486,7 @@ fn _toasts_held[ids]
     remember['lory.overlays.test', Held[ids]]
 
 --- three toasts show at once, the first given first, 8 CSS pixels in from
---- the corner and 10 apart; each shows 5000 ms (Radix's duration), the
+--- the corner and 10 apart; each shows 5000 ms, the
 --- time kept while the pointer is on the stack; on time each tells
 --- `dismiss` (`timeout`), and the one waiting takes its turn
 test toasts_show_three_at_once_and_pause_while_the_pointer_is_on_them[]
@@ -1519,7 +1512,7 @@ test toasts_show_three_at_once_and_pause_while_the_pointer_is_on_them[]
     'stack:d' in _toast_page[7016.0, '[]'].boxes
 
 --- a toast pressed and moved right past 50 CSS pixels closes as it is
---- let go; at 49 it goes back (Radix's swipeThreshold); a mouse's swipe
+--- let go; at 49 it goes back; a mouse's swipe
 --- begins past 2 pixels, a touch's past 10, and a move that first goes
 --- past them another way lets the press go
 test a_toast_swiped_past_50_closes_and_one_short_of_it_goes_back[]
@@ -1549,7 +1542,7 @@ test a_toast_swiped_past_50_closes_and_one_short_of_it_goes_back[]
     swiped_past[0.0, 11.0, 'down', swipe_start['touch']]
     not swiped_past[0.0, 10.0, 'down', swipe_start['touch']]
 
---- F8 takes the focus to the newest toast (Radix's hotkey), where Escape
+--- F8 takes the focus to the newest toast, where Escape
 --- closes it; the window losing the keyboard pauses the toasts until it
 --- has it again; a press on a toast's act tells it and closes the toast,
 --- and one on its close button closes it
@@ -1585,9 +1578,8 @@ fn _two_snacks[]
     [notice['one', 'First saved'], notice['two', 'Second saved', act = 'Undo']]
 
 --- snackbars show one at a time at the foot of the page, in its middle
---- (Vuetify's VSnackbarQueue, totalVisible 1); the pointer on one holds
---- it, its 5000 ms starting again once the pointer leaves (Vuetify's
---- VSnackbar); a touch swiped 50 CSS pixels closes it, at 50 it stays
+--- (one visible); the pointer on one holds it, its 5000 ms starting
+--- again once the pointer leaves; a touch swiped 50 CSS pixels closes it, at 50 it stays
 test snackbars_show_one_at_a_time_and_start_again_after_the_pointer_leaves[]
     _begun[]
     first = _snack_page[0.0, '[]', _two_snacks[]]
@@ -1616,7 +1608,7 @@ fn _sheet_page[t, given, open]
 
 --- a sheet stands along the right of the page, 320 CSS pixels wide and
 --- the page's height, and slides in from beyond it over 200 ms
---- (Vuetify's bottom sheet's time and curve); open, it holds the focus as
+--- (the standard curve); open, it holds the focus as
 --- a dialog does and tells `dismiss`; closed, it slides out, and the
 --- focus comes back
 test a_sheet_slides_in_from_its_side_over_200_ms[]
@@ -1642,7 +1634,7 @@ fn _dim_page[t, given, active]
     gui.show[c, gui.column[[dimmer[c, 'seg', [gui.button['inside', 'Inside'], gui.space[100.0]], active, words = 'Loading'], gui.button['after', 'After'], banner[c, 'ban', 'Your connection was lost.', [banner_act['retry', 'Retry'], banner_act['close', 'Dismiss']], icon = 'exclamation-triangle', tone = 'warning']]]]
 
 --- a dimmer covers the box of what it dims, fading in over 0.5 s to 0.85
---- (Semantic UI's), and keeps presses from what is under it (a press on
+--- and keeps presses from what is under it (a press on
 --- it tells `dismiss`); gone, a press reaches it again. A banner lays its
 --- icon and words at its start and its acts at its end
 test a_dimmer_covers_what_it_dims_and_a_banner_lays_its_acts_at_its_end[]

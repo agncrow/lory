@@ -1,0 +1,197 @@
+--- Async Data: a number field names a person, and each time its words
+--- change the person is looked up. The lookup answers after 300 ms, as
+--- a server would, from sample data built into the example: while the
+--- latest lookup is out "Loading..." stands beside the field; when its
+--- answer comes the person is shown whole as JSON, two spaces a level,
+--- and an id no one has shows an error under the field instead (the last
+--- person shown stays). An answer to an earlier lookup, come after a
+--- later one began, is not shown (only the latest is). The field's words
+--- are looked up as they are, an empty field too; before anything is
+--- typed nothing is.
+use lory
+use lory.gui
+
+--- a lookup: its id (the count of lookups so far), the words looked up
+--- and when its answer comes (ms)
+struct Ask [id, key, due]
+
+--- the field's words (`typed` false until something was typed), the
+--- words looked up (every one, in order), the lookups still out, the id
+--- of the latest, whether it is still out, the person shown (as JSON's
+--- words, '' before any) and the error shown ('' for none)
+struct State [typed, words, asked, pending, latest, loading, shown, error]
+
+fn _no_asks[]
+    slice[[Ask['', '', 0.0]], 0, 0]
+
+fn fresh[at]
+    State[false, '', slice[[''], 0, 0], _no_asks[], '', false, '', '']
+
+--- how long a lookup takes, in milliseconds
+fn wait_ms[]
+    300.0
+
+--- the sample people, by id, as a server would answer (JSON); '' for an
+--- id no one has
+fn person_of[key]
+    if key eq '1'
+        return '{"name":"Mira Okafor","height":"172","mass":"68","hair_color":"black","projects":["Harbour Bridge","Night Market"]}'
+    if key eq '2'
+        return '{"name":"Tomas Lind","height":"181","mass":"80","hair_color":"blond","projects":["Night Market"]}'
+    if key eq '3'
+        return '{"name":"Ines Varga","height":"165","mass":"unknown","hair_color":"auburn, grey","projects":[]}'
+    if key eq '12'
+        return '{"name":"Ravi Menon","height":"177","mass":"74","hair_color":"brown","projects":["Old Mill"]}'
+    ''
+
+--- the lookups whose answers are due by `at` answered: the latest's
+--- shown (or its error), the earlier ones dropped
+fn before[s, at]
+    left = _no_asks[]
+    for a in s.pending
+        if a.due lte at
+            if a.id eq s.latest
+                s.loading = false
+                body = person_of[a.key]
+                if body eq ''
+                    s.error = 'No one has the id "`a.key`".'
+                else
+                    s.shown = pretty[body]
+                    s.error = ''
+        else
+            left = push[left, a]
+    s.pending = left
+    s
+
+--- the person looked up again with the field's new words, at `at`
+fn asked_for[s, words, at]
+    if s.typed and words eq s.words
+        return s
+    s.typed = true
+    s.words = words
+    id = 'resource.`len[s.asked]`'
+    s.asked = push[s.asked, words]
+    s.pending = push[s.pending, Ask[id, words, at + wait_ms[]]]
+    s.latest = id
+    s.loading = true
+    s
+
+fn after[s, shown, at]
+    for e in shown.events
+        if e.id eq 'resource.id' and e.act eq 'edit'
+            s = asked_for[s, e.words, at]
+    s
+
+--- ---- JSON written two spaces a level ----
+
+--- JSON's words written again two spaces a level: each member and item on a line of its own, indented two spaces a
+--- level, `": "` after a key, and an empty list or object kept `[]`/`{}`
+fn pretty[words]
+    chars = split[words, '']
+    out = ''
+    depth = 0
+    inside = false
+    escaped = false
+    i = 0
+    while i lt len[chars]
+        ch = chars[i]
+        if inside
+            out = '`out``ch`'
+            if escaped
+                escaped = false
+            else if ch eq '\\'
+                escaped = true
+            else if ch eq '"'
+                inside = false
+        else if ch eq '"'
+            inside = true
+            out = '`out``ch`'
+        else if ch eq '{' or ch eq '['
+            j = _next_filled[chars, i + 1]
+            if j lt len[chars] and (chars[j] eq '}' or chars[j] eq ']')
+                out = '`out``ch``chars[j]`'
+                i = j
+            else
+                depth = depth + 1
+                out = '`out``ch`\n`_indent[depth]`'
+        else if ch eq '}' or ch eq ']'
+            depth = depth - 1
+            out = '`out`\n`_indent[depth]``ch`'
+        else if ch eq ','
+            out = '`out`,\n`_indent[depth]`'
+        else if ch eq ':'
+            out = '`out`: '
+        else if not (ch eq ' ' or ch eq '\n' or ch eq '\t' or ch eq '\r')
+            out = '`out``ch`'
+        i = i + 1
+    out
+
+fn _next_filled[chars, i]
+    j = i
+    while j lt len[chars] and (chars[j] eq ' ' or chars[j] eq '\n' or chars[j] eq '\t' or chars[j] eq '\r')
+        j = j + 1
+    j
+
+fn _indent[depth]
+    out = ''
+    for k in range[depth]
+        out = '`out`  '
+    out
+
+--- ---- drawn ----
+
+fn loading_words[s]
+    if s.loading
+        return 'Loading...'
+    ''
+
+fn tree[s, at, dark]
+    field = gui.sized[gui.field['resource.id', s.words, kind = 'number', hint = 'Enter Numeric Id'], 180.0]
+    lines = for line in split[s.shown, '\n']
+        gui.text[line, size = 13.0]
+    if s.shown eq ''
+        lines = slice[lines, 0, 0]
+    top = gui.row[[field, gui.text[loading_words[s], tone = 'muted']], gap = 10.0]
+    kids = [top]
+    if s.error ne ''
+        kids = push[kids, gui.text[s.error, tone = 'danger']]
+    gui.column[push[kids, gui.column[lines, gap = 0.0]], gap = 12.0]
+
+--- ---- what the example shows, as the tests read it ----
+
+fn seen[s, at]
+    '{"t": `encode[at]`, "loading": `encode[loading_words[s]]`, "shown": `encode[s.shown]`, "error": `encode[s.error]`, "asked": `encode[s.asked]`}'
+
+--- a page 1000 by 900 at `t` ms with no input, as the page hands a frame
+fn _page[t]
+    json['{"t": `t`, "width": 1000, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 900, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+test json_is_written_two_spaces_a_level[]
+    pretty['{"a":1,"b":[],"c":["x","y, z"],"d":{"e":null}}'] eq '{\n  "a": 1,\n  "b": [],\n  "c": [\n    "x",\n    "y, z"\n  ],\n  "d": {\n    "e": null\n  }\n}'
+    pretty['{}'] eq '{}'
+
+test only_the_latest_answer_is_shown[]
+    s = asked_for[fresh[0.0], '1', 0.0]
+    s = asked_for[before[s, 16.0], '12', 16.0]
+    s.asked eq ['1', '12']
+    s = before[s, 300.0]
+    s.loading
+    s.shown eq ''
+    s = before[s, 316.0]
+    not s.loading
+    s.shown eq '{\n  "name": "Ravi Menon",\n  "height": "177",\n  "mass": "74",\n  "hair_color": "brown",\n  "projects": [\n    "Old Mill"\n  ]\n}'
+
+test an_id_no_one_has_shows_an_error_and_keeps_the_last_person[]
+    s = before[asked_for[fresh[0.0], '2', 0.0], 300.0]
+    s.error eq ''
+    s = before[asked_for[s, '99', 400.0], 700.0]
+    s.error eq 'No one has the id "99".'
+    len[split[s.shown, 'Tomas Lind']] eq 2
+
+test words_unchanged_are_not_asked_again[]
+    s = asked_for[asked_for[fresh[0.0], '', 0.0], '', 16.0]
+    len[s.asked] eq 1
+
+test its_field_is_drawn[]
+    shown = gui.show[lory.begin[_page[0.0]], tree[fresh[0.0], 0.0, false]]
+    'resource.id' in shown.boxes

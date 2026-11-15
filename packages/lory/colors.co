@@ -1,34 +1,31 @@
 --- Colours and themes. A colour is a lory.Color: its sRGB channels and its
---- opacity, each from 0 to 1. This module reads and writes a colour as CSS
+--- opacity, each from 0 to 1. This module reads and writes a colour as
 --- hex; turns it into linear light, OKLab, OKLCH, HSL and HSV and back;
 --- mixes two colours in any of those spaces; makes one lighter, darker or
 --- more saturated in OKLCH and fits it back inside sRGB; lays a translucent
---- colour over another; and measures text on a background by WCAG 2's
---- contrast ratio and by APCA's lightness contrast. Each number is held to
---- the library it follows (culori 4.0.2, apca-w3 0.1.9) by
---- tests/colors/reference.co.
+--- colour over another; and measures text on a background by its
+--- contrast ratio and by its lightness contrast (Lc).
 ---
 --- It also makes twelve-step colour scales of its own, one for each of the
---- 31 scales Radix Colors names (its six grays and 25 accents), in a light
+--- 31 named scales (six grays and 25 accents), in a light
 --- and a dark appearance, solid and translucent, with black and white
---- overlays. The steps keep the roles Radix gives them: 1 an app's
+--- overlays. Each step has a role: 1 an app's
 --- background, 2 a subtle background, 3, 4 and 5 a control's background at
 --- rest, hovered and pressed, 6, 7 and 8 borders (8 a focus ring's), 9 and
 --- 10 solid fills at rest and hovered, 11 and 12 text. Steps 11 and 12 keep
---- the contrast Radix states for them, APCA Lc 60 and Lc 90 on steps 1 and
+--- a set contrast, Lc 60 and Lc 90 on steps 1 and
 --- 2 of their own scale, in both appearances. Every step comes from the
 --- curves of OKLCH lightness and chroma written here, out of a seed for
 --- each scale (the lightness, chroma and hue of its step 9, chosen so that
---- a name means the colour it means in Radix); no step is taken from
---- Radix's tables.
+--- each name means the colour it names).
 ---
---- From the same scales come Semantic UI's thirteen named colours, with the
---- hover, focus, pressed and active shades Semantic UI derives from each;
---- Vuetify's palette (a base colour, five lighter shades, four darker and
+--- From the same scales come thirteen named colours, with the
+--- hover, focus, pressed and active shades derived from each; a
+--- palette (a base colour, five lighter shades, four darker and
 --- four accents for each of its names); and a theme's tokens (page, panel,
 --- edge, ink, accent, the states of a control, danger, success, warning and
---- info) for an accent, a gray and an appearance, as Radix Themes resolves
---- them. A program turns a Theme into whatever look it draws with.
+--- info) for an accent, a gray and an appearance. A program turns a
+--- Theme into whatever look it draws with.
 use math
 use lory
 
@@ -56,12 +53,12 @@ struct Hsv [h, s, v, alpha]
 --- the bright scales whose tints stay pale)
 struct Seed [l, c, h, tint, lean, early, airy]
 
---- a colour's states as Semantic UI derives them from the colour: hovered,
+--- a colour's states, derived from the colour: hovered,
 --- focused, pressed (`down`) and active
 struct States [base, hover, focus, down, active]
 
---- one of Semantic UI's named colours, made from Lory's scales: the colour,
---- its states as Semantic UI derives them, its light version (for dark
+--- one of the named colours, made from Lory's scales: the colour,
+--- its states, its light version (for dark
 --- backgrounds), a soft background and the text that reads on it (`ink`),
 --- and the text that reads on the colour itself (`on`)
 struct Named [base, hover, focus, down, active, light, soft, ink, on]
@@ -79,8 +76,8 @@ struct Theme [page, panel, surface, field, edge, edge_strong, ink, muted, accent
 
 --- ---- small pieces ----
 
---- a number held into 0 to 1 (`nan` is 0, as culori's formatter reads an
---- undefined channel)
+--- a number held into 0 to 1 (`nan` is 0, as an undefined channel is
+--- read)
 fn _unit[x]
     if not (x eq x)
         return 0.0
@@ -90,12 +87,11 @@ fn _unit[x]
 fn _missing[h]
     not (h eq h)
 
---- a straight line from `a` to `b`, `t` of the way (culori's lerp)
+--- a straight line from `a` to `b`, `t` of the way
 fn _lerp[a, b, t]
     a + t * (b - a)
 
---- a hue in degrees brought into [0, 360), as culori's normalizeHue brings
---- it
+--- a hue in degrees brought into [0, 360)
 fn _turned[h]
     if h gte 0.0 and h lt 360.0
         return h
@@ -103,8 +99,8 @@ fn _turned[h]
         return h + 360.0
     h - 360.0 * floor[h / 360.0]
 
---- a hue, or 0 where it is missing, as culori reads a missing hue when it
---- turns a colour back into sRGB
+--- a hue, or 0 where it is missing, as a missing hue is read when a
+--- colour turns back into sRGB
 fn _hue_or_zero[h]
     if _missing[h]
         return 0.0
@@ -139,8 +135,8 @@ fn _bare[code]
         s = slice[s, 1, len[s]]
     lower[s]
 
---- whether a text is a CSS hex colour: three, four, six or eight hex
---- digits after an optional `#`, in either case (culori's pattern)
+--- whether a text is a hex colour: three, four, six or eight hex
+--- digits after an optional `#`, in either case
 fn is_hex[code]
     s = _bare[code]
     n = len[s]
@@ -154,7 +150,7 @@ fn is_hex[code]
         i = i + 1
     true
 
---- the colour a CSS hex code names: `#rgb`, `#rgba`, `#rrggbb` or
+--- the colour a hex code names: `#rgb`, `#rgba`, `#rrggbb` or
 --- `#rrggbbaa`, each pair of digits a channel's 0 to 255 and each digit of
 --- a short code doubled; the `#` may be left out. Any other text is black,
 --- as lory.hex answers it (`is_hex` asks first).
@@ -185,15 +181,14 @@ fn _pair[x]
     '`first``second`'
 
 --- the colour as `#rrggbb`: its channels held into 0 to 1 and rounded to
---- 255ths, its opacity left out (culori's formatHex)
+--- 255ths, its opacity left out
 fn hex_of[c]
     r = _pair[c.r]
     g = _pair[c.g]
     b = _pair[c.b]
     '#`r``g``b`'
 
---- the colour as `#rrggbbaa`, its opacity the last pair (culori's
---- formatHex8)
+--- the colour as `#rrggbbaa`, its opacity the last pair
 fn hex_alpha_of[c]
     rgb = hex_of[c]
     a = _pair[c.a]
@@ -223,7 +218,7 @@ fn srgb_channel[x]
         return v
     x * 12.92
 
---- the colour with its channels in linear light (culori's lrgb), its
+--- the colour with its channels in linear light, its
 --- opacity kept
 fn to_linear[c]
     lory.Color[linear_channel[c.r], linear_channel[c.g], linear_channel[c.b], c.a]
@@ -246,8 +241,8 @@ fn _cube_root[x]
         return 0.0 - y
     y
 
---- the OKLab colour of channels in linear light: Björn Ottosson's two
---- matrices (at the precision culori holds them) with a cube root between
+--- the OKLab colour of channels in linear light: OKLab's two
+--- matrices with a cube root between
 fn _oklab_of_linear[r, g, b, alpha]
     lc = _cube_root[0.412221469470763 * r + 0.5363325372617348 * g + 0.0514459932675022 * b]
     mc = _cube_root[0.2119034958178252 * r + 0.6806995506452344 * g + 0.1073969535369406 * b]
@@ -255,7 +250,7 @@ fn _oklab_of_linear[r, g, b, alpha]
     Lab[0.210454268309314 * lc + 0.7936177747023054 * mc - 0.0040720430116193 * sc, 1.9779985324311684 * lc - 2.4285922420485799 * mc + 0.450593709617411 * sc, 0.0259040424655478 * lc + 0.7827717124575296 * mc - 0.8086757549230774 * sc, alpha]
 
 --- the colour in OKLab; a gray in sRGB (three equal channels) has no a or
---- b at all, as culori gives it none, so that it has no hue
+--- b at all, so that it has no hue
 fn to_oklab[c]
     x = to_linear[c]
     lab = _oklab_of_linear[x.r, x.g, x.b, c.a]
@@ -335,7 +330,7 @@ fn to_hsl[c]
         s = (most - least) / (1.0 - abs[most + least - 1.0])
     Hsl[_hue_of[c, most, least], s, 0.5 * (most + least), c.a]
 
---- one channel of an HSL colour by CSS Color 4's formula (`n` 0 for red, 8
+--- one channel of an HSL colour by the standard formula (`n` 0 for red, 8
 --- for green, 4 for blue)
 fn _hsl_part[n, hue, l, k]
     t = n + hue / 30.0
@@ -357,7 +352,7 @@ fn to_hsv[c]
         s = 1.0 - least / most
     Hsv[_hue_of[c, most, least], s, most, c.a]
 
---- one channel of an HSV colour by CSS Color 4's formula (`n` 5 for red, 3
+--- one channel of an HSV colour by the standard formula (`n` 5 for red, 3
 --- for green, 1 for blue)
 fn _hsv_part[n, hue, s, v]
     t = n + hue / 60.0
@@ -382,7 +377,7 @@ fn _hue_from[h1, h2]
 
 --- the hue a mix goes to, the shorter way round from where it starts (so
 --- it may lie past 360 or below 0), or the start where the second colour
---- has no hue (culori's fixupHueShorter)
+--- has no hue
 fn _hue_to[h1, h2]
     if _missing[h2]
         return _hue_from[h1, h2]
@@ -402,7 +397,7 @@ fn _hue_to[h1, h2]
 --- goes in a straight line, a hue the shorter way round, and a gray's
 --- missing hue takes the other colour's, so a gray mixed with red stays
 --- red's hue; the opacity goes in a straight line too. The answer is not
---- fitted inside sRGB (culori's interpolate, read as rgb).
+--- fitted inside sRGB.
 fn mix[a, b, t, space = 'oklab']
     if space eq 'srgb'
         return lory.Color[_lerp[a.r, b.r, t], _lerp[a.g, b.g, t], _lerp[a.b, b.b, t], _lerp[a.a, b.a, t]]
@@ -436,8 +431,8 @@ fn in_gamut[c]
 fn _clipped[c]
     lory.Color[_unit[c.r], _unit[c.g], _unit[c.b], c.a]
 
---- an OKLCH colour in sRGB, its chroma lowered until it fits as culori's
---- clampChroma lowers it in 'oklch': kept where it fits; clipped channel by
+--- an OKLCH colour in sRGB, its chroma lowered until it fits:
+--- kept where it fits; clipped channel by
 --- channel where not even its gray fits (a lightness past 0 or 1);
 --- otherwise its chroma halved between none and its own until the step is
 --- under 0.4 / 2^13, keeping the last that fits. Lightness and hue stay.
@@ -493,8 +488,8 @@ fn saturated[c, amount]
 fn _over_part[s, b, sa, ba, alpha]
     _unit[(sa * (1.0 - ba) * s + sa * ba * s + (1.0 - sa) * ba * b) / alpha]
 
---- a colour laid over another (source-over, as culori's blend 'normal'
---- lays it): the opacities combine, and each channel is the two colours
+--- a colour laid over another (source-over): the opacities combine, and
+--- each channel is the two colours
 --- weighed by how much of each shows, held into 0 to 1
 fn over[top, bottom]
     alpha = top.a + bottom.a * (1.0 - top.a)
@@ -524,14 +519,14 @@ fn translucent[solid, background]
 
 --- ---- contrast ----
 
---- the colour's relative luminance by WCAG 2: its channels in linear light
---- weighed 0.2126, 0.7152 and 0.0722 (culori's wcagLuminance, whose sRGB
+--- the colour's relative luminance: its channels in linear light
+--- weighed 0.2126, 0.7152 and 0.0722 (the sRGB
 --- curve turns at 0.04045)
 fn luminance[c]
     x = to_linear[c]
     0.2126 * x.r + 0.7152 * x.g + 0.0722 * x.b
 
---- the WCAG 2 contrast ratio of two colours, from 1 (none) to 21 (black and
+--- the contrast ratio of two colours, from 1 (none) to 21 (black and
 --- white): the lighter's luminance and 0.05 over the darker's and 0.05. It
 --- has no sign; the order of the two does not matter.
 fn contrast_ratio[a, b]
@@ -539,24 +534,24 @@ fn contrast_ratio[a, b]
     y = luminance[b]
     (max[x, y] + 0.05) / (min[x, y] + 0.05)
 
---- the screen luminance APCA reads from a colour: each sRGB channel (held
+--- the screen luminance the lightness contrast reads from a colour: each sRGB channel (held
 --- into 0 to 1) to the power 2.4, weighed 0.2126729, 0.7151522 and
---- 0.0721750 (apca-w3's sRGBtoY, with no straight segment near black)
-fn apca_luminance[c]
+--- 0.0721750, with no straight segment near black
+fn screen_luminance[c]
     0.2126729 * (_unit[c.r] ^ 2.4) + 0.7151522 * (_unit[c.g] ^ 2.4) + 0.072175 * (_unit[c.b] ^ 2.4)
 
---- a screen luminance near black lifted by APCA's soft clamp
+--- a screen luminance near black lifted by a soft clamp
 fn _soft_black[y]
     if y gt 0.022
         return y
     y + (0.022 - y) ^ 1.414
 
---- APCA's lightness contrast (Lc) of a text's and a background's screen
---- luminance, by the W3 formula of APCA 0.0.98G-4g (apca-w3's
---- APCAcontrast): positive for darker text on a lighter background,
+--- the lightness contrast (Lc) of a text's and a background's screen
+--- luminance:
+--- positive for darker text on a lighter background,
 --- negative for lighter text on a darker one, and 0 where the two are too
 --- near or a luminance lies outside 0 to 1.1
-fn apca_contrast[text_y, background_y]
+fn lc_of[text_y, background_y]
     if _missing[text_y] or _missing[background_y]
         return 0.0
     if min[text_y, background_y] lt 0.0 or max[text_y, background_y] gt 1.1
@@ -575,21 +570,21 @@ fn apca_contrast[text_y, background_y]
         return 0.0
     (s + 0.027) * 100.0
 
---- the APCA lightness contrast (Lc) of text in one colour on a background
+--- the lightness contrast (Lc) of text in one colour on a background
 --- in another: about 106 for black on white, about -108 for white on
 --- black. A translucent text is laid over the background first.
-fn apca[text, background]
+fn contrast_lc[text, background]
     shown = text
     if text.a lt 1.0
         shown = over[text, background]
-    apca_contrast[apca_luminance[shown], apca_luminance[background]]
+    lc_of[screen_luminance[shown], screen_luminance[background]]
 
---- the contrast Vuetify 3.7 reckons with when it picks a text colour: an
---- earlier APCA (its own constants: exponents 0.55 and 0.58, 0.62 and 0.57,
+--- the contrast reckoned with when a text colour is picked for a colour:
+--- an earlier lightness contrast (exponents 0.55 and 0.58, 0.62 and 0.57,
 --- a soft clamp at 0.03, a scale of 1.25 and an offset of 0.06)
-fn _vuetify_contrast[text, background]
-    t = apca_luminance[text]
-    b = apca_luminance[background]
+fn _foreground_contrast[text, background]
+    t = screen_luminance[text]
+    b = screen_luminance[background]
     if t lte 0.03
         t = t + (0.03 - t) ^ 1.45
     if b lte 0.03
@@ -610,23 +605,23 @@ fn _vuetify_contrast[text, background]
         return (s - s * 12.82051282051282 * 0.06) * 100.0
     (s + 0.06) * 100.0
 
---- the text colour Vuetify puts on a colour (a theme's `on-` colours):
+--- the text colour put on a colour (a theme's `on-` colours):
 --- white where white text has more contrast than black, or at least Lc 50,
---- and black otherwise (Vuetify's getForeground)
+--- and black otherwise
 fn on_color[c]
-    on_black = abs[_vuetify_contrast[_black[], c]]
-    on_white = abs[_vuetify_contrast[_white[], c]]
+    on_black = abs[_foreground_contrast[_black[], c]]
+    on_white = abs[_foreground_contrast[_white[], c]]
     if on_white gt min[on_black, 50.0]
         return _white[]
     _black[]
 
 --- ---- the scales ----
 
---- the names of Radix's six grays
+--- the names of the six grays
 fn gray_names[]
     ['gray', 'mauve', 'slate', 'sage', 'olive', 'sand']
 
---- the names of Radix's 25 accent scales
+--- the names of the 25 accent scales
 fn accent_names[]
     ['gold', 'bronze', 'brown', 'yellow', 'amber', 'orange', 'tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'lime', 'mint', 'sky']
 
@@ -735,7 +730,7 @@ fn _most_chroma[l, h]
 fn _text_solid[l, h, share, chroma, room]
     _solid[l, min[share * chroma, room * _most_chroma[l, h]], h]
 
---- the lightness at which a text step reaches APCA contrast `target` (its
+--- the lightness at which a text step reaches lightness contrast `target` (its
 --- size) on `background`: halved fourteen times between `near`, where it
 --- has contrast to spare, and `far`, keeping the side that reaches it. The
 --- colour is judged as it will be drawn (rounded to 255ths), so the step
@@ -746,7 +741,7 @@ fn _text_lightness[target, background, h, share, chroma, room, near, far]
     i = 0
     while i lt 14
         mid = (lo + hi) / 2.0
-        if abs[apca[_text_solid[mid, h, share, chroma, room], background]] gte target
+        if abs[contrast_lc[_text_solid[mid, h, share, chroma, room], background]] gte target
             lo = mid
         else
             hi = mid
@@ -763,8 +758,8 @@ fn _onset[k, early]
 --- an airy seed), their chroma rises to a top set by the seed's, and their
 --- hue turns from the tint's lean to the seed's over steps 6 to 9. Step 9
 --- is the seed, step 10 is 0.028 darker, and steps 11 and 12 are the
---- lightnesses at which text of the seed's hue (leaned) reaches APCA Lc 70
---- and 93.5 on step 2, Radix's 60 and 90 with room to spare.
+--- lightnesses at which text of the seed's hue (leaned) reaches Lc 70
+--- and 93.5 on step 2, past the 60 and 90 a scale keeps, with room to spare.
 fn _accent_light[s]
     top = min[0.125, 0.9 * s.c]
     if s.l gt 0.8
@@ -852,7 +847,7 @@ fn _gray_share[k, dark]
     0.12 + 0.88 * (((k - 1.0) / 8.0) ^ 1.2)
 
 --- the twelve steps of a gray: steps 1 to 10 by the gray's curves, steps
---- 11 and 12 the lightnesses at which its text reaches APCA Lc 75 and 99 on
+--- 11 and 12 the lightnesses at which its text reaches Lc 75 and 99 on
 --- step 2 in light, -61 and -95 in dark
 fn _gray_scale[s, dark]
     out = slice[[_white[]], 0, 0]
@@ -893,7 +888,7 @@ fn step[name, appearance, k]
 
 --- a scale of Lory's own whose step 9 is the given colour, in an
 --- appearance, by the accent curves (a colour with little chroma by the
---- gray's): the custom palette Radix offers to make from a brand colour
+--- gray's): a custom scale made from a brand colour
 fn scale_from[c, appearance]
     x = to_oklch[c]
     hue = _hue_or_zero[x.h]
@@ -929,7 +924,7 @@ fn _overlay_opacity[k]
     (k / 12.5) ^ 1.25
 
 --- the twelve black overlays, black at rising opacity, the same in light
---- and dark (Radix's blackA): for shadows, scrims and darkening
+--- and dark: for shadows, scrims and darkening
 fn black_overlay[]
     out = slice[[_white[]], 0, 0]
     k = 1
@@ -938,7 +933,7 @@ fn black_overlay[]
         k = k + 1
     out
 
---- the twelve white overlays (Radix's whiteA): for lightening anything
+--- the twelve white overlays: for lightening anything
 fn white_overlay[]
     out = slice[[_white[]], 0, 0]
     k = 1
@@ -947,7 +942,7 @@ fn white_overlay[]
         k = k + 1
     out
 
---- the gray Radix Themes pairs with an accent: mauve for the reds, pinks
+--- the gray that pairs with an accent: mauve for the reds, pinks
 --- and purples, slate for the blues, sage for the blue-greens, olive for
 --- the yellow-greens, sand for the yellows, oranges and browns
 fn gray_for[accent]
@@ -964,11 +959,11 @@ fn gray_for[accent]
     'gray'
 
 --- whether a scale's solid steps (9 and 10) are bright, made for dark
---- text: sky, mint, lime, yellow and amber, as Radix makes them
+--- text: sky, mint, lime, yellow and amber
 fn is_bright[name]
     name in ['sky', 'mint', 'lime', 'yellow', 'amber']
 
---- the text that goes on a scale's solid steps (Radix Themes' accent
+--- the text that goes on a scale's solid steps (the accent's
 --- contrast): white, or on a bright scale its paired gray's step 12 in
 --- light
 fn on_solid[name]
@@ -976,13 +971,13 @@ fn on_solid[name]
         return step[gray_for[name], 'light', 12]
     _white[]
 
---- ---- Semantic UI's named colours ----
+--- ---- named colours ----
 
---- Semantic UI's thirteen named colours
+--- the thirteen named colours
 fn semantic_names[]
     ['red', 'orange', 'yellow', 'olive', 'green', 'teal', 'blue', 'violet', 'purple', 'pink', 'brown', 'grey', 'black']
 
---- the scale a Semantic UI name is made from
+--- the scale a named colour is made from
 fn _semantic_scale[name]
     if name eq 'olive'
         return 'lime'
@@ -990,9 +985,9 @@ fn _semantic_scale[name]
         return 'gray'
     name
 
---- the colour of a Semantic UI name, from Lory's light scales: step 9 of
+--- the colour of a name, from Lory's light scales: step 9 of
 --- the scale of its name (olive is lime's), grey the gray's step 10, black
---- its step 12; black for a name Semantic UI does not have
+--- its step 12; black for a name that is not one of them
 fn named[name]
     if not (name in semantic_names[])
         return _black[]
@@ -1002,13 +997,13 @@ fn named[name]
         return step['gray', 'light', 12]
     step[_semantic_scale[name], 'light', 9]
 
---- a channel of 0 to 255 rounded to a whole byte, as LESS writes it in hex
+--- a channel of 0 to 255 rounded to a whole byte, as hex writes it
 fn _byte[x]
     min[255, max[0, round[x]]]
 
---- a colour of channels from 0 to 255 in HSL as LESS reads it (its toHSL):
+--- a colour of channels from 0 to 255 in HSL:
 --- the hue in degrees (0 for a gray), the saturation and the lightness
-fn _less_hsl[c]
+fn _shade_hsl[c]
     r = c.r / 255.0
     g = c.g / 255.0
     b = c.b / 255.0
@@ -1031,9 +1026,9 @@ fn _less_hsl[c]
             h = (b - r) / d + 2.0
     Hsl[h / 6.0 * 360.0, s, l, c.a]
 
---- one channel of an HSL colour by CSS 2's formula, which LESS keeps: `h`
+--- one channel of an HSL colour by the older formula: `h`
 --- in turns, shifted a third for red and blue
-fn _less_part[h, m1, m2]
+fn _shade_part[h, m1, m2]
     t = h
     if t lt 0.0
         t = t + 1.0
@@ -1048,9 +1043,9 @@ fn _less_part[h, m1, m2]
         return m1 + (m2 - m1) * (2.0 / 3.0 - t) * 6.0
     m1
 
---- the colour (channels from 0 to 255) of an HSL colour as LESS makes it
---- (its hsla)
-fn _less_rgb[x]
+--- the colour (channels from 0 to 255) of an HSL colour, by the older
+--- formula
+fn _shade_rgb[x]
     h = x.h / 360.0
     s = _unit[x.s]
     l = _unit[x.l]
@@ -1058,42 +1053,39 @@ fn _less_rgb[x]
     if l lte 0.5
         m2 = l * (s + 1.0)
     m1 = l * 2.0 - m2
-    lory.Color[_less_part[h + 1.0 / 3.0, m1, m2] * 255.0, _less_part[h, m1, m2] * 255.0, _less_part[h - 1.0 / 3.0, m1, m2] * 255.0, x.alpha]
+    lory.Color[_shade_part[h + 1.0 / 3.0, m1, m2] * 255.0, _shade_part[h, m1, m2] * 255.0, _shade_part[h - 1.0 / 3.0, m1, m2] * 255.0, x.alpha]
 
 --- a colour (channels from 0 to 255) with `amount` percent more HSL
---- lightness, held into 0 to 1 (LESS's lighten; darken is a negative
---- amount)
-fn _less_lighter[c, amount]
-    x = _less_hsl[c]
-    _less_rgb[Hsl[x.h, x.s, _unit[x.l + amount / 100.0], x.alpha]]
+--- lightness, held into 0 to 1 (darker is a negative amount)
+fn _shade_lighter[c, amount]
+    x = _shade_hsl[c]
+    _shade_rgb[Hsl[x.h, x.s, _unit[x.l + amount / 100.0], x.alpha]]
 
 --- a colour (channels from 0 to 255) with its HSL saturation raised by
---- `amount` percent of itself (LESS's saturate, relative)
-fn _less_richer[c, amount]
-    x = _less_hsl[c]
-    _less_rgb[Hsl[x.h, _unit[x.s + x.s * amount / 100.0], x.l, x.alpha]]
+--- `amount` percent of itself
+fn _shade_richer[c, amount]
+    x = _shade_hsl[c]
+    _shade_rgb[Hsl[x.h, _unit[x.s + x.s * amount / 100.0], x.l, x.alpha]]
 
 --- a colour of channels from 0 to 255 as a hex code writes it
 fn _from_bytes[c]
     lory.Color[_byte[c.r] / 255.0, _byte[c.g] / 255.0, _byte[c.b] / 255.0, c.a]
 
---- a colour's states as Semantic UI's site variables derive them through
---- LESS, the colour read in whole 255ths as a hex code gives it: a colour
+--- a colour's states, derived from it, the colour read in whole 255ths as a hex code gives it: a colour
 --- is hovered 5% darker and 10% more saturated, focused 8% darker and 20%
 --- more saturated, pressed 10% darker, and active 5% darker and 15% more
 --- saturated; a neutral one (grey, black) is hovered 5%, focused 8% and
---- pressed 10% lighter, and active 5% darker. Each state is a hex colour,
---- the same hex LESS writes.
+--- pressed 10% lighter, and active 5% darker. Each state is a hex colour.
 fn states_of[c, neutral]
     base = lory.Color[0.0 + _byte[c.r * 255.0], 0.0 + _byte[c.g * 255.0], 0.0 + _byte[c.b * 255.0], c.a]
     if neutral
-        return States[c, _from_bytes[_less_lighter[base, 5.0]], _from_bytes[_less_lighter[base, 8.0]], _from_bytes[_less_lighter[base, 10.0]], _from_bytes[_less_lighter[base, -5.0]]]
-    hover = _less_richer[_less_lighter[base, -5.0], 10.0]
-    focus = _less_richer[_less_lighter[base, -8.0], 20.0]
-    active = _less_richer[_less_lighter[base, -5.0], 15.0]
-    States[c, _from_bytes[hover], _from_bytes[focus], _from_bytes[_less_lighter[base, -10.0]], _from_bytes[active]]
+        return States[c, _from_bytes[_shade_lighter[base, 5.0]], _from_bytes[_shade_lighter[base, 8.0]], _from_bytes[_shade_lighter[base, 10.0]], _from_bytes[_shade_lighter[base, -5.0]]]
+    hover = _shade_richer[_shade_lighter[base, -5.0], 10.0]
+    focus = _shade_richer[_shade_lighter[base, -8.0], 20.0]
+    active = _shade_richer[_shade_lighter[base, -5.0], 15.0]
+    States[c, _from_bytes[hover], _from_bytes[focus], _from_bytes[_shade_lighter[base, -10.0]], _from_bytes[active]]
 
---- a Semantic UI name with all it carries: its colour and states, its
+--- a named colour with all it carries: its colour and states, its
 --- light version for dark backgrounds (the scale's step 10 in dark; the
 --- gray's step 6 in light for grey, step 8 in dark for black), a soft
 --- background (step 3 in light) with the text that reads on it (step 11),
@@ -1113,9 +1105,9 @@ fn named_states[name]
         on = on_solid[source]
     Named[base, st.hover, st.focus, st.down, st.active, lit, step[source, 'light', 3], step[source, 'light', 11], on]
 
---- ---- Vuetify's palette ----
+--- ---- the palette ----
 
---- the names of Vuetify's palette, as its classes spell them
+--- the names of the palette, dashed
 fn palette_names[]
     ['red', 'pink', 'purple', 'deep-purple', 'indigo', 'blue', 'light-blue', 'cyan', 'teal', 'green', 'light-green', 'lime', 'yellow', 'amber', 'orange', 'deep-orange', 'brown', 'blue-grey', 'grey', 'black', 'white', 'transparent']
 
@@ -1134,7 +1126,7 @@ fn _key[name]
 fn _palette_keys[]
     ['red', 'pink', 'purple', 'deeppurple', 'indigo', 'blue', 'lightblue', 'cyan', 'teal', 'green', 'lightgreen', 'lime', 'yellow', 'amber', 'orange', 'deeporange', 'brown', 'bluegrey', 'grey', 'black', 'white', 'transparent']
 
---- whether a name is one of Vuetify's palette (dashes and case aside)
+--- whether a name is one of the palette's (dashes and case aside)
 fn is_palette[name]
     _key[name] in _palette_keys[]
 
@@ -1166,7 +1158,7 @@ fn _palette_scale[k]
         return 'gray'
     k
 
---- a colour of Vuetify's palette by name and shade ('base' by default),
+--- a colour of the palette by name and shade ('base' by default),
 --- made from the step 9 of the scale the name comes from (deep-purple is
 --- violet's, light-blue sky's, light-green grass's, deep-orange tomato's,
 --- blue-grey slate's): lighten-n climbs (n / 5)^0.8 of the way to
@@ -1211,18 +1203,18 @@ fn palette[name, shade = 'base']
 --- ---- themes ----
 
 --- a theme's tokens for an accent scale, a gray scale ('auto' for the gray
---- Radix Themes pairs with the accent) and an appearance, with red for
+--- that pairs with the accent) and an appearance, with red for
 --- danger, green for success, amber for warning and blue for info
 fn theme[accent, gray, appearance]
     theme_with[accent, gray, appearance, 'red', 'green', 'amber', 'blue']
 
---- a theme's tokens with its four status scales named, resolved as Radix
---- Themes resolves them: in light the page and a panel are white, in dark
+--- a theme's tokens with its four status scales named: in light
+--- the page and a panel are white, in dark
 --- the page is the gray's step 1 and a panel its step 2; a field's
 --- translucent surface is white at 0.85 in light and black at 0.25 in dark;
 --- the overlay behind a dialog is black overlay 6 in light and 8 in dark,
 --- and a raised layer's shadow black overlay 3 in light and 5 in dark (the
---- widest layer of the shadow Radix Themes puts under a popover); edges are
+--- widest layer of a popover's shadow); edges are
 --- the gray's steps 6 and 7, text its 12 and 11, a hovered and a pressed
 --- control its 4 and 5; the accent is its scale's step 9, hovered 10, soft
 --- 3 and text 11, with its contrast for text on it; the focus ring is the
@@ -1358,14 +1350,14 @@ test a_translucent_colour_over_its_background_is_the_solid[]
     half = over[lory.Color[0.0, 0.0, 0.0, 0.5], page]
     _same_color[half, lory.Color[0.5, 0.5, 0.5, 1.0], 0.0000000001]
 
-test contrast_by_wcag_and_by_apca[]
+test contrast_by_ratio_and_by_lightness_contrast[]
     contrast_ratio[_black[], _white[]] eq 21.0
     contrast_ratio[_white[], _black[]] eq 21.0
     contrast_ratio[parse['#777777'], parse['#777777']] eq 1.0
-    _near[apca[_black[], _white[]], 106.04067321268862, 0.000000001]
-    _near[apca[_white[], _black[]], -107.88473318309848, 0.000000001]
-    apca[parse['#777777'], parse['#777777']] eq 0.0
-    apca[lory.Color[0.0, 0.0, 0.0, 0.0], _white[]] eq 0.0
+    _near[contrast_lc[_black[], _white[]], 106.04067321268862, 0.000000001]
+    _near[contrast_lc[_white[], _black[]], -107.88473318309848, 0.000000001]
+    contrast_lc[parse['#777777'], parse['#777777']] eq 0.0
+    contrast_lc[lory.Color[0.0, 0.0, 0.0, 0.0], _white[]] eq 0.0
     hex_of[on_color[parse['#ffc53d']]] eq '#000000'
     hex_of[on_color[parse['#0090ff']]] eq '#ffffff'
 
@@ -1390,14 +1382,14 @@ test light_steps_darken_and_dark_steps_lighten[]
         to_oklab[lit[11]].l lt to_oklab[lit[10]].l
         to_oklab[dim[11]].l gt to_oklab[dim[10]].l
 
-test text_steps_keep_radix_contrast[]
+test text_steps_keep_their_contrast[]
     for name in ['slate', 'indigo', 'yellow', 'lime']
         for look in ['light', 'dark']
             s = scale[name, look]
-            abs[apca[s[10], s[0]]] gte 60.0
-            abs[apca[s[10], s[1]]] gte 60.0
-            abs[apca[s[11], s[0]]] gte 90.0
-            abs[apca[s[11], s[1]]] gte 90.0
+            abs[contrast_lc[s[10], s[0]]] gte 60.0
+            abs[contrast_lc[s[10], s[1]]] gte 60.0
+            abs[contrast_lc[s[11], s[0]]] gte 90.0
+            abs[contrast_lc[s[11], s[1]]] gte 90.0
 
 test alpha_steps_lay_over_the_page_to_the_solid[]
     for look in ['light', 'dark']
@@ -1432,8 +1424,8 @@ test a_custom_scale_keeps_its_colour_and_contrast[]
     for look in ['light', 'dark']
         s = scale_from[brand, look]
         hex_of[s[8]] eq '#7c3aed'
-        abs[apca[s[10], s[1]]] gte 60.0
-        abs[apca[s[11], s[1]]] gte 90.0
+        abs[contrast_lc[s[10], s[1]]] gte 60.0
+        abs[contrast_lc[s[11], s[1]]] gte 90.0
 
 test semantic_colours_and_their_states[]
     len[semantic_names[]] eq 13
@@ -1449,7 +1441,7 @@ test semantic_colours_and_their_states[]
     n = named_states['yellow']
     hex_of[n.on] eq hex_of[step['sand', 'light', 12]]
 
-test the_palette_has_vuetifys_shape[]
+test the_palette_has_its_shape[]
     len[palette_names[]] eq 22
     len[shade_names['red']] eq 14
     len[shade_names['blue-grey']] eq 10

@@ -6,44 +6,37 @@
 ---
 ---     t = dt.new[columns, rows]
 ---     g = dg.grid['people', t]                        --- a grid of a table
----     tree = dg.view[g, 900.0, 400.0]                 --- its drawing, a gui node
+---     tree = dg.grid_view[g, 900.0, 400.0]            --- its drawing, a gui node
 ---     shown = gui.show[c, gui.column[[tree]]]
 ---     g = dg.handled[g, shown]                        --- the reader's keys and presses
 ---
 --- It has five parts, each usable alone:
 ---
---- - Cell selection and cell spanning, as TanStack Table's table-core
----   (9.3.1) has them: an ordered list of rectangles held by their corners'
+--- - Cell selection and cell spanning: an ordered list of rectangles held
+---   by their corners'
 ---   row and column ids (so they follow the cells through sorting,
 ---   filtering and reordering), each adding cells or taking them away;
 ---   presses, Shift and Ctrl presses, drags, arrows and select-all; the
 ---   cells each rectangle holds, counted, listed and copied; and cells
 ---   merged down a column where neighbours hold the same value, or across
 ---   a row, with what the merges cover.
---- - TOAST UI Grid's keymap (4.21.22): arrows, Home and End, Page Up and
+--- - A spreadsheet's keymap: arrows, Home and End, Page Up and
 ---   Down, Ctrl+Home and Ctrl+End, Shift with each to extend, Ctrl+A,
 ---   Tab, Enter and Space to edit, Escape, Delete and Backspace to clear,
 ---   Ctrl+C and Ctrl+V with the text a spreadsheet copies; its editors
 ---   (text, number, a list, a box to tick), its relations between columns,
 ---   its tree column, its summary row and three looks.
---- - Editing as TanStack Table's with-tanstack-form example has it: each
----   edit a draft over the rows, each draft checked by its column's rules,
+--- - Editing as a form: each edit a draft over the rows, each draft checked by its column's rules,
 ---   the dirty cells and rows known, rows added, and all of it or one row
 ---   saved, or let go.
 --- - A grid kept live by a feed: cells changed by row id many times a
 ---   second, the page, the sorting and the selection kept, each change
 ---   flashing up or down.
---- - A spreadsheet, the 7GUIs task Cells as Vue's example does it: a cell
+--- - A spreadsheet of five columns and twenty rows: a cell
 ---   holds what was typed (trimmed); one that begins with `=` is a formula
 ---   whose references (`A0`) read other cells, worked out as JavaScript
 ---   works out the same expression; with a range's count, sum and mean,
 ---   cut, copy, paste and clear, and undo and redo.
----
---- What each answers was written anew from the libraries' documents and
---- from running them: tests/datagrid/reference.mjs runs table-core in node
---- and TOAST UI Grid in headless Chrome on fixed inputs and writes what
---- they answered to reference.json, and tests/datagrid/reference.co holds
---- this module to it, value for value. No source of theirs is copied.
 ---
 --- The grid draws as one control of gui's (`gui.drawn`): its header, its
 --- rows and its summary are painted in the tree's own pass, with a field
@@ -76,20 +69,17 @@ struct Spot [row, column]
 --- (-1 for none); `region` is the chosen rectangle it is in.
 struct Place [region, row, column]
 
---- How cells may be chosen (table-core's options): at all (`on`); not in
---- these columns (`unselectable`, a column's enableCellSelection false);
---- by Shift extending the active rectangle (`ranges`, enableCellRangeSelection);
---- by a drag (`drag`, enableCellSelectionDrag); and by Ctrl adding or
---- taking away a rectangle (`multi`, enableMultiCellRangeSelection).
+--- How cells may be chosen: at all (`on`); not in these columns
+--- (`unselectable`); by Shift extending the active rectangle (`ranges`);
+--- by a drag (`drag`); and by Ctrl adding or taking away a rectangle
+--- (`multi`).
 struct Selecting [on, unselectable, ranges, drag, multi]
 
---- How cells merge (table-core's cell spanning): at all (`on`); down the
---- columns named in `rows` where neighbours hold the same value (a
---- column's spanRows true); across a row by `columns` (a column's
---- spanColumns as a number, for every row) or by `wide` (a span for one
---- row: its key is the column's id, a tab and the row's id, where
---- table-core takes a function of the row); and never in the columns
---- named in `off` (enableCellSpanning false).
+--- How cells merge: at all (`on`); down the columns named in `rows` where
+--- neighbours hold the same value; across a row by `columns` (a column's
+--- span as a number, for every row) or by `wide` (a span for one row: its
+--- key is the column's id, a tab and the row's id); and never in the
+--- columns named in `off`.
 struct Spanning [on, rows, columns, wide, off]
 
 --- The merges of the rows drawn: the rows in the order drawn (the pinned
@@ -142,7 +132,7 @@ fn _ones[n]
         out = push[out, 1]
     out
 
---- cells may be chosen everywhere, by every means: table-core's defaults
+--- cells may be chosen everywhere, by every means: the defaults
 fn selecting[on = true, unselectable = [], ranges = true, drag = true, multi = true]
     off = _no_texts[]
     for id in unselectable
@@ -181,7 +171,7 @@ fn _place_of[places, id]
         return places[id]
     -1
 
---- The rows in the order table-core counts cells in: the rows before
+--- The rows in the order cells are counted in: the rows before
 --- paging, with each expanded row's sub-rows after it.
 fn display_rows[t, m]
     if t.options.page_expanded or t.options.manual_expanding
@@ -384,8 +374,7 @@ fn _row_place[k, id]
     _place_of[k.at, id]
 
 --- The cells chosen, as disjoint rectangles in the order drawn, every
---- rectangle's adding and taking away done in turn (table-core's
---- getCellSelectionBounds). A rectangle whose corner is not shown (its row
+--- rectangle's adding and taking away done in turn. A rectangle whose corner is not shown (its row
 --- filtered out, its column hidden) adds and takes nothing, and comes back
 --- when it shows again.
 fn selection_bounds[k, sel]
@@ -510,7 +499,7 @@ fn _page_place_of_display[k, d]
         i = i + 1
     -1
 
---- One step from a cell in a direction (table-core's), among the page's
+--- One step from a cell in a direction, among the page's
 --- rows and the columns drawn: columns that may not be chosen are passed
 --- over, a merged cell is left from its far side and landed on at its
 --- first cell; a Spot of no ids where the step leaves the grid.
@@ -528,7 +517,7 @@ fn _stepped[k, row, column, way]
     from_row = _row_place[k, rows[ri].id]
     from_column = ci
     if len[k.merges] gt 0
-        --- (table-core looks the merge up by the row's place on the page)
+        --- (the merge is looked up by the row's place on the page)
         s = _merge_at[k.merges, ri, ci]
         if s.top gte 0
             if dr gt 0
@@ -609,7 +598,7 @@ fn extended[k, sel, way]
     sel[len[sel] - 1] = a
     sel
 
---- The selection after a press on a cell (table-core's start handler):
+--- The selection after a press on a cell:
 --- with `shift` the active rectangle reaches to it; with `multi` (Ctrl or
 --- Command) a rectangle of it is added, or taken away where the cell is
 --- chosen; else it is the only cell chosen. Nothing changes for a cell
@@ -637,7 +626,7 @@ fn drags[k]
     k.selecting.drag and k.selecting.ranges
 
 --- The selection as a drag reaches a cell: the active rectangle's focus
---- moved there (table-core's extend handler, while a drag is open).
+--- moved there (while a drag is open).
 fn reached[k, sel, row, column]
     if not cell_selectable[k, row, column] or len[sel] eq 0
         return sel
@@ -715,8 +704,7 @@ fn selection_rows[k, bounds]
     out
 
 --- the ids of the columns the selection reaches but those whose cells
---- may not be chosen (as table-core lists them, whether the table lets
---- cells be chosen or not)
+--- may not be chosen (whether the table lets cells be chosen or not)
 fn selection_columns[k, bounds]
     out = _no_texts[]
     seen = map['' = true]
@@ -735,8 +723,7 @@ fn selection_columns[k, bounds]
 fn _value_at[k, r, c]
     dt.value_of[k.display[r], k.columns[c]]
 
---- Each chosen region's values, row by row (table-core's
---- getSelectedCellRangesData): a list per region of a list per row.
+--- Each chosen region's values, row by row: a list per region of a list per row.
 fn selected_values[k, bounds]
     out = slice[[[[dt.missing[]]]], 0, 0]
     for p in _each_chosen[k, bounds, false]
@@ -789,7 +776,7 @@ fn _same_object[a, b]
         return a.num eq b.num
     a.is eq 'missing' or a.is eq 'null'
 
---- The merges of the rows drawn (table-core's getCellSpanIndex): across
+--- The merges of the rows drawn: across
 --- each row first, kept within the part of the columns it starts in
 --- (pinned to the start, the center, pinned to the end), then down each
 --- column, a run held together by the same value as its first row (not
@@ -933,8 +920,7 @@ fn column_span[sp, row, column]
 fn covered[sp, row, column]
     row_span[sp, row, column] eq 0 or column_span[sp, row, column] eq 0
 
---- The merged cells as rectangles in the selection's places (table-core's
---- getCellSelectionMergeBounds): each run down a column (as wide as its
+--- The merged cells as rectangles in the selection's places: each run down a column (as wide as its
 --- first cell's span across), then each span across a row that is not in
 --- a run. A merge whose rows are not together before paging is passed over.
 fn merge_bounds[k]
@@ -994,15 +980,14 @@ fn merge_bounds[k]
 --- own is edited as text and has no rules.
 struct Spec [column, editor, choices, rules, summary, align]
 
---- What an edit of a cell must be, as a form's schema says it (Zod's in
---- TanStack's with-tanstack-form, TOAST UI Grid's validation): given
+--- What an edit of a cell must be, as a form's schema says it: given
 --- (`required`), a number (`number`), at least and at most (`least`,
 --- `most`: numbers, or text's length for a column of words; past
 --- ten to the 20th for no bound), one of the column's choices (`listed`), and held by no other
 --- row (`unique`).
 struct Rules [required, number, least, most, listed, unique]
 
---- How one column rules another (TOAST UI Grid's relations): when the
+--- How one column rules another: when the
 --- `source` column's value is one of `off`, the `target` column's cell
 --- may not be edited; when it is a key of `choices`, the target's choices
 --- are the ones written there (separated by `|`), and a target value not
@@ -1049,8 +1034,8 @@ fn _spec_of[g, column]
 --- What a data grid holds: its id (its control's, and its events'), the
 --- table it shows, how its cells may be chosen and merge, its columns'
 --- specs and relations; the focused cell and the selection's rectangles
---- (`selected` is whether a rectangle has been chosen beyond the focus,
---- TOAST UI Grid's selection; `whole` that it was chosen whole by Ctrl+A);
+--- (`selected` is whether a rectangle has been chosen beyond the focus;
+--- `whole` that it was chosen whole by Ctrl+A);
 --- whether a drag is choosing cells; the cell being edited ('' for none)
 --- and what its editor holds; the edits; whether edits wait to be saved
 --- (`drafts`, a form's) or are made at once (a grid's); what was copied
@@ -1079,7 +1064,7 @@ fn _no_edits[]
 fn _no_flashes[]
     map['' = Flash[0.0, 0]]
 
---- a grid of a table: every cell chosen as table-core chooses it, edits
+--- a grid of a table: every cell may be chosen by every means, edits
 --- made at once, nothing focused, in the default look
 fn grid[id, t]
     Grid[id, t, selecting[], spanning[], _no_specs[], _no_relations[], Spot['', ''], _no_ranges[], false, false, false, Spot['', ''], '', _no_edits[], false, '', '', 0.0, 'default', _no_flashes[], 0.0, Sheet[0, 0, map['' = ''], _no_steps[], _no_steps[], false]]
@@ -1374,7 +1359,7 @@ fn row_added[g, r]
             g.edits = e
     g
 
--------------------------------------------------------------------- TOAST UI Grid's keymap
+-------------------------------------------------------------------- the keymap
 
 --- the page's row at a place and a column at a place, as a Spot
 fn _spot_at[k, r, c]
@@ -1386,13 +1371,13 @@ fn _spot_at[k, r, c]
 fn place_of[k, s]
     Place[-1, _page_place[k, s.row], _place_of[k.places, s.column]]
 
---- TOAST UI Grid's next cell for a command from a place: `up`, `down`,
+--- The next cell for a command from a place: `up`, `down`,
 --- `left`, `right`, `firstColumn` (Home), `lastColumn` (End), `pageUp`
---- and `pageDown` (the first and last rows: TOAST UI Grid 4.21.22 goes
---- there, not a screen's height), `firstCell`, `lastCell`, `nextCell`
+--- and `pageDown` (the first and last rows, not a
+--- screen's height), `firstCell`, `lastCell`, `nextCell`
 --- (Tab: on along the row, then down to the next row's first) and
 --- `prevCell`, kept within the grid.
-fn toast_next[k, command, row, column]
+fn grid_next_cell[k, command, row, column]
     last_row = len[k.page] - 1
     last_column = len[k.columns] - 1
     r = row
@@ -1435,10 +1420,10 @@ fn toast_next[k, command, row, column]
                 c = c - 1
     Place[-1, max[0, min[last_row, r]], max[0, min[last_column, c]]]
 
---- the command TOAST UI Grid gives a key stroke (`ctrl` for Control or
+--- the command the grid gives a key stroke (`ctrl` for Control or
 --- Command), with what kind of command it is: `move`, `select`, `edit`,
 --- `remove` or `clipboard` ('' for a key it does nothing with)
-fn toast_command[key, shift, ctrl]
+fn grid_command[key, shift, ctrl]
     name = _key_name[key]
     stroke = name
     if shift
@@ -1476,7 +1461,7 @@ fn toast_command[key, shift, ctrl]
         return ['select', 'lastCell']
     ['', '']
 
---- a browser's key name as TOAST UI Grid names it
+--- a browser's key name as the keymap names it
 fn _key_name[key]
     names = map[ArrowUp = 'up', ArrowDown = 'down', ArrowLeft = 'left', ArrowRight = 'right', PageUp = 'pageUp', PageDown = 'pageDown', Home = 'home', End = 'end', Enter = 'enter', Tab = 'tab', Backspace = 'backspace', Delete = 'del', Escape = 'esc']
     if key in names
@@ -1493,9 +1478,9 @@ fn focused_on[g, row, column]
     g.whole = false
     g
 
---- the rectangle TOAST UI Grid's selection covers, by places (row, row,
+--- the rectangle the grid's selection covers, by places (row, row,
 --- column, column) ascending; Bounds of -1 where it has none
-fn toast_selection[g, k]
+fn grid_selection[g, k]
     if not g.selected or len[g.sel] eq 0
         return Bounds[-1, -1, -1, -1]
     if g.whole
@@ -1507,11 +1492,11 @@ fn toast_selection[g, k]
     fc = _place_of[k.places, a.focus_column]
     Bounds[min[ar, fr], max[ar, fr], min[ac, fc], max[ac, fc]]
 
---- The grid after a TOAST UI Grid selection command: the selection's far
+--- The grid after a selection command: the selection's far
 --- corner moved by the command from where it stands (from the focus when
 --- nothing is chosen), its near corner kept; Ctrl+A chooses every cell,
 --- and the next Shift move goes on from the focus's row.
-fn toast_selected[g, k, command]
+fn grid_selected[g, k, command]
     f = place_of[k, g.focus]
     if f.row lt 0 or f.column lt 0
         return g
@@ -1533,7 +1518,7 @@ fn toast_selected[g, k, command]
         ec = len[k.columns] - 1
         whole = true
     else
-        n = toast_next[k, command, er, ec]
+        n = grid_next_cell[k, command, er, ec]
         er = n.row
         ec = n.column
     a = _spot_at[k, sr, sc]
@@ -1545,13 +1530,13 @@ fn toast_selected[g, k, command]
 
 --- the cells a command acts on: the selection, or the focused cell
 fn _acted_on[g, k]
-    b = toast_selection[g, k]
+    b = grid_selection[g, k]
     if b.top gte 0
         return b
     f = place_of[k, g.focus]
     Bounds[f.row, f.row, f.column, f.column]
 
---- The text TOAST UI Grid copies: the cells' words, a tab between
+--- The text the grid copies: the cells' words, a tab between
 --- columns and a new line between rows (as a spreadsheet pastes them).
 fn copied_text[g, k]
     b = _acted_on[g, k]
@@ -1569,7 +1554,7 @@ fn copied_text[g, k]
         r = r + 1
     join[lines, '\n']
 
---- Text as TOAST UI Grid reads a paste: rows by new lines, cells by tabs;
+--- Text as the grid reads a paste: rows by new lines, cells by tabs;
 --- a cell in double quotes that holds a new line has its quotes taken
 --- off and its doubled quotes made one (any other cell is kept as it is).
 fn pasted_cells[t]
@@ -1598,16 +1583,16 @@ fn pasted_cells[t]
         out = push[out, cells]
     out
 
---- The grid with text pasted (TOAST UI Grid's paste): from the
+--- The grid with text pasted: from the
 --- selection's first cell (or the focus), the pasted rows repeated to
 --- fill a selection that holds them whole more than once, each cell that
 --- may be edited set; the selection is then what was pasted. Rows past
---- the page's last are not added (TOAST UI Grid adds empty ones).
+--- the page's last are not added.
 fn pasted[g, k, t]
     data = pasted_cells[t]
     if len[data] eq 0 or len[data[0]] eq 0
         return g
-    b = toast_selection[g, k]
+    b = grid_selection[g, k]
     if b.top gte 0
         rows_n = b.bottom - b.top + 1
         cols_n = b.right - b.left + 1
@@ -1703,8 +1688,8 @@ fn edit_cancelled[g]
     g.draft = ''
     g
 
---- The grid after a key typed while it has the focus, as TOAST UI Grid's
---- keymap has it (`ctrl` is Control or Command). Copying leaves the text
+--- The grid after a key typed while it has the focus, as the keymap has
+--- it (`ctrl` is Control or Command). Copying leaves the text
 --- in `copied` for the program to put on the clipboard (and keeps it as
 --- the grid's own, which Ctrl+V pastes).
 fn keyed[g, k, key, shift = false, ctrl = false]
@@ -1718,7 +1703,7 @@ fn keyed[g, k, key, shift = false, ctrl = false]
             k = grid_laid[g]
         else
             return g
-    cmd = toast_command[key, shift, ctrl]
+    cmd = grid_command[key, shift, ctrl]
     kind = cmd[0]
     what = cmd[1]
     if g.focus.row eq ''
@@ -1728,15 +1713,15 @@ fn keyed[g, k, key, shift = false, ctrl = false]
         return focused_on[g, first.row, first.column]
     f = place_of[k, g.focus]
     if kind eq 'move'
-        n = toast_next[k, what, f.row, f.column]
+        n = grid_next_cell[k, what, f.row, f.column]
         s = _spot_at[k, n.row, n.column]
         return focused_on[g, s.row, s.column]
     if kind eq 'select'
-        return toast_selected[g, k, what]
+        return grid_selected[g, k, what]
     if kind eq 'edit'
         if what eq 'currentCell'
             return edit_started[g, k]
-        n = toast_next[k, what, f.row, f.column]
+        n = grid_next_cell[k, what, f.row, f.column]
         s = _spot_at[k, n.row, n.column]
         return focused_on[g, s.row, s.column]
     if kind eq 'remove'
@@ -1751,10 +1736,9 @@ fn keyed[g, k, key, shift = false, ctrl = false]
             return pasted[g, k, g.clipboard]
     g
 
--------------------------------------------------------------------- a spreadsheet: 7GUIs Cells
+-------------------------------------------------------------------- a spreadsheet
 
---- A sheet of cells, as the 7GUIs task Cells has one (Vue's example: five
---- columns A to E, twenty rows counted from 0): what each cell was given,
+--- A sheet of cells (five columns A to E, twenty rows counted from 0): what each cell was given,
 --- trimmed, by its name (`A0`); the steps that may be undone (each a list
 --- of the cells it changed) and the steps undone that may be done again;
 --- and whether a step is open, so that a paste's many cells are one step.
@@ -1787,8 +1771,7 @@ fn raw_of[s, name]
         return s.raw[name]
     ''
 
---- The sheet with a cell given words, trimmed (as Vue's example commits
---- an edit): one step that may be undone, or a part of the step open.
+--- The sheet with a cell given words, trimmed (an edit committed): one step that may be undone, or a part of the step open.
 fn sheet_set[s, name, words]
     after = trim[words]
     before = raw_of[s, name]
@@ -2050,7 +2033,7 @@ fn _sum[s, rd, depth]
             rd.value = _applied[op, left, rd.value]
     rd
 
---- A cell's value, as Vue's Cells example works it out: a formula (its
+--- A cell's value: a formula (its
 --- words begin with `=`) is the JavaScript expression after the `=`, its
 --- cells' names reading their cells' values; other words that read as a
 --- number are that number; anything else is the words. A formula that is
@@ -2083,8 +2066,7 @@ fn cell_shown[s, name]
         return '#ERROR'
     _as_text[v]
 
---- What the cells of a rectangle hold, as TanStack's sheet sums a range
---- up: how many hold something, how many of them hold a number, the
+--- What the cells of a rectangle hold, a range summed up: how many hold something, how many of them hold a number, the
 --- numbers' sum and their mean (NaN when none does).
 struct Tally [count, numbers, total, mean]
 
@@ -2998,7 +2980,7 @@ fn _grid_event[g, k, e, tall]
 --- The grid after a frame: what its body and its edit bar told applied,
 --- in order (a press chooses and focuses, a drag reaches, a press on the
 --- focused cell or a double press edits it in the edit bar, a key acts
---- as TOAST UI Grid's keymap has it, a header sorts, a toggle opens a
+--- as the keymap has it, a header sorts, a toggle opens a
 --- tree's row, the wheel scrolls), Enter in the edit bar making the edit
 --- and Escape letting it go (the grid focused again after either), and
 --- Tab in the edit bar making the edit and moving on. What was copied is

@@ -1,0 +1,464 @@
+{
+ "hello-world": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "full-component": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "fc-1"], "at": 0},
+   {"do": ["press", "fc-2"], "at": 0},
+   {"do": ["press", "fc-1"], "at": 0}
+  ]
+ },
+ "properties-basic": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "properties-has-changed": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "date-today"], "at": 0},
+   {"do": ["wait", 250], "at": 250},
+   {"do": ["wait", 750], "at": 1000},
+   {"do": ["pick", "date-input", "2026-11-14"], "at": 1000},
+   {"do": ["wait", 300], "at": 1300},
+   {"do": ["pick", "date-input", "2026-12-25"], "at": 1300},
+   {"do": ["wait", 500], "at": 1800},
+   {"do": ["wait", 600], "at": 2400}
+  ]
+ },
+ "properties-custom-converter": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "expressions": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "expr-click"], "at": 0},
+   {"do": ["press", "expr-click"], "at": 0}
+  ]
+ },
+ "templates-conditional": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "cond-toggle"], "at": 0},
+   {"do": ["press", "cond-toggle"], "at": 0}
+  ]
+ },
+ "repeating-and-conditional": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "slotting-children": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "element-composition": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "template-composition": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "directive-async-append": {
+  "draws": [0.39816198823973536, 0.6033986730035394, 0.5262760161422193, 0.1989340395666659, 0.8037807932123542, 0.5322087784297764, 0.71432298514992, 0.20932065369561315, 0.1412721429951489, 0.5475668469443917],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["wait", 1000], "at": 1000},
+   {"do": ["wait", 1000], "at": 2000},
+   {"do": ["wait", 2000], "at": 4000},
+   {"do": ["wait", 5000], "at": 9000},
+   {"do": ["wait", 2000], "at": 11000}
+  ]
+ },
+ "directive-async-replace": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["wait", 1000], "at": 1000},
+   {"do": ["wait", 1000], "at": 2000},
+   {"do": ["wait", 3000], "at": 5000},
+   {"do": ["wait", 4000], "at": 9000},
+   {"do": ["wait", 2000], "at": 11000}
+  ]
+ },
+ "directive-cache": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["type", "cache-plain", "typed plain"], "at": 0},
+   {"do": ["type", "cache-kept", "typed kept"], "at": 0},
+   {"do": ["press", "cache-toggle"], "at": 0},
+   {"do": ["type", "cache-kept", "second view"], "at": 0},
+   {"do": ["press", "cache-toggle"], "at": 0},
+   {"do": ["press", "cache-toggle"], "at": 0}
+  ]
+ },
+ "directive-class-map": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["check", "cm-enabled"], "at": 0},
+   {"do": ["check", "cm-hidden"], "at": 0},
+   {"do": ["check", "cm-enabled"], "at": 0},
+   {"do": ["check", "cm-hidden"], "at": 0}
+  ]
+ },
+ "directive-guard": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["wait", 1000], "at": 1000},
+   {"do": ["press", "guard-inc"], "at": 1000},
+   {"do": ["type", "guard-value", "hello"], "at": 1000},
+   {"do": ["press", "guard-inc"], "at": 1000},
+   {"do": ["press", "guard-calc"], "at": 1000},
+   {"do": ["wait", 500], "at": 1500},
+   {"do": ["press", "guard-inc"], "at": 1500},
+   {"do": ["wait", 600], "at": 2100}
+  ]
+ },
+ "directive-if-defined": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["type", "ifd-name", "river"], "at": 0},
+   {"do": ["type", "ifd-name", "cat"], "at": 0},
+   {"do": ["type", "ifd-name", "canyon"], "at": 0}
+  ]
+ },
+ "directive-live": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["type", "live-with", "typed with"], "at": 0},
+   {"do": ["type", "live-without", "typed without"], "at": 0},
+   {"do": ["press", "live-commit"], "at": 0},
+   {"do": ["type", "live-source", "new"], "at": 0},
+   {"do": ["press", "live-commit"], "at": 0},
+   {"do": ["type", "live-without", "again"], "at": 0},
+   {"do": ["press", "live-commit"], "at": 0}
+  ]
+ },
+ "directive-ref": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["type", "ref-input", "hi"], "at": 0}
+  ]
+ },
+ "directive-repeat": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["check", "rk-1"], "at": 0},
+   {"do": ["check", "ru-1"], "at": 0},
+   {"do": ["press", "rep-up"], "at": 0},
+   {"do": ["check", "rk-4"], "at": 0},
+   {"do": ["press", "rep-down"], "at": 0},
+   {"do": ["press", "rep-up"], "at": 0}
+  ]
+ },
+ "directive-style-map": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["check", "sm-enabled"], "at": 0},
+   {"do": ["check", "sm-hidden"], "at": 0},
+   {"do": ["check", "sm-enabled"], "at": 0},
+   {"do": ["check", "sm-hidden"], "at": 0}
+  ]
+ },
+ "directive-template-content": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "directive-unsafe-html": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "directive-unsafe-svg": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "directive-until": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["wait", 1000], "at": 1000},
+   {"do": ["wait", 1000], "at": 2000},
+   {"do": ["wait", 1000], "at": 3000}
+  ]
+ },
+ "async-task": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["wait", 500], "at": 500},
+   {"do": ["wait", 600], "at": 1100},
+   {"do": ["type", "task-name", "no-such-package"], "at": 1100},
+   {"do": ["commit", "task-name"], "at": 1100},
+   {"do": ["wait", 1100], "at": 2200},
+   {"do": ["type", "task-name", ""], "at": 2200},
+   {"do": ["commit", "task-name"], "at": 2200},
+   {"do": ["type", "task-name", "paper-boat"], "at": 2200},
+   {"do": ["commit", "task-name"], "at": 2200},
+   {"do": ["wait", 400], "at": 2600},
+   {"do": ["type", "task-name", "tin-whistle"], "at": 2600},
+   {"do": ["commit", "task-name"], "at": 2600},
+   {"do": ["wait", 300], "at": 2900},
+   {"do": ["type", "task-name", "paper-boat"], "at": 2900},
+   {"do": ["commit", "task-name"], "at": 2900},
+   {"do": ["wait", 1100], "at": 4000}
+  ]
+ },
+ "context-basics": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "context-consume-provide": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "signals": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "sig-inc-1"], "at": 0},
+   {"do": ["press", "sig-inc-2"], "at": 0},
+   {"do": ["press", "sig-inc-2"], "at": 0}
+  ]
+ },
+ "roulette": {
+  "draws": [0.5163109616842121, 0.9970917752943933],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "roulette-click"], "at": 0},
+   {"do": ["press", "roulette-click"], "at": 0},
+   {"do": ["press", "roulette-click"], "at": 0},
+   {"do": ["press", "roulette-click"], "at": 0},
+   {"do": ["press", "roulette-click"], "at": 0},
+   {"do": ["press", "roulette-click"], "at": 0},
+   {"do": ["press", "roulette-reset"], "at": 0},
+   {"do": ["press", "roulette-click"], "at": 0},
+   {"do": ["press", "roulette-click"], "at": 0}
+  ]
+ },
+ "named-slots": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0}
+  ]
+ },
+ "ref-player": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "tri-play"], "at": 0},
+   {"do": ["press", "tri-pause"], "at": 0},
+   {"do": ["press", "tri-canvas"], "at": 0},
+   {"do": ["press", "tri-canvas"], "at": 0}
+  ]
+ },
+ "motion-circle": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "slide"], "at": 0},
+   {"do": ["wait", 100], "at": 100},
+   {"do": ["wait", 100], "at": 200},
+   {"do": ["wait", 200], "at": 400},
+   {"do": ["press", "slide"], "at": 400},
+   {"do": ["wait", 150], "at": 550},
+   {"do": ["press", "slide"], "at": 550},
+   {"do": ["wait", 400], "at": 950}
+  ]
+ },
+ "motion-letters": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["wait", 500], "at": 500},
+   {"do": ["wait", 800], "at": 1300},
+   {"do": ["press", "letter-1"], "at": 1300},
+   {"do": ["wait", 300], "at": 1600},
+   {"do": ["press", "letter-1"], "at": 1600},
+   {"do": ["wait", 700], "at": 2300},
+   {"do": ["wait", 1500], "at": 3800},
+   {"do": ["wait", 1000], "at": 4800}
+  ]
+ },
+ "motion-list": {
+  "draws": [0.6011037519201636, 0.44829055899754167, 0.8524657934904099, 0.6697340414393693, 0.17481389874592423, 0.5265925421845168, 0.2732279943302274, 0.6247446539346129, 0.8654746483080089, 0.4723170551005751, 0.24992373422719538, 0.8820588334929198, 0.7457375649828464, 0.3070015134289861, 0.19725383794866502, 0.5007294877432287, 0.6866120179183781, 0.6106208984274417, 0.003842951962724328, 0.47078192373737693, 0.8373374259099364, 0.05120926629751921, 0.5923239905387163, 0.03153795562684536, 0.2669559868518263, 0.06178139243274927, 0.18568900716491044, 0.7835472931619734, 0.530335606308654, 0.027123609324917197, 0.17300523445010185, 0.8426881253253669, 0.4877399173565209, 0.8090229837689549, 0.3194617456756532, 0.44989572861231863, 0.03743921360000968, 0.05139273451641202, 0.5565997792873532, 0.5967295127920806, 0.24517467361874878, 0.6456944046076387, 0.20951048866845667, 0.30362963443621993, 0.7386213727295399, 0.8587109192740172, 0.5079962892923504, 0.2041900979820639],
+  "orders": ["Four,Two,One,Five,Three", "Three,Five,One,Two,Four", "Three,Four,One,Five,Two", "One,Three,Two,Five,Four", "Two,One,Four,Five,Three", "One,Five,Two,Three,Four", "Two,Five,One,Four,Three"],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["wait", 300], "at": 300},
+   {"do": ["wait", 700], "at": 1000},
+   {"do": ["wait", 400], "at": 1400},
+   {"do": ["wait", 600], "at": 2000},
+   {"do": ["wait", 1000], "at": 3000},
+   {"do": ["wait", 1000], "at": 4000},
+   {"do": ["wait", 1000], "at": 5000},
+   {"do": ["wait", 1500], "at": 6500},
+   {"do": ["wait", 1000], "at": 7500}
+  ]
+ },
+ "motion-grid": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "cell-2"], "at": 0},
+   {"do": ["wait", 250], "at": 250},
+   {"do": ["wait", 500], "at": 750},
+   {"do": ["wait", 1300], "at": 2050},
+   {"do": ["press", "cell-0"], "at": 2050},
+   {"do": ["wait", 600], "at": 2650},
+   {"do": ["press", "cell-4"], "at": 2650},
+   {"do": ["wait", 2000], "at": 4650},
+   {"do": ["press", "cell-1"], "at": 4650},
+   {"do": ["wait", 2000], "at": 6650}
+  ]
+ },
+ "motion-carousel": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "card-4"], "at": 0},
+   {"do": ["wait", 100], "at": 100},
+   {"do": ["wait", 100], "at": 200},
+   {"do": ["wait", 200], "at": 400},
+   {"do": ["press", "card-0"], "at": 400},
+   {"do": ["wait", 400], "at": 800},
+   {"do": ["press", "card-3"], "at": 800},
+   {"do": ["wait", 150], "at": 950},
+   {"do": ["press", "card-5"], "at": 950},
+   {"do": ["wait", 400], "at": 1350}
+  ]
+ },
+ "motion-hero": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "card-2-icon"], "at": 0},
+   {"do": ["wait", 100], "at": 100},
+   {"do": ["wait", 200], "at": 300},
+   {"do": ["press", "detail-header"], "at": 300},
+   {"do": ["wait", 200], "at": 500},
+   {"do": ["press", "detail"], "at": 500},
+   {"do": ["wait", 500], "at": 1000},
+   {"do": ["press", "detail-content"], "at": 1000},
+   {"do": ["wait", 150], "at": 1150},
+   {"do": ["wait", 650], "at": 1800},
+   {"do": ["press", "card-4"], "at": 1800},
+   {"do": ["wait", 900], "at": 2700}
+  ]
+ },
+ "motion-todos": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["check", "todo-1-check"], "at": 0},
+   {"do": ["wait", 100], "at": 100},
+   {"do": ["wait", 150], "at": 250},
+   {"do": ["wait", 300], "at": 550},
+   {"do": ["press", "todo-3-remove"], "at": 550},
+   {"do": ["wait", 250], "at": 800},
+   {"do": ["wait", 300], "at": 1100},
+   {"do": ["type", "todo-text", "Water the plants."], "at": 1100},
+   {"do": ["press", "todo-add"], "at": 1100},
+   {"do": ["wait", 200], "at": 1300},
+   {"do": ["wait", 400], "at": 1700},
+   {"do": ["check", "todo-2-check"], "at": 1700},
+   {"do": ["wait", 600], "at": 2300}
+  ]
+ },
+ "docs-events": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "ev-child"], "at": 0},
+   {"do": ["press", "ev-child"], "at": 0},
+   {"do": ["press", "ev-child"], "at": 0}
+  ]
+ },
+ "docs-clock": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["wait", 1000], "at": 1000},
+   {"do": ["wait", 1500], "at": 2500},
+   {"do": ["press", "clock-toggle"], "at": 2500},
+   {"do": ["wait", 2300], "at": 4800},
+   {"do": ["press", "clock-toggle"], "at": 4800},
+   {"do": ["wait", 900], "at": 5700},
+   {"do": ["wait", 200], "at": 5900},
+   {"do": ["wait", 1000], "at": 6900}
+  ]
+ },
+ "docs-batching": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "batch-both"], "at": 0},
+   {"do": ["press", "batch-both"], "at": 0},
+   {"do": ["press", "batch-freeze"], "at": 0},
+   {"do": ["press", "batch-both"], "at": 0},
+   {"do": ["press", "batch-both"], "at": 0},
+   {"do": ["press", "batch-freeze"], "at": 0},
+   {"do": ["press", "batch-both"], "at": 0}
+  ]
+ },
+ "docs-slots": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "slot-toggle"], "at": 0},
+   {"do": ["press", "slot-toggle"], "at": 0},
+   {"do": ["press", "slot-toggle"], "at": 0}
+  ]
+ },
+ "docs-localize": {
+  "draws": [],
+  "steps": [
+   {"do": ["open"], "at": 0},
+   {"do": ["press", "loc-es"], "at": 0},
+   {"do": ["wait", 50], "at": 50},
+   {"do": ["wait", 60], "at": 110},
+   {"do": ["press", "loc-en"], "at": 110},
+   {"do": ["wait", 10], "at": 120},
+   {"do": ["press", "loc-es"], "at": 120},
+   {"do": ["wait", 150], "at": 270}
+  ]
+ }
+}

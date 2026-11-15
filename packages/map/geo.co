@@ -3,12 +3,11 @@
 --- bar's numbers, a circle of metres on the picture, the middle of a line
 --- and of a polygon, and a line simplified.
 ---
---- Each is Leaflet's (1.9.4) behaviour, written anew and held to what
---- Leaflet itself answers (tests/map/reference.json): the same steps in
---- the same order, so the same floating point numbers come out. Places
---- are latitude and longitude in degrees; points are CSS pixels of the
---- world's picture at a zoom, 256 of them across the world at zoom 0,
---- measured from its top left (north west) corner.
+--- Each step is taken in a fixed order, so the same floating point
+--- numbers come out in both modes. Places are latitude and longitude in
+--- degrees; points are CSS pixels of the world's picture at a zoom, 256
+--- of them across the world at zoom 0, measured from its top left (north
+--- west) corner.
 use math
 
 --- a place on the earth: latitude north and longitude east, in degrees
@@ -23,7 +22,7 @@ struct Bounds [south, west, north, east]
 
 --- what a view shows: its middle place, its zoom, its size in CSS pixels,
 --- and the point of the world's picture at its top left — rounded to a
---- whole pixel, as Leaflet keeps it (the pixel origin), which is where a
+--- whole pixel (the pixel origin), which is where a
 --- place is reckoned from on the screen
 struct Seen [lat, lng, zoom, w, h, ox, oy]
 
@@ -99,11 +98,11 @@ fn unproject[x, y, zoom]
     t = _unit[]
     from_metres[(x / k - 0.5) / t, (y / k - 0.5) / (0.0 - t)]
 
---- ---- JavaScript's rounding, which the reference's numbers carry ----
+--- ---- rounding to whole numbers ----
 
 --- the whole number nearest `x`, a half rounded up (towards positive
---- infinity, as JavaScript's Math.round does: -2.5 is -2)
-fn js_round[x]
+--- infinity: -2.5 is -2)
+fn round_half_up[x]
     if x ne x or abs[x] gte 4503599627370496.0
         return x
     r = 0.0 + floor[x]
@@ -112,25 +111,23 @@ fn js_round[x]
     r
 
 --- the whole number at or below `x` (infinities and nothing kept)
-fn js_floor[x]
+fn floor_whole[x]
     if x ne x or abs[x] gte 4503599627370496.0
         return x
     0.0 + floor[x]
 
 --- the whole number at or above `x` (infinities and nothing kept)
-fn js_ceil[x]
+fn ceil_whole[x]
     if x ne x or abs[x] gte 4503599627370496.0
         return x
     0.0 + ceil[x]
 
---- the remainder of `x` by `d` with the sign of `x`, exactly (fmod, as
---- JavaScript's `%` is)
+--- the remainder of `x` by `d` with the sign of `x`, exactly (fmod)
 fn remainder[x, d]
     mod[[x], d][0]
 
 --- `x` brought into the range from `low` to `high` by whole turns of
 --- the range: `high` itself where `keep_high` says so, otherwise `low`
---- (Leaflet's wrapNum)
 fn wrap_number[x, low, high, keep_high]
     if x eq high and keep_high
         return x
@@ -156,7 +153,7 @@ fn distance[lat1, lng1, lat2, lng2]
     earth_radius[] * c
 
 --- the box of places `size` metres across about a place (`size` / 2 to
---- each side; Leaflet's LatLng.toBounds)
+--- each side)
 fn around[lat, lng, size]
     lat_by = 180.0 * size / 40075017.0
     lng_by = lat_by / cos[(pi / 180.0) * lat]
@@ -173,7 +170,7 @@ fn metres_per_pixel[lat, zoom]
 --- what a view of a place at a zoom shows in a box `w` by `h` CSS pixels
 fn seen[lat, lng, zoom, w, h]
     p = project[lat, lng, zoom]
-    Seen[lat, lng, zoom, w, h, js_round[p.x - w / 2.0], js_round[p.y - h / 2.0]]
+    Seen[lat, lng, zoom, w, h, round_half_up[p.x - w / 2.0], round_half_up[p.y - h / 2.0]]
 
 --- the place under a point of the view, in CSS pixels from its top left
 fn place_at[v, x, y]
@@ -192,16 +189,16 @@ fn bounds_of[v]
     Bounds[low.lat, low.lng, high.lat, high.lng]
 
 --- the zoom `zoom` brought to a multiple of `snap` (none: 0) and into the
---- zooms allowed (Leaflet's _limitZoom)
+--- zooms allowed
 fn limit_zoom[zoom, snap, lowest, highest]
     z = zoom
     if snap gt 0.0
-        z = js_round[z / snap] * snap
+        z = round_half_up[z / snap] * snap
     max[lowest, min[highest, z]]
 
 --- the zoom at which a box of places fits a view `w` by `h` CSS pixels
 --- less `pad_x` and `pad_y` (or, `inside`, fills it), on multiples of
---- `snap`, from the view's own zoom (Leaflet's getBoundsZoom)
+--- `snap`, from the view's own zoom
 fn bounds_zoom[b, w, h, zoom, snap, lowest, highest, inside, pad_x, pad_y]
     nw = project[b.north, b.west, zoom]
     se = project[b.south, b.east, zoom]
@@ -214,17 +211,17 @@ fn bounds_zoom[b, w, h, zoom, snap, lowest, highest, inside, pad_x, pad_y]
         scale = max[scale_x, scale_y]
     z = scale_zoom[scale, zoom]
     if snap gt 0.0
-        z = js_round[z / (snap / 100.0)] * (snap / 100.0)
+        z = round_half_up[z / (snap / 100.0)] * (snap / 100.0)
         if inside
-            z = js_ceil[z / snap] * snap
+            z = ceil_whole[z / snap] * snap
         else
-            z = js_floor[z / snap] * snap
+            z = floor_whole[z / snap] * snap
     max[lowest, min[highest, z]]
 
 --- the view that fits a box of places: its middle and zoom, the box kept
 --- `left` and `top` pixels from the view's top left and `right` and
 --- `bottom` from its foot, its zoom no higher than `most` where that is
---- given (Leaflet's fitBounds and its maxZoom)
+--- given
 fn fit[b, w, h, zoom, snap, lowest, highest, left, top, right, bottom, most = -1.0]
     z = bounds_zoom[b, w, h, zoom, snap, lowest, highest, false, left + right, top + bottom]
     if most gte 0.0
@@ -281,7 +278,7 @@ fn scale_of[v, most_wide]
         r = round_number[feet]
         imperial = '`r` ft'
         ratio = r / feet
-    Scale[most, metric, js_round[most_wide * (m / most)], imperial, js_round[most_wide * ratio]]
+    Scale[most, metric, round_half_up[most_wide * (m / most)], imperial, round_half_up[most_wide * ratio]]
 
 --- ---- a circle of metres ----
 
@@ -310,8 +307,8 @@ fn circle_radius[lat, lng, reach, zoom]
 fn same_place[lat1, lng1, lat2, lng2]
     max[abs[lat1 - lat2], abs[lng1 - lng2]] lte 0.000000001
 
---- the place halfway along the lines through the places (Leaflet's
---- polylineCenter: measured in Web Mercator's metres)
+--- the place halfway along the lines through the places (measured
+--- in Web Mercator's metres)
 fn line_middle[lats, lngs]
     n = len[lats]
     if n eq 0
@@ -346,8 +343,8 @@ fn line_middle[lats, lngs]
     Place[p.lat + off.lat, p.lng + off.lng]
 
 --- the middle (the centroid) of the polygon through the places, its
---- closing place left off where it repeats the first (Leaflet's
---- polygonCenter: measured in Web Mercator's metres)
+--- closing place left off where it repeats the first (measured in
+--- Web Mercator's metres)
 fn polygon_middle[lats, lngs]
     n = len[lats]
     if n eq 0
@@ -418,7 +415,7 @@ fn _apart[x1, y1, x2, y2]
 --- the points of a line, as indexes into xs and ys, that stay when the
 --- line is simplified to within `tolerance` pixels: points nearer than
 --- that to the last one kept are dropped, then the Douglas-Peucker
---- reduction (Leaflet's LineUtil.simplify)
+--- reduction
 fn simplify[xs, ys, tolerance]
     n = len[xs]
     kept = []
@@ -519,14 +516,14 @@ test the_corners_of_the_square_world[]
     abs[q.x - 512.0] lt 0.000001
     abs[q.y - 512.0] lt 0.000001
 
-test javascript_rounds_halves_up[]
-    js_round[2.5] eq 3.0
-    js_round[-2.5] eq -2.0
-    js_round[-2.6] eq -3.0
-    js_round[0.49999999999999994] eq 0.0
-    js_floor[-0.5] eq -1.0
-    js_ceil[-0.5] eq 0.0
-    js_round[inf] eq inf
+test a_half_rounds_up[]
+    round_half_up[2.5] eq 3.0
+    round_half_up[-2.5] eq -2.0
+    round_half_up[-2.6] eq -3.0
+    round_half_up[0.49999999999999994] eq 0.0
+    floor_whole[-0.5] eq -1.0
+    ceil_whole[-0.5] eq 0.0
+    round_half_up[inf] eq inf
 
 test a_longitude_wraps_into_the_one_world[]
     wrap[10.0, 190.0].lng eq -170.0

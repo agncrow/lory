@@ -1,4 +1,4 @@
---- A chart's axes as Chart.js lays its scales: its datasets read against
+--- A chart's axes: its datasets read against
 --- them (each value placed on its axis, stacked where the axis stacks),
 --- the range each axis spans, the ticks it is marked with and their
 --- labels, how much room it takes beside the chart's area (its labels
@@ -8,9 +8,6 @@
 --- the centre of a radar or a polar area, its point labels round it. How
 --- an axis is laid in the room it is given, and a radial one in the
 --- chart's area, is charts_fit's.
----
---- These are Chart.js 4.5.1's rules, read from its scales and written
---- anew (see charts_model.co).
 use math
 use lory
 use charts_model
@@ -50,7 +47,7 @@ struct Parsed [set, form, x_id, y_id, i_id, v_id, i_axis, v_axis, ivs, vvs, star
 
 --- ---- the axes ----
 
---- the chart's axes, each as Chart.js starts laying it
+--- the chart's axes, each as its laying starts
 fn scales_of[ch]
     out = slice[[_blank_scale[]], 0, 0]
     i = 0
@@ -176,7 +173,7 @@ fn _nans[n]
         i = i + 1
     out
 
---- whether the values never fall (none missing): Chart.js then finds
+--- whether the values never fall (none missing): it then finds
 --- elements along them by halving
 fn _rising[vs]
     i = 0
@@ -262,7 +259,7 @@ fn _floating_starts[scales, kv, s]
         i = i + 1
     out
 
---- a floating bar's value as Chart.js keeps it: the end further from
+--- a floating bar's value as it is kept: the end further from
 --- naught
 fn _bar_ends[froms, tos]
     out = charts_model.no_numbers[]
@@ -285,7 +282,7 @@ fn _bar_ends[froms, tos]
 fn floats[p, j]
     j lt len[p.starts] and p.starts[j] eq p.starts[j]
 
---- the end of a floating bar nearer naught (its start as Chart.js draws
+--- the end of a floating bar nearer naught (its start as it is drawn
 --- it)
 fn bar_start[p, j]
     a = p.starts[j]
@@ -347,7 +344,7 @@ fn value_at[p, iv, j]
     nan
 
 --- the dataset's `j`th value with those of its stack found before it
---- (`order`: the shown datasets in the order found) added, as Chart.js
+--- (`order`: the shown datasets in the order found) added, as a chart
 --- stacks a value: those of its sign, or all where `single`; 0 where the
 --- dataset is not among those found
 fn stacked_value[ps, order, d, j, single]
@@ -501,7 +498,7 @@ fn _set_range[ch, ps, scales, d, sc, can_stack, order]
         j = j + 1
     [lo, hi]
 
---- a value stacked as Chart.js stacks it when it counts an axis's range
+--- a value stacked as it is when an axis's range is counted
 --- (by sign, whatever the axis's own stacking)
 fn _range_stacked[ps, order, d, j]
     stacked_value[ps, order, d, j, false]
@@ -554,7 +551,7 @@ fn _ranged_scale[ch, ps, scales, k, a]
     sc
 
 --- the range kept to naught where asked (`from_zero`) and widened where
---- it is one value, as Chart.js widens it
+--- it is one value, widened
 fn _linear_range_options[sc, a]
     lo = sc.min
     hi = sc.max
@@ -734,7 +731,7 @@ fn _almost_whole[x, epsilon]
 fn _almost_equals[x, y, epsilon]
     abs[x - y] lt epsilon
 
---- how much room a tick's label takes along the axis, as Chart.js counts
+--- how much room a tick's label takes along the axis, as it is counted
 --- it to tell whether a range's end is too near a tick
 fn _label_room[value, min_spacing, horizontal, min_rotation]
     rad = charts_model.radians[min_rotation]
@@ -747,7 +744,7 @@ fn _label_room[value, min_spacing, horizontal, min_rotation]
     min[min_spacing / ratio, length]
 
 --- the ticks of a numeric axis over the range `rmin` to `rmax`, as
---- Chart.js generates them: nice steps, at most `max_ticks`, the ends
+--- they are generated: nice steps, at most `max_ticks`, the ends
 --- asked for (`user_min`, `user_max`, nan for none) kept where
 --- `include_bounds`, a step or a count of ticks where asked, rounded to
 --- `precision` decimals where asked
@@ -835,7 +832,7 @@ fn numeric_ticks[bounds, step, user_min, user_max, precision, count, max_ticks, 
 struct Logged [values, significands]
 
 --- the ticks of a logarithmic axis from `lo` to `hi`, its ends asked for
---- kept, as Chart.js steps them: 1 to 9 times each power of ten (then 15
+--- kept, stepped: 1 to 9 times each power of ten (then 15
 --- and 20 of the last), from the order of the range's tenth
 fn log_ticks[user_min, user_max, lo, hi]
     vals = charts_model.no_numbers[]
@@ -1134,7 +1131,7 @@ fn _tick_added[got, t, stamps, from_data]
     push[got, pick]
 
 --- where `v` falls among rising values: the places of the last below it
---- and the next (Chart.js's halving search)
+--- and the next (a halving search)
 fn lookup[vs, v]
     hi = len[vs] - 1
     lo = 0
@@ -1373,7 +1370,7 @@ test numeric_ticks_fall_on_nice_steps[]
     l.values[0] eq 1.0
     l.values[len[l.values] - 1] eq 100000.0
 
-test labels_are_written_as_chart_js_writes_them[]
+test labels_are_written_as_an_axis_writes_them[]
     numeric_label[[0.0, 0.5, 1.0, 1.5], 1] eq '0.5'
     numeric_label[[0.0, 20.0, 40.0], 2] eq '40'
     numeric_label[[1000.0, 2000.0], 0] eq '1,000'

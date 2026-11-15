@@ -1,38 +1,17 @@
 --- Everything lory.motion computes, written out a case to a line, to diff
---- the interpreter's run against the compiled program's. The cases are
---- the fixed inputs tests/motion/reference.json holds (each easing at its
---- 21 times, the springs sampled until they rest, the retargeted springs,
---- the staggers, the timelines' positions, the clocks, the keyframes, the
---- throws, the scroll offsets and the number helpers), and then what is
---- held between frames (a clock played, paused, reversed, sought and sped
---- up; a tween and a spring given new targets; a presence turned half
---- way), anime.js's scroll windows, AOS's lines, a motion path and words
---- split. A number is written as the fewest digits that read back as the
---- same float, so the two runs write the same line only when every bit of
---- every number is the same. reference.co holds the interpreter's numbers
---- to the libraries themselves. Run from the repository's root:
+--- the interpreter's run against the compiled program's: every named
+--- easing at 21 times, then what is held between frames (a clock played,
+--- paused, reversed, sought and sped up; a tween and a spring given new
+--- targets; a presence turned half way), scroll windows, reveal lines, a
+--- motion path and words split. A number is written as the fewest digits
+--- that read back as the same float, so the two runs write the same line
+--- only when every bit of every number is the same. Run from the
+--- repository's root:
 ---
 ---     tests/modes.sh crow tests/modes/motion.co
 
 use lory
 use lory.motion
-
-fn _reference[]
-    json[read['tests/motion/reference.json']]
-
-fn _numbers_of[parsed]
-    out = []
-    for i in range[0]
-        out = push[out, 0.0]
-    for v in parsed
-        out = push[out, 0.0 + v]
-    out
-
-fn _texts_of[parsed]
-    out = slice[[''], 0, 0]
-    for v in parsed
-        out = push[out, str[v]]
-    out
 
 --- some numbers as one line's words
 fn _line[xs]
@@ -41,230 +20,17 @@ fn _line[xs]
         words = push[words, '`x`']
     join[words, ' ']
 
---- ---- the reference's cases ----
-
-fn _easings[j]
-    times = _numbers_of[j['times']]
-    for one in j['eases']
-        name = str[one['name']]
+--- every named easing at 21 times from 0 to 1
+fn _easings[]
+    for name in motion.ease_names[]
         easing = motion.ease[name]
         ours = []
-        for at in times
-            ours = push[ours, motion.eased[easing, at]]
+        i = 0
+        while i lte 20
+            ours = push[ours, motion.eased[easing, float[i] / 20.0]]
+            i = i + 1
         numbers = _line[ours]
         log['ease `name`: `numbers`']
-
-fn _anime_springs[j]
-    times = _numbers_of[j['times']]
-    for one in j['anime_springs']
-        name = str[one['name']]
-        easing = motion.ease[name]
-        ours = [motion.spring_settling[easing], easing.p[4], easing.p[6], easing.p[7]]
-        for at in times
-            ours = push[ours, motion.eased[easing, at]]
-        numbers = _line[ours]
-        log['anime.js `name`: `numbers`']
-
-fn _spring_of[one]
-    form = str[one['form']]
-    sp = motion.spring[0.0 + one['stiffness'], 0.0 + one['damping'], 0.0 + one['mass']]
-    if form eq 'duration'
-        sp = motion.spring_duration[0.0 + one['duration'], 0.0 + one['bounce']]
-    if form eq 'visual'
-        sp = motion.spring_visual[0.0 + one['visual'], 0.0 + one['bounce']]
-    sp.rest_speed = 0.0 + one['rest_speed']
-    sp.rest_delta = 0.0 + one['rest_delta']
-    sp
-
---- a spring's value, speed and rest at each sample's time, as words
-fn _samples_of[sp, origin, target, velocity, samples]
-    words = slice[[''], 0, 0]
-    for sample in samples
-        ours = motion.spring_sample[sp, origin, target, velocity, 0.0 + sample[0]]
-        words = push[words, '`ours.value` `ours.velocity` `ours.done`']
-    join[words, ' ']
-
-fn _springs[j]
-    k = 0
-    for one in j['springs']
-        sampled = _samples_of[_spring_of[one], 0.0 + one['from'], 0.0 + one['to'], 0.0 + one['velocity'], one['samples']]
-        log['spring `k`: `sampled`']
-        k = k + 1
-
-fn _retargets[j]
-    k = 0
-    for one in j['retargets']
-        sp = motion.spring[0.0 + one['stiffness'], 0.0 + one['damping'], 1.0]
-        origin = 0.0 + one['from']
-        before = _samples_of[sp, origin, 0.0 + one['to'], 0.0, one['before']]
-        there = motion.spring_sample[sp, origin, 0.0 + one['to'], 0.0, 0.0 + one['at']]
-        after = _samples_of[sp, there.value, 0.0 + one['next'], there.velocity, one['after']]
-        log['retarget `k`: `before` | `there.value` `there.velocity` | `after`']
-        k = k + 1
-
-fn _stagger_of[one]
-    each = 0.0 + one['each']
-    st = motion.stagger[each]
-    if 0 + one['ranged'] eq 1
-        st = motion.stagger_range[each, 0.0 + one['upto']]
-    if str[one['rule']] eq 'motion'
-        st = motion.stagger_motion[each]
-    st.base = 0.0 + one['base']
-    st.origin = str[one['origin']]
-    st.origin_x = 0.0 + one['origin_x']
-    st.origin_y = 0.0 + one['origin_y']
-    st.reversed = 0 + one['reversed'] eq 1
-    named = str[one['ease']]
-    if named ne ''
-        st = motion.stagger_eased[st, named]
-    st = motion.stagger_grid[st, int[one['columns']], int[one['rows']]]
-    st.axis = str[one['axis']]
-    st.seed = int[one['seed']]
-    st
-
-fn _staggers[j]
-    k = 0
-    for one in j['staggers']
-        numbers = _line[motion.staggers[_stagger_of[one], int[one['total']]]]
-        log['stagger `k`: `numbers`']
-        k = k + 1
-
---- each timeline's children where anime.js lays them (their offsets,
---- delays and lengths), its labels, its length, and each child's clock at
---- five times across it
-fn _timelines[j]
-    k = 0
-    for one in j['timelines']
-        tl = motion.timeline[]
-        tl.loops = int[one['loop']]
-        tl.loop_delay = 0.0 + one['loop_delay']
-        words = slice[[''], 0, 0]
-        names = slice[[''], 0, 0]
-        c = 0
-        for step in one['steps']
-            position = str[step['position']]
-            if str[step['op']] eq 'add'
-                name = 'child `c`'
-                tl = motion.timeline_add[tl, name, 0.0 + step['duration'], position, delay = 0.0 + step['delay'], loops = int[step['loop']]]
-                child = motion.child_of[tl, name]
-                words = push[words, '`child.offset` `child.delay` `child.total`']
-                names = push[names, name]
-                c = c + 1
-            else
-                name = str[step['name']]
-                tl = motion.timeline_label[tl, name, position]
-                words = push[words, '`motion.label_at[tl, name]`']
-        whole = motion.timeline_duration[tl]
-        words = push[words, '`tl.iteration_duration` `whole`']
-        for name in names
-            for part in [0.0, 0.25, 0.5, 0.75, 1.0]
-                head = motion.child_playhead[tl, name, whole * part]
-                words = push[words, '`head.iteration` `head.time` `head.progress` `head.done`']
-        laid = join[words, ' ']
-        log['timeline `k`: `laid`']
-        k = k + 1
-
-fn _timers[j]
-    k = 0
-    for one in j['timers']
-        tw = motion.tween_of[0.0, 1.0, 0.0 + one['duration'], 'linear']
-        tw.loops = int[one['loop']]
-        tw.alternate = 0 + one['alternate'] eq 1
-        tw.reversed = 0 + one['reversed'] eq 1
-        tw.loop_delay = 0.0 + one['loop_delay']
-        tw.delay = 0.0 + one['delay']
-        words = ['`motion.tween_duration[tw]`']
-        for sample in one['samples']
-            head = motion.playhead[tw, 0.0 + sample[0]]
-            words = push[words, '`head.iteration` `head.time` `head.progress` `head.done`']
-        played = join[words, ' ']
-        log['clock `k`: `played`']
-        k = k + 1
-
-fn _keyframes[j]
-    k = 0
-    for one in j['keyframes']
-        frames = motion.keyframes[_numbers_of[one['values']], 0.0 + one['duration']]
-        if len[one['times']] gt 0
-            frames.offsets = _numbers_of[one['times']]
-        if len[one['eases']] gt 0
-            eases = slice[[motion.ease['linear']], 0, 0]
-            for name in _texts_of[one['eases']]
-                eases = push[eases, motion.ease[name]]
-            frames.eases = eases
-        named = str[one['ease']]
-        if named ne ''
-            frames = motion.with_ease[frames, named]
-        ours = []
-        for sample in one['samples']
-            ours = push[ours, motion.track_value[frames, 0.0 + sample[0]]]
-        numbers = _line[ours]
-        log['keyframes `k`: `numbers`']
-        k = k + 1
-
-fn _inertias[j]
-    k = 0
-    for one in j['inertias']
-        thrown = motion.inertia[0.0 + one['origin'], 0.0 + one['velocity']]
-        thrown.power = 0.0 + one['power']
-        thrown.time_constant = 0.0 + one['time_constant']
-        thrown.bounce_stiffness = 0.0 + one['bounce_stiffness']
-        thrown.bounce_damping = 0.0 + one['bounce_damping']
-        thrown.rest_delta = 0.0 + one['rest_delta']
-        thrown.rest_speed = 0.0 + one['rest_speed']
-        thrown.snap = 0.0 + one['snap']
-        if 0 + one['has_min'] eq 1
-            thrown.low = 0.0 + one['min']
-        if 0 + one['has_max'] eq 1
-            thrown.high = 0.0 + one['max']
-        g = motion.glide[thrown]
-        words = slice[[''], 0, 0]
-        for sample in one['samples']
-            g = motion.glided[thrown, g, 0.0 + sample[0]]
-            words = push[words, '`g.value` `g.done`']
-        slid = join[words, ' ']
-        log['throw `k`: `slid`']
-        k = k + 1
-
-fn _scrolls[j]
-    k = 0
-    for one in j['scrolls']
-        offsets = _texts_of[one['offsets']]
-        ours = []
-        for sample in one['samples']
-            ours = push[ours, motion.scroll_progress[0.0 + sample[0], 0.0 + one['container'], 0.0 + one['target'], 0.0 + one['inset'], offsets]]
-        numbers = _line[ours]
-        log['scroll `k`: `numbers`']
-        k = k + 1
-
-fn _helpers[j]
-    h = j['helpers']
-    ours = []
-    for d in h['damp']
-        ours = push[ours, motion.damp[0.0 + d[0], 0.0 + d[1], 0.0 + d[2], 0.0 + d[3]]]
-    for d in h['lerp']
-        ours = push[ours, motion.blend[0.0 + d[0], 0.0 + d[1], 0.0 + d[2]]]
-    for d in h['map_range']
-        ours = push[ours, motion.map_range[0.0 + d[0], 0.0 + d[1], 0.0 + d[2], 0.0 + d[3], 0.0 + d[4]]]
-    for d in h['wrap']
-        ours = push[ours, motion.wrapped[0.0 + d[0], 0.0 + d[1], 0.0 + d[2]]]
-    for d in h['snap']
-        ours = push[ours, motion.snapped[0.0 + d[0], 0.0 + d[1]]]
-    numbers = _line[ours]
-    log['helpers: `numbers`']
-    for one in h['random']
-        seed_number = int[one['seed']]
-        r = motion.random_seeded[seed_number]
-        drawn = []
-        for call in one['calls']
-            r = motion.random_next[r, 0.0 + call[0], 0.0 + call[1], int[call[2]]]
-            drawn = push[drawn, r.value]
-        u = motion.random_seeded[seed_number]
-        for raw in one['raw']
-            u = motion.random_unit[u]
-            drawn = push[drawn, u.value]
-        randoms = _line[drawn]
-        log['seed `seed_number`: `randoms`']
 
 --- ---- held between frames ----
 
@@ -325,8 +91,8 @@ fn _kept[]
     shown = join[present, ' ']
     log['a presence turned: `shown`']
 
---- anime.js's scroll windows over a target 300 tall at 1200 in content
---- 4000 tall, seen through a container 800 tall, and AOS's lines
+--- scroll windows over a target 300 tall at 1200 in content
+--- 4000 tall, seen through a container 800 tall, and reveal lines
 fn _scrolled[]
     pairs = [['end start', 'start end'], ['bottom top', 'top bottom'], ['center center', 'top top'], ['end-=100 start', 'start+=50 end'], ['25% start', '75% end'], ['min start', 'max end'], ['100 start', '400 end']]
     words = slice[[''], 0, 0]
@@ -341,7 +107,7 @@ fn _scrolled[]
         line = motion.reveal_line[1500.0, 240.0, 900.0, placement, 120.0]
         lines = push[lines, '`line` `motion.revealed[400.0, 900.0, line]` `motion.revealed[900.0, 900.0, line]`']
     reveals = join[lines, ' ']
-    log['AOS lines: `reveals`']
+    log['reveal lines: `reveals`']
 
 --- a point along a motion path, the line drawn so far, and words split
 fn _paths_and_words[]
@@ -360,18 +126,7 @@ fn _paths_and_words[]
     split_characters = join[motion.characters_of['a spring’s bounce'], '|']
     log['words: `split_words`; characters: `split_characters`']
 
-j = _reference[]
-_easings[j]
-_anime_springs[j]
-_springs[j]
-_retargets[j]
-_staggers[j]
-_timelines[j]
-_timers[j]
-_keyframes[j]
-_inertias[j]
-_scrolls[j]
-_helpers[j]
+_easings[]
 _clocks[]
 _kept[]
 _scrolled[]

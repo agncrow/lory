@@ -1,5 +1,5 @@
 --- Kite's scanner charts: the look and the drawings of a VWAP scanner's
---- cards, on top of klinecharts' behaviour — a dark theme in teal and soft
+--- cards, on top of Kite's chart — a dark theme in teal and soft
 --- red, no price grid, dimmed axes, a hover that names only the symbol and
 --- the bar's span; the cumulative and the rolling VWAP over the candles,
 --- with a dashed band 6% above the rolling one; and a percentage ladder

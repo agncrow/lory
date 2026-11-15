@@ -1,4 +1,4 @@
---- Lory's charts (docs/lory-design.md, phase 3): lines, scatter, bars,
+--- Lory's charts: lines, scatter, bars,
 --- candles and volume, heatmaps, axes and a legend, panned with a drag
 --- and zoomed with the wheel or a pinch, over data of any length.
 ---

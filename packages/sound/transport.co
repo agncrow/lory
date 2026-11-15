@@ -1,6 +1,5 @@
---- The transport: a tempo's clock of ticks (192 a quarter note, as Tone
---- counts them) and the events scheduled on it, which fall when Tone's
---- Transport would fire them — once, repeated, a loop of so many
+--- The transport: a tempo's clock of ticks (192 a quarter note) and the
+--- events scheduled on it, which fall at their ticks — once, repeated, a loop of so many
 --- iterations, a sequence whose nested steps split a step, a part of timed
 --- notes looped by its own length, a pattern walking its values up, down
 --- or both ways — swung by a share of a subdivision, and looped between
@@ -12,8 +11,7 @@
 ---     transport.fired[tr, 0.0, 1.0]      (C4 at 0, E4 at 0.25, G4 at 0.375, B4 at 0.75)
 ---
 --- A sequence's steps are words in one text: a note's name, `.` a rest,
---- and `[ … ]` a step split evenly among what it holds (Tone's nested
---- arrays).
+--- and `[ … ]` a step split evenly among what it holds.
 
 use math
 use sound
@@ -63,7 +61,7 @@ fn in_meter[tr, signature]
 
 --- the transport swung: each off-beat of `subdivision` (`8n`) moved later
 --- by `amount` (0 to 1) of a third of two subdivisions, along a half sine
---- over each pair, as Tone swings it
+--- over each pair
 fn swung[tr, amount, subdivision]
     tr.swing = 0.0 + amount
     tr.swing_ticks = sound.ticks_of[subdivision, tr.tempo]
@@ -85,13 +83,13 @@ fn _added[tr, event]
     tr.events = push[tr.events, event]
     tr
 
---- an event firing once at `at` (Tone's `schedule`); in a looping
+--- an event firing once at `at`; in a looping
 --- transport it fires again each time the loop passes it
 fn once[tr, track, at, value]
     _added[tr, Event[track, _ticks[tr, at], 0.0, _forever[], [value], '']]
 
 --- an event firing every `interval` from `at`, for `duration` (time
---- notation; none, ``, for ever), as Tone's `scheduleRepeat`
+--- notation; none, ``, for ever)
 fn every[tr, track, interval, at, duration]
     from = _ticks[tr, at]
     until = _forever[]
@@ -99,7 +97,7 @@ fn every[tr, track, interval, at, duration]
         until = from + _ticks[tr, duration]
     _added[tr, Event[track, from, _ticks[tr, interval], until, [''], '']]
 
---- a loop (Tone's `Loop`): every `interval` from `at`, `iterations` times
+--- a loop: every `interval` from `at`, `iterations` times
 --- (0 for ever), at `rate` times its pace (2 fires twice as often)
 fn loop[tr, track, interval, at, iterations, rate]
     from = _ticks[tr, at]
@@ -122,7 +120,7 @@ fn note_at[at, value]
 --- `[ticks, place]` and the values in that order
 struct Laid [offsets, values]
 
---- a part's notes started at `start` ticks (Tone's `Part.start`): each a
+--- a part's notes started at `start` ticks: each a
 --- loop of the part's length where the part loops and the note lies within
 --- its loop, else fired once; notes before `offset` are skipped (looping,
 --- they come round on the next pass)
@@ -148,7 +146,7 @@ fn _parted[tr, track, laid, start, looped, loop_start, loop_end]
         i = i + 1
     tr
 
---- a part (Tone's `Part`): notes at their times within it, started at
+--- a part: notes at their times within it, started at
 --- `at`; looped, it plays again every `loop_end` (time notation, from its
 --- start), and a note at or past its end is not played
 fn part[tr, track, notes, at, looped, loop_end]
@@ -211,7 +209,7 @@ fn steps_in[steps]
     t = _tokens[steps]
     len[_elements[t, 0, len[t]]]
 
---- a sequence (Tone's `Sequence`): its steps each a `subdivision` long
+--- a sequence: its steps each a `subdivision` long
 --- (`8n`), a bracketed step split among what it holds, a `.` a rest,
 --- started at `at` and looping over its length
 fn sequence[tr, track, steps, subdivision, at]
@@ -220,7 +218,7 @@ fn sequence[tr, track, steps, subdivision, at]
     laid = _laid[t, 0, len[t], 0.0, each, Laid[slice[[0.0], 0, 0], slice[[''], 0, 0]]]
     _parted[tr, track, laid, _ticks[tr, at], true, 0.0, steps_in[steps] * each]
 
---- a pattern (Tone's `Pattern`): its values walked one each `interval`
+--- a pattern: its values walked one each `interval`
 --- from `at`, in the order its kind names: `up`, `down`, `upDown`,
 --- `downUp`, `alternateUp`, `alternateDown`, `random`, `randomOnce` or
 --- `randomWalk` (the random ones by a fixed seed, so each run is the same)
@@ -447,7 +445,7 @@ fn ticks_at[tr, seconds_in]
     pass[0] + (seconds_in - pass[2]) / _tick_seconds[tr]
 
 --- where the transport is `seconds` after it started, as bars, beats and
---- sixteenths (`1:2:0.5`), as Tone shows its position
+--- sixteenths (`1:2:0.5`)
 fn position[tr, seconds_in]
     sound.bars_beats[sound.seconds_of_ticks[ticks_at[tr, seconds_in], tr.tempo], tr.tempo]
 
@@ -459,7 +457,7 @@ fn progress[tr, seconds_in]
     (ticks_at[tr, seconds_in] - tr.loop_start) / (tr.loop_end - tr.loop_start)
 
 --- the next time after `seconds` that falls on a subdivision (`4n`) of
---- the transport's ticks, as Tone's `nextSubdivision` answers
+--- the transport's ticks
 fn next_subdivision[tr, seconds_in, subdivision]
     each = _ticks[tr, subdivision]
     ticks_now = ticks_at[tr, seconds_in]
@@ -484,7 +482,7 @@ fn due[c, tr, now_at]
 
 --- ---- tests ----
 
-test events_fall_where_tone_fires_them[]
+test events_fall_on_their_ticks[]
     tr = every[transport[120.0], 0, '4n', '0', '']
     f = fired[tr, 0.0, 1.1]
     len[f] eq 3

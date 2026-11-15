@@ -1,4 +1,4 @@
---- Sound made by the program: a keyboard of notes, a few of Tone's synths,
+--- Sound made by the program: a keyboard of notes, a few synths,
 --- an effect after them, a step sequencer on the transport, and a meter
 --- and a spectrum of what was last handed to the page, all drawn with
 --- Lory. A key pressed (by a mouse, a touch or a headset's ray) renders
@@ -31,10 +31,10 @@ fn rate[]
     22050.0
 
 fn instruments[]
-    ['Synth', 'FMSynth', 'AMSynth', 'MonoSynth', 'DuoSynth', 'PluckSynth', 'MembraneSynth']
+    ['synth', 'fm_synth', 'am_synth', 'mono_synth', 'duo_synth', 'pluck_synth', 'membrane_synth']
 
 fn effects[]
-    ['none', 'feedback_delay', 'chorus', 'jc_reverb', 'distortion', 'phaser', 'tremolo', 'bit_crusher']
+    ['none', 'feedback_delay', 'chorus', 'schroeder_reverb', 'distortion', 'phaser', 'tremolo', 'bit_crusher']
 
 --- the sequencer's rows, top to bottom: the notes each sounds
 fn row_notes[]
@@ -42,7 +42,7 @@ fn row_notes[]
 
 fn fresh[]
     grid = ['10001000', '00100010', '01000100', '10101010']
-    App['Synth', 'feedback_delay', -6.0, slice[[0], 0, 0], 0.0, grid, false, 0.0, transport.clock[0.2], sound.silence[rate[], 0.0], 0.0, analysis.meter[]]
+    App['synth', 'feedback_delay', -6.0, slice[[0], 0, 0], 0.0, grid, false, 0.0, transport.clock[0.2], sound.silence[rate[], 0.0], 0.0, analysis.meter[]]
 
 fn sequencer[]
     transport.every[transport.transport[120.0], 0, '8n', '0', '']

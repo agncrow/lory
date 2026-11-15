@@ -1,0 +1,258 @@
+--- List with Transitions: numbered rows, a new one put in at a random
+--- place, the list reset to 1 to 5 or shuffled, and a row taken out by
+--- its `x`. Over 500 milliseconds of `cubic-bezier(0.55, 0, 0.1, 1)`:
+--- a row put in fades in, unflattens from a hundredth of its height and
+--- slides 30 pixels left into place; a row taken out does the opposite,
+--- drawn where it stood while the rest close up; and each row whose place
+--- changed slides from its old place to its new one. Random numbers come
+--- from a generator seeded with 42 (common.co's), so a run can be played
+--- again; a change made while another is moving
+--- starts from where the rows now stand, the other's motion dropped.
+use lory
+use lory.gui
+use lory.motion
+use common
+
+--- a row taken out: its number and its place before
+struct Leaving [key, place]
+
+--- a row that changed place: its number and how far it moved (old place
+--- less new, CSS pixels)
+struct Moved [key, by]
+
+--- the rows, the next number, the random numbers, and the motion: when
+--- it began, the rows put in, the rows leaving and the rows moved
+struct Rows [items, next, random, began, entering, leaving, moved]
+
+fn _initial[]
+    [1, 2, 3, 4, 5]
+
+fn fresh[]
+    Rows[_initial[], 6, common.seeded[42], 0.0, slice[[0], 0, 0], slice[[Leaving[0, 0]], 0, 0], slice[[Moved[0, 0.0]], 0, 0]]
+
+fn _length[]
+    500.0
+
+fn _row_tall[]
+    30.0
+
+fn eased_at[s, t]
+    p = max[0.0, min[1.0, (t - s.began) / _length[]]]
+    motion.eased[motion.cubic_bezier[0.55, 0.0, 0.1, 1.0], p]
+
+fn _moving[s]
+    len[s.entering] gt 0 or len[s.leaving] gt 0 or len[s.moved] gt 0
+
+fn _still[s]
+    s.entering = slice[s.entering, 0, 0]
+    s.leaving = slice[s.leaving, 0, 0]
+    s.moved = slice[s.moved, 0, 0]
+    s
+
+--- the motion over once its time is
+fn ticked[s, c]
+    if _moving[s] and lory.time[c] - s.began gt _length[]
+        return _still[s]
+    s
+
+fn _place_in[xs, key]
+    i = 0
+    while i lt len[xs]
+        if xs[i] eq key
+            return i
+        i = i + 1
+    -1
+
+--- the rows changed to `after` at `t`: what was put in, taken out and
+--- moved, worked out from where the rows stood
+fn changed[s, after, t]
+    before = s.items
+    s = _still[s]
+    s.began = t
+    for k in after
+        was = _place_in[before, k]
+        if was lt 0
+            s.entering = push[s.entering, k]
+        else
+            later_at = _place_in[after, k]
+            if later_at ne was
+                s.moved = push[s.moved, Moved[k, float[was - later_at] * _row_tall[]]]
+    i = 0
+    for k in before
+        if _place_in[after, k] lt 0
+            s.leaving = push[s.leaving, Leaving[k, i]]
+        i = i + 1
+    s.items = after
+    s
+
+--- a new number put in at a random place, from 0 to the length
+fn inserted[s, t]
+    r = common.drawn_after[s.random]
+    s.random = r
+    at = int[common.rounded[r.value * float[len[s.items]]]]
+    after = slice[s.items, 0, at]
+    after = push[after, s.next]
+    for k in slice[s.items, at, len[s.items]]
+        after = push[after, k]
+    s.next = s.next + 1
+    changed[s, after, t]
+
+fn reset[s, t]
+    s.next = len[_initial[]] + 1
+    changed[s, _initial[], t]
+
+fn shuffled[s, t]
+    got = common.shuffled[s.items, s.random]
+    s.random = got.random
+    changed[s, got.items, t]
+
+fn removed[s, key, t]
+    i = _place_in[s.items, key]
+    if i lt 0
+        return s
+    after = slice[s.items, 0, i]
+    for k in slice[s.items, i + 1, len[s.items]]
+        after = push[after, k]
+    changed[s, after, t]
+
+--- ---- how each row stands at `t` ----
+
+--- a row's opacity, its height's share and how far it is slid right
+struct Look [alpha, tall, slid, lift]
+
+fn _entering[e]
+    Look[e, 0.01 + 0.99 * e, 30.0 * (1.0 - e), 0.0]
+
+fn _leaving[e]
+    Look[1.0 - e, 1.0 - 0.99 * e, 30.0 * e, 0.0]
+
+fn _moved_by[s, key]
+    for m in s.moved
+        if m.key eq key
+            return m.by
+    0.0
+
+fn look_of[s, key, t]
+    e = eased_at[s, t]
+    if key in s.entering
+        return _entering[e]
+    Look[1.0, 1.0, 0.0, _moved_by[s, key] * (1.0 - e)]
+
+--- a number to six places, as the tests read a motion's
+fn _six[x]
+    common.number_text[common.rounded[x * 1000000.0] / 1000000.0 + 0.0]
+
+fn _motion_words[l]
+    '`_six[l.alpha]` `_six[l.tall]` `_six[l.slid]`'
+
+--- ---- the list drawn ----
+
+fn _button_left[]
+    30.0
+
+fn _button_wide[]
+    22.0
+
+--- where a press takes out the row of that number, in a list whose box
+--- is given (the middle of its `x`)
+fn remove_spot[s, key, box]
+    i = _place_in[s.items, key]
+    [box[0] + _button_left[] + _button_wide[] / 2.0, box[1] + _row_tall[] * float[i] + _row_tall[] / 2.0]
+
+fn _row[c, x, y, w, key, l, k]
+    h = _row_tall[] * k
+    tall = h * l.tall
+    top = y + l.lift * k + (h - tall) / 2.0
+    left = x + l.slid * k
+    c = lory.rect[c, left, top, w, tall, lory.fade[lory.hex['#666666'], l.alpha]]
+    c = lory.rect[c, left + k, top + k * l.tall, w - 2.0 * k, tall - 2.0 * k * l.tall, lory.fade[lory.hex['#f3f3f3'], l.alpha]]
+    size = 15.0 * k * l.tall
+    c = lory.text[c, left + 6.0 * k, top + tall / 2.0 - size * 0.6, '`key`', size, lory.fade[lory.hex['#213547'], l.alpha]]
+    bx = left + _button_left[] * k
+    bh = 20.0 * k * l.tall
+    by = top + (tall - bh) / 2.0
+    c = lory.round_rect[c, bx, by, _button_wide[] * k, bh, 3.0 * k, lory.fade[lory.hex['#767676'], l.alpha]]
+    c = lory.round_rect[c, bx + k, by + k * l.tall, _button_wide[] * k - 2.0 * k, bh - 2.0 * k * l.tall, 2.0 * k, lory.fade[lory.hex['#efefef'], l.alpha]]
+    lory.text[c, bx + 7.0 * k, by + bh / 2.0 - size * 0.6, 'x', size, lory.fade[lory.hex['#000000'], l.alpha]]
+
+--- the rows, drawn from what the gallery holds for the example; a press
+--- on a row's `x` tells `remove` with its number
+fn _list_painter[d]
+    s = recall['apps.list-transition', fresh[]]
+    t = lory.time[d.c]
+    k = d.s
+    e = eased_at[s, t]
+    i = 0
+    for key in s.items
+        d.c = _row[d.c, d.x, d.y + _row_tall[] * float[i] * k, d.w, key, look_of[s, key, t], k]
+        i = i + 1
+    for gone in s.leaving
+        d.c = _row[d.c, d.x, d.y + _row_tall[] * float[gone.place] * k, d.w, gone.key, _leaving[e], k]
+    if d.pressed
+        x = d.px / k
+        y = d.py / k
+        row = floor[y / _row_tall[]]
+        if x gte _button_left[] and x lt _button_left[] + _button_wide[] and row gte 0 and row lt len[s.items]
+            d = gui.tell[d, 'remove', '`s.items[row]`', 0.0]
+    d
+
+fn controls[s, c, room]
+    t = lory.time[c]
+    buttons = gui.row[[gui.button['list-transition:insert', 'Insert at random index'], gui.button['list-transition:reset', 'Reset'], gui.button['list-transition:shuffle', 'Shuffle']], gap = 6.0]
+    rows = len[s.items]
+    for gone in s.leaving
+        rows = max[rows, gone.place + 1]
+    list = gui.drawn['list-transition:list', 0.0, min[room.wide, 480.0], _row_tall[] * float[max[rows, 1]], _list_painter]
+    --- (what the tests read: the rows, and the first row entering, leaving
+    --- and moving, as the page orders them)
+    words = slice[[''], 0, 0]
+    for key in s.items
+        words = push[words, '`key`']
+    list.opts['items'] = join[words, ' ']
+    list.opts['enter'] = ''
+    list.opts['leave'] = ''
+    list.opts['move'] = ''
+    if len[s.entering] gt 0
+        for key in s.items
+            if key in s.entering and list.opts['enter'] eq ''
+                list.opts['enter'] = _motion_words[look_of[s, key, t]]
+    if len[s.leaving] gt 0
+        list.opts['leave'] = _motion_words[_leaving[eased_at[s, t]]]
+    for key in s.items
+        if _moved_by[s, key] ne 0.0 and list.opts['move'] eq ''
+            list.opts['move'] = '`key` `_six[look_of[s, key, t].lift]`'
+    gui.column[[buttons, list], gap = 16.0]
+
+fn handled[s, shown, c]
+    t = lory.time[c]
+    for ev in shown.events
+        if ev.id eq 'list-transition:insert' and ev.act eq 'press'
+            s = inserted[s, t]
+        if ev.id eq 'list-transition:reset' and ev.act eq 'press'
+            s = reset[s, t]
+        if ev.id eq 'list-transition:shuffle' and ev.act eq 'press'
+            s = shuffled[s, t]
+        if ev.id eq 'list-transition:list' and ev.act eq 'remove'
+            s = removed[s, int[ev.words], t]
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    list = common.node_by[tree, 'list-transition:list']
+    for key in ['items', 'enter', 'leave', 'move']
+        out[key] = ''
+        if key in list.opts
+            out[key] = list.opts[key]
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]
+
+test the_motion_eases_as_the_example_s_curve_does[]
+    s = Rows[_initial[], 6, common.seeded[42], 1000.0, [6], slice[[Leaving[0, 0]], 0, 0], [Moved[1, -30.0]]]
+    _motion_words[look_of[s, 6, 1125.0]] eq '0.135374 0.14402 25.938792'
+    _six[look_of[s, 1, 1250.0].lift] eq '-6.117091'

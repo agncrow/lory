@@ -1,7 +1,7 @@
 --- What lory.datatable makes of fixed rows, written out, to diff the
 --- interpreter's run against the compiled program's: sorted, filtered,
 --- ranked, grouped, expanded, selected, pinned and paged rows, columns and
---- their headers, facets, and a Grid.js grid's pages.
+--- their headers, facets, and a simple grid's pages.
 use lory.datatable as dt
 
 fn _syllable[n]
@@ -219,7 +219,7 @@ for id in ['team', 'age', 'code']
     reach = dt.faceted_range[faceted, core, id]
     log['facets `id`: `join[found, \' \']` range `reach.found` `dt.number_text[reach.least]` `dt.number_text[reach.greatest]`']
 
---- a Grid.js grid
+--- a simple grid
 cells = slice[[[dt.missing[]]], 0, 0]
 for r in _people[45]
     cells = push[cells, [r.cells['first'], r.cells['last'], r.cells['code'], r.cells['score']]]

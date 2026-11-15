@@ -13,7 +13,7 @@ use lory.drag
 struct App [tab, lists, deck, mail, compare, done]
 
 fn fresh[]
-    lists = map['todo' = ['Write the brief', 'Draw the lists', 'Test the drop', 'Ship it'], 'doing' = ['Read SortableJS'], 'done' = _texts[], 'palette' = ['Red', 'Green', 'Blue'], 'canvas' = ['Ink'], 'board' = ['1', '2', '3', '4', '5', '6', '7', '8', '9'], 'picked' = ['Apples', 'Pears', 'Plums', 'Figs', 'Kiwis']]
+    lists = map['todo' = ['Write the brief', 'Draw the lists', 'Test the drop', 'Ship it'], 'doing' = ['Read the notes'], 'done' = _texts[], 'palette' = ['Red', 'Green', 'Blue'], 'canvas' = ['Ink'], 'board' = ['1', '2', '3', '4', '5', '6', '7', '8', '9'], 'picked' = ['Apples', 'Pears', 'Plums', 'Figs', 'Kiwis']]
     App['Lists', lists, ['Ace', 'King', 'Queen', 'Jack'], ['From Ada', 'From Grace', 'From Alan'], 0.5, '']
 
 fn _texts[]
@@ -81,7 +81,7 @@ fn free_tab[a]
     ball = gui.sized[gui.panel[[gui.label['Throw me'], gui.space[30.0]]], 120.0]
     puck = gui.sized[gui.panel[[gui.label['Back home'], gui.space[30.0]]], 120.0]
     rail = gui.sized[gui.panel[[gui.label['Along x or y'], gui.space[30.0]]], 120.0]
-    gui.column[[gui.note['Dragged and let go, each goes on at its speed, as Motion throws a drag.'], drag.free['ball', ball, left = -40.0, right = 500.0, top = -20.0, bottom = 160.0], drag.free['puck', puck, snap = true], drag.free['rail', rail, lock = true]], gap = 24.0]
+    gui.column[[gui.note['Dragged and let go, each goes on at its speed.'], drag.free['ball', ball, left = -40.0, right = 500.0, top = -20.0, bottom = 160.0], drag.free['puck', puck, snap = true], drag.free['rail', rail, lock = true]], gap = 24.0]
 
 fn look_tab[a]
     photo = gui.sized[gui.panel[[gui.heading['Pinch me'], gui.note['Two fingers, or Ctrl and the wheel.'], gui.space[160.0]]], 300.0]
@@ -175,7 +175,7 @@ test a_task_dragged_into_doing_lands_there[]
     remember['app', fresh[]]
     first = frame_of[0, '[]']
     from = first.boxes['Write the brief']
-    to = first.boxes['Read SortableJS']
+    to = first.boxes['Read the notes']
     x = from[0] + 40.0
     y = from[1] + 10.0
     frame_of[50, pointer['down', x, y]]
@@ -184,7 +184,7 @@ test a_task_dragged_into_doing_lands_there[]
     frame_of[200, pointer['move', to[0] + 40.0, to[1] + to[3] - 4.0]]
     frame_of[250, pointer['up', to[0] + 40.0, to[1] + to[3] - 4.0]]
     a = recall['app', fresh[]]
-    a.lists['doing'] eq ['Read SortableJS', 'Write the brief']
+    a.lists['doing'] eq ['Read the notes', 'Write the brief']
     a.lists['todo'] eq ['Draw the lists', 'Test the drop', 'Ship it']
 
 --- each tab draws, its drags in place

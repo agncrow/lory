@@ -1,0 +1,205 @@
+--- The small apps driven by a script: each app started afresh, then each
+--- step of its script (steps.json) done at its time by frames as a page
+--- hands them (a press is a pointer's press and release on the control,
+--- typing is a press on the field, Ctrl+A and the text, a choice is the
+--- select opened and its choice pressed), and one frame more at the same
+--- time, after which the tests read what the app shows. Also a headset's
+--- frames: the right hand's ray aimed and pressed, the stick pushed. Used
+--- by tests/apps/headset.co and tests/modes/apps.co, run from the
+--- repository's root.
+use lory
+use lory.gui
+use examples.apps.gallery
+use examples.apps.common
+use examples.apps.transitions
+
+--- the script: the day the apps start on, their order, and each app's
+--- steps
+fn steps[]
+    json[read['tests/apps/steps.json']]
+
+--- a frame's size: room beside the menu for the Circle Drawer's canvas
+fn wide[]
+    1100
+
+fn tall[]
+    800
+
+fn _frame_text[t, given, said]
+    w = wide[]
+    h = tall[]
+    '{"t": `t`, "width": `w`, "height": `h`, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": `w`, "height": `h`, "projection": [], "camera": []}], "input": `given`, "pointers": [], "controllers": [], "said": `said`}'
+
+--- one frame of the gallery at `t` with the input and answers given (JSON
+--- lists)
+fn frame[t, given, said]
+    gallery.framed[json[_frame_text[t, given, said]]]
+
+fn idle[t]
+    frame[t, '[]', '[]']
+
+--- a mouse's press and release at a place, with its button and Ctrl
+fn pressed_at[x, y, button, ctrl]
+    held = 'false'
+    if ctrl
+        held = 'true'
+    '{"type": "down", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": `button`, "ctrl": `held`}, {"type": "up", "device": "mouse", "id": 1, "x": `x`, "y": `y`, "button": `button`, "ctrl": `held`}'
+
+fn press_at[x, y]
+    '[`pressed_at[x, y, 0, false]`]'
+
+--- the middle of a box
+fn mid_x[b]
+    b[0] + b[2] / 2.0
+
+fn mid_y[b]
+    b[1] + b[3] / 2.0
+
+--- what the step names, or ''
+fn _field[step, key]
+    if key in step
+        return '`step[key]`'
+    ''
+
+--- the control a step names: the example's name, what it acts on, and
+--- which of them
+fn target_of[slug, step]
+    on = _field[step, 'on']
+    of = _field[step, 'of']
+    if of ne ''
+        return '`slug`:`on`:`of`'
+    '`slug`:`on`'
+
+--- the place of a choice in a list of choices, or -1
+fn _place_of[items, words]
+    i = 0
+    while i lt len[items]
+        if items[i] eq words
+            return i
+        i = i + 1
+    -1
+
+--- the frames that do the step, ending with the shown frame after them
+--- (the run's last frame is where its controls stand)
+fn performed[slug, step, last]
+    t = 0.0 + step['at']
+    act = _field[step, 'do']
+    id = target_of[slug, step]
+    boxes = last.boxes
+    if act eq 'press' or act eq 'check'
+        if slug eq 'list-transition' and starts[id, 'list-transition:remove:']
+            --- (a row's `x` is drawn by the list's painter: pressed where
+            --- it stands)
+            rows = recall['apps.list-transition', transitions.fresh[]]
+            key = int[slice[id, 23, len[id]]]
+            spot = transitions.remove_spot[rows, key, common.box_of[last, 'list-transition:list']]
+            return frame[t, press_at[spot[0], spot[1]], '[]']
+        b = common.box_of[last, id]
+        if slug eq 'cells' and starts[id, 'cells:cell:']
+            --- (a cell is pressed near its left, where its words begin)
+            return frame[t, press_at[b[0] + 6.0, mid_y[b]], '[]']
+        return frame[t, press_at[mid_x[b], mid_y[b]], '[]']
+    if act eq 'fill'
+        b = common.box_of[last, id]
+        words = _field[step, 'text']
+        typed = '{"type": "text", "text": `common.json_quoted[words]`}'
+        if words eq ''
+            typed = '{"type": "key", "key": "Backspace", "code": "Backspace"}'
+        given = '[`pressed_at[b[0] + b[2] - 4.0, b[1] + 12.0, 0, false]`, {"type": "key", "key": "a", "code": "KeyA", "ctrl": true}, `typed`]'
+        return frame[t, given, '[]']
+    if act eq 'commit'
+        return frame[t, '[{"type": "key", "key": "Enter", "code": "Enter"}]', '[]']
+    if act eq 'slide'
+        n = common.node_by[gallery.tree_now[last.canvas], id]
+        b = common.box_of[last, id]
+        v = 0.0 + step['value']
+        x = b[0] + 8.0 + (b[2] - 16.0) * (v - n.lo) / (n.hi - n.lo)
+        return frame[t, press_at[x, mid_y[b]], '[]']
+    if act eq 'choose'
+        tree = gallery.tree_now[last.canvas]
+        label = _field[step, 'label']
+        value = _field[step, 'value']
+        whole = '`id`:`value`'
+        if common.holds[tree, whole]
+            b = common.box_of[last, whole]
+            return frame[t, press_at[mid_x[b], mid_y[b]], '[]']
+        n = common.node_by[tree, id]
+        b = common.box_of[last, id]
+        i = _place_of[n.items, label]
+        if n.tag eq 'radio'
+            return frame[t, press_at[b[0] + 8.0, b[1] + 30.0 * i + 12.0], '[]']
+        --- (a select: opened, its choices laid in the next frame, the one
+        --- named pressed)
+        frame[t, press_at[mid_x[b], mid_y[b]], '[]']
+        laid = idle[t]
+        list = common.box_of[laid, 'choices:`id`']
+        return frame[t, press_at[list[0] + 20.0, list[1] + 4.0 + 32.0 * i + 16.0], '[]']
+    if act eq 'pick'
+        value = _field[step, 'value']
+        b = common.box_of[last, '`id`:`value`']
+        adds = step['add'] eq true
+        return frame[t, '[`pressed_at[mid_x[b], mid_y[b], 0, adds]`]', '[]']
+    if act eq 'double'
+        b = common.box_of[last, id]
+        x = b[0] + 6.0
+        y = mid_y[b]
+        frame[t, press_at[x, y], '[]']
+        return frame[t, '[`pressed_at[x, y, 0, false]`, {"type": "double", "id": "dbl", "device": "mouse", "x": `x`, "y": `y`, "button": 0}]', '[]']
+    if act eq 'click' or act eq 'context'
+        b = common.box_of[last, '`slug`:canvas']
+        button = 0
+        if act eq 'context'
+            button = 2
+        x = b[0] + step['x']
+        y = b[1] + step['y']
+        return frame[t, '[`pressed_at[x, y, button, false]`]', '[]']
+    if act eq 'dismiss'
+        b = common.box_of[last, '`slug`:alert:ok']
+        return frame[t, press_at[mid_x[b], mid_y[b]], '[]']
+    idle[t]
+
+--- the example started afresh at time 0 on the script's day, its
+--- controls laid out
+fn started[slug]
+    gui.unfocus[]
+    day = steps[]['today']
+    gallery.dated['`day`']
+    --- (a press on nothing: what another run left focused lets go)
+    first = frame[0, press_at[1090.0, 790.0], '[]']
+    gallery.start[slug, first.canvas]
+    idle[0]
+
+--- ---- in a headset ----
+
+--- a headset's frame at `t`: the right hand's ray aimed at the point
+--- (x, y) of the page (1000 by 560 on a panel 2 m wide, 1.5 m ahead), its
+--- stick pushed `forward` (1: toward the reader), with the input given
+fn headset_frame[t, given, x, y, forward]
+    unit = '[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]'
+    dx = x * 0.002 - 1.0
+    dy = (1.8 - y * 0.002) - 1.25
+    text = '{"t": `t`, "width": 1000, "height": 560, "ratio": 1, "xr": true, "views": [{"eye": "left", "x": 0, "y": 0, "width": 1000, "height": 560, "projection": `unit`, "camera": `unit`}], "input": `given`, "pointers": [], "controllers": [{"hand": "right", "origin": [0, 1.25, 0], "direction": [`dx`, `dy`, -1.5], "matrix": [], "buttons": [0, 0, 0, 0, 0, 0], "axes": [0, 0, 0, `forward`]}], "said": []}'
+    shown = gallery.framed[json[text]]
+    lory.end[shown.canvas]
+    shown
+
+--- the trigger pulled and let go where the ray rests
+fn ray_press[]
+    '[{"type": "down", "device": "ray", "id": 9, "x": 0, "y": 0, "button": 0}, {"type": "up", "device": "ray", "id": 9, "x": 0, "y": 0, "button": 0}]'
+
+--- the ray resting on the middle of a box, idle
+fn aimed_at[t, b]
+    headset_frame[t, '[]', mid_x[b], mid_y[b], 0]
+
+--- the ray's press on the middle of a box
+fn pressed_by_ray[t, b]
+    headset_frame[t, ray_press[], mid_x[b], mid_y[b], 0]
+
+--- the example started afresh in a headset, its controls laid out
+fn started_in_headset[slug]
+    gui.unfocus[]
+    day = steps[]['today']
+    gallery.dated['`day`']
+    first = headset_frame[0, '[]', 995.0, 555.0, 0]
+    gallery.start[slug, first.canvas]
+    headset_frame[10, '[]', 995.0, 555.0, 0]

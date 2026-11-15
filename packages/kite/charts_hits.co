@@ -1,12 +1,9 @@
---- What a pointer finds on a laid chart, as Chart.js finds it: the marks
+--- What a pointer finds on a laid chart: the marks
 --- each interaction mode picks at a point (index, dataset, point,
 --- nearest, x, y; only those under the pointer or the nearest; measured
 --- along x, along y, both, or round a centre), the tooltip that tells of
 --- them (its title and lines, its size, where it stands and which way its
 --- caret points), and what a click on a legend item hides or shows.
----
---- These are Chart.js 4.5.1's interaction modes, tooltip and legend
---- rules, read from it and written anew (see charts_model.co).
 use math
 use lory
 use charts_model
@@ -218,7 +215,7 @@ fn _candidates[ch, laid, ps, layers, d, axis, x, y, intersect]
 fn _cartesian[form]
     form eq 'bar' or form eq 'line' or form eq 'scatter' or form eq 'bubble'
 
---- whether a dataset's marks share one style (Chart.js then finds them
+--- whether a dataset's marks share one style (they are then found
 --- by halving): none whose colours or radii differ value by value
 fn _shared[s, form]
     form ne 'bubble' and len[s.fills] lte 1 and len[s.edges] lte 1 and len[s.hover_fills] lte 1 and len[s.hover_edges] lte 1
@@ -467,7 +464,7 @@ fn _line_of[ch, laid, ps, h, mode]
         return '`name`: `lv[1]`'
     lv[1]
 
---- a mark's label and value as Chart.js writes them in a tooltip
+--- a mark's label and value as a tooltip writes them
 fn label_and_value[ch, laid, ps, d, j]
     p = ps[d]
     form = p.form
@@ -606,7 +603,7 @@ fn _box_at[t, chart_w, chart_h, at, width, height, x_align, y_align]
 
 --- the chart with the legend's `k`th item clicked: a dataset hidden or
 --- shown, or (a pie's, a doughnut's, a polar area's) a value; laid again
---- as Chart.js lays a chart a second time
+--- as a chart is laid a second time
 fn toggled[ch0, laid, k]
     ch = ch0
     ch.laid_before = true

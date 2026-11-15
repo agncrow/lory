@@ -1,15 +1,14 @@
---- Filters: the page's BiquadFilterNode, of each of its eight kinds
+--- Filters: the biquad, of each of its eight kinds
 --- (`lowpass`, `highpass`, `bandpass`, `lowshelf`, `highshelf`, `notch`,
---- `allpass`, `peaking`), its coefficients the Audio EQ Cookbook's as the
---- Web Audio spec states them, run sample by sample as the page runs
---- them (its frequency may change every sample, as an envelope or an LFO
---- sweeps it); Tone's Filter, a cascade of one to four of them (rolloff
---- -12, -24, -48 or -96 dB an octave), and its frequency response at
---- Tone's own frequencies; Tone's one-pole filter, its feedback comb (the
---- worklet's delay, a sample longer than the delay time's whole samples),
---- its lowpass comb (a one-pole before a comb), its three-band split and
---- EQ3; and convolution, normalised as the page's ConvolverNode
---- normalises an impulse.
+--- `allpass`, `peaking`), its coefficients the standard ones, run
+--- sample by sample as the page runs them (its frequency may change every sample, as an envelope or an LFO
+--- sweeps it); a filter, a cascade of one to four of them (rolloff
+--- -12, -24, -48 or -96 dB an octave), and its frequency response;
+--- a one-pole filter, a feedback comb (its delay a sample longer than
+--- the delay time's whole samples), a lowpass comb (a one-pole before a
+--- comb), a three-band split and a three-band equaliser; and
+--- convolution, an impulse normalised as the page's convolver
+--- normalises it.
 ---
 ---     f = filter.filter['lowpass', 800.0]
 ---     ys = filter.filtered[f, xs, 22050.0]
@@ -21,7 +20,7 @@ use sound
 --- (dB; the shelves and peaking use it) and detune (cents)
 struct Biquad [type, frequency, q, gain, detune]
 
---- Tone's Filter: a biquad's settings and how steeply it rolls off
+--- a filter: a biquad's settings and how steeply it rolls off
 --- (-12, -24, -48 or -96 dB an octave: one, two, three or four biquads)
 struct Filter [type, frequency, q, gain, detune, rolloff]
 
@@ -35,8 +34,7 @@ struct Coefficients [b0, b1, b2, a1, a2]
 fn biquad[kind, frequency]
     Biquad[kind, 0.0 + frequency, 1.0, 0.0, 0.0]
 
---- the coefficients of a biquad at a rate, as the Web Audio spec computes
---- them: Q in decibels for the lowpass and highpass, a plain Q for the
+--- the coefficients of a biquad at a rate: Q in decibels for the lowpass and highpass, a plain Q for the
 --- rest, the shelves' slope 1
 fn coefficients[b, rate]
     return _coefficients_at[b.type, b.frequency * 2.0 ^ (b.detune / 1200.0), b.q, b.gain, rate]
@@ -208,9 +206,9 @@ fn swept_biquad[b, xs, freqs, rate]
 fn biquad_filtered[b, xs, rate]
     _run[coefficients[b, rate], xs]
 
---- ---- Tone's Filter ----
+--- ---- filters ----
 
---- Tone's Filter of a kind at a frequency: Q 1, no gain, -12 dB an octave
+--- a filter of a kind at a frequency: Q 1, no gain, -12 dB an octave
 fn filter[kind, frequency]
     Filter[kind, 0.0 + frequency, 1.0, 0.0, 0.0, -12]
 
@@ -262,15 +260,14 @@ fn swept[f, xs, freqs, rate]
         k = k + 1
     out
 
---- the frequencies Tone reads a filter's response at: `n` of them from
+--- the frequencies a filter's response is read at: `n` of them from
 --- 20 Hz to 20 kHz, closer together low down (the square of each place)
-fn tone_frequencies[n]
+fn response_frequencies[n]
     p = (0.0 + range[n]) / n
     p .* p * (20000.0 - 20.0) + 20.0
 
---- a filter's gain at each frequency (its biquads' gains multiplied), as
---- Tone's `getFrequencyResponse` answers; above the rate's highest
---- frequency none (NaN), as the page answers
+--- a filter's gain at each frequency (its biquads' gains multiplied); above
+--- the rate's highest frequency none (NaN)
 fn frequency_response[f, rate, freqs]
     b = _biquad_of[f]
     out = zeros[len[freqs]]
@@ -289,9 +286,9 @@ fn impulse_response[f, rate, n]
     click[0] = 1.0
     filtered[f, click, rate]
 
---- ---- Tone's primitive filters ----
+--- ---- primitive filters ----
 
---- samples through Tone's one-pole filter (`lowpass` or `highpass`) at a
+--- samples through a one-pole filter (`lowpass` or `highpass`) at a
 --- frequency: each output a share of the input and the rest the last
 --- output (the share 2π·frequency/rate)
 fn one_pole[kind, frequency, xs, rate]
@@ -325,9 +322,9 @@ fn single[x]
         return 0.0 - kept
     kept
 
---- samples through Tone's feedback comb: each heard `delay` seconds later
+--- samples through a feedback comb: each heard `delay` seconds later
 --- (a sample more than the whole samples in the delay as the page keeps
---- it, as Tone's worklet reads its line), fed back `resonance` (0 to 1)
+--- it), fed back `resonance` (0 to 1)
 --- each time round
 fn comb[xs, rate, delay, resonance]
     d = int[floor[single[delay] * rate]] + 1
@@ -345,12 +342,12 @@ fn comb[xs, rate, delay, resonance]
         a = b
     out
 
---- samples through Tone's lowpass comb: a one-pole lowpass at `dampening`
+--- samples through a lowpass comb: a one-pole lowpass at `dampening`
 --- Hz, then a feedback comb
 fn lowpass_comb[xs, rate, delay, resonance, dampening]
     comb[one_pole['lowpass', dampening, xs, rate], rate, delay, resonance]
 
---- a sound split in three bands as Tone's MultibandSplit splits it: below
+--- a sound split in three bands: below
 --- `low_frequency` (a lowpass), between (a highpass then a lowpass), and
 --- above `high_frequency` (a highpass), each -12 dB an octave of Q `q`
 fn bands[xs, rate, low_frequency, high_frequency, q]
@@ -359,7 +356,7 @@ fn bands[xs, rate, low_frequency, high_frequency, q]
     high = filtered[with_q[filter['highpass', high_frequency], q], xs, rate]
     [low, mid, high]
 
---- a sound through Tone's EQ3: its three bands (split at 400 and 2500 Hz
+--- a sound through a three-band equaliser: its three bands (split at 400 and 2500 Hz
 --- by default) each raised or cut by decibels, and summed
 fn equalized[xs, rate, low, mid, high, low_frequency, high_frequency]
     b = bands[xs, rate, low_frequency, high_frequency, 1.0]
@@ -387,7 +384,7 @@ fn convolved[a, b]
     im = fa[0] .* fb[1] + fa[1] .* fb[0]
     slice[ifft[re, im], 0, n]
 
---- the gain the page's ConvolverNode scales an impulse response by (of
+--- the gain the page's convolver scales an impulse response by (of
 --- `channels` channels, all their samples in `heard`): one over its RMS
 --- power, times -58 dB, times 44100 over its rate
 fn convolver_scale[heard, channels, rate]
@@ -430,7 +427,7 @@ test the_impulse_and_the_response_agree[]
     same = swept[f, concat[[1.0], zeros[63]], zeros[64] + 2000.0, 16000.0]
     abs[same[5] - h[5]] lt 0.000000001
 
-test the_primitives_are_tones[]
+test the_comb_one_pole_convolution_and_equaliser_run[]
     click = concat[[1.0], zeros[9]]
     c = comb[click, 10.0, 0.2, 0.5]
     c eq [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.25]

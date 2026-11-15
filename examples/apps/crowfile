@@ -1,0 +1,2 @@
+name = 'lory_apps'
+deps = map[lory = '../../packages/lory']

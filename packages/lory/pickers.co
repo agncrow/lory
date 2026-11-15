@@ -1,9 +1,9 @@
---- Lory's pickers (docs/components/pickers.md): a date in a field with a
---- calendar under it; a range of dates, several dates, a week, a month, a
---- quarter or a year (and ranges of them); a time from a list or typed; a
---- date and a time; each one inline instead, without its field. They
---- follow react-datepicker 9.1.0: its keys, the days it lets be chosen,
---- the order a range is chosen in, its list of times.
+--- Lory's pickers: a date in a field with a calendar under it; a range
+--- of dates, several dates, a week, a month, a quarter or a year (and
+--- ranges of them); a time from a list or typed; a date and a time; each
+--- one inline instead, without its field. Below: their keys, the days
+--- they let be chosen, the order a range is chosen in, their list of
+--- times.
 ---
 --- The program holds what is chosen, a list of moments (none; one day;
 --- a range's first day and then its last; many days): a day is a moment
@@ -122,7 +122,7 @@ fn localized[p, name]
     p.loc = calendar.locale[name]
     p
 
---- the picker's clock and today read in a zone (an IANA name, an offset
+--- the picker's clock and today read in a zone (a zone's name, an offset
 --- or UTC)
 fn zoned[p, zone]
     p.zone = zone
@@ -177,9 +177,8 @@ fn hinted[p, words]
     p
 
 --- the picker's range swapped where its second day is before its first
---- (react-datepicker's `swapRange`), its calendar always six weeks tall
---- (`fixedHeight`), and its calendar kept open after a choice
---- (`shouldCloseOnSelect` false)
+--- (`swapping`), its calendar always six weeks tall (`six_weeks`), and
+--- its calendar kept open after a choice (`kept_open`)
 fn swapping[p]
     p.swap = true
     p
@@ -193,8 +192,7 @@ fn kept_open[p]
     p
 
 --- the picker reading words typed only where the pattern writes them so
---- for the moment they read (react-datepicker's `strictParsing`): held
---- strictly, `3/5/2024` is no day of `MM/dd/yyyy`, and `03/05/24` is not
+--- for the moment they read: held strictly, `3/5/2024` is no day of `MM/dd/yyyy`, and `03/05/24` is not
 --- the year 24
 fn strict[p]
     p.strict = true
@@ -376,8 +374,7 @@ fn _period_last[p, t]
 fn _years_paged[]
     12
 
---- the first and last years of the page a year is on, as react-datepicker
---- pages them: the page ends on a multiple of twelve, 2017 to 2028 holding
+--- the first and last years of the page a year is on: the page ends on a multiple of twelve, 2017 to 2028 holding
 --- 2024
 fn years_page[y]
     n = _years_paged[]
@@ -396,8 +393,7 @@ fn _page_first[p, t]
         return calendar.day[years_page[t.year][0], 1, 1]
     calendar.start_of_month[t]
 
---- whether a month, a quarter or a year may not be chosen, as
---- react-datepicker decides it: outside the bounds, holding a day left
+--- whether a month, a quarter or a year may not be chosen: outside the bounds, holding a day left
 --- out, holding none of the days only allowed, or its first day not kept
 fn period_off[r, first, last]
     if last lt r.earliest or first gt r.latest
@@ -430,7 +426,7 @@ fn _off[p, t]
 --- what the picker's field shows for what is chosen: the pattern's words
 --- for one, a range's two parted by ` - ` (the first alone followed by
 --- it), and of several days the first two parted by a comma, or the first
---- and how many more (`03/05/2024 (+2)`), as react-datepicker writes them
+--- and how many more (`03/05/2024 (+2)`)
 fn written[p, given]
     chosen = calendar.plain_days[given]
     n = len[chosen]
@@ -468,8 +464,8 @@ fn _not_read[]
 --- what words typed into the field choose: nothing where they are
 --- empty; else the moment, or a range's two parted by ` - `, they write by
 --- the pattern, where each may be chosen (`fits` false where they write
---- none); what the pattern leaves out is the reference's
-fn read_words[p, words, reference]
+--- none); what the pattern leaves out is the base moment's
+fn read_words[p, words, base]
     w = trim[words]
     if w eq ''
         return Read[true, calendar.no_days[]]
@@ -481,25 +477,25 @@ fn read_words[p, words, reference]
             return _not_read[]
         out = calendar.no_days[]
         for part in parts
-            got = _read_one[p, part, reference]
+            got = _read_one[p, part, base]
             if len[got] eq 0
                 return _not_read[]
             out = push[out, got[0]]
         if len[out] eq 2 and out[1] lt out[0]
             return _not_read[]
         return Read[true, out]
-    got = _read_one[p, w, reference]
+    got = _read_one[p, w, base]
     if len[got] eq 0
         return _not_read[]
     Read[true, got]
 
 --- the moment words write by the picker's pattern, as a list of one (none
 --- where they write none, or one that may not be chosen)
-fn _read_one[p, words, reference]
+fn _read_one[p, words, base]
     zone = 'UTC'
     if _clocked[p]
         zone = p.zone
-    t = calendar.parse[words, p.format, p.loc, reference, zone]
+    t = calendar.parse[words, p.format, p.loc, base, zone]
     if not t.ok
         return calendar.no_days[]
     if p.strict and _one_written[p, t] ne trim[words]
@@ -521,14 +517,13 @@ fn _read_one[p, words, reference]
 fn _clock[p, t]
     calendar.seconds_into[calendar.in_zone[t, p.zone]]
 
---- whether a time may not be chosen, as react-datepicker decides it:
+--- whether a time may not be chosen:
 --- outside the first and last allowed (where both are given), left out,
 --- not among those only allowed, or not kept
 fn time_off[p, t]
     s = _clock[p, t]
     if p.earliest_time gte 0 and p.latest_time gte 0
-        --- (bounds given the wrong way round are taken the right way, as
-        --- date-fns's interval takes them)
+        --- (bounds given the wrong way round are taken the right way)
         low = min[p.earliest_time, p.latest_time]
         high = max[p.earliest_time, p.latest_time]
         if s lt low or s gt high
@@ -539,7 +534,7 @@ fn time_off[p, t]
         return true
     not p.keep_time[calendar.in_zone[t, p.zone]]
 
---- the times a day's list holds, as react-datepicker lists them: every
+--- the times a day's list holds: every
 --- `interval` minutes from the day's start in the picker's zone, as many
 --- as the day's hours hold (23 or 25 on a day the clocks turn), with the
 --- times added put between the two they fall between
@@ -645,9 +640,8 @@ fn _tile_step[p, t, key, back]
             return calendar.add_years[t, _year_offset[t.year, key]]
     t
 
---- how far up or down a year moves on its page of three columns, as
---- react-datepicker counts it (a page of twelve has no years left over,
---- so three)
+--- how far up or down a year moves on its page of three columns (a page
+--- of twelve has no years left over, so three)
 fn _year_offset[y, key]
     page = years_page[y]
     n = _years_paged[]
@@ -670,7 +664,7 @@ fn _year_offset[y, key]
     k
 
 --- the period the focus moves to by a key among months, quarters or
---- years, as react-datepicker moves it: months a month across and three
+--- years: months a month across and three
 --- up and down, stepping past those that may not be chosen (at most 40
 --- steps, turned back at the bounds); quarters and years one across (and
 --- years three up and down), not moving onto one that may not be chosen
@@ -1278,7 +1272,7 @@ fn _pressed_told[d]
 --- the day the keys moved to (else closes it), and while it is open the
 --- up and down arrows and Page Up and Page Down move over its days. The
 --- calendar: a day pressed is chosen, the arrows turn its months, its keys
---- move as react-datepicker's (`calendar.key_moved`), Enter and space
+--- move by `calendar.key_moved`, Enter and space
 --- choose, Escape closes it; a choice that ends (a day, a range ended)
 --- closes it and gives the focus back to the field. Tab from the field,
 --- or from the calendar where nothing follows it, closes it.
@@ -1405,10 +1399,10 @@ fn _field_told[p, t, e]
             return t
         t.seen.typed = e.words
         t.seen.typing = true
-        reference = calendar.today[p.zone]
+        base = calendar.today[p.zone]
         if len[t.chosen] gt 0
-            reference = t.chosen[0]
-        got = read_words[p, e.words, reference]
+            base = t.chosen[0]
+        got = read_words[p, e.words, base]
         if got.fits
             t.chosen = got.chosen
             if len[got.chosen] gt 0
@@ -1511,7 +1505,7 @@ fn _on_chosen_day[p, chosen, at]
     at
 
 --- the list's keys: up and left a time back, down and right a time on
---- (passing over none, as react-datepicker's list does), Enter and space
+--- (passing over none), Enter and space
 --- choosing the one with the focus where it may be chosen, Escape closing
 fn _time_key[p, t, times, key]
     at = t.seen.time_at
@@ -1547,8 +1541,7 @@ fn _time_key[p, t, times, key]
     t
 
 --- a key typed into the field while the calendar is open: up and down a
---- week (a time in a time's picker, by its minutes: react-datepicker's
---- time input), Page Up and Page Down a month (with Shift a year); Tab
+--- week (a time in a time's picker, by its minutes), Page Up and Page Down a month (with Shift a year); Tab
 --- closes it
 fn _field_key[p, t, k]
     shift = ends[k, '+'] and len[k] gt 1
@@ -1731,7 +1724,7 @@ test the_time_list_holds_a_time_every_thirty_minutes_within_its_bounds[]
     not time_off[bounded, d + 9 * 3600]
     not time_off[bounded, d + 17 * 3600]
     time_off[bounded, d + 17 * 3600 + 1800]
-    --- (an earliest time alone bounds nothing, as react-datepicker's)
+    --- (an earliest time alone bounds nothing)
     not time_off[times_bounded[p, 9 * 3600, -1], d + 3600]
     time_off[times_excluding[p, [12 * 3600]], d + 12 * 3600]
     only = times_including[p, [9 * 3600, 10 * 3600]]
@@ -1860,7 +1853,7 @@ test a_time_is_typed_into_its_field_and_stepped_by_the_arrows[]
     typed = _shown[p, chosen, _screen[_typed_words['2:30 PM']]]
     chosen = answered[p, chosen, typed]
     written[p, chosen] eq '2:30 PM'
-    --- (up a step of the list's minutes, as react-datepicker's time input)
+    --- (up a step of the list's minutes)
     up = _shown[p, chosen, _screen[_typed_keys[['ArrowUp'], false]]]
     chosen = answered[p, chosen, up]
     written[p, chosen] eq '2:00 PM'

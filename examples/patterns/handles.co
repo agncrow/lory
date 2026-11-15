@@ -1,0 +1,133 @@
+--- Slots, events and refs, drawn by Lory: how a parent reaches a child
+--- component and hears from it. A roulette tells its parent by two
+--- events (pop and reset) and the parent shows its message; children
+--- handed to a component land in its named slots, in the order given; and
+--- a player that keeps its own state (playing or not) is driven from
+--- outside, by play and pause through a ref, telling its state back by an
+--- event. A component here is a function, its properties the arguments,
+--- its events the events the example answers.
+
+use math
+use memory
+use lory
+use lory.gui
+use shared
+
+--- ---- Events up: Click Roulette ----
+
+--- a roulette loaded with a number from 1 to 6: Click counts, and fires
+--- (and is off) when the count reaches it; Reset loads it again. The
+--- parent shows its message by the two events the roulette sends, pop
+--- and reset.
+fn roulette_view[s, t]
+    count = int[shared.number_of[s, 'count']]
+    fired = shared.flag_of[s, 'fired']
+    click = gui.button['roulette-click', 'Click']
+    if fired
+        click = gui.disabled[click]
+    message = '😬'
+    if shared.flag_of[s, 'popped']
+        message = '🎉'
+    gui.column[[shared.titled[1, 'Let\'s play Click Roulette!', '', ''], gui.panel[[gui.text['Clicked: `count`'], gui.row[[click, gui.button['roulette-reset', 'Reset']]]]], gui.text[message]]]
+
+--- the roulette as it opens: loaded from its first chance
+fn roulette_opened[s]
+    drawn = shared.chance[s]
+    shared.set_number[drawn.s, 'loaded', floor[drawn.value * 6.0] + 1.0]
+
+fn roulette_answered[s, ev, t]
+    if ev.id eq 'roulette-click' and ev.act eq 'press'
+        if shared.flag_of[s, 'fired']
+            return s
+        count = shared.number_of[s, 'count'] + 1.0
+        s = shared.set_number[s, 'count', count]
+        if count eq shared.number_of[s, 'loaded']
+            s = shared.set_flag[s, 'fired', true]
+            return shared.set_flag[s, 'popped', true]
+        return s
+    if ev.id eq 'roulette-reset' and ev.act eq 'press'
+        s = shared.set_number[s, 'count', 0.0]
+        s = shared.set_flag[s, 'fired', false]
+        s = shared.set_flag[s, 'popped', false]
+        return roulette_opened[s]
+    s
+
+--- ---- Named slots ----
+
+--- children projected by their slot names: the head slot's, the default
+--- slot's (those with no name), then the tail slot's two, in the order
+--- the parent gave them
+fn named_slots_view[s, t]
+    head = gui.panel[[gui.text['This child goes to the "head" slot.']]]
+    middle = gui.panel[[gui.text['Children without a slot name go to the default slot.']]]
+    tail = gui.panel[[gui.text['This child goes to the "tail" slot.'], gui.text['A second child of the same slot follows the first.']]]
+    gui.panel[[gui.text['slot="head"'], head, gui.text['default slot'], middle, gui.text['slot="tail"'], tail]]
+
+--- ---- Driven by a ref ----
+
+--- a player of flying triangles that keeps its own state (playing or not),
+--- driven from outside by play and pause through a ref, and telling its
+--- state back by an event the parent shows in its buttons; a press on the
+--- player plays or pauses it too
+fn player_view[s, t]
+    playing = shared.flag_of[s, 'playing']
+    hint = 'click to play'
+    on = 0.0
+    if playing
+        hint = 'click to pause'
+        on = 1.0
+    play = gui.button['tri-play', 'play']
+    pause = gui.button['tri-pause', 'pause']
+    if playing
+        play = gui.disabled[play]
+    else
+        pause = gui.disabled[pause]
+    gui.column[[gui.drawn['tri-canvas', on, 300.0, 300.0, _triangles_painted, 0.0, 1.0, 'name=tri-canvas|`hint`'], gui.row[[play, pause]]]]
+
+fn player_answered[s, ev, t]
+    playing = shared.flag_of[s, 'playing']
+    if ev.act ne 'press'
+        return s
+    if ev.id eq 'tri-play'
+        return shared.set_flag[s, 'playing', true]
+    if ev.id eq 'tri-pause'
+        return shared.set_flag[s, 'playing', false]
+    if ev.id eq 'tri-canvas'
+        return shared.set_flag[s, 'playing', not playing]
+    s
+
+--- three triangles wandering over a gray ground, their headings turning
+--- with the time, and the hint over them
+fn _triangles_painted[d]
+    s = d.s
+    c = d.c
+    c = lory.rect[c, d.x, d.y, d.w, d.h, lory.hex['#343434']]
+    c = lory.rect[c, d.x + 5.0 * s, d.y + 5.0 * s, d.w - 10.0 * s, d.h - 10.0 * s, lory.hex['#dedede']]
+    clock = recall['lory_patterns/triangles', shared.Box[0.0, 0.0, 0.0, 0.0]]
+    now_at = lory.time[c]
+    if d.num gt 0.5 and clock.w gt 0.0
+        clock.x = clock.x + min[100.0, now_at - clock.y]
+    clock.y = now_at
+    clock.w = 1.0
+    remember['lory_patterns/triangles', clock]
+    k = 0.0
+    while k lt 3.0
+        a = clock.x / (900.0 + 300.0 * k) + 2.1 * k
+        x = d.x + d.w * (0.5 + 0.35 * cos[a * (1.0 + 0.2 * k)])
+        y = d.y + d.h * (0.5 + 0.35 * sin[a * (1.3 - 0.1 * k)])
+        r = 10.0 * s
+        c = lory.triangle[c, x, y + r, x - r, y - r, x + r, y - r, lory.hex['#8fa3dc']]
+        k = k + 1.0
+    hint = split[d.words, '|'][1]
+    c = lory.text_centered[c, d.x + d.w / 2.0, d.y + d.h / 2.0, hint, 15.0 * s, lory.Color[0.0, 0.0, 0.0, 0.4]]
+    d.c = c
+    if d.pressed
+        return gui.tell[d, 'press', '', 0.0]
+    d
+
+fn _painters_known[]
+    _triangles_painted[shared.blank_drawn[]]
+
+--- the part's trees shown on a canvas
+fn shown_on[c, s, t]
+    gui.show[c, player_view[s, t]]

@@ -56,7 +56,7 @@ fn list_faces[v]
     out
 
 --- the effects' page: a heading that sticks while its part scrolls past,
---- a band whose picture lags (Vuetify's parallax), blocks told as they
+--- a band whose picture lags (a parallax), blocks told as they
 --- come into view, its progress and a way back to the top
 fn effects_kids[a, stuck_y, shift]
     out = [gui.heading['Effects']]
@@ -93,7 +93,7 @@ fn view_of[a, w, h]
             bar = push[bar, gui.button['back', 'Back to top']]
         top = push[top, gui.row[bar]]
         y = scrolling.sticky_y[a.stuck, e.top, e.tall, 200.0 + 60.0, 40.0, 900.0] - (200.0 + 60.0)
-        band = scrolling.vuetify_parallax[e.top, e.tall, 900.0, 40.0, scale = 0.6]
+        band = scrolling.parallax_offset[e.top, e.tall, 900.0, 40.0, scale = 0.6]
         top = push[top, scrolling.area_view[e, 'effects', h - 60.0, effects_kids[e, y, band[0] * 0.1]]]
     gui.column[top]
 

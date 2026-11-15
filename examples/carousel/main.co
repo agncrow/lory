@@ -1,15 +1,15 @@
---- Lory's carousels (`use lory.carousel`), drawn by Lory: react-slick's
---- carousel in its kinds (arrows, dots, autoplay and looping; several at
---- once and rows; centred with its neighbours peeking; slides of their own
---- widths; a fade; slides loaded as they come; breakpoints; upright and
---- right to left; two carousels moving each other, and a program's buttons
---- moving one), Vuetify's window (panes sliding in the way their index
---- goes) and slide group (chips scrolled a page at a time, chosen), and
---- Motion's ticker (an endless line, slowed while hovered, dragged). What
---- each holds between frames is lory.carousel's; the program keeps only
---- the pane it shows. In a headset the page is 1000 by 560 on a panel: the
---- thumbstick scrolls it, the ray presses arrows and dots, and the trigger
---- held while the ray moves swipes a carousel.
+--- Lory's carousels (`use lory.carousel`), drawn by Lory: carousels of
+--- every kind (arrows, dots, autoplay and looping; several at once and
+--- rows; centred with its neighbours peeking; slides of their own widths;
+--- a fade; slides loaded as they come; breakpoints; upright and right to
+--- left; two carousels moving each other, and a program's buttons moving
+--- one), a window (panes sliding in the way their index goes), a slide
+--- group (chips scrolled a page at a time, chosen), and a ticker (an
+--- endless line, slowed while hovered, dragged). What each holds between
+--- frames is lory.carousel's; the program keeps only the pane it shows. In
+--- a headset the page is 1000 by 560 on a panel: the thumbstick scrolls
+--- it, the ray presses arrows and dots, and the trigger held while the ray
+--- moves swipes a carousel.
 use sys
 use memory
 use lory
@@ -81,8 +81,8 @@ fn view_of[c, a, tall]
     window = carousel.panes[c, 'window', [slide['Pane 1', 'The first pane.', 60.0], slide['Pane 2', 'The second pane, a little taller.', 120.0], slide['Pane 3', 'The last pane.', 30.0]], a.pane]
     group = carousel.slide_group[c, 'group', chips[16], center = true]
     tick = carousel.ticker[c, 'tick', chips[8], hover_factor = 0.2, draggable = true]
-    kinds = [section['Arrows, dots, autoplay, looping', 'react-slick: arrows and the arrow keys, dots, a swipe by mouse or touch; autoplay pauses while the pointer rests on it.', hero], section['Several at once, by breakpoint', 'Three slides, two under 900 pixels, one under 600.', several], section['Rows', 'Two rows of two in each slide.', rows], section['Centred', 'The slide shown in the middle, its neighbours peeking.', centred], section['Variable width', 'Each slide as wide as it is.', variable], section['Adaptive height', 'The list as tall as the slide shown.', adaptive], section['Fade', 'Slides fading over one another.', fade], section['Lazy loading', 'Slides drawn as they come into view.', lazy], section['Upright', 'Slides above one another, swiped up and down.', upright], section['Right to left', 'Its order and its arrows reversed.', rtl], section['Linked', 'Each moves the other; press a thumb to show it.', gui.column[[main, thumbs]]], section['Moved by the program', 'The buttons call next_slide, previous_slide, go_to, play and pause on the first carousel.', buttons], section['Window', 'Vuetify: each pane slides in the way its index goes.', window], section['Slide group', 'Vuetify: chips scrolled a page at a time; a chip pressed is chosen and centred.', group], section['Ticker', 'Motion: an endless line, slowed while hovered, dragged and thrown.', tick]]
-    page = gui.column[push[[gui.heading['lory.carousel']], gui.column[kinds, gap = 16.0]], gap = 12.0]
+    kinds = [section['Arrows, dots, autoplay, looping', 'Arrows and the arrow keys, dots, a swipe by mouse or touch; autoplay pauses while the pointer rests on it.', hero], section['Several at once, by breakpoint', 'Three slides, two under 900 pixels, one under 600.', several], section['Rows', 'Two rows of two in each slide.', rows], section['Centred', 'The slide shown in the middle, its neighbours peeking.', centred], section['Variable width', 'Each slide as wide as it is.', variable], section['Adaptive height', 'The list as tall as the slide shown.', adaptive], section['Fade', 'Slides fading over one another.', fade], section['Lazy loading', 'Slides drawn as they come into view.', lazy], section['Upright', 'Slides above one another, swiped up and down.', upright], section['Right to left', 'Its order and its arrows reversed.', rtl], section['Linked', 'Each moves the other; press a thumb to show it.', gui.column[[main, thumbs]]], section['Moved by the program', 'The buttons call next_slide, previous_slide, go_to, play and pause on the first carousel.', buttons], section['Window', 'Each pane slides in the way its index goes.', window], section['Slide group', 'Chips scrolled a page at a time; a chip pressed is chosen and centred.', group], section['Ticker', 'An endless line, slowed while hovered, dragged and thrown.', tick]]
+    page = gui.column[push[[gui.heading['Carousels and sliders']], gui.column[kinds, gap = 16.0]], gap = 12.0]
     gui.scroll['page', tall, [page]]
 
 fn applied[a, e]

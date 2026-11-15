@@ -11,7 +11,7 @@ both). It then checks:
 - A double press edits the cell in the edit bar; keys typed there and Enter
   make the edit, kept as a draft: one person changed, the row's hours as
   they were until Save is pressed, then the new hours.
-- ArrowDown moves the focus down a row, as TOAST UI Grid's keymap has it.
+- ArrowDown moves the focus down a row.
 - The wheel over the grid scrolls its rows.
 - On the Live tab the feed's ticks come in as the frames' time runs, and
   the drawing changes from frame to frame with no input.
@@ -128,7 +128,7 @@ def free_port():
 
 
 def checked(got):
-    """What the page found, held to what the example should do: the
+    """What the page found, checked against what the example should do: the
     failures, each in words."""
     failures = []
     if got.get('stopped'):

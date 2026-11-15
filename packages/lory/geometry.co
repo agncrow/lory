@@ -1,6 +1,5 @@
---- The shapes three.js builds — its BufferGeometry classes — made by Lory,
---- laid out as three lays them out, vertex for vertex: a program draws
---- them through `space` or reads their numbers itself.
+--- Lory's 3D shapes, built vertex by vertex: a program draws them
+--- through `space` or reads their numbers itself.
 ---
 ---     use lory.geometry
 ---
@@ -15,30 +14,19 @@
 --- vertices in turn make one) and its groups (three numbers each). The
 --- box, plane, circle, ring, sphere, cylinder, cone, torus, torus knot,
 --- capsule, lathe, tube, shape, extrusion and the regular polyhedra are
---- three's, and so are its edges (where faces meet at more than an angle)
---- and its wireframe. Curves in space (a line, Bézier curves, Catmull-Rom
+--- built here, and so are a geometry's edges (where faces meet at more
+--- than an angle) and its wireframe. Curves in space (a line, Bézier curves, Catmull-Rom
 --- splines, a helix) carry a tube or an extrusion; paths in the plane
 --- (lines, curves, splines, arcs and ellipses) with holes are a shape's
---- outline, cut into triangles as three's ShapeUtils cuts them (earcut's
---- ears, its holes bridged in).
+--- outline, cut into triangles by ear clipping (its holes bridged in
+--- first).
 ---
 --- A geometry is handed to space as it is, its indices kept
 --- (`space_form`), and its edges and wireframe as segments
 --- (`space_segments`): space draws them as lines in the scene, behind what
 --- is nearer, in a headset too. `lines_drawn` draws them instead with
 --- Lory's flat lines of any width, over the scene.
----
---- lory.geometry reimplements, in Crow, the geometries of three.js,
---- Copyright 2010-2026 three.js authors, licensed under the MIT License
---- (https://github.com/mrdoob/three.js), and the triangulation three cuts
---- shapes with, earcut, Copyright Mapbox, licensed under the ISC License
---- (https://github.com/mapbox/earcut). No source of either is included:
---- three's layouts and formulas were read from version 0.187.0 (earcut
---- 3.0.2 within it) and written anew, and tests/geometry/reference.co
---- holds Lory to the numbers three answers, bit for bit. The one table
---- taken as three has it is the order of the regular polyhedra's faces
---- (their corners are worked out here), so that their triangles come as
---- three's come.
+
 use sys
 use math
 use lory
@@ -82,9 +70,9 @@ fn _ints[numbers]
         out = push[out, floor[0.0 + x]]
     out
 
---- the numbers as single precision keeps them: three holds a geometry's
---- numbers in Float32Arrays, and works its normals and edges out from what
---- it reads back from them
+--- the numbers as single precision keeps them: a geometry's numbers go
+--- to the screen as 32-bit floats, so its normals and edges are worked out
+--- from what single precision reads back
 fn _single[xs]
     if len[xs] eq 0
         return xs
@@ -103,12 +91,11 @@ fn _three_onto[xs, a, b, c]
 fn _indices_onto[xs, a, b, c]
     push[push[push[xs, a], b], c]
 
---- the smallest gap between 1 and the next float (JavaScript's
---- Number.EPSILON)
+--- the smallest gap between 1 and the next double (2^-52)
 fn _epsilon[]
     1.0 / 4503599627370496.0
 
---- a direction of length one, as three's `normalize` makes it: each part
+--- a direction of length one: each part
 --- times one over the length (a length of 0 kept as it is)
 fn _unit[x, y, z]
     l = sqrt[x * x + y * y + z * z]
@@ -117,12 +104,12 @@ fn _unit[x, y, z]
     k = 1.0 / l
     [x * k, y * k, z * k]
 
---- the cross product of two directions, worked out as three works it out
+--- the cross product of two directions
 fn _cross[ax, ay, az, bx, by, bz]
     [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx]
 
---- (x, y, z) turned by `angle` about the axis (a unit direction), as
---- three's rotation matrix about an axis turns a point
+--- (x, y, z) turned by `angle` about the axis (a unit direction), by
+--- the rotation matrix about that axis
 fn _turned[x, y, z, ax, ay, az, angle]
     c = cos[angle]
     s = sin[angle]
@@ -140,7 +127,7 @@ fn _turned[x, y, z, ax, ay, az, angle]
     m33 = t * az * az + c
     [m11 * x + m12 * y + m13 * z + 0.0, m21 * x + m22 * y + m23 * z + 0.0, m31 * x + m32 * y + m33 * z + 0.0]
 
---- each three numbers made of length one (three's normalizeNormals)
+--- each three numbers made of length one
 fn _normalized[xs]
     out = []
     for i in range[len[xs] / 3]
@@ -149,8 +136,7 @@ fn _normalized[xs]
     out
 
 --- a triangle soup's normals, each corner its face's: worked out from
---- the positions as single precision holds them, as three's
---- computeVertexNormals does for a geometry without indices
+--- the positions as single precision holds them
 fn _flat_normals[positions]
     p = _single[positions]
     raw = []
@@ -170,8 +156,8 @@ fn _flat_normals[positions]
 --- ---- planes, discs and rings ----
 
 --- a box `width` across (x), `height` up (y) and `depth` deep (z) about
---- the origin, each face cut into segments: its six faces in three's order
---- (+x, -x, +y, -y, +z, -z), a group each
+--- the origin, each face cut into segments: its six faces in the order
+--- +x, -x, +y, -y, +z, -z, a group each
 fn box[width = 1.0, height = 1.0, depth = 1.0, width_segments = 1, height_segments = 1, depth_segments = 1]
     g = _empty[]
     g = _side[g, 2, 1, -1.0, -1.0, depth, height, width, depth_segments, height_segments, 0]
@@ -299,7 +285,7 @@ fn ring[inner = 0.5, outer = 1.0, theta_segments = 32, phi_segments = 1, theta_s
             positions = _three_onto[positions, x, y, 0.0]
             normals = _three_onto[normals, 0.0, 0.0, 1.0]
             uvs = _two_onto[uvs, (x / outer + 1.0) / 2.0, (y / outer + 1.0) / 2.0]
-        --- (each ring's radius the last one's and a step: three adds them up)
+        --- (each ring's radius the last one's and a step, added up)
         radius = radius + step
     indices = []
     for j in range[across]
@@ -700,7 +686,7 @@ fn helix_curve[radius = 1.0, height = 1.0, turns = 1.0]
     _measured[Curve['helix', [], false, 'centripetal', 0.5, numbers, []]]
 
 --- the curve with its lengths measured: the distance along it to each
---- of 200 even steps of its own measure (three's arc lengths)
+--- of 200 even steps of its own measure (its arc lengths)
 fn _measured[curve]
     lengths = push[[], 0.0]
     last = point_on[curve, 0.0]
@@ -740,14 +726,14 @@ fn point_on[curve, t]
         return [h[0] * cos[angle], h[1] * t - h[1] / 2.0, h[0] * sin[angle]]
     _spline_point[points, curve.closed, curve.spline, curve.tension, t]
 
---- one coordinate of a quadratic Bézier curve at `t`, as three weighs
---- its three points
+--- one coordinate of a quadratic Bézier curve at `t`: its three points
+--- weighed by the Bernstein polynomials
 fn _quadratic[t, a, b, c]
     k = 1.0 - t
     k * k * a + 2.0 * (1.0 - t) * t * b + t * t * c
 
---- one coordinate of a cubic Bézier curve at `t`, as three weighs its
---- four points
+--- one coordinate of a cubic Bézier curve at `t`: its four points
+--- weighed by the Bernstein polynomials
 fn _cubic[t, a, b, c, d]
     k = 1.0 - t
     k * k * k * a + 3.0 * k * k * t * b + 3.0 * (1.0 - t) * t * t * c + t * t * t * d
@@ -847,8 +833,8 @@ fn _uneven_cubic[x0, x1, x2, x3, dt0, dt1, dt2, w]
     _hermite[x1, x2, t1 * dt1, t2 * dt1, w]
 
 --- of a curve's lengths, the measure at which `u` of its whole length
---- is reached (three's getUtoTmapping: a search, then a straight line
---- between the two steps about it)
+--- is reached (a binary search, then a straight line between the two
+--- steps about it)
 fn _measure_at[lengths, u]
     count = len[lengths]
     target = u * lengths[count - 1]
@@ -895,8 +881,8 @@ fn tangent_at[curve, u]
 struct Frames [tangents, normals, binormals]
 
 --- the curve's frames at `segments` + 1 even steps along it by length,
---- each normal turned from the last no more than the curve turns (three's
---- Frenet frames) — and, closed, twisted evenly so the last meets the first
+--- each normal turned from the last no more than the curve turns (Frenet
+--- frames, carried along) — and, closed, twisted evenly so the last meets the first
 fn frenet_frames[curve, segments, closed = false]
     tangents = []
     for i in range[segments + 1]
@@ -1257,9 +1243,9 @@ fn shapes[outlines, curve_segments = 12]
         g.groups = _indices_onto[g.groups, begun, len[g.indices] - begun, i]
     g
 
---- the geometry with an outline's shape added to it: its outline and
---- holes made to go the ways three's are, each without a last point on
---- its first, cut into triangles
+--- the geometry with an outline's shape added to it: its outline made
+--- to go clockwise and its holes the other way, each without a last
+--- point on its first, cut into triangles
 fn _shaped_into[g, o, curve_segments]
     base = len[g.positions] / 3
     outer = path_points[o.path, curve_segments]
@@ -1298,17 +1284,17 @@ fn _shaped_into[g, o, curve_segments]
     g.indices = indices
     g
 
---- ---- cutting an outline into triangles (earcut) ----
+--- ---- cutting an outline into triangles (ear clipping) ----
 
---- earcut's working state: its rings of nodes, four numbers a node — the
+--- the ear clipper's working state: its rings of nodes, four numbers a node — the
 --- node before it and after it about its ring, its vertex, and whether
 --- it is a Steiner point (1: a hole of one point) — the triangles cut so
 --- far (three vertices each), and the node a step answered
 struct Ears [nodes, triangles, got]
 
 --- the outline (x, y each) with its holes after it (each hole's first
---- vertex in `hole_at`) cut into triangles: three vertices each, as
---- earcut cuts them — ears cut off its rings in turn, each hole bridged
+--- vertex in `hole_at`) cut into triangles: three vertices each, by
+--- ear clipping — ears cut off its rings in turn, each hole bridged
 --- into the outline first, the leftmost first
 fn _cut[outer, hole_list]
     xy = outer
@@ -1318,11 +1304,11 @@ fn _cut[outer, hole_list]
         hole_at = push[hole_at, at]
         at = at + len[h] / 2
         xy = concat[xy, h]
-    _earcut[xy, hole_at]
+    _ear_clipped[xy, hole_at]
 
 --- the triangles of points (x, y each), the outline's first and its
 --- holes' after it
-fn _earcut[xy, hole_at]
+fn _ear_clipped[xy, hole_at]
     ears = Ears[[], [], -1]
     outer_end = len[xy]
     if len[hole_at] gt 0
@@ -1625,7 +1611,7 @@ fn _leftmost[xy, nodes, begin]
     best
 
 --- the holes' leftmost nodes in order: by x, then y, then the slope of
---- the edge leaving them (a stable sort, as JavaScript's is)
+--- the edge leaving them (a stable sort)
 fn _in_order[xy, nodes, queue]
     out = []
     for q in queue
@@ -1836,7 +1822,7 @@ fn _extruded[outlines, depth, steps, bevel, thickness, size, offset, bevel_segme
     g.normals = _flat_normals[g.positions]
     g
 
---- the way a corner moves as its edges are bevelled (three's getBevelVec):
+--- the way a corner moves as its edges are bevelled:
 --- along the two edges' inward normals' meeting, at most √2 long
 fn _bevel_way[x, y, px, py, nx, ny]
     tiny = _epsilon[]
@@ -2202,11 +2188,11 @@ fn _subdivided[held, ax, ay, az, bx, by, bz, cx, cy, cz, detail]
 fn _point_onto[held, row, k]
     _three_onto[held, row[k * 3], row[k * 3 + 1], row[k * 3 + 2]]
 
---- how far round the y axis a point is, as three measures it
+--- how far round the y axis a point is (from -x, toward +z)
 fn _azimuth[x, z]
     atan2[z, -x]
 
---- how far up or down from the middle a point is, as three measures it
+--- how far up or down from the middle a point is (down positive)
 fn _inclination[x, y, z]
     atan2[-y, sqrt[x * x + z * z]]
 
@@ -2278,8 +2264,8 @@ fn dodecahedron[radius = 1.0, detail = 0]
 --- ---- lines ----
 
 --- the geometry's edges where its faces meet at more than `threshold`
---- degrees (and those with no face beyond them): two corners each, as
---- three's EdgesGeometry finds them — corners told apart to a ten
+--- degrees (and those with no face beyond them): two corners each,
+--- corners told apart to a ten
 --- thousandth, the edges found on a second face first, then those left
 fn edges[g, threshold = 1.0]
     positions = _single[g.positions]
@@ -2357,7 +2343,7 @@ fn _face_normal[positions, a, b, c]
     [0.0, 0.0, 0.0]
 
 --- every edge of every triangle once: two corners each, in the order
---- three's WireframeGeometry gives them (an indexed geometry group by group)
+--- the triangles come (an indexed geometry group by group)
 fn wireframe[g]
     positions = _single[g.positions]
     indices = g.indices
@@ -2442,9 +2428,9 @@ fn _svg_count[k]
 --- one): its moves, lines (L, H, V), cubic curves (C, and S whose first
 --- handle mirrors the last), quadratic curves (Q, and T likewise), each
 --- given from the origin (capitals) or from where the path is (small
---- letters), and closes (Z) — as three's SVGLoader reads a path. SVG's y
---- runs down the page, and so do the paths' (turn them over, as three's
---- examples do, with a scale of -1 in y). Elliptical arcs (A) are drawn
+--- letters), and closes (Z). SVG's y
+--- runs down the page, and so do the paths' (turn them over with a
+--- scale of -1 in y). Elliptical arcs (A) are drawn
 --- as lines to their ends
 fn svg_paths[d]
     words = _svg_words[d]
@@ -2558,8 +2544,8 @@ fn upper_of[w]
 --- side across a cube `size` wide about the origin (x fastest, then y,
 --- then z), comes to `level`: the inside where it is above. Each cell of
 --- the grid is cut into six tetrahedra about its long diagonal and the
---- surface found in each (marching tetrahedra: the same surface three's
---- MarchingCubes finds, with no table of cases), each triangle's corners
+--- surface found in each (marching tetrahedra, with no table of
+--- cases), each triangle's corners
 --- placed between grid points in proportion to the field there, facing
 --- out (down the field's slope, where it falls)
 fn marched[samples, n, size, level]
@@ -2717,8 +2703,8 @@ fn ball_field[balls, n, size]
         i = i + 1
     out
 
---- the geometry moved by `x`, `y` and `z`: each corner's place (three's
---- BufferGeometry.translate)
+--- the geometry moved by `x`, `y` and `z`: each corner's place
+--- moved
 fn translated[g, x, y, z]
     out = []
     n = len[g.positions] / 3
@@ -2730,10 +2716,9 @@ fn translated[g, x, y, z]
     g
 
 --- an arrow from `from` pointing `way` (a unit direction), `length` long
---- with a head `head_length` long and `head_width` across (three's are a
---- fifth of the length and a fifth of that), in a colour, lit by
---- nothing, as three's ArrowHelper draws one: a line for its shaft and a
---- cone of five sides for its head
+--- with a head `head_length` long and `head_width` across (a fifth of
+--- the length and a fifth of that suit most arrows), in a colour, lit by
+--- nothing: a line for its shaft and a cone of five sides for its head
 fn arrow[c, from, way, length, color, head_length, head_width]
     if not space.made['lory.geometry.arrow.line']
         c = space.mesh_form[c, 'lory.geometry.arrow.line', space.polyline[[0.0, 0.0, 0.0, 0.0, 1.0, 0.0]]]
@@ -2753,8 +2738,7 @@ fn arrow[c, from, way, length, color, head_length, head_width]
 --- ---- drawn in Lory's space ----
 
 --- the geometry as space draws it (`space.mesh_form`): its vertices as
---- they are and its triangles by its indices where it has them, as three
---- hands a BufferGeometry to WebGL
+--- they are and its triangles by its indices where it has them
 fn space_form[g]
     s = space.Shape[g.positions, g.normals, g.uvs]
     if len[g.indices] eq 0
@@ -2762,7 +2746,7 @@ fn space_form[g]
     space.indexed[s, g.indices]
 
 --- a geometry's segments (its edges' or its wireframe's: two corners
---- each) as lines space draws (three's LineSegments)
+--- each) as lines space draws (`space.segments`)
 fn space_segments[g]
     if len[g.indices] eq 0
         return space.segments[g.positions]
@@ -2826,7 +2810,7 @@ fn _projected[m, x, y, z]
         return [0.0, 0.0, 0.0]
     [cx / cw, cy / cw, cw]
 
---- ---- what three's layouts come to ----
+--- ---- what the layouts come to ----
 
 --- a frame of no input, for drawing in a test
 fn _still_frame[]

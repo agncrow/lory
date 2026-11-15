@@ -1,5 +1,5 @@
---- A shape of sides that turns in three dimensions to show the next, as
---- Semantic UI's Shape does: its sides are gui trees, one shown at a
+--- A shape of sides that turns in three dimensions to show the next: its
+--- sides are gui trees, one shown at a
 --- time; asked to flip up, down, left or right it turns as a cube does
 --- (the side below, above, right or left of the shown one coming to the
 --- front), and over or back as a card does (the next side on its back).
@@ -7,8 +7,7 @@
 --- by lory.motion), seen in perspective; flips asked for while one runs
 --- wait their turn. The next side is the one after the shown one (the
 --- first after the last) unless `set_next_side` names another. The frame
---- a flip begins says so (Semantic's beforeChange), and the frame it ends
---- (onChange).
+--- a flip begins says so, and so does the frame it ends.
 ---
 ---     flip.flip['card', 'over']                      --- on a click, say
 ---     s = flip.shape[c, 'card', sides, 40.0, 40.0, 300.0, 180.0, gui.dark[]]
@@ -38,7 +37,7 @@ fn _key[id]
 fn _fresh[]
     Shape[0, -1, false, '', 0.0, 0, []]
 
---- how long a flip takes, in milliseconds (Semantic's 700)
+--- how long a flip takes, in milliseconds
 fn duration[]
     700.0
 

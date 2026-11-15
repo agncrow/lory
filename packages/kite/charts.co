@@ -1,13 +1,14 @@
---- Kite's charts (`use kite.charts`): Chart.js's charts, drawn with Lory.
+--- Kite's charts (`use kite.charts`): bar, line, scatter, bubble, pie,
+--- doughnut, polar area and radar charts, drawn with Lory.
 ---
 --- A chart is a view over data. A program makes one each frame (a kind,
---- labels, datasets, axes, a legend, titles and a tooltip; or a Chart.js
+--- labels, datasets, axes, a legend, titles and a tooltip; or a chart
 --- configuration read with `of`) and hands it to be drawn into a box of
 --- the canvas: as a control in gui's tree (`drawn`, painted by
 --- `painter`), or straight onto the canvas (`shown_at`). Between frames
---- Kite keeps, under the chart's id, what Chart.js keeps in its chart: the
+--- Kite keeps, under the chart's id: the
 --- datasets and values the legend has hidden, the marks on their way where
---- the data changed (moving as Chart.js animates them), what the pointer
+--- the data changed (moving as they animate), what the pointer
 --- was over and the place the arrow keys have reached. It tells the
 --- program what the reader did, as gui's events of the chart's id:
 ---
@@ -21,15 +22,12 @@
 ---   sparkline tells its current index.
 ---
 --- Its parts: charts_model (the records and the small rules every part
---- shares), charts_json (a Chart.js configuration read), charts_scales and
+--- shares), charts_json (a chart configuration read), charts_scales and
 --- charts_time (the axes), charts_layout (the boxes round the area),
 --- charts_marks (where each bar, point and arc stands), charts_hits (what
 --- the pointer finds, the tooltip, the legend's clicks), charts_motion
 --- (animations), charts_decimation (long lines thinned) and charts_paint
 --- (the drawing).
----
---- Kite reimplements the behaviour of Chart.js (Copyright the Chart.js
---- contributors, MIT licence); see charts_model.co.
 use math
 use memory
 use lory
@@ -48,7 +46,7 @@ use charts_paint
 
 --- a chart of `kind` (bar, line, scatter, bubble, pie, doughnut,
 --- polarArea, radar) named `id`, over `labels`, of no datasets yet: its
---- axes, legend, tooltip, interaction and animation are Chart.js's for
+--- axes, legend, tooltip, interaction and animation are the defaults for
 --- that kind
 fn chart_of[id, kind, labels]
     charts_model.chart_of[id, kind, labels]
@@ -118,7 +116,7 @@ fn subtitled[ch, lines]
     ch.subtitle = h
     ch
 
---- the chart read from a Chart.js configuration, JSON's text: its
+--- the chart read from a chart configuration, JSON's text: its
 --- `type`, its `data` (labels and datasets) and its `options` (text that
 --- is not JSON gives a bar chart of nothing)
 fn of[id, config]
@@ -200,7 +198,7 @@ fn hits_words[hits]
 --- turned from what the program says (hidden where it says shown, and
 --- shown where it says hidden), the values a pie's legend has hidden, its
 --- marks' motion, the size it was last laid at, whether it has been laid
---- again since its first (Chart.js lays a chart again at each update),
+--- again since its first (a chart is laid again at each update),
 --- the marks the pointer was over (their words), the place the arrow keys
 --- have reached (-1: none) and how many frames it has been drawn
 struct Kept [turned, points_hidden, motion, width, height, laid_before, over, current, frames]
@@ -225,7 +223,7 @@ fn forget[id]
     remember[_kept_key[id], _fresh[]]
 
 --- the chart as Kite draws it: with what its legend has hidden or shown
---- again, and laid as Chart.js lays a chart it has updated
+--- again, and laid as a chart that has been updated
 fn held_of[ch]
     _held_applied[ch, kept_of[ch.id]]
 
@@ -523,7 +521,7 @@ fn _same_color[a, b]
 
 --- ---- sparklines ----
 
---- a sparkline (Vuetify's): a small chart of `ys` with no axes, legend
+--- a sparkline: a small chart of `ys` with no axes, legend
 --- or tooltip, inset 8 pixels: a line ('trend') or bars ('bar'); its line
 --- curved through its points without overshooting them (`smooth`) and
 --- filled down to its foot (`filled`), in `color`; the pointer over it
@@ -633,7 +631,7 @@ test marks_alike_are_alike_and_a_moved_one_is_not[]
     moved = with_set[chart_of['m', 'bar', ['a', 'b']], dataset['', 'x', [1.0, 3.0]]]
     not _same_layers[one, marks_of[moved, laid[moved, 300.0, 200.0]]]
 
-test a_chart_is_read_from_a_chart_js_configuration[]
+test a_chart_is_read_from_a_json_configuration[]
     ch = of['c', '{"type": "line", "data": {"labels": ["a", "b"], "datasets": [{"label": "x", "data": [1, 2], "tension": 0.4}]}, "options": {"indexAxis": "y"}}']
     ch.form eq 'line'
     len[ch.labels] eq 2

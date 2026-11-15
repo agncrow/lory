@@ -3,17 +3,17 @@
 ---
 ---     c = icons.draw[c, 'check', x, y, 24.0, look.ink]
 ---
---- An icon is designed on a grid of 15 units (Radix's grid), scaled to the
+--- An icon is designed on a grid of 15 units, scaled to the
 --- square it is drawn in: its strokes are a unit wide, so an icon drawn 15
 --- pixels wide on whole pixels has crisp one-pixel lines, and their ends
 --- and corners are round. Where an icon is solid (play, a filled star) it
 --- is filled and edged with the same stroke, so its corners are round too.
 ---
---- The set (docs/components/icons.md): Crow ui's closed set by Crow's names,
---- Radix Icons' by Radix's names (its brand marks aside), and the icons the
---- surveyed kits' components ask for (a map's pin, a table's sorts, a
+--- The set: the controls' icons (Crow ui's names), a broad set of
+--- general icons, and the icons further
+--- components ask for (a map's pin, a table's sorts, a
 --- player's volume, a hotkey's keys). A name is spelled with hyphens, as
---- Radix spells it, or underscores, as Crow does: `eye_off` is `eye-off`.
+--- the set spells it, or underscores, as Crow does: `eye_off` is `eye-off`.
 --- Some names are another's drawing (`close` is `x`); every other name has
 --- a drawing of its own. A name the set does not draw is a small square.
 --- `names[]` lists them all, `known[name]` says whether one is drawn,
@@ -47,9 +47,9 @@ fn names[]
     out = slice[[''], 0, 0]
     for n in _crow_set[]
         out = push[out, _spelled[n]]
-    for n in _radix_set[]
+    for n in _general_set[]
         out = push[out, n]
-    for n in _kit_set[]
+    for n in _further_set[]
         out = push[out, n]
     for pair in _aliases[]
         out = push[out, pair[0]]
@@ -69,7 +69,7 @@ fn known[name]
 
 --- the canvas with the icon drawn as `draw` draws it, then turned
 --- clockwise about its square's middle by `degrees`: a chevron that turns
---- as its section opens (Semantic UI's rotated icons are a quarter turn,
+--- as its section opens (a quarter turn is
 --- 90 clockwise and -90 counterclockwise). Every shape Lory draws is
 --- placed by its corners and shaded from its own corner's numbers, so
 --- turning the corners turns the shape whole: a rounded box stays rounded,
@@ -84,7 +84,7 @@ fn turned[c, name, x, y, size, color, degrees]
 
 --- the canvas with the icon drawn as a loading icon is at the frame's
 --- time `t` (milliseconds, `lory.time[c]`): turned at an even pace, once
---- round every two seconds, as Semantic UI turns its loading icons. Drawn
+--- round every two seconds. Drawn
 --- each frame, it spins
 fn spinning[c, name, x, y, size, color, t]
     turned[c, name, x, y, size, color, _spin[t]]
@@ -96,7 +96,7 @@ fn _spin[t]
     360.0 * (turns - floor[turns])
 
 --- the canvas with the icon drawn as `draw` draws it, then flipped about
---- its square's middle, as Semantic UI flips its icons: `horizontally`
+--- its square's middle: `horizontally`
 --- (left and right swapped: the arrow right points left) or `vertically`
 --- (top and bottom swapped). Every shape Lory draws is shaded alike on
 --- either side of its middle, so a shape flipped is the shape mirrored
@@ -522,10 +522,8 @@ fn _crow_set[]
      'filter', 'sort', 'chart', 'table', 'bell', 'mail', 'lock', 'eye', 'eye_off', 'dollar',
      'bookmark', 'flag', 'tag', 'circle', 'dot', 'loader']
 
---- Radix Icons' names, as Radix spells them (the survey's list of its
---- repository; its fourteen brand marks are not drawn: docs/components/
---- icons.md says why)
-fn _radix_set[]
+--- the general icons' names
+fn _general_set[]
     ['accessibility', 'activity-log', 'align-baseline', 'align-bottom', 'align-center-horizontally',
      'align-center-vertically', 'align-left', 'align-right', 'align-top', 'all-sides', 'angle',
      'archive', 'arrow-bottom-left', 'arrow-bottom-right', 'arrow-down', 'arrow-left',
@@ -580,12 +578,12 @@ fn _radix_set[]
      'triangle-up', 'underline', 'update', 'upload', 'value', 'value-none', 'video', 'view-grid',
      'view-horizontal', 'view-none', 'view-vertical', 'width', 'zoom-in', 'zoom-out']
 
---- the icons the surveyed kits' components ask for that neither set has:
+--- the icons further components ask for that neither set has:
 --- a tree's folders and boxes, a table's sorts and pages, a file field's
 --- clip, a colour picker's dropper and palette, a rating's half star, a
 --- map's pins, a player's keys, an editor's lists and turns, a hotkey's
 --- keys, a status bar's signals
-fn _kit_set[]
+fn _further_set[]
     ['unfold-more', 'unfold-less', 'sort-ascending', 'sort-descending', 'first-page', 'last-page',
      'list-view', 'square-plus', 'square-minus', 'folder', 'folder-open', 'paperclip', 'cloud',
      'cloud-upload', 'eyedropper', 'palette', 'star-half', 'spinner', 'map', 'map-pin',
@@ -594,8 +592,8 @@ fn _kit_set[]
      'code-block', 'flip-horizontal', 'flip-vertical', 'rotate-clockwise', 'command', 'shift',
      'option', 'control', 'return', 'backspace', 'wifi', 'battery', 'signal', 'phone']
 
---- the names drawn as another's drawing: Crow's names where Radix has the
---- same icon, and the kits' words for icons the set has
+--- the names drawn as another's drawing: Crow's names where the general
+--- set has the same icon, and other words for icons the set has
 fn _aliases[]
     [['x', 'cross-2'], ['search', 'magnifying-glass'], ['menu', 'hamburger-menu'], ['more',
      'dots-horizontal'], ['settings', 'gear'], ['user', 'person'], ['refresh', 'reload'], ['edit',
@@ -2294,14 +2292,14 @@ fn _draws_of[calls, n]
             count = count + 1
     count
 
---- every name of Crow's set (spelled as Crow spells it), of Radix's and
---- of the kits' is known and drawn, and not as the square of a name the
+--- every name of Crow's set (spelled as Crow spells it), of the general
+--- set and of the further icons is known and drawn, and not as the square of a name the
 --- set does not draw
 test every_name_of_the_three_sets_is_drawn[]
-    _undrawn[concat[_crow_set[], _radix_set[], _kit_set[]]] eq ''
+    _undrawn[concat[_crow_set[], _general_set[], _further_set[]]] eq ''
     len[_crow_set[]] eq 52
-    len[_radix_set[]] eq 318
-    len[_kit_set[]] eq 49
+    len[_general_set[]] eq 318
+    len[_further_set[]] eq 49
     len[_drawings[]] eq 371
     len[names[]] eq 404
 
@@ -2324,7 +2322,7 @@ test a_name_the_set_does_not_draw_is_a_small_square[]
     not known['']
 
 --- a name may be spelled with underscores, as Crow spells it, or with
---- hyphens, as Radix does; an alias is drawn as the drawing it names
+--- hyphens; an alias is drawn as the drawing it names
 test underscores_and_aliases_draw_the_drawings_they_name[]
     known['eye_off'] and known['eye-off'] and known['arrow_up'] and known['drag_handle_dots_2']
     _same[_alone['eye_off', 0.0, 0.0, 15.0], _alone['eye-none', 0.0, 0.0, 15.0]]
@@ -2388,8 +2386,7 @@ test an_icon_turned_is_its_drawing_turned_about_its_middle[]
     _round_about[_turned_alone['spinner', 250.0], 22.0, 32.0, 12.0 * sqrt[2.0] + 1.8]
 
 --- a loading icon turns at an even pace, once round every two seconds
---- (semantic-ui-less 2.4.1: `@loadingDuration` 2s, `linear`, 0 to 360
---- degrees): a quarter turn at half a second, half round at one, round
+--- (linear, 0 to 360 degrees): a quarter turn at half a second, half round at one, round
 --- again at two, and drawn so at its time
 test a_loading_icon_turns_once_every_two_seconds[]
     _spin[0.0] eq 0.0

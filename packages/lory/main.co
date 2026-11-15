@@ -1,5 +1,5 @@
 --- Lory: drawing in a browser — on a desktop, a phone or a headset — from
---- Crow (docs/lory-design.md). A program built with `crow build --target
+--- Crow. A program built with `crow build --target
 --- web` hands `sys.frames` a function of the frame; that function begins a
 --- canvas from the frame, draws on it, and ends it:
 ---

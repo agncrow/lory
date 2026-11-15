@@ -1,4 +1,4 @@
---- The repository's root: the examples and the parity programs reach the
+--- The repository's root: the examples and the both-modes programs reach the
 --- packages through crow_modules/lory and crow_modules/kite, links to
 --- packages/lory and packages/kite, as a program that installs them does.
 --- The repository keeps its links relative, here and in each example and

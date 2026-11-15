@@ -11,7 +11,7 @@ checks that each of these changes what is drawn:
 - typing in the search field;
 - a press on a person's row (it is selected).
 
-A page of ten fits without scrolling; the table's scroll is held by the
+A page of ten fits without scrolling; the table's scroll is checked by the
 example's own headset test (the thumbstick).
 
 The page says what it found in its title, which this script reads.
@@ -101,7 +101,7 @@ def free_port():
 
 
 def checked(got):
-    """What the page found, held to what the example should do: the
+    """What the page found, checked against what the example should do: the
     failures, each in words."""
     failures = []
     if got.get('stopped'):

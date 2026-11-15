@@ -4,18 +4,16 @@
 --- as they come, and a coarser tile already in hand drawn where a finer
 --- one has not come yet.
 ---
---- Which tiles and what they are called is Leaflet's (1.9.4) behaviour
---- (GridLayer and TileLayer: the tile zoom, the pixel bounds, the range,
---- longitudes wrapped round the world, `{s}` chosen by the tile), held to
---- what Leaflet answers in tests/map/reference.json.
+--- Which tiles a view needs follows from the tile zoom, the view's pixel
+--- bounds and their range of columns and rows, longitudes wrapped round
+--- the world, and `{s}` chosen by the tile.
 use math
 use lory
 use geo
 
 --- one tile a view needs: its column and row at its zoom as the view
 --- has them (a column past the world's edge where the view goes round
---- it), its column brought into the world, its key (`x:y:z`, unwrapped,
---- as Leaflet names it), its address, and where it is drawn: its top
+--- it), its column brought into the world, its key (`x:y:z`, unwrapped), its address, and where it is drawn: its top
 --- left and size in the view's CSS pixels
 struct Tile [x, y, z, wx, key, url, left, top, size]
 
@@ -35,7 +33,7 @@ struct Layer [template, subdomains, credit, lowest, highest, native_low, native_
 struct Held [urls, states, since, used, slot_of, fresh, dropped, asked_at, asked_zoom]
 
 --- the layer of tiles at a template, credited to its makers, with
---- Leaflet's defaults: zooms 0 to 18, subdomains `abc`, images in page
+--- the defaults: zooms 0 to 18, subdomains `abc`, images in page
 --- objects 40000 to 40159
 fn layer[template, credit]
     Layer[template, 'abc', credit, 0.0, 18.0, -1.0, -1.0, 40000, 160]
@@ -64,7 +62,7 @@ fn held_none[slots]
 --- the whole zoom tiles are drawn at for a view at `zoom`, or -1 where
 --- the layer is not shown at that zoom
 fn tile_zoom[t, zoom]
-    z = geo.js_round[zoom]
+    z = geo.round_half_up[zoom]
     if z gt t.highest or z lt t.lowest
         return -1.0
     if t.native_low gte 0.0 and z lt t.native_low
@@ -103,24 +101,24 @@ fn tiles_at[t, tz, lat, lng, zoom, w, h, ox, oy]
         return out
     scale = geo.zoom_scale[zoom, tz]
     centre = geo.project[lat, lng, tz]
-    cx = geo.js_floor[centre.x]
-    cy = geo.js_floor[centre.y]
+    cx = geo.floor_whole[centre.x]
+    cy = geo.floor_whole[centre.y]
     hw = w / (scale * 2.0)
     hh = h / (scale * 2.0)
-    x0 = geo.js_floor[(cx - hw) / 256.0]
-    y0 = geo.js_floor[(cy - hh) / 256.0]
-    x1 = geo.js_ceil[(cx + hw) / 256.0] - 1.0
-    y1 = geo.js_ceil[(cy + hh) / 256.0] - 1.0
+    x0 = geo.floor_whole[(cx - hw) / 256.0]
+    y0 = geo.floor_whole[(cy - hh) / 256.0]
+    x1 = geo.ceil_whole[(cx + hw) / 256.0] - 1.0
+    y1 = geo.ceil_whole[(cy + hh) / 256.0] - 1.0
     --- (the world's rows at this zoom, and its columns, which repeat)
     k = geo.world[tz]
     d = pi * geo.radius[]
     u = 0.5 / (pi * geo.radius[])
     top = k * ((0.0 - u) * d + 0.5)
     foot = k * ((0.0 - u) * (0.0 - d) + 0.5)
-    first_row = geo.js_floor[min[top, foot] / 256.0]
-    last_row = geo.js_ceil[max[top, foot] / 256.0] - 1.0
-    west = geo.js_floor[geo.project[0.0, -180.0, tz].x / 256.0]
-    east = geo.js_ceil[geo.project[0.0, 180.0, tz].x / 256.0]
+    first_row = geo.floor_whole[min[top, foot] / 256.0]
+    last_row = geo.ceil_whole[max[top, foot] / 256.0] - 1.0
+    west = geo.floor_whole[geo.project[0.0, -180.0, tz].x / 256.0]
+    east = geo.ceil_whole[geo.project[0.0, 180.0, tz].x / 256.0]
     --- (where the tiles are drawn: the view's top left at the view's zoom,
     --- a tile `size` pixels there)
     size = 256.0 * scale
@@ -142,7 +140,7 @@ fn tiles_at[t, tz, lat, lng, zoom, w, h, ox, oy]
                 far = push[far, sqrt[dx * dx + dy * dy]]
             i = i + 1.0
         j = j + 1.0
-    --- (nearest the middle first, as Leaflet queues them)
+    --- (nearest the middle first)
     order = argsort[far]
     for o in order
         out = push[out, found[o]]
@@ -231,7 +229,7 @@ fn asks_for[c, h, t]
     c
 
 --- how opaque a tile that came at `since` is drawn at `when`: it fades
---- in over a fifth of a second (Leaflet's fade)
+--- in over a fifth of a second
 fn _opacity[since, when]
     min[1.0, max[0.0, (when - since) / 200.0]]
 
@@ -255,8 +253,8 @@ fn draw_tiles[c, h, t, tiles, x, y, s, when]
         for tile in behind
             if tile.z - up gte 0
                 f = 2.0 ^ up
-                px = geo.js_floor[tile.x / f]
-                py = geo.js_floor[tile.y / f]
+                px = geo.floor_whole[tile.x / f]
+                py = geo.floor_whole[tile.y / f]
                 pz = tile.z - up
                 key = '`0 + px`:`0 + py`:`pz`'
                 if not (key in drawn_keys)

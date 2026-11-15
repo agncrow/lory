@@ -1,8 +1,7 @@
 --- 3D model files read and written: OBJ (with its MTL's materials), STL
 --- (text and binary), PLY (text and binary), XYZ and PCD point clouds,
 --- VTK's legacy text and OFF read into `lory.geometry`'s geometries, and
---- OBJ, STL, PLY and glTF 2.0 written from them, as three.js's loaders read
---- them and its exporters write them.
+--- OBJ, STL, PLY and glTF 2.0 written from them.
 ---
 ---     use lory.models
 ---
@@ -17,19 +16,9 @@
 --- A model is its parts in the file's order: each a name, how it is drawn
 --- (a mesh of triangles, lines or points), its geometry (positions,
 --- normals, uvs, indices and groups, as `lory.geometry` holds them), its
---- colours (three numbers a vertex, in linear light, as three holds them)
---- and its materials (one a group, or one for the whole). A file that cannot
+--- colours (three numbers a vertex, in linear light) and its materials (one a group, or one for the whole). A file that cannot
 --- be read is a model whose `failure` says why; a reader never stops the
 --- program.
----
---- lory.models reimplements, in Crow, the loaders and exporters of
---- three.js, Copyright 2010-2026 three.js authors, licensed under the MIT
---- License (https://github.com/mrdoob/three.js). No source of theirs is
---- included: what three 0.187.0's OBJLoader, MTLLoader, STLLoader,
---- PLYLoader, XYZLoader, PCDLoader, VTKLoader and its OBJ, STL, PLY and
---- glTF exporters do was read and written anew, and tests/models/reference.co
---- holds Lory to what three answers and writes for the same files and
---- geometries.
 use sys
 use bits
 use lory
@@ -45,7 +34,7 @@ struct Model [parts, libraries, failure]
 
 --- a part of a model: its name, how it is drawn (`mesh`, `lines` or
 --- `points`), its geometry, its colours (three numbers a vertex in linear
---- light, as three holds them, or none), and its materials (one a group of
+--- light, or none), and its materials (one a group of
 --- its geometry, or one for the whole where it has no groups)
 struct Part [name, form, geometry, colors, materials]
 
@@ -59,20 +48,20 @@ struct Material [name, color, specular, emissive, shininess, opacity, transparen
 --- three numbers as a list (a list written out is a tensor; this is a
 --- list grown by `push`, as the geometry's lists are). Each is a float
 --- given as it is (adding 0.0 would make a negative zero a positive one)
-fn _three[a, b, c]
+fn _triple[a, b, c]
     push[push[push[[], a], b], c]
 
---- a material of a name, as three makes one with nothing said of it: white,
---- its highlight a dark grey (three's 0x111111), no glow, shininess 30,
+--- a material of a name with nothing said of it: white, its highlight a
+--- dark grey (0x111111), no glow, shininess 30,
 --- opaque, smooth, with no picture
 fn plain_material[name]
     grey = _linear[17.0 / 255.0]
-    Material[name, _three[1.0, 1.0, 1.0], _three[grey, grey, grey], _three[0.0, 0.0, 0.0], 30.0, 1.0, false, true, '']
+    Material[name, _triple[1.0, 1.0, 1.0], _triple[grey, grey, grey], _triple[0.0, 0.0, 0.0], 30.0, 1.0, false, true, '']
 
 --- a material of a name in a colour (three numbers in linear light)
 fn colored_material[name, rgb]
     m = plain_material[name]
-    m.color = _three[rgb[0], rgb[1], rgb[2]]
+    m.color = _triple[rgb[0], rgb[1], rgb[2]]
     m
 
 --- a model of no parts, that could not be read for the reason given
@@ -300,7 +289,7 @@ fn _byte_of[x]
         whole = 0 - whole
     (whole % 256 + 256) % 256
 
---- a number as single precision keeps it (as three's Float32Arrays do)
+--- a number as single precision keeps it (as a 32-bit float array does)
 fn single[x]
     sys.ieee[sys.ieee[0.0 + x, 4, true], 0, 4, true]
 
@@ -312,24 +301,22 @@ fn singles[xs]
 
 --- ---- colours ----
 
---- a colour's part in sRGB taken into linear light, as three's
---- SRGBToLinear takes it
+--- a colour's part in sRGB taken into linear light
 fn _linear[c]
     if c lt 0.04045
         return c * 0.0773993808
     (c * 0.9478672986 + 0.0521327014) ^ 2.4
 
---- a colour's part in linear light taken into sRGB, as three's
---- LinearToSRGB takes it
+--- a colour's part in linear light taken into sRGB
 fn _srgb[c]
     if c lt 0.0031308
         return c * 12.92
     1.055 * (c ^ 0.41666) - 0.055
 
---- a colour in sRGB (three numbers 0 to 1) in linear light, as three
+--- a colour in sRGB (three numbers 0 to 1) in linear light, as a model
 --- keeps a colour it is given
 fn linear_color[r, g, b]
-    _three[_linear[r], _linear[g], _linear[b]]
+    _triple[_linear[r], _linear[g], _linear[b]]
 
 --- a colour in linear light (three numbers) as Lory draws one: in sRGB
 fn shown_color[rgb]
@@ -405,18 +392,17 @@ fn _at[xs, place]
         return _nan[]
     xs[floor[place]]
 
---- a direction of length one, as three's Vector3 normalizes one (a
---- direction of no length, or not a number, divided by one)
+--- a direction of length one (a direction of no length, or not a number, divided by one)
 fn _unit3[x, y, z]
     l = sqrt[x * x + y * y + z * z]
     if not (l gt 0.0)
         l = 1.0
     k = 1.0 / l
-    _three[x * k, y * k, z * k]
+    _triple[x * k, y * k, z * k]
 
 --- ---- MTL ----
 
---- what an MTL file says of one material, as three's MTLLoader keeps it:
+--- what an MTL file says of one material:
 --- its name, and its properties' keys (lower case) in the order they
 --- first come, each with the last value said of it
 struct _Said [name, keys, words]
@@ -475,16 +461,14 @@ fn _said_more[s, key, value]
     s.words = push[s.words, value]
     s
 
---- the material what is said of it makes, as three's MaterialCreator
---- makes one: each property in the order its key first came
+--- the material what is said of it makes: each property in the order its key first came
 fn _material_of[s]
     m = plain_material[s.name]
     for i in range[len[s.keys]]
         m = _material_set[m, s.keys[i], s.words[i]]
     m
 
---- a material with one MTL property set, as three's MaterialCreator sets
---- it (a colour's three numbers are read even where none are given: they
+--- a material with one MTL property set (a colour's three numbers are read even where none are given: they
 --- are then not numbers)
 fn _material_set[m, key, value]
     if key eq 'kd' or key eq 'ks' or key eq 'ke'
@@ -575,7 +559,7 @@ fn _no_use[]
 fn _object_started[name, declared]
     _Obj[name, declared, 'mesh', [], [], [], [], false, slice[[_no_use[]], 0, 0], true]
 
---- the model of an OBJ file, as three's OBJLoader reads it, its materials
+--- the model of an OBJ file, its materials
 --- from the MTL file's text (none given: plain materials, flat where `s`
 --- turns smoothing off). Each object (`o`, `g`) is a part: a mesh of its
 --- faces (each fanned into triangles from its first corner, normals
@@ -709,7 +693,7 @@ fn _object_name[line]
     _js_trim[kept]
 
 --- the place of a vertex's first number in a list of `width` numbers a
---- vertex, as three reads an OBJ index: counted from 1, or back from the
+--- vertex, read from an OBJ index: counted from 1, or back from the
 --- end when below 0 (not a number where it is none)
 fn _obj_place[words, length, width]
     n = js_int[words]
@@ -717,7 +701,7 @@ fn _obj_place[words, length, width]
         return (n - 1.0) * width
     (n + length / width) * width
 
---- a face's triangle added to the object, three's way: its corners'
+--- a face's triangle added to the object: its corners'
 --- positions and colours (a colour only for a vertex that has one), its
 --- normals given or worked out from its corners, its uvs given or zeros
 fn _face_added[o, vs, vc, colored, vn, vt, ca, cb, cc]
@@ -801,8 +785,8 @@ fn _has_color[colored, place]
     k = floor[place] / 3
     k lt len[colored] and colored[k]
 
---- the normal of a triangle from its corners, as three works one out for
---- a face that gives none: (c - b) × (a - b), made of length one
+--- the normal of a triangle from its corners, worked out for a face
+--- that gives none: (c - b) × (a - b), made of length one
 fn _face_normal[ax, ay, az, bx, by, bz, cx, cy, cz]
     ux = cx - bx
     uy = cy - by
@@ -926,7 +910,7 @@ fn _obj_part[o, known, with_mtl]
         m = plain_material[u.name]
         if with_mtl
             m = _material_named[known, u.name]
-            --- (three draws lines in a material of their own, which keeps
+            --- (lines are drawn in a material of their own, which keeps
             --- the MTL's colour but not its picture)
             if o.form eq 'lines'
                 m.texture = ''
@@ -948,8 +932,8 @@ fn _obj_part[o, known, with_mtl]
 fn _decoded[data]
     _without_bom[sys.text[data, char[65533]]]
 
---- the bytes as Latin-1 spells them, a character a byte (how three reads
---- a header of PLY and PCD), from `from` up to `upto`
+--- the bytes as Latin-1 spells them, a character a byte (how a PLY or
+--- PCD header is read), from `from` up to `upto`
 fn _latin[data, from, upto]
     out = ''
     i = from
@@ -967,7 +951,7 @@ fn _bytes_say[data, at, word]
 
 --- ---- STL ----
 
---- the model of an STL file (its bytes), as three's STLLoader reads it:
+--- the model of an STL file (its bytes):
 --- binary where its length is what its count of triangles needs, or where
 --- none of its first five bytes begins `solid`; text otherwise. Binary:
 --- each triangle's normal on its three corners, and where the header says
@@ -975,7 +959,7 @@ fn _bytes_say[data, at, word]
 --- header's colour where its top bit is set) in linear light. Text: each
 --- `solid` a group, its name its material's; each facet's normal on its
 --- corners (a facet that gives none keeps the one before). A file too short
---- for a binary header is read as text (three stops on it)
+--- for a binary header is read as text
 fn read_stl[data]
     n = len[data]
     if n lt 84
@@ -994,11 +978,11 @@ fn _stl_binary[data, faces]
     if len[data] lt need
         return _failed['the STL file says it holds `faces` triangles, which take `need` bytes; it has `len[data]`']
     colored = false
-    base = _three[0.0, 0.0, 0.0]
+    base = _triple[0.0, 0.0, 0.0]
     for at in range[71]
         if _bytes_say[data, at, 'COLOR=']
             colored = true
-            base = _three[sys.byte[data, at + 6] / 255.0, sys.byte[data, at + 7] / 255.0, sys.byte[data, at + 8] / 255.0]
+            base = _triple[sys.byte[data, at + 6] / 255.0, sys.byte[data, at + 7] / 255.0, sys.byte[data, at + 8] / 255.0]
     positions = []
     normals = []
     colors = []
@@ -1009,7 +993,7 @@ fn _stl_binary[data, faces]
         if colored
             packed = sys.unpack[data, begun + 48, 2, little = true, signed = false]
             if bitand[packed, 32768] eq 0
-                rgb = _three[bitand[packed, 31] / 31.0, bitand[shift[packed, -5], 31] / 31.0, bitand[shift[packed, -10], 31] / 31.0]
+                rgb = _triple[bitand[packed, 31] / 31.0, bitand[shift[packed, -5], 31] / 31.0, bitand[shift[packed, -10], 31] / 31.0]
         lit = linear_color[rgb[0], rgb[1], rgb[2]]
         for k in [3, 6, 9]
             positions = push[positions, xs[k]]
@@ -1024,7 +1008,7 @@ fn _stl_binary[data, faces]
                 colors = push[colors, lit[2]]
     _model_of[[Part['', 'mesh', geometry.Geometry[positions, normals, [], [], []], colors, [plain_material['']]]]]
 
---- the texts of each match of three's `/open([\s\S]*?)end/g` in the text,
+--- the texts of each match of `/open([\s\S]*?)end/g` in the text,
 --- where the closing word is the opening one after `end` (as `endsolid`
 --- closes `solid`): the opening word's first place before each closing
 --- word, or the one inside the closing word itself
@@ -1048,8 +1032,8 @@ fn _spans[t, opening, closing]
             k = n
     out
 
---- three numbers after each match of a word in a text, in order, as
---- three's text STL pattern finds them (a number may be empty: then it is
+--- three numbers after each match of a word in a text, in order, as a
+--- text STL's facets and vertices are found (a number may be empty: then it is
 --- not one)
 fn _after_word[t, word]
     cls = _space_class[]
@@ -1078,7 +1062,7 @@ fn _stl_text[t]
     normals = []
     groups = []
     materials = slice[[plain_material['']], 0, 0]
-    normal = _three[0.0, 0.0, 0.0]
+    normal = _triple[0.0, 0.0, 0.0]
     vertices = 0
     solids = _spans[t, 'solid', 'endsolid']
     for i in range[len[solids]]
@@ -1093,7 +1077,7 @@ fn _stl_text[t]
             given = _after_word[f, 'normal']
             k = 0
             while k + 2 lt len[given]
-                normal = _three[given[k], given[k + 1], given[k + 2]]
+                normal = _triple[given[k], given[k + 1], given[k + 2]]
                 k = k + 3
             corners = _after_word[f, 'vertex']
             k = 0
@@ -1113,14 +1097,14 @@ fn _stl_text[t]
         materials = push[materials, plain_material['']]
     _model_of[[Part['', 'mesh', geometry.Geometry[positions, normals, [], [], groups], [], materials]]]
 
---- ---- typed numbers, as three's typed arrays keep them ----
+--- ---- typed numbers, as typed arrays keep them ----
 
 --- whether a PLY type is one of floats
 fn _float_type[form]
     form eq 'float' or form eq 'float32' or form eq 'double' or form eq 'float64'
 
---- the PLY type three keeps a property's numbers as ('' where three has no
---- array for it)
+--- the typed array a PLY property's numbers are kept in ('' where no
+--- array keeps its type)
 fn _typed_as[form]
     if form eq 'char' or form eq 'int8'
         return 'int8'
@@ -1187,11 +1171,11 @@ struct _Property [name, form, count_form, item_form]
 --- an element of a PLY header: its name, how many it counts, its properties
 struct _Element [name, count, properties]
 
---- a PLY header as three reads it: its format, its elements, how many
+--- a PLY header as it is read: its format, its elements, how many
 --- bytes it takes, and what stops it being read ('' where nothing does)
 struct _Header [format, elements, length, failure]
 
---- where each of the vertex's values three reads stands among its
+--- where each of the vertex's values Lory reads stands among its
 --- properties (-1 where none does), and each one's type
 struct _Plan [x, y, z, nx, ny, nz, s, t, r, g, b, coords, position_form, normal_form, uv_form, color_form, coords_form]
 
@@ -1201,12 +1185,12 @@ struct _Plan [x, y, z, nx, ny, nz, s, t, r, g, b, coords, position_form, normal_
 --- the element was whole
 struct _Row [numbers, corners, alt, coords, upto, whole]
 
---- the model of a PLY file (its bytes), as three's PLYLoader reads it: its
+--- the model of a PLY file (its bytes): its
 --- header's elements in order, in text or in binary (either byte order),
 --- the vertices' positions, normals, uvs (`s`/`u`, `t`/`v`) and colours
 --- (`red`, `green`, `blue`), each kept as its type keeps it, the colours
 --- in linear light; each face of three corners a triangle and of four two
---- (faces of more are left out, as three leaves them). Faces' texture
+--- (faces of more are left out). Faces' texture
 --- coordinates or colours make every triangle's corners their own. A part
 --- of points where it has no faces
 fn read_ply[data]
@@ -1217,7 +1201,7 @@ fn read_ply[data]
         return _ply_read[data, h, true]
     _ply_read[data, h, false]
 
---- a PLY file's header, as three finds it: its lines to the one that is
+--- a PLY file's header: its lines to the one that is
 --- `end_header`, each byte a character
 fn _ply_header[data]
     n = len[data]
@@ -1283,14 +1267,14 @@ fn _property_at[properties, names]
                 return i
     -1
 
---- the type of the property at a place, or the one three takes where none
+--- the type of the property at a place, or the one taken where none
 --- stands there
 fn _form_at[properties, at, otherwise]
     if at lt 0
         return otherwise
     properties[at].form
 
---- where the vertex's values three reads stand among an element's
+--- where the vertex's values Lory reads stand among an element's
 --- properties
 fn _plan_of[properties]
     x = _property_at[properties, ['x', 'px', 'posx']]
@@ -1305,7 +1289,7 @@ fn _plan_of[properties]
 
 --- an element's row read from the text's words at `at`: each property's
 --- number as its type reads it (parseInt for whole types, parseFloat for
---- floats, not a number for a type three does not know), a list's items
+--- floats, not a number for a type it does not know), a list's items
 --- after its count; not whole where the words end first
 fn _text_row[words, at, properties, first_list, second_list, coords_at]
     numbers = []
@@ -1339,7 +1323,7 @@ fn _text_row[words, at, properties, first_list, second_list, coords_at]
             i = i + 1
     _Row[numbers, corners, alt, coords, i, true]
 
---- a word of a PLY text as three reads it for a property's type
+--- a word of a PLY text read for a property's type
 fn _text_number[w, form]
     typed = _typed_as[form]
     if typed eq ''
@@ -1348,7 +1332,7 @@ fn _text_number[w, form]
         return js_float[w]
     _js_int_any[w]
 
---- how many bytes a number of the type takes (0 for a type three does not
+--- how many bytes a number of the type takes (0 for a type Lory does not
 --- read)
 fn _width_of[typed]
     if typed eq 'int8' or typed eq 'uint8'
@@ -1371,7 +1355,7 @@ fn _binary_number[data, at, typed, little]
     0.0 + sys.unpack[data, at, _width_of[typed], little = little, signed = signed]
 
 --- an element's row read from the bytes at `at` (not whole where the bytes
---- end first, or a type three does not read is met: `upto` is then -1)
+--- end first, or a type Lory does not read is met: `upto` is then -1)
 fn _binary_row[data, at, properties, little, first_list, second_list, coords_at]
     numbers = []
     corners = []
@@ -1433,8 +1417,8 @@ fn _named_number[properties, row, name]
             out = row.numbers[i]
     out
 
---- what three's PLYLoader gathers from the elements before it makes the
---- geometry: the vertices' positions, normals, uvs and colours, the
+--- what is gathered from a PLY's elements before its geometry is made:
+--- the vertices' positions, normals, uvs and colours, the
 --- triangles' corners, the faces' uvs and colours, the vertices' plan
 --- (the last element named `vertex`), the faces', and what stops it
 struct _Gathered [positions, normals, uvs, colors, indices, face_uvs, face_colors, vertex_plan, face_plan, has_face, failure]
@@ -1481,7 +1465,7 @@ fn _ply_read[data, h, as_text]
                 if as_text
                     stopped = true
                 else if row.upto lt 0
-                    return _failed['the PLY file\'s element `element.name` has a property of a type three does not read']
+                    return _failed['the PLY file\'s element `element.name` has a property of a type Lory does not read']
                 else
                     return _failed['the PLY file ends inside its element `element.name` (number `j`)']
             else
@@ -1496,7 +1480,7 @@ fn _ply_read[data, h, as_text]
         e = e + 1
     _ply_model[gathered]
 
---- a vertex's values gathered, as three's PLYLoader gathers them: a
+--- a vertex's values gathered: a
 --- colour taken into linear light, and a whole type's colour rounded back
 --- to its whole number
 fn _vertex_gathered[gathered, plan, row]
@@ -1524,7 +1508,7 @@ fn _vertex_gathered[gathered, plan, row]
             gathered.colors = push[gathered.colors, c]
     gathered
 
---- how three scales a colour of a type into 0 to 1
+--- how a colour of a type is scaled into 0 to 1
 fn _color_scale[form]
     if form eq 'uchar' or form eq 'uint8'
         return 1.0 / 255.0
@@ -1534,7 +1518,7 @@ fn _color_scale[form]
         return 1.0
     1.0 / 255.0
 
---- a face gathered, as three's PLYLoader gathers one: three corners one
+--- a face gathered: three corners one
 --- triangle, four two (its uvs where its texture coordinates are six or
 --- eight numbers), more none; its colour on each corner of its triangles
 fn _face_gathered[gathered, plan, properties, row]
@@ -1610,7 +1594,7 @@ fn _all_normal_of[xs, typed]
         out = push[out, _normal_of[x, typed]]
     out
 
---- a triangle's corners as three's index keeps them: in 16 bits, or 32
+--- a triangle's corners as an index keeps them: in 16 bits, or 32
 --- where one reaches 65535
 fn _index_kept[indices]
     wide = false
@@ -1625,8 +1609,7 @@ fn _index_kept[indices]
         out = push[out, floor[_kept_as[i, typed]]]
     out
 
---- an attribute's numbers made each triangle corner's own, as three's
---- toNonIndexed makes them (a corner past the numbers is not a number, or
+--- an attribute's numbers made each triangle corner's own (a corner past the numbers is not a number, or
 --- 0 in a whole type)
 fn _unindexed[xs, size, indices, typed]
     out = []
@@ -1642,31 +1625,31 @@ fn _unindexed[xs, size, indices, typed]
                 out = push[out, missing]
     out
 
---- the geometry three's PLYLoader makes of what it gathered
+--- the geometry made of what a PLY's reading gathered
 fn _ply_model[gathered]
     vp = gathered.vertex_plan
     position_typed = _typed_as[vp.position_form]
     if position_typed eq ''
-        return _failed['three keeps no array of the PLY type `vp.position_form` (the positions\')']
+        return _failed['no array keeps the PLY type `vp.position_form` (the positions\')']
     positions = _all_kept_as[gathered.positions, position_typed]
     normals = []
     if len[gathered.normals] gt 0
         typed = _typed_as[vp.normal_form]
         if typed eq ''
-            return _failed['three keeps no array of the PLY type `vp.normal_form` (the normals\')']
+            return _failed['no array keeps the PLY type `vp.normal_form` (the normals\')']
         normals = _all_kept_as[gathered.normals, typed]
     uvs = []
     if len[gathered.uvs] gt 0
         typed = _typed_as[vp.uv_form]
         if typed eq ''
-            return _failed['three keeps no array of the PLY type `vp.uv_form` (the uvs\')']
+            return _failed['no array keeps the PLY type `vp.uv_form` (the uvs\')']
         uvs = _all_kept_as[gathered.uvs, typed]
     colors = []
     color_typed = 'float32'
     if len[gathered.colors] gt 0
         color_typed = _typed_as[vp.color_form]
         if color_typed eq ''
-            return _failed['three keeps no array of the PLY type `vp.color_form` (the colours\')']
+            return _failed['no array keeps the PLY type `vp.color_form` (the colours\')']
         colors = _all_kept_as[gathered.colors, color_typed]
     indices = _index_kept[gathered.indices]
     expanded = false
@@ -1685,12 +1668,12 @@ fn _ply_model[gathered]
         if len[gathered.face_uvs] gt 0
             typed = _typed_as[fp.coords_form]
             if typed eq ''
-                return _failed['three keeps no array of the PLY type `fp.coords_form` (the faces\' texture coordinates\')']
+                return _failed['no array keeps the PLY type `fp.coords_form` (the faces\' texture coordinates\')']
             uvs = _all_kept_as[gathered.face_uvs, typed]
         if len[gathered.face_colors] gt 0
             color_typed = _typed_as[fp.color_form]
             if color_typed eq ''
-                return _failed['three keeps no array of the PLY type `fp.color_form` (the faces\' colours\')']
+                return _failed['no array keeps the PLY type `fp.color_form` (the faces\' colours\')']
             colors = _all_kept_as[gathered.face_colors, color_typed]
     if not _float_type[color_typed]
         colors = _all_normal_of[colors, color_typed]
@@ -1701,7 +1684,7 @@ fn _ply_model[gathered]
 
 --- ---- XYZ ----
 
---- the points of an XYZ file, as three's XYZLoader reads them: each line
+--- the points of an XYZ file: each line
 --- of three numbers a point, of six a point and its colour (0 to 255, in
 --- sRGB, taken into linear light); lines beginning `#` and lines of other
 --- counts are passed over
@@ -1725,14 +1708,14 @@ fn read_xyz[words]
 
 --- ---- PCD ----
 
---- a PCD header as three reads it: its fields, their sizes, types and
+--- a PCD header as it is read: its fields, their sizes, types and
 --- counts, how many points, how its data is written, how many bytes the
 --- header takes, each field's first place among the fields and its offset
 --- (the last field of a name's), how many bytes a point's row takes, and
 --- what stops it being read
 struct _Cloud [fields, sizes, types, counts, points, data, length, offsets, row, has_types, has_sizes, failure]
 
---- the points of a PCD file (its bytes), as three's PCDLoader reads them:
+--- the points of a PCD file (its bytes):
 --- its data in text, binary or LZF-compressed binary; `x y z` the
 --- positions, `normal_x normal_y normal_z` the normals, `rgb` the colours
 --- (a float's bits holding red, green and blue, in sRGB, taken into linear
@@ -1754,7 +1737,7 @@ fn read_pcd[data]
             return _failed['the PCD file ends inside its compressed data']
         unpacked = _lzf[sys.slice[data, h.length + 8, h.length + 8 + packed], size]
         if len[unpacked] ne size
-            return _failed['the PCD file\'s compressed data is not LZF that three can read']
+            return _failed['the PCD file\'s compressed data is not LZF that Lory can read']
         return _pcd_binary[unpacked, h, 0, true]
     _model_of[[Part['', 'points', geometry.Geometry[[], [], [], [], []], [], [plain_material['']]]]]
 
@@ -1853,7 +1836,7 @@ fn _pcd_rest[lines, word]
     out
 
 --- the words after the first line of the PCD header that begins with the
---- word, split at each space (as three splits them)
+--- word, split at each space
 fn _pcd_words[lines, word]
     if not _pcd_has[lines, word]
         return slice[[''], 0, 0]
@@ -1942,7 +1925,7 @@ fn _pcd_text[data, h]
     _model_of[[Part['', 'points', geometry.Geometry[positions, normals, [], [], []], colors, [plain_material['']]]]]
 
 --- a field's number read from a PCD's binary data at a place, as its type
---- (`F`, `I` or `U`) and size say (not a number for a type three does not
+--- (`F`, `I` or `U`) and size say (not a number for a type Lory does not
 --- read); -1 as the place where it lies past the data
 fn _pcd_number[data, at, form, size]
     if form eq 'F'
@@ -2034,7 +2017,7 @@ fn _pcd_binary[data, h, base, columns]
     _model_of[[Part['', 'points', geometry.Geometry[positions, normals, [], [], []], colors, [plain_material['']]]]]
 
 --- bytes made from LZF's (as a PCD's compressed data holds them), as many
---- as `size`; bytes of another length where they are not LZF three reads
+--- as `size`; bytes of another length where they are not LZF Lory reads
 fn _lzf[packed, size]
     out = sys.bytes[size]
     bad = sys.bytes[size + 1]
@@ -2080,12 +2063,11 @@ fn _lzf[packed, size]
 
 --- ---- VTK ----
 
---- the model of a legacy VTK file's text (its bytes), as three's VTKLoader
---- reads it: a POLYDATA's points, its polygons (each fanned from its first
+--- the model of a legacy VTK file's text (its bytes): a POLYDATA's points, its polygons (each fanned from its first
 --- corner) and triangle strips, and from its point or cell data colours
 --- (`COLOR_SCALARS name 3`, in sRGB, taken into linear light) and normals.
---- A colour a cell makes each triangle's corners their own (three takes
---- its colour into linear light twice over). VTK's binary and XML forms
+--- A colour a cell makes each triangle's corners their own (its colour
+--- taken into linear light twice over). VTK's binary and XML forms
 --- are not read (a model that says so)
 fn read_vtk[data]
     n = len[data]
@@ -2247,7 +2229,7 @@ fn _vtk_text[t]
 
 --- ---- OFF ----
 
---- the model of an OFF file (Lory's own reading: three has no OFF loader):
+--- the model of an OFF file:
 --- `OFF` and its kin (`COFF` colours, `NOFF` normals, `STOFF` uvs, after
 --- each vertex's position), the counts of vertices and faces, a vertex a
 --- line, then a face a line — its count of corners, its corners (fanned
@@ -2332,7 +2314,7 @@ fn read_off[words]
             k = v[c + 1]
             if not _finite[k] or k lt 0.0 or k gte 0.0 + vertices
                 return _failed['the OFF file\'s face `f` names vertex `k`, past its `vertices` vertices']
-        rgb = _three[1.0, 1.0, 1.0]
+        rgb = _triple[1.0, 1.0, 1.0]
         if len[v] - n - 1 gte 3
             rgb = _off_color[v, n + 1]
             colored_faces = true
@@ -2396,17 +2378,16 @@ fn model_of[name, data]
 
 --- ---- writing ----
 
---- Lory's writers write a model as three's exporters write the objects
---- three reads it into: each number as three holds it, in single
---- precision, placed by the identity's matrix and made unit as three's
---- vectors do it, and written as JavaScript writes numbers
+--- Lory's writers write a model's parts as they are read: each number in
+--- single precision, placed by the identity's matrix and made unit, and
+--- written as JavaScript writes numbers
 
---- a part's numbers at a vertex's place (three's, single precision; not
---- numbers past its end)
+--- a part's numbers at a vertex's place (single precision; not numbers
+--- past its end)
 fn _triple_at[xs, i]
-    _three[_at[xs, 3.0 * i], _at[xs, 3.0 * i + 1.0], _at[xs, 3.0 * i + 2.0]]
+    _triple[_at[xs, 3.0 * i], _at[xs, 3.0 * i + 1.0], _at[xs, 3.0 * i + 2.0]]
 
---- a position placed as three's exporters place it, through the identity's
+--- a position placed through the identity's
 --- matrix as `applyMatrix4` multiplies (minus zero becomes zero; a number
 --- past the floats' range makes all three not numbers)
 fn _placed[v]
@@ -2414,9 +2395,9 @@ fn _placed[v]
     y = v[1]
     z = v[2]
     w = 1.0 / (0.0 * x + 0.0 * y + 0.0 * z + 1.0)
-    _three[(1.0 * x + 0.0 * y + 0.0 * z + 0.0) * w, (0.0 * x + 1.0 * y + 0.0 * z + 0.0) * w, (0.0 * x + 0.0 * y + 1.0 * z + 0.0) * w]
+    _triple[(1.0 * x + 0.0 * y + 0.0 * z + 0.0) * w, (0.0 * x + 1.0 * y + 0.0 * z + 0.0) * w, (0.0 * x + 0.0 * y + 1.0 * z + 0.0) * w]
 
---- a normal as three's exporters turn one, through the identity's normal
+--- a normal turned through the identity's normal
 --- matrix as `applyMatrix3` multiplies, then made unit
 fn _turned[v]
     x = v[0]
@@ -2425,17 +2406,17 @@ fn _turned[v]
     _unit3[1.0 * x + 0.0 * y + 0.0 * z, 0.0 * x + 1.0 * y + 0.0 * z, 0.0 * x + 0.0 * y + 1.0 * z]
 
 --- three numbers as JavaScript writes them, a space between
-fn _three_words[v]
+fn _triple_words[v]
     a = number_text[v[0]]
     b = number_text[v[1]]
     c = number_text[v[2]]
     '`a` `b` `c`'
 
---- a colour of linear light in sRGB, as three's exporters write one
+--- a colour of linear light in sRGB, as the writers write one
 fn _srgb_of[v]
-    _three[_srgb[v[0]], _srgb[v[1]], _srgb[v[2]]]
+    _triple[_srgb[v[0]], _srgb[v[1]], _srgb[v[2]]]
 
---- how many vertices a part's positions hold (three's count)
+--- how many vertices a part's positions hold
 fn _vertices_of[p]
     len[p.geometry.positions] / 3
 
@@ -2493,13 +2474,13 @@ fn _corner_words[k, vertices_before, uvs_before, normals_before, has_uv, has_nor
         n = '/`place`'
     '`v`/`t``n`'
 
---- the model as OBJ text, as three's OBJExporter writes the objects:
+--- the model as OBJ text:
 --- each part an object (`o` and its name); a mesh with one named material
 --- says it (`usemtl`), then its vertices (`v`, with its colour in sRGB
 --- where the part has colours), uvs (`vt`), normals (`vn`, made unit) and
 --- triangles (`f`, a corner's vertex, uv and normal); lines are `l` pairs
 --- of their vertices and points one `p` of them all. Materials are not
---- written (three's exporter writes no MTL), nor a mesh's groups
+--- written (no MTL is written), nor a mesh's groups
 fn obj_text[m]
     out = slice[[''], 0, 0]
     vertices_before = 0.0
@@ -2517,9 +2498,9 @@ fn obj_text[m]
                 out = push[out, 'usemtl `named`']
         has_colors = len[cs] gt 0 and p.form ne 'lines'
         for i in range[vertices]
-            words = _three_words[_placed[_triple_at[ps, i]]]
+            words = _triple_words[_placed[_triple_at[ps, i]]]
             if has_colors
-                shade = _three_words[_srgb_of[_triple_at[cs, i]]]
+                shade = _triple_words[_srgb_of[_triple_at[cs, i]]]
                 words = '`words` `shade`'
             out = push[out, 'v `words`']
         if p.form eq 'mesh'
@@ -2532,7 +2513,7 @@ fn obj_text[m]
                 v = number_text[us[2 * i + 1]]
                 out = push[out, 'vt `u` `v`']
             for i in range[normal_count]
-                turned = _three_words[_turned[_triple_at[ns, i]]]
+                turned = _triple_words[_turned[_triple_at[ns, i]]]
                 out = push[out, 'vn `turned`']
             corners = _corners_of[g, vertices]
             k = 0
@@ -2574,7 +2555,7 @@ fn obj_text[m]
 
 --- ---- STL ----
 
---- a triangle as three's STLExporter writes it: its normal (the turn from
+--- a triangle as an STL file is written: its normal (the turn from
 --- its second corner to its third and first, made unit twice over) and
 --- its corners, each placed
 struct _Facet [normal, a, b, c]
@@ -2583,8 +2564,8 @@ fn _facet_of[ps, a, b, c]
     va = _placed[_triple_at[ps, a]]
     vb = _placed[_triple_at[ps, b]]
     vc = _placed[_triple_at[ps, c]]
-    cb = _three[vc[0] - vb[0], vc[1] - vb[1], vc[2] - vb[2]]
-    ab = _three[va[0] - vb[0], va[1] - vb[1], va[2] - vb[2]]
+    cb = _triple[vc[0] - vb[0], vc[1] - vb[1], vc[2] - vb[2]]
+    ab = _triple[va[0] - vb[0], va[1] - vb[1], va[2] - vb[2]]
     turn = _unit3[cb[1] * ab[2] - cb[2] * ab[1], cb[2] * ab[0] - cb[0] * ab[2], cb[0] * ab[1] - cb[1] * ab[0]]
     _Facet[_unit3[turn[0], turn[1], turn[2]], va, vb, vc]
 
@@ -2602,15 +2583,15 @@ fn _facets_of[m]
                 k = k + 3
     out
 
---- the model's meshes as STL text, as three's STLExporter writes them: a
+--- the model's meshes as STL text: a
 --- solid named `exported`, a facet a triangle
 fn stl_text[m]
     out = ['solid exported']
     for f in _facets_of[m]
-        normal = _three_words[f.normal]
-        a = _three_words[f.a]
-        b = _three_words[f.b]
-        c = _three_words[f.c]
+        normal = _triple_words[f.normal]
+        a = _triple_words[f.a]
+        b = _triple_words[f.b]
+        c = _triple_words[f.c]
         out = push[out, '\tfacet normal `normal`']
         out = push[out, '\t\touter loop']
         out = push[out, '\t\t\tvertex `a`']
@@ -2622,7 +2603,7 @@ fn stl_text[m]
     whole = join[out, '\n']
     '`whole`\n'
 
---- the model's meshes as binary STL, as three's STLExporter writes them:
+--- the model's meshes as binary STL:
 --- 80 bytes of nothing, how many triangles, and each triangle's normal
 --- and corners in single precision (little-endian), with no colour
 fn stl_bytes[m]
@@ -2637,7 +2618,7 @@ fn stl_bytes[m]
 
 --- ---- PLY ----
 
---- what three's PLYExporter writes of a model: its meshes and points (not
+--- what a PLY file is written of a model: its meshes and points (not
 --- its lines), how many vertices and triangles, whether each vertex has a
 --- normal, a uv and a colour (any part's having one gives every vertex
 --- one), and whether triangles are written (not where there are points)
@@ -2669,7 +2650,7 @@ fn _laid_of[m]
                 triangles = false
     _Laid[parts, vertices, faces, normals, uvs, colors, triangles, whole or not triangles]
 
---- a PLY's header, as three's PLYExporter writes it: its format, its
+--- a PLY's header as it is written: its format, its
 --- vertices' properties (all single precision) and its faces
 fn _ply_head[laid, format]
     out = ['ply', 'format `format` 1.0', 'element vertex `laid.vertices`', 'property float x', 'property float y', 'property float z']
@@ -2685,7 +2666,7 @@ fn _ply_head[laid, format]
     whole = join[out, '\n']
     '`whole`\n'
 
---- a part's numbers in single precision, as three holds them: its
+--- a part's numbers in single precision: its
 --- positions, normals, uvs and colours
 struct _Held [positions, normals, uvs, colors]
 
@@ -2693,7 +2674,7 @@ fn _held_of[p]
     g = p.geometry
     _Held[singles[g.positions], singles[g.normals], singles[g.uvs], singles[p.colors]]
 
---- a vertex's numbers as three's PLYExporter writes them: its place, its
+--- a vertex's numbers as a PLY file is written: its place, its
 --- normal (made unit, or none as 0 0 0), its uv (or 0 0) and its colour
 --- in sRGB (or white), each where the file has them
 fn _ply_numbers[laid, h, i]
@@ -2702,7 +2683,7 @@ fn _ply_numbers[laid, h, i]
         if len[h.normals] gt 0
             out = concat[out, _turned[_triple_at[h.normals, i]]]
         else
-            out = concat[out, _three[0.0, 0.0, 0.0]]
+            out = concat[out, _triple[0.0, 0.0, 0.0]]
     if laid.uvs
         if len[h.uvs] gt 0
             out = push[out, _at[h.uvs, 2.0 * i]]
@@ -2713,10 +2694,10 @@ fn _ply_numbers[laid, h, i]
         if len[h.colors] gt 0
             out = concat[out, _srgb_of[_triple_at[h.colors, i]]]
         else
-            out = concat[out, _three[1.0, 1.0, 1.0]]
+            out = concat[out, _triple[1.0, 1.0, 1.0]]
     out
 
---- the triangles three's PLYExporter writes, each its three corners
+--- the triangles a PLY file is written with, each its three corners
 --- counted across the file
 fn _ply_triangles[laid]
     out = []
@@ -2733,10 +2714,9 @@ fn _ply_triangles[laid]
         written = written + vertices
     out
 
---- the model as PLY text, as three's PLYExporter writes it: a line a
+--- the model as PLY text: a line a
 --- vertex, then a line a triangle (`3` and its corners), and a blank line;
---- nothing ('') where a mesh's corners are not whole triangles, as three
---- writes none
+--- nothing ('') where a mesh's corners are not whole triangles
 fn ply_text[m]
     laid = _laid_of[m]
     if not laid.whole
@@ -2761,7 +2741,7 @@ fn ply_text[m]
         return '`head`\n'
     '`head``body`\n\n'
 
---- the model as binary PLY, as three's PLYExporter writes it, big-endian
+--- the model as binary PLY, big-endian
 --- unless `little`: each vertex's numbers in single precision, then each
 --- triangle as a byte 3 and its corners as 32-bit whole numbers; no bytes
 --- where a mesh's corners are not whole triangles
@@ -2860,14 +2840,14 @@ fn _js_max[a, b]
         return b
     a
 
---- what three's GLTFExporter has written of a model so far: its buffer
+--- what the glTF writer has written of a model so far: its buffer
 --- views, accessors, materials (and the materials they are, with whether
 --- their part has colours, to write each once), meshes and nodes as
 --- JSON, and the buffer's bytes
 struct _Gltf [views, accessors, materials, seen, colored, meshes, nodes, data]
 
 --- an accessor of a part's numbers (`size` to an item, from item `first`,
---- `count` of them) and its buffer view, as three's exporter writes them:
+--- `count` of them) and its buffer view:
 --- single-precision floats (component 5126) or whole numbers of 16 or 32
 --- bits (5123, 5125), each view's bytes padded to four, its least and
 --- greatest numbers
@@ -2924,7 +2904,7 @@ fn _same_material[a, b]
             return false
     true
 
---- a material as three's exporter writes a Phong one (and a line's or
+--- a material as a glossy one is written (and a line's or
 --- points', which have no glow): metal-rough with its colour and opacity
 --- as the base where they are not white and whole, no metal and full
 --- roughness, its glow where it has one, blended where it is transparent,
@@ -2965,7 +2945,7 @@ fn _material_place[w, mat, colored]
             return i
     -1
 
---- a part's normals as three's exporter takes them: as they are where
+--- a part's normals as the glTF writer takes them: as they are where
 --- each is of length one (within 0.0005), else each made unit (one of no
 --- length as 1 0 0), in single precision
 fn _gltf_normals[ns]
@@ -2980,20 +2960,18 @@ fn _gltf_normals[ns]
     out = []
     for i in range[count]
         v = _triple_at[ns, i]
-        made = _three[1.0, v[1], v[2]]
+        made = _triple[1.0, v[1], v[2]]
         if not (v[0] eq 0.0 and v[1] eq 0.0 and v[2] eq 0.0)
             made = _unit3[v[0], v[1], v[2]]
         out = concat[out, made]
     singles[out]
 
---- the model as glTF 2.0's JSON, its buffer within as a data URI, as
---- three's GLTFExporter writes the objects (`JSON.stringify` of its
---- answer): a scene of a node a part, named as it is, each with its mesh
+--- the model as glTF 2.0's JSON, its buffer within as a data URI: a scene of a node a part, named as it is, each with its mesh
 --- of one primitive (a part with several materials, one a group, its
 --- corners counted out where it has no indices), the part's positions,
 --- normals, colours and uvs as single-precision floats, its indices as
---- whole numbers, and its materials (metal-rough, as three writes a
---- Phong material; their pictures are not written). `generator` names
+--- whole numbers, and its materials (metal-rough, from a glossy
+--- material; their pictures are not written). `generator` names
 --- the writer in the asset
 fn gltf_text[m, generator = 'Lory']
     none = slice[[''], 0, 0]
@@ -3112,8 +3090,8 @@ struct Strand [lines, color]
 --- (those that are numbers): [[x, y, z], [x, y, z]] (a box at the middle
 --- where it has none)
 fn bounds_of[m]
-    lo = _three[_infinity[], _infinity[], _infinity[]]
-    hi = _three[0.0 - _infinity[], 0.0 - _infinity[], 0.0 - _infinity[]]
+    lo = _triple[_infinity[], _infinity[], _infinity[]]
+    hi = _triple[0.0 - _infinity[], 0.0 - _infinity[], 0.0 - _infinity[]]
     for p in m.parts
         ps = p.geometry.positions
         for i in range[len[ps] / 3]
@@ -3125,7 +3103,7 @@ fn bounds_of[m]
                     if v[k] gt hi[k]
                         hi[k] = v[k]
     if not (lo[0] lte hi[0])
-        return [_three[-0.5, -0.5, -0.5], _three[0.5, 0.5, 0.5]]
+        return [_triple[-0.5, -0.5, -0.5], _triple[0.5, 0.5, 0.5]]
     [lo, hi]
 
 --- how far across a model's box is, corner to corner (1 where it has none)
@@ -3139,7 +3117,7 @@ fn size_of[m]
 --- the middle of a model's box
 fn middle_of[m]
     b = bounds_of[m]
-    _three[(b[0][0] + b[1][0]) / 2.0, (b[0][1] + b[1][1]) / 2.0, (b[0][2] + b[1][2]) / 2.0]
+    _triple[(b[0][0] + b[1][0]) / 2.0, (b[0][1] + b[1][1]) / 2.0, (b[0][2] + b[1][2]) / 2.0]
 
 --- a colour of linear light, each part rounded to a 16th, as text: the
 --- key its triangles are gathered under
@@ -3171,7 +3149,7 @@ fn _corner_shade[p, mat, i]
     if len[p.colors] eq 0
         return mat.color
     c = _triple_at[p.colors, i]
-    _three[c[0] * mat.color[0], c[1] * mat.color[1], c[2] * mat.color[2]]
+    _triple[c[0] * mat.color[0], c[1] * mat.color[1], c[2] * mat.color[2]]
 
 --- a number that is one (0 where it is not)
 fn _number_or_zero[x]
@@ -3202,14 +3180,14 @@ fn _mesh_drawn[p]
             at = []
             facing = []
             uv = []
-            shade = _three[0.0, 0.0, 0.0]
+            shade = _triple[0.0, 0.0, 0.0]
             for j in range[3]
                 i = corners[t + j]
                 v = _triple_at[g.positions, i]
                 for x in v
                     at = push[at, _number_or_zero[x]]
                 s = _corner_shade[p, mat, i]
-                shade = _three[shade[0] + s[0] / 3.0, shade[1] + s[1] / 3.0, shade[2] + s[2] / 3.0]
+                shade = _triple[shade[0] + s[0] / 3.0, shade[1] + s[1] / 3.0, shade[2] + s[2] / 3.0]
                 if len[g.uvs] gt 0
                     uv = push[uv, _number_or_zero[_at[g.uvs, 2.0 * i]]]
                     uv = push[uv, _number_or_zero[_at[g.uvs, 2.0 * i + 1.0]]]
@@ -3400,8 +3378,8 @@ test an_obj_of_one_triangle_is_read_with_its_normal_worked_out[]
     p = m.parts[0]
     p.form eq 'mesh'
     p.name eq ''
-    p.geometry.positions eq concat[_three[0.0, 0.0, 0.0], _three[1.0, 0.0, 0.0], _three[0.0, 1.0, 0.0]]
-    p.geometry.normals eq concat[_three[0.0, 0.0, 1.0], _three[0.0, 0.0, 1.0], _three[0.0, 0.0, 1.0]]
+    p.geometry.positions eq concat[_triple[0.0, 0.0, 0.0], _triple[1.0, 0.0, 0.0], _triple[0.0, 1.0, 0.0]]
+    p.geometry.normals eq concat[_triple[0.0, 0.0, 1.0], _triple[0.0, 0.0, 1.0], _triple[0.0, 0.0, 1.0]]
     len[p.geometry.uvs] eq 0
     len[p.colors] eq 0
     len[p.materials] eq 1
@@ -3443,9 +3421,9 @@ test a_file_lory_cannot_read_says_why[]
     grid = '# vtk DataFile Version 3.0\nan unstructured grid\nASCII\nDATASET UNSTRUCTURED_GRID\nPOINTS 1 float\n0 0 0\n'
     'POLYDATA' in read_vtk[sys.bytes['`grid``pad`']].failure
 
-test where_three_stops_lory_reads_a_short_stl_as_text_and_a_short_vtk[]
-    --- (three's STL loader reads a header past the end of a file shorter
-    --- than 84 bytes; its VTK loader the first 250 bytes, past a short one)
+test a_short_stl_reads_as_text_and_a_short_vtk_reads[]
+    --- (an STL file shorter than its 84-byte binary header is text; a VTK
+    --- file shorter than the 250 bytes its header is looked for in reads)
     stl = read_stl[sys.bytes['solid s\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid s\n']]
     readable[stl]
     vertex_total[stl] eq 3

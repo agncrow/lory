@@ -64,7 +64,7 @@ CARDS = ['Bars', 'Bars across', 'Stacked bars', 'Floating bars', 'Lines', 'Gaps'
 # Kite's palette (charts_model.palette) and gui's light look's accent
 PALETTE = ['#3b7dd8', '#e0525e', '#ef9a2d', '#2fae9e', '#8a63d2', '#6aa84f', '#8d96a7']
 ACCENT = (37, 99, 235)
-# a legend's band: its boxes, its words and the room round them (Chart.js's
+# a legend's band: its boxes, its words and the room round them (Kite's
 # legend at the top: 10 above, a 12-pixel box, 10 below), and more
 BAND = 36.0
 

@@ -1,18 +1,17 @@
---- Lory's navigation components (docs/components/display.md): what takes
---- the reader from place to place — app bars, system bars and footers
---- (with Vuetify's scroll behaviours), bottom navigation, breadcrumbs that
---- collapse as MUI's do, Semantic UI's menu bar and vertical menu,
---- navigation buttons, pagination (Vuetify's windows of pages and TOAST
---- UI's), steppers (Semantic UI's states, Vuetify's linear and editable
---- steppers, and a vertical stepper) and Radix's toolbar.
+--- Lory's navigation components: what takes the reader from place to
+--- place — app bars, system bars and footers (with their scroll
+--- behaviours), bottom navigation, breadcrumbs that collapse, a menu bar
+--- and a vertical menu, navigation buttons, pagination (a run of pages
+--- about the one shown, and pages in windows), steppers (linear and
+--- editable, and a vertical stepper) and a toolbar.
 ---
 --- Each is a function answering a `gui.Node`. A part the reader can press
 --- is a drawn control of its own id (a pagination's page 3 is `pages:p3`),
 --- which tells its events under its component's id (`pages`): what was
 --- done, the part's words and a number (the page, the step, the index).
 --- None changes what it shows by itself: the program holds the page, the
---- step, the chosen place, and draws the component anew from them (TOAST
---- UI's `beforeMove` is so the program's to refuse).
+--- step, the chosen place, and draws the component anew from them (so a
+--- move told is the program's to take or refuse).
 use bits
 use math
 use memory
@@ -20,7 +19,7 @@ use lory
 use gui
 use display
 
---- how an app bar stands as the page scrolls (Vuetify's scroll behaviours):
+--- how an app bar stands as the page scrolls (its scroll behaviours):
 --- how far down the page is scrolled, whether it went up last, whether it is
 --- at the page's foot, whether it reached it scrolling down, whether the bar
 --- shows, the room it takes at the page's top, how far it is moved up off
@@ -144,10 +143,9 @@ fn unscrolled[]
 
 --- how an app bar stands with the page scrolled `top` CSS pixels down (of
 --- a page `page_h` high seen `view_h` at a time), from how it stood the
---- frame before (`was`; `unscrolled[]` at first), as Vuetify's app bar
---- does with its `scroll-behavior` (`behaviour`: any of `hide`,
---- `fully-hide`, `inverted`, `collapse`, `elevate`, `fade-image`, apart by
---- spaces) and `scroll-threshold` (`threshold`), its content `tall` high
+--- frame before (`was`; `unscrolled[]` at first), by its `behaviour` (any
+--- of `hide`, `fully-hide`, `inverted`, `collapse`, `elevate`,
+--- `fade-image`, apart by spaces) and `threshold`, its content `tall` high
 --- and its extension `extension`:
 ---  - hide: scrolled down past the threshold it goes up by its content's
 ---    height (its extension stays); scrolled up, or above the threshold, it
@@ -227,7 +225,7 @@ fn bar_scrolled[was, top, view_h, page_h, behaviour, threshold = 300.0, tall = 6
             s.lifted = whole
     s
 
---- a toolbar's height by its density (Vuetify's): 64, `comfortable` 56,
+--- a toolbar's height by its density: 64, `comfortable` 56,
 --- `compact` 48; `prominent` 128
 fn bar_tall[density = '', prominent = false]
     if prominent
@@ -238,7 +236,7 @@ fn bar_tall[density = '', prominent = false]
         return 48.0
     64.0
 
---- an app bar (Vuetify's): its navigation icon (`lead`, an icon's name,
+--- an app bar: its navigation icon (`lead`, an icon's name,
 --- pressed: `press` with words `lead`), its title, its controls at its end
 --- (`kids`) and an `extension` row under them; standing as `scrolled`
 --- says (`bar_scrolled`): moved up while hidden, collapsed to its icon and
@@ -297,7 +295,7 @@ fn _lead_painter[d]
         return _told[d, _field[fs, 1], 'press', 'lead', 0.0]
     d
 
---- a system bar (Vuetify's): a thin bar along the page's top, its
+--- a system bar: a thin bar along the page's top, its
 --- controls (small words, icons) at its end; 24 high, 32 as a window's
 fn system_bar[kids, tall = 24.0, window = false]
     high = tall
@@ -306,7 +304,7 @@ fn system_bar[kids, tall = 24.0, window = false]
     line = gui.row[kids, gap = 8.0, align = 'center', justify = 'end']
     display.grounded['system bar', _bar_row['system bar row', line, high], 'bar', 'none']
 
---- a footer (Vuetify's): a bar along the page's foot holding its controls
+--- a footer: a bar along the page's foot holding its controls
 fn footer[kids, key = 'footer']
     display.grounded[key, gui.row[kids, gap = 12.0, align = 'center', pad = 12.0], 'foot', 'none']
 
@@ -325,14 +323,14 @@ fn place_index[places, chosen]
     -1
 
 --- how wide each place of a bottom navigation stands: its words and room
---- for them, 80 to 168 CSS pixels (Vuetify's); `grow`n, an even share of
+--- for them, 80 to 168 CSS pixels; `grow`n, an even share of
 --- the bar's width, at most 168
 fn place_wide[words, grow, wide, count]
     if grow and count gt 0 and wide gt 0.0
         return min[168.0, wide / count]
     max[80.0, min[168.0, display.words_wide[words, 12.0] + 32.0]]
 
---- bottom navigation (Vuetify's): its places along the page's foot, each
+--- bottom navigation: its places along the page's foot, each
 --- an icon (`glyphs`) over its words, the one `chosen` (by its words, or
 --- its index as words) shown so; each is a stop of Tab, and pressing one
 --- (or Enter or space) tells `choose` with its words and index. `mode`
@@ -391,7 +389,7 @@ fn _place_painter[d]
 fn _no_crumbs[]
     Crumbs[map['' = false], map['' = false]]
 
---- the crumbs a trail of `count` shows (MUI's): all of them while there
+--- the crumbs a trail of `count` shows: all of them while there
 --- are no more than `most` (0: no most), or it is `expanded`, or the
 --- first `before` and the last `after` would show them all; otherwise
 --- those, an ellipsis (-1) between them
@@ -417,13 +415,12 @@ fn crumbs_collapse[id]
     remember['lory.navigation.crumbs', k]
     id
 
---- breadcrumbs (Vuetify's, collapsing as MUI's): the trail to the page,
---- each crumb before the last a link (pressed: `press` with its words and
---- index), the last the page itself, quiet, set apart (Semantic UI's active
---- section); between them `divider` words or an icon (`glyph`, an icon's
+--- breadcrumbs: the trail to the page, each crumb before the last a link
+--- (pressed: `press` with its words and index), the last the page itself,
+--- quiet, set apart as the active section; between them `divider` words or an icon (`glyph`, an icon's
 --- name). With more than `most`, the middle crumbs go into an ellipsis,
 --- whose press (or Enter) tells `expand` and shows them all, the first of
---- them taking the focus (as MUI's does)
+--- them taking the focus
 fn breadcrumbs[id, crumbs, divider = '/', most = 8, before = 1, after = 1, glyph = '']
     k = recall['lory.navigation.crumbs', _no_crumbs[]]
     opened = crumbs_open[id]
@@ -492,9 +489,9 @@ fn _ellipsis_painter[d]
         return _told[d, d.words, 'expand', '', 0.0]
     d
 
---- ---- menus (Semantic UI's) ----
+--- ---- menus ----
 
---- a menu bar (Semantic UI's menu): its entries along a bar (`vertical`:
+--- a menu bar: its entries along a bar (`vertical`:
 --- one under another), one stop of Tab whose arrows move through them
 --- (Left and Right, Up and Down for a vertical menu; Home and End), round
 --- from the last to the first unless `loop` is false. `stackable`: on a
@@ -550,14 +547,14 @@ fn _entry_painter[d]
         return _told[d, d.id, 'press', words, 0.0]
     d
 
---- an entry that opens a list of entries under it (Semantic UI's simple
+--- an entry that opens a list of entries under it (a simple
 --- dropdown): gui's dropdown, its list a menu of its own
 fn menu_drop[id, words, entries]
     gui.dropdown[id, words, [gui.roving['`id`:list', entries, along = 'column', loop = true, gap = 0.0]]]
 
 --- ---- navigation buttons ----
 
---- a navigation button (Vuetify's, as a rail's, a drawer's or a bottom
+--- a navigation button (a rail's, a drawer's or a bottom
 --- navigation's destination): its icon and its words — which it must have,
 --- so where none are given it says its icon's name — the `active` one on
 --- an indicator, a `badge` at its icon's corner (`dot`: a dot; any other
@@ -617,10 +614,9 @@ fn _nav_button_painter[d]
         return _told[d, d.id, 'press', words, 0.0]
     d
 
---- ---- pagination (Vuetify's) ----
+--- ---- pagination ----
 
---- the pages a pagination shows with `visible` of them at most (Vuetify's
---- `total-visible`), 0 standing for an ellipsis: all where there is room,
+--- the pages a pagination shows with `visible` of them at most, 0 standing for an ellipsis: all where there is room,
 --- else the first, the last and those about the page shown
 fn pages_shown[length, page, visible]
     out = []
@@ -656,8 +652,8 @@ fn pages_shown[length, page, visible]
     out = push[out, 0]
     push[out, length]
 
---- the pages shown where as many show as fit `wide` CSS pixels (Vuetify's
---- measure: 58 a button, the arrows' two, or four with `first_last`), an
+--- the pages shown where as many show as fit `wide` CSS pixels (by the
+--- measure of 58 a button, the arrows' two, or four with `first_last`), an
 --- ellipsis that stands for one page shown as that page
 fn pages_fitted[length, page, wide, first_last = false]
     out = []
@@ -697,7 +693,7 @@ fn page_current[items, page]
 fn arrows_off[length, page, disabled = false]
     [disabled or page lte 1, disabled or page gte length]
 
---- pagination (Vuetify's): its arrows and the pages shown (`visible` of
+--- pagination: its arrows and the pages shown (`visible` of
 --- them, or with `visible` 0 as many as fit its width, `wide` or the width
 --- it stood at the frame before), the `page` shown filled; each is a stop
 --- of Tab, and pressing one (or Enter or space on it) tells `page` with
@@ -773,7 +769,7 @@ fn _page_painter[d]
         return _told[d, owner, act, '', page + 1.0]
     d
 
---- ---- pagination (TOAST UI's) ----
+--- ---- pagination in windows ----
 
 --- the last page of `total` items `per` page (1 where there are none)
 fn last_page[total, per]
@@ -784,7 +780,7 @@ fn last_page[total, per]
         return 1
     k
 
---- the window of pages a page stands in (TOAST UI's): its index, or with
+--- the window of pages a page stands in: its index, or with
 --- `centered`, its first page
 fn _window_of[page, total, per, visible, centered]
     if centered
@@ -805,7 +801,7 @@ fn _edges_of[page, total, per, visible, centered]
     at = _window_of[page, total, per, visible, centered]
     [(at - 1) * visible + 1, min[at * visible, last]]
 
---- TOAST UI's buttons in order, each in words: `first`, `prev`, `more_prev`
+--- the windowed pagination's buttons in order, each in words: `first`, `prev`, `more_prev`
 --- (the window before), the pages (`[5]` the page shown), `more_next`,
 --- `next`, `last`, each moving arrow `_off` where it cannot be pressed
 fn page_buttons[total, per, page, visible = 10, centered = false]
@@ -835,7 +831,7 @@ fn _off_unless[words, on]
         return words
     '`words`_off'
 
---- the page TOAST UI's "more" button on that `side` (`prev`, `next`) moves
+--- the page the "more" button on that `side` (`prev`, `next`) moves
 --- to: the window before or after (-1 where there is none)
 fn page_more[total, per, page, side, visible = 10, centered = false]
     last = last_page[total, per]
@@ -852,26 +848,26 @@ fn page_more[total, per, page, side, visible = 10, centered = false]
         return min[max[at + visible, 1], last]
     min[max[at * visible + 1, 1], last]
 
---- pagination as TOAST UI's: its first, previous, "more", page, next and
---- last buttons (`page_buttons`), each a stop of Tab; pressing one (or
---- Enter or space) tells `move` with the page it goes to, which the program
---- takes or refuses (TOAST UI's `beforeMove`)
-fn toast_pages[id, total, per, page, visible = 10, centered = false]
+--- pagination in windows of pages: its first, previous, "more", page,
+--- next and last buttons (`page_buttons`), each a stop of Tab; pressing one
+--- (or Enter or space) tells `move` with the page it goes to, which the
+--- program takes or refuses
+fn page_windows[id, total, per, page, visible = 10, centered = false]
     last = last_page[total, per]
     kids = _none[]
     for one in page_buttons[total, per, page, visible, centered]
         if one eq 'first' or one eq 'first_off'
-            kids = push[kids, _toast_part['`id`:first', 'first', 1, id, one eq 'first_off']]
+            kids = push[kids, _window_part['`id`:first', 'first', 1, id, one eq 'first_off']]
         if one eq 'prev' or one eq 'prev_off'
-            kids = push[kids, _toast_part['`id`:prev', 'chevron_left', page - 1, id, one eq 'prev_off']]
+            kids = push[kids, _window_part['`id`:prev', 'chevron_left', page - 1, id, one eq 'prev_off']]
         if one eq 'more_prev'
-            kids = push[kids, _toast_part['`id`:more_prev', 'dots-horizontal', page_more[total, per, page, 'prev', visible, centered], id, false]]
+            kids = push[kids, _window_part['`id`:more_prev', 'dots-horizontal', page_more[total, per, page, 'prev', visible, centered], id, false]]
         if one eq 'more_next'
-            kids = push[kids, _toast_part['`id`:more_next', 'dots-horizontal', page_more[total, per, page, 'next', visible, centered], id, false]]
+            kids = push[kids, _window_part['`id`:more_next', 'dots-horizontal', page_more[total, per, page, 'next', visible, centered], id, false]]
         if one eq 'next' or one eq 'next_off'
-            kids = push[kids, _toast_part['`id`:next', 'chevron_right', page + 1, id, one eq 'next_off']]
+            kids = push[kids, _window_part['`id`:next', 'chevron_right', page + 1, id, one eq 'next_off']]
         if one eq 'last' or one eq 'last_off'
-            kids = push[kids, _toast_part['`id`:last', 'last', last, id, one eq 'last_off']]
+            kids = push[kids, _window_part['`id`:last', 'last', last, id, one eq 'last_off']]
         if starts[one, '[']
             kids = push[kids, gui.drawn['`id`:p`page`', 0.0 + page, 32.0, 32.0, _page_painter, words = _packed[[str[page], '', 's', id, 'move']]]]
         else
@@ -879,7 +875,7 @@ fn toast_pages[id, total, per, page, visible = 10, centered = false]
                 kids = push[kids, gui.drawn['`id`:p`one`', 0.0 + _whole[one], 32.0, 32.0, _page_painter, words = _packed[[one, '', '', id, 'move']]]]
     gui.row[kids, gap = 2.0, align = 'center']
 
-fn _toast_part[part, glyph, target, id, off]
+fn _window_part[part, glyph, target, id, off]
     one = gui.drawn[part, 0.0 + target, 32.0, 32.0, _page_painter, words = _packed[['', glyph, '', id, 'move']]]
     if off
         return gui.disabled[one]
@@ -910,7 +906,7 @@ fn step_state[i, active, completed, errors = [], disabled = []]
         return 'disabled'
     'idle'
 
---- whether a step may be pressed (Vuetify's: only an `editable` one, never
+--- whether a step may be pressed (only an `editable` one, never
 --- one set aside); `linear`: only up to the first step not complete
 fn step_pressable[i, active, completed, editable = true, linear = true, disabled = []]
     if _among[i, disabled] or not editable
@@ -922,15 +918,15 @@ fn step_pressable[i, active, completed, editable = true, linear = true, disabled
         first_open = first_open + 1
     i lte max[first_open, active]
 
---- a stepper (Semantic UI's steps, Vuetify's stepper): its steps along a
+--- a stepper: its steps along a
 --- line, each a numbered disc (a tick once complete, a pencil where it is
 --- the active and editable one, a mark where it has an error) and its
 --- title and subtitle; the `active` step set apart, `completed`, `errors`
 --- and `disabled` steps shown so. A step that may be pressed
 --- (`step_pressable`: `editable`, and with `linear` only up to the first
 --- not complete) is a stop of Tab, and pressing it (or Enter or space)
---- tells `step` with its index. `mobile` hides the titles, as Vuetify's
---- does; `vertical` lays the steps one under another.
+--- tells `step` with its index. `mobile` hides the titles, as on a
+--- phone; `vertical` lays the steps one under another.
 fn stepper[id, titles, active, completed = [], subtitles = [], errors = [], disabled = [], editable = true, linear = true, mobile = false, vertical = false]
     kids = _none[]
     i = 0
@@ -1027,7 +1023,7 @@ fn _step_line_painter[d]
     d.c = c
     d
 
---- the stepper's arrows (Vuetify's actions): back and on, telling `step`
+--- the stepper's arrows (its actions): back and on, telling `step`
 --- with the step before or after; back set aside at the first step, on at
 --- the last
 fn step_actions[id, active, count, back = 'Back', on = 'Continue']
@@ -1061,7 +1057,7 @@ fn _step_button_painter[d]
         return _told[d, owner, 'step', words, d.num]
     d
 
---- a vertical stepper (Vuetify's, on expansion panels): each step a panel
+--- a vertical stepper (on expansion panels): each step a panel
 --- whose header is its disc and title, the active one open on its
 --- controls (`bodies`, one a step) and its arrows (`step_actions`); a
 --- header that may be pressed tells `step` with its index
@@ -1082,9 +1078,9 @@ fn stepper_vertical[id, titles, active, bodies, completed = [], errors = [], edi
         i = i + 1
     gui.column[panels, gap = 8.0]
 
---- ---- toolbars (Radix's) ----
+--- ---- toolbars ----
 
---- a toolbar (Radix's, at Vuetify's heights): its controls along it, one
+--- a toolbar (at `bar_tall`'s heights): its controls along it, one
 --- stop of Tab (it enters at the first, or the one last left), the arrows
 --- along it moving through them (Left and Right, or Up and Down where it
 --- is `vertical`; Home and End to the first and the last), round from the
@@ -1128,7 +1124,7 @@ fn tool_button[id, words = '', glyph = '']
         w = display.words_wide[words, 14.0] + 24.0
     gui.drawn[id, 0.0, w, 36.0, _tool_painter, words = _packed[[words, glyph, '', id, 'press']]]
 
---- a toolbar's toggle (Radix's toggle item): pressed in or not (`on`),
+--- a toolbar's toggle: pressed in or not (`on`),
 --- shown so; pressed it tells `toggle` with 1 for in, 0 for out
 fn tool_toggle[id, words, on, glyph = '']
     w = 36.0
@@ -1136,7 +1132,7 @@ fn tool_toggle[id, words, on, glyph = '']
         w = display.words_wide[words, 14.0] + 24.0
     gui.drawn[id, 0.0, w, 36.0, _tool_painter, words = _packed[[words, glyph, _flag[on, 's'], id, 'toggle']]]
 
---- a toolbar's group of toggles (Radix's toggle group): one of them in at
+--- a toolbar's group of toggles: one of them in at
 --- most, or many (`multiple`), those in `chosen` pressed in; each a stop
 --- of the toolbar's arrows; pressing one tells `choose` under the group's
 --- id with what is chosen then (a choice a line) and its index
@@ -1260,9 +1256,9 @@ fn _has_event[shown, id, act]
 fn _drew[shown, letter]
     letter in shown.canvas.missing
 
---- Vuetify's windows of pages (4.3.1's own answers; tests/display holds
---- them all)
-test pages_shown_and_fitted_are_vuetifys[]
+--- the pages shown about the page, by a most shown or by the width, an
+--- ellipsis (0) standing for those left out
+test pages_shown_and_fitted_leave_out_pages_by_an_ellipsis[]
     pages_shown[7, 1, 5] eq [1, 2, 3, 4, 0, 7]
     pages_shown[8, 3, 7] eq [1, 2, 3, 4, 5, 6, 0, 8]
     pages_shown[13, 9, 4] eq [1, 0, 9, 10, 0, 13]
@@ -1279,8 +1275,8 @@ test pages_shown_and_fitted_are_vuetifys[]
     pages_fitted[2, 1, 150.0] eq [1, 2]
     pages_fitted[10, 1, 800.0] eq [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
---- TOAST UI's buttons and where its "more" buttons go (3.4.1's own)
-test toast_uis_buttons_and_more_buttons[]
+--- the windowed pagination's buttons, and where its "more" buttons go
+test page_buttons_and_where_more_buttons_go[]
     page_buttons[0, 10, 1, 1] eq ['first_off', 'prev_off', '[1]', 'next_off', 'last_off']
     page_buttons[100, 7, 11, 2] eq ['first', 'prev', 'more_prev', '[11]', '12', 'more_next', 'next', 'last']
     page_more[100, 7, 11, 'prev', 2] eq 10
@@ -1294,8 +1290,9 @@ test toast_uis_buttons_and_more_buttons[]
     last_page[95, 10] eq 10
     last_page[101, 10] eq 11
 
---- MUI's collapsing (9.5.0's own: tests/display holds them all)
-test crumbs_collapse_as_muis[]
+--- a long trail collapses to its first and last crumbs about an
+--- ellipsis (-1)
+test crumbs_collapse_about_an_ellipsis[]
     crumbs_shown[6, 4, 3, 2] eq [0, 1, 2, -1, 4, 5]
     crumbs_shown[9, 2, 2, 2] eq [0, 1, -1, 7, 8]
     crumbs_shown[10, 5, 0, 0] eq [-1]
@@ -1338,7 +1335,7 @@ fn _tools[loop, vertical]
     tools = [tool_button['cut', 'Cut'], tool_button['copy', '', 'file'], tool_separator[vertical], tool_toggle['bold', 'Bold', false, 'bold'], tool_link['help', 'Help']]
     gui.column[[gui.button['before', 'Before'], toolbar['tools', tools, 'Edit', loop = loop, vertical = vertical], gui.button['after', 'After']]]
 
---- Radix's toolbar: one stop of Tab that enters at its first control (and
+--- a toolbar: one stop of Tab that enters at its first control (and
 --- comes back to the one left), Left and Right moving round it (not past
 --- its ends where it does not loop), Home and End, and Enter or space
 --- pressing the one the focus is on
@@ -1439,7 +1436,7 @@ test bottom_navigation_is_reached_by_tab_and_chosen_by_its_keys[]
 fn _menu[vertical, stackable, wide]
     gui.column[[menu_bar['menu', [menu_entry['m:home', 'Home', true], menu_entry['m:news', 'News'], menu_entry['m:about', 'About', false, 'info']], vertical, true, stackable, wide], gui.button['after', 'After']]]
 
---- Semantic UI's menu: one stop of Tab whose arrows move round its entries
+--- a menu bar: one stop of Tab whose arrows move round its entries
 --- (along it, or down a vertical one), Home and End; Enter or space
 --- presses the entry the focus is on
 test a_menus_arrows_move_round_its_entries[]
@@ -1498,7 +1495,7 @@ test a_stepper_shows_its_states_and_is_stepped_where_it_may_be[]
     back.num eq 0.0
     back.words eq 'Ωart'
     _drew[_shown[_quiet[], tree], 'Ω']
-    --- (on a phone, Vuetify hides the titles)
+    --- (on a phone the titles are hidden)
     small = gui.column[[stepper['steps', ['Ωart', 'Address', 'Pay'], 1, [0], mobile = true]]]
     s = _shown[_away[], small]
     s.boxes['steps:0'][2] eq 40.0
@@ -1518,7 +1515,7 @@ test a_stepper_shows_its_states_and_is_stepped_where_it_may_be[]
     p.boxes['v:on'][1] gt p.boxes['v:1'][1]
     _event_of[_shown[_press_on[p, 'v:back'], panels], 'v', 'step'].num eq 0.0
 
---- Vuetify's app bar as the page scrolls past its threshold: hidden going
+--- an app bar as the page scrolls past its threshold: hidden going
 --- down and shown going up (all of it, fully), never on a page too short;
 --- inverted the other way about; flat at the top (elevate), collapsed past
 --- the threshold, its image fading
@@ -1580,7 +1577,7 @@ test an_app_bar_hides_collapses_and_elevates_as_the_page_scrolls[]
     _shown[_quiet[], system]
     display.ground_box['system bar'][3] eq 24.0
 
---- Vuetify's pagination: a page, an arrow or a key tells the page it goes
+--- a pagination: a page, an arrow or a key tells the page it goes
 --- to; the arrows at the ends are set aside, and all of it where disabled
 test a_pagination_tells_the_page_pressed_and_its_keys_step[]
     _fresh[]
@@ -1606,11 +1603,11 @@ test a_pagination_tells_the_page_pressed_and_its_keys_step[]
     'fit:p2' in fit.boxes and 'fit:p20' in fit.boxes
     not ('fit:p3' in fit.boxes)
 
---- TOAST UI's: each button tells the page it moves to, for the program to
---- take (or refuse, as `beforeMove` may)
-test toast_pages_tell_the_move_of_each_button[]
+--- pages in windows: each button tells the page it moves to, for the
+--- program to take or refuse
+test page_windows_tell_the_move_of_each_button[]
     _fresh[]
-    tree = gui.column[[toast_pages['tp', 100, 7, 11, 2]]]
+    tree = gui.column[[page_windows['tp', 100, 7, 11, 2]]]
     laid = _shown[_away[], tree]
     _event_of[_shown[_press_on[laid, 'tp:more_prev'], tree], 'tp', 'move'].num eq 10.0
     _event_of[_shown[_press_on[laid, 'tp:more_next'], tree], 'tp', 'move'].num eq 13.0
@@ -1618,7 +1615,7 @@ test toast_pages_tell_the_move_of_each_button[]
     _event_of[_shown[_press_on[laid, 'tp:last'], tree], 'tp', 'move'].num eq 15.0
     _event_of[_shown[_press_on[laid, 'tp:first'], tree], 'tp', 'move'].num eq 1.0
     _event_of[_shown[_press_on[laid, 'tp:prev'], tree], 'tp', 'move'].num eq 10.0
-    start = gui.column[[toast_pages['tp', 100, 7, 1, 2]]]
+    start = gui.column[[page_windows['tp', 100, 7, 1, 2]]]
     s = _shown[_away[], start]
     len[_shown[_press_on[s, 'tp:first'], start].events] eq 0
 

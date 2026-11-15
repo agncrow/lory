@@ -1,0 +1,195 @@
+--- Recent Commits: the latest three commits of a project on the branch
+--- chosen (`main`, `next` or `archive`), loaded as the example starts and
+--- again each time the branch changes. The commits come from sample data
+--- built into the example, after a short wait, as an answer from a
+--- server would: while they load the example says so, and a branch
+--- whose history cannot be read (`archive`) shows an error in their
+--- place. Each commit shows its short sha and the first line of its
+--- message, its author and its date (`T` and `Z` made spaces).
+use lory
+use lory.gui
+use common
+
+--- a commit as the list shows it
+struct Commit [sha, message, name, date]
+
+--- the branch chosen, the commits shown, what the load is at
+--- ('loading', 'ready' or 'failed'), when the load began (ms, -1 before
+--- the first frame) and how many loads were begun
+struct Commits [branch, commits, status, began, count]
+
+fn branches[]
+    ['main', 'next', 'archive']
+
+--- how long a load takes, in milliseconds
+fn wait_ms[]
+    400.0
+
+fn _no_commits[]
+    slice[[Commit['', '', '', '']], 0, 0]
+
+--- the commits of `main`, loading
+fn fresh[]
+    Commits['main', _no_commits[], 'loading', -1.0, 1]
+
+--- the commits of the branch chosen asked for again, from `t`
+fn asked[s, t]
+    s.status = 'loading'
+    s.began = t
+    s.commits = _no_commits[]
+    s.count = s.count + 1
+    s
+
+--- the sample history of each branch, as a server would answer it (JSON);
+--- '' for a branch it cannot read
+fn sample_of[branch]
+    if branch eq 'main'
+        return '[{"sha": "3f1c2a9e8b7d6c5a4f3e2d1c0b9a8f7e6d5c4b3a", "author": {"name": "Ada Builder", "date": "2026-11-12T08:30:00Z"}, "message": "Keep a slot\'s fallback when its content is empty\\n\\nA slot given nothing drew nothing."}, {"sha": "b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7", "author": {"name": "Lin Reviewer", "date": "2026-11-11T17:05:42Z"}, "message": "Bump the compiler\'s tests"}, {"sha": "0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b", "author": {"name": "Sam Maintainer", "date": "2026-11-10T23:59:01Z"}, "message": "Fewer allocations in effect scopes"}]'
+    if branch eq 'next'
+        return '[{"sha": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d", "author": {"name": "Kim Planner", "date": "2026-11-13T10:12:30Z"}, "message": "Draw a list\'s rows as they scroll into view"}, {"sha": "c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4", "author": {"name": "Ada Builder", "date": "2026-11-12T19:44:08Z"}, "message": "A field\'s caret follows the pointer while it is dragged"}, {"sha": "5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c", "author": {"name": "Lin Reviewer", "date": "2026-11-12T09:01:55Z"}, "message": "Name the new layer kinds\\n\\nAnd say which of them are modal."}]'
+    ''
+
+--- a message's first line
+fn first_line[v]
+    lines = split[v, '\n']
+    if len[lines] gt 1 and lines[0] ne ''
+        return lines[0]
+    v
+
+--- a date as the list writes it
+fn date_words[v]
+    join[split[join[split[v, 'T'], ' '], 'Z'], ' ']
+
+fn _text_at[j, key]
+    if type[j] ne 'map'
+        return ''
+    if not (key in j)
+        return ''
+    v = j[key]
+    if not v.ok
+        return ''
+    '`v`'
+
+--- the words at `key` inside the map at `outer` of a map
+fn _inner_text[j, outer, key]
+    if type[j] ne 'map'
+        return ''
+    if not (outer in j)
+        return ''
+    inner = j[outer]
+    if not inner.ok
+        return ''
+    _text_at[inner, key]
+
+fn _commit_of[item]
+    Commit[_text_at[item, 'sha'], _text_at[item, 'message'], _inner_text[item, 'author', 'name'], _inner_text[item, 'author', 'date']]
+
+--- the commits an answer's body holds (none, where it is not a list)
+fn commits_of[body]
+    out = _no_commits[]
+    j = json[body]
+    if not j.ok
+        return out
+    if type[j] ne 'array'
+        return out
+    for item in j
+        c = _commit_of[item]
+        if c.ok
+            out = push[out, Commit['`c.sha`', '`c.message`', '`c.name`', '`c.date`']]
+    out
+
+--- the commits an answer's body holds, none where it cannot be read
+fn _commits_in[body]
+    got = commits_of[body]
+    if not got.ok
+        return _no_commits[]
+    got
+
+--- the load moved on by the frame's time: begun on the first frame, and
+--- answered once its wait is over
+fn ticked[s, c]
+    t = lory.time[c]
+    if s.began lt 0.0
+        s.began = t
+    if s.status eq 'loading' and t - s.began gte wait_ms[]
+        body = sample_of[s.branch]
+        if body eq ''
+            s.status = 'failed'
+        else
+            s.commits = _commits_in[body]
+            s.status = 'ready'
+    s
+
+--- the words shown in place of the list while it loads or when it failed
+fn status_words[s]
+    if s.status eq 'loading'
+        return 'Loading the commits of `s.branch`…'
+    if s.status eq 'failed'
+        return 'The history of `s.branch` could not be read.'
+    ''
+
+fn controls[s, c, room]
+    title = common.titled['', 'Recent Commits', 32.0, c]
+    choice = gui.radio['fetching-data:branch', branches[], s.branch]
+    branch = common.with_id[gui.text['lory@`s.branch`'], 'fetching-data:shown']
+    kids = [title, choice, branch]
+    said = status_words[s]
+    if said ne ''
+        kids = push[kids, common.named[gui.note[said], 'fetching-data:status']]
+    rows = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    for m in s.commits
+        sha = common.styled['', slice[m.sha, 0, 7], 15.0, common.ink_link[], 0, c]
+        top = gui.row[[sha, gui.text['-'], gui.text[first_line[m.message]]], gap = 6.0]
+        under = gui.row[[gui.text['by'], common.titled['', m.name, 15.0, c], gui.text['at'], common.titled['', date_words[m.date], 15.0, c]], gap = 6.0]
+        rows = push[rows, common.named[gui.column[[top, under], gap = 4.0], 'fetching-data:row:`i`']]
+        i = i + 1
+    if len[rows] gt 0
+        kids = push[kids, gui.column[rows, gap = 20.0]]
+    gui.column[kids, gap = 12.0]
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if ev.id eq 'fetching-data:branch' and ev.act eq 'choose' and ev.words ne s.branch
+            s.branch = ev.words
+            s = asked[s, lory.time[c]]
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['branch'] = common.words_by[tree, 'fetching-data:shown']
+    out['picked'] = common.words_by[tree, 'fetching-data:branch']
+    out['status'] = common.words_by[tree, 'fetching-data:status']
+    rows = slice[[''], 0, 0]
+    i = 0
+    while common.holds[tree, 'fetching-data:row:`i`']
+        rows = push[rows, common.words_under[tree, 'fetching-data:row:`i`']]
+        i = i + 1
+    out['rows'] = join[rows, '\n']
+    out['loads'] = '`s.count`'
+    out
+
+test the_sample_commits_are_read_and_an_unreadable_branch_has_none[]
+    main = commits_of[sample_of['main']]
+    len[main] eq 3
+    first_line[main[0].message] eq 'Keep a slot\'s fallback when its content is empty'
+    main[1].name eq 'Lin Reviewer'
+    len[commits_of[sample_of['next']]] eq 3
+    sample_of['archive'] eq ''
+    len[commits_of['not a list']] eq 0
+    date_words['2026-11-12T08:30:00Z'] eq '2026-11-12 08:30:00 '
+
+test a_load_waits_then_shows_the_commits_or_fails[]
+    s = asked[fresh[], 1000.0]
+    s.status eq 'loading'
+    status_words[s] eq 'Loading the commits of main…'
+    s.branch = 'archive'
+    s.status = 'failed'
+    status_words[s] eq 'The history of archive could not be read.'
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

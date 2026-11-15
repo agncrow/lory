@@ -1,4 +1,4 @@
---- The marks a laid chart draws, where Chart.js places them: each
+--- The marks a laid chart draws, and where they stand: each
 --- dataset's bars (where a bar stands across its slot, how far it runs
 --- from its base, whether its corners may be rounded and which edges its
 --- border leaves out), its points (where each stands, whether it is a
@@ -6,10 +6,6 @@
 --- curved line is drawn through) and its arcs (centre, angles, radii).
 --- These are what a pointer finds, a tooltip tells of and an animation
 --- moves.
----
---- These are Chart.js 4.5.1's rules for its bar, line, scatter, bubble,
---- doughnut, pie, polar area and radar charts, read from it and written
---- anew (see charts_model.co).
 use math
 use lory
 use charts_model
@@ -153,7 +149,7 @@ fn bars_of[ch, laid, ps, d, reset]
         j = j + 1
     out
 
---- what the dataset's bars share: Chart.js's ruler
+--- what the dataset's bars share: their ruler
 fn _ruler[ch, ps, scales, d, isc]
     s = ch.sets[d]
     p = ps[d]

@@ -52,7 +52,7 @@ jobs:
       - name: The site
         run: |
           crow run -i site/site.co
-          test -f site/out/index.html && test -f site/out/docs/components/README.html
+          test -f site/out/index.html && test -f site/out/site/guide/controls.html
           n=$(find site/out/examples -name main.wasm | wc -l); echo "$n examples running"; test "$n" -ge 9
       # the site as the one commit of gh-pages (no history kept: each push
       # is the whole site), served as it is written (.nojekyll)

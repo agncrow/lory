@@ -1,4 +1,4 @@
---- Lory's menus (docs/components/menus.md): a dropdown menu, a context
+--- Lory's menus: a dropdown menu, a context
 --- menu, a menubar, a navigation menu, a command palette, and a floating
 --- action button with its speed dial, made of gui's layers and drawn
 --- controls. A menu's entries are items, checkboxes, radio items, labels,
@@ -7,9 +7,9 @@
 ---     entries = [menus.item['new', 'New file', shortcut = '⌘N'], menus.separator[], menus.submenu['share', 'Share', [menus.item['mail', 'Mail']]]]
 ---     menus.dropdown[c, 'file', 'File', entries]
 ---
---- A menu answers the keys and the pointer as Radix's menus do (their
---- keyboard maps, typing ahead, a submenu's opening delay and the grace
---- the pointer is given on its way to one), and tells what was chosen as
+--- A menu answers the keys and the pointer (its keyboard map, typing
+--- ahead, a submenu's opening delay and the grace the pointer is given
+--- on its way to one), and tells what was chosen as
 --- gui's events: `choose` (the menu's id, the item's id), `toggle` (a
 --- checkbox's id, 1 or 0), `choose` (a radio item's group, its value),
 --- `open` and `dismiss` (the menu's id, why: `chosen`, `escape`,
@@ -138,7 +138,7 @@ fn close_menus[]
 --- that counts)
 struct Turn [h, told, done]
 
---- ---- the numbers held to Radix's (docs/components/menus.md) ----
+--- ---- a menu's times and distances ----
 
 --- how long the pointer rests on a submenu's row before it opens (ms)
 fn submenu_delay[]
@@ -440,8 +440,7 @@ fn _closed[t, why]
     t.done = true
     t
 
---- ---- typing ahead and the pointer's grace (Radix's, number for
---- number: tests/menus/reference.json) ----
+--- ---- typing ahead and the pointer's grace ----
 
 --- the words typing ahead reaches: of `names` (the rows' words), the
 --- first after `current` (the highlighted row's, '' for none), round past
@@ -675,8 +674,8 @@ fn _entry_under[h, k, entries, x, y]
         return -1
     r
 
---- the pointer moved to (x, y) over level `k`, as Radix's menu answers
---- it, in its order: the row the pointer leaves is left; the row it is on
+--- the pointer moved to (x, y) over level `k`, answered in this
+--- order: the row the pointer leaves is left; the row it is on
 --- takes the highlight, unless the pointer is on its way to the open
 --- submenu (one set aside gives it up instead), and a submenu's row starts
 --- its wait to open; then the way it moves along is kept. A move off the
@@ -802,7 +801,7 @@ fn _picked[t, k, entries, r, keyed]
 
 --- the keys typed while the menu has the focus, each in turn, at the
 --- level the keys reach: Tab, which moves the focus on, closes a menu
---- that keeps nothing to itself (Radix's closes as the focus leaves it)
+--- that keeps nothing to itself (it closes as the focus leaves it)
 fn _keyed[t, evs, clock]
     for e in evs
         if not t.done and e.on eq 'key'
@@ -813,7 +812,7 @@ fn _keyed[t, evs, clock]
                 t = _key[t, e, clock]
     t
 
---- one key, as Radix's menu answers it. On a highlighted row: Enter and
+--- one key, answered at the level it reaches. On a highlighted row: Enter and
 --- space choose it (space types ahead while letters are being typed), a
 --- submenu's row opens on Enter, space and the right arrow, and the arrows
 --- move the highlight (down and up, round where the rows go round; Home
@@ -1007,7 +1006,7 @@ fn _ground[d]
 --- ---- motion ----
 
 --- how far an arrival `t` milliseconds old has come (0 to 1), over
---- `lasts` ms on Radix's demos' curve (cubic-bezier(0.16, 1, 0.3, 1)),
+--- `lasts` ms on a quick ease-out curve (cubic-bezier(0.16, 1, 0.3, 1)),
 --- drawn by Lory's motion
 fn _come[t, lasts]
     if t gte lasts
@@ -1066,8 +1065,7 @@ fn _stood[id, n, x, y]
 --- ---- a dropdown menu ----
 
 --- a button that opens a menu of `entries` on its `side`, `align`ed along
---- it and `gap` away (Radix's DropdownMenu: below and centred; its demos'
---- offset, 5). A press on the button (the left button, Control not held)
+--- it and `gap` away (by default below and centred, 5 away). A press on the button (the left button, Control not held)
 --- opens it with no row highlighted and, open, closes it; Enter and space
 --- open it on its first row, and the down arrow too. While it is open and
 --- `modal`, nothing under it is reached and Tab stays in it; its rows go
@@ -1147,9 +1145,9 @@ fn _button_drawn[d, words, held, mark]
 
 --- `kids` in a column, opening a menu of `entries` at the pointer where it
 --- is pressed with the right button (or the left with Control held), or a
---- touch is held on it 700 ms without moving (Radix's ContextMenu): the
+--- touch is held on it 700 ms without moving: the
 --- menu stands 2 CSS pixels right of and level with the point (flipped and
---- shifted to stay on the page, as Floating UI places it), with no row
+--- shifted to stay on the page, as gui places a layer), with no row
 --- highlighted, keeping the pointer and Tab to itself
 fn context[c, id, kids, entries, loop = false]
     h = _held[]
@@ -1256,7 +1254,7 @@ struct Pull [id, words, kids]
 fn bar_menu[id, words, entries]
     Pull[id, words, entries]
 
---- a bar of menus' titles (Radix's Menubar): a press on one (the left
+--- a bar of menus' titles (a menubar): a press on one (the left
 --- button, Control not held) opens its menu and, while one is open, closes
 --- it; the pointer moving onto another title while one is open opens that
 --- one. With the focus on the bar, the arrows along it move between the
@@ -1497,7 +1495,7 @@ fn _said[]
     focus = recall['lory.gui', gui._fresh[]].focus
     'open=`h.open` path=`path` hot=`hot` level=`h.level` focus=`focus`'
 
---- ---- a command palette (cmdk's Command, in a dialog) ----
+--- ---- a command palette (commands searched in a dialog) ----
 
 --- one command: its id (told when it is chosen), its words, other words
 --- it is found by (`keywords`, spaced), the group it is shown in
@@ -1521,7 +1519,7 @@ struct Pal [id, query, shown, picked, top, pressed, loop, rows]
 fn _pal[]
     recall['lory.menus.palette', Pal['', '', _no_commands[], '', 0, -1, false, 7]]
 
---- the characters cmdk passes over to reach a word's start after a mark,
+--- the characters a search passes over to reach a word's start after a mark,
 --- and after a space (a space or a hyphen)
 fn _gap[ch]
     ch in ['\\', '/', '_', '+', '.', '#', '"', '@', '[', '(', '{', '&']
@@ -1529,8 +1527,8 @@ fn _gap[ch]
 fn _spacing[ch]
     ch in [' ', '\t', '\n', '\r', '-']
 
---- the letters of the words lowered, and each space or hyphen a space, as
---- cmdk reads both what it searches and what is typed
+--- the letters of the words lowered, and each space or hyphen a space,
+--- for both what is searched and what is typed
 fn _formed[words]
     out = slice[[''], 0, 0]
     for ch in split[lower[words], '']
@@ -1556,8 +1554,7 @@ fn _counted[chars, lo, hi, gaps]
     n
 
 --- how well `query` matches `words` with `keywords` beside them (a space
---- between), as cmdk 1.1.1 scores a command (its command-score, written
---- anew here and held to its numbers by tests/menus/reference.json): 0 is
+--- between), as a palette scores a command: 0 is
 --- no match (the command is hidden), 1 the words themselves. The query's
 --- letters are found in turn, its case aside: a letter that goes on from
 --- the last keeps the score, one starting a word after a space keeps 0.9
@@ -1565,7 +1562,7 @@ fn _counted[chars, lo, hi, gaps]
 --- each word or letter passed over keeps 0.999 of it, a letter of another
 --- case 0.9999, and words not reached to their end 0.99; two letters
 --- typed the wrong way round are found at a tenth. Each start and letter
---- is scored once, from the end back (cmdk asks the same of a memo)
+--- is scored once, from the end back
 fn command_score[words, query, keywords]
     whole = words
     if keywords ne ''
@@ -1651,11 +1648,10 @@ fn _scored_row[chars, lowered, typed, sought, ai, ahead, beyond]
         si = si + 1
     row
 
---- the commands `query` finds, in cmdk's order: all as given while
+--- the commands `query` finds, in a palette's order: all as given while
 --- nothing is typed; else those it scores above 0, the ones of no group
 --- first, then each group, the group of the best score first, each by its
---- score, best first (an equal score keeps the order given: cmdk keeps the
---- order of its last sort)
+--- score, best first (an equal score keeps the order given)
 fn ranked[commands, query]
     if query eq ''
         return commands
@@ -1833,7 +1829,7 @@ fn _pickable[found]
         i = i + 1
     out
 
---- the pick moved, as cmdk moves it: `step` commands on (round where the
+--- the pick moved `step` commands on (round where the
 --- list goes round), to an end, or to the first of the next or the last
 --- group (none there: one command on)
 fn _pick_moved[found, picked, step, loop]
@@ -2018,7 +2014,7 @@ fn _palette_drawn[d, found, lines, picked, top]
         r = r + 1
     lory.unclip[c, kept]
 
---- ---- a navigation menu (Radix's NavigationMenu) ----
+--- ---- a navigation menu ----
 
 --- one of a navigation menu's items: its id, its words, and what its
 --- panel holds (gui's controls; none: it is a link, chosen as one)
@@ -2046,7 +2042,7 @@ struct Nav [open, value, at, last, delayed, closed_at, waiting, waiting_at, clos
 fn _nav[]
     recall['lory.menus.nav', Nav['', '', -1, -1, true, -1000000.0, -1, 0.0, -1.0, -1, false, -1, -1, 0, 0.0, '', -1, [0.0, 0.0, 0.0, 0.0], false]]
 
---- the numbers held to Radix's NavigationMenu: the rest before an item
+--- a navigation menu's times: the rest before an item
 --- opens, the time after a close in which another opens at once, and the
 --- time the menu waits to close once the pointer leaves it (ms)
 fn nav_delay[]
@@ -2059,7 +2055,7 @@ fn nav_close_delay[]
     150.0
 
 --- a bar of items, each opening a panel of its own controls under the bar
---- (a mega menu) or chosen as a link, as Radix's NavigationMenu: the
+--- (a mega menu) or chosen as a link: the
 --- pointer resting on an item 200 ms opens it, and once one is open the
 --- pointer moving to another opens that at once (and for 300 ms after the
 --- menu closes); the pointer leaving the items and the panel closes it
@@ -2101,7 +2097,6 @@ fn navigation[c, id, items, gap = 6.0]
     gui.row[[clip, panel], gap = 0.0]
 
 --- how far a panel's arrival `t` ms old has come: 250 ms on CSS's `ease`
---- (Radix's demos' panel slides in so)
 fn _nav_come[t]
     if t gte 250.0
         return 1.0
@@ -2374,8 +2369,7 @@ fn _nav_drawn[d, v, titles, slots]
         c = lory.cursor[c, 'pointer']
     c
 
---- ---- a floating action button and its speed dial (Vuetify's VFab
---- and VSpeedDial) ----
+--- ---- a floating action button and its speed dial ----
 
 --- one of a speed dial's actions: its id (told when it is chosen), its
 --- words (shown as its tip) and its icon's name
@@ -2391,7 +2385,7 @@ struct Dial [open, since, seen]
 fn _dial[]
     recall['lory.menus.dial', Dial['', 0.0, map['' = 0.0]]]
 
---- the numbers held to Vuetify's: a button's entrance and a dial's
+--- a button's times and sizes: its entrance and a dial's
 --- actions growing in (ms, on its standard curve, cubic-bezier(0.4, 0,
 --- 0.2, 1)), each action after the one before it, the room between them,
 --- and a button's size
@@ -2469,8 +2463,8 @@ fn _fab_painted[d, turn]
         return lory.text[c, d.x + 48.0 * s, d.y + (d.h - lory.line_height[c, 15.0 * s]) / 2.0, parts[1], 15.0 * s, look.on_accent]
     icons.turned[c, parts[0], d.x + (d.w - size) / 2.0, d.y + (d.h - size) / 2.0, size, look.on_accent, turn]
 
---- a floating action button that opens its `actions` above it (Vuetify's
---- VSpeedDial: its location `top center`): a press on it, Enter or space
+--- a floating action button that opens its `actions` above it, centred
+--- over it: a press on it, Enter or space
 --- opens and closes them, each growing in 50 ms after the one nearer the
 --- button; Escape and a press outside close them, and choosing one tells
 --- `choose` (the dial's id, the action's id) and closes them. Its
@@ -2672,9 +2666,8 @@ fn _file_page[t, given]
     gui.show[c, gui.column[[dropdown[c, 'file', 'File', _file_entries[]], gui.button['after', 'After']]]]
 
 --- a press on the menu's button opens it below the button, centred on it
---- and 5 CSS pixels away (Radix's DropdownMenu: side `bottom`, align
---- `center`; its demos' sideOffset 5), shifted to stay 8 from the page's
---- edge (Floating UI's shift, as gui places a layer), with no row
+--- and 5 CSS pixels away, shifted to stay 8 from the page's edge (as
+--- gui places a layer), with no row
 --- highlighted; its opening is told as it is first drawn, and a press
 --- outside closes it
 test a_press_opens_a_dropdown_below_its_button_and_a_press_outside_closes_it[]
@@ -2696,10 +2689,10 @@ test a_press_opens_a_dropdown_below_its_button_and_a_press_outside_closes_it[]
     gone = _file_page[64.0, '[]']
     not ('file:level:0' in gone.boxes)
 
---- Enter on the button opens the menu on its first row (Radix's
---- DropdownMenu: Enter, space and the down arrow open it so); the down
+--- Enter on the button opens the menu on its first row (Enter, space
+--- and the down arrow open it so); the down
 --- and up arrows pass over rules, labels and a row set aside and stop at
---- the ends (`loop` is false, as Radix's is), Home and End go to the
+--- the ends (`loop` is false by default), Home and End go to the
 --- ends, and Enter chooses: the item is told and the menu closes, the
 --- focus given back to the button
 test keys_open_a_dropdown_on_its_first_row_and_move_and_choose[]
@@ -2735,8 +2728,7 @@ test keys_open_a_dropdown_on_its_first_row_and_move_and_choose[]
 
 --- a checkbox is told the state it is toggled to (a ticked one 0, one
 --- not ticked or mixed 1) and a radio item its group, its value and its
---- place in the group, each closing the menu (Radix's onCheckedChange
---- and onValueChange)
+--- place in the group, each closing the menu
 test a_checkbox_and_a_radio_item_tell_what_they_become[]
     _begun[]
     b = _file_page[0.0, _press[899.0, 699.0]].boxes['file']
@@ -2757,12 +2749,11 @@ test a_checkbox_and_a_radio_item_tell_what_they_become[]
     mixed.num eq 0.5
     check['all', 'All', true].num eq 1.0
 
---- typing ahead (Radix's typeahead): a letter goes to the next row that
+--- typing ahead: a letter goes to the next row that
 --- starts with it after the one highlighted, round past the end, and the
 --- same letter again to the next; letters typed within a second make one
 --- search ('co' after 'c'), and one typed a second or more after the last
---- begins a new one (tests/menus/reference.co holds `next_match` to
---- Radix's own)
+--- begins a new one
 test typing_ahead_finds_rows_by_their_first_letters[]
     _begun[]
     b = _file_page[0.0, _press[899.0, 699.0]].boxes['file']
@@ -2788,8 +2779,7 @@ test typing_ahead_finds_rows_by_their_first_letters[]
     next_match[['Apple', 'Banana'], 'a', 'Apple'] eq ''
 
 --- the pointer resting on a submenu's row 100 ms opens it beside the row
---- (Radix: 100 ms; side `right`, align `start`; the demos' sideOffset 2,
---- its rows level with the row's), its rows not highlighted; the right
+--- (on its right, 2 CSS pixels away, its rows level with the row's), its rows not highlighted; the right
 --- arrow opens one on its first row and the left arrow closes it, the
 --- keys back on its row
 test a_submenu_opens_after_the_pointer_rests_and_keys_open_and_close_it[]
@@ -2829,7 +2819,7 @@ test a_submenu_opens_after_the_pointer_rests_and_keys_open_and_close_it[]
 --- on the way to an open submenu across other rows, the pointer keeps it
 --- open while it moves toward it inside the area from where it left the
 --- submenu's row to the submenu's near corners (5 pixels behind the
---- point: Radix's grace), for 300 ms; after that, a row it moves over
+--- point), for 300 ms; after that, a row it moves over
 --- takes the highlight and the submenu closes
 test the_pointer_on_its_way_to_a_submenu_keeps_it_open_for_300_ms[]
     _begun[]
@@ -2868,8 +2858,7 @@ fn _canvas_page[t, given]
     gui.show[c, gui.column[[context[c, 'canvas', [gui.space[600.0]], _canvas_entries[]], gui.button['after', 'After']]]]
 
 --- the right button pressed on the area opens its menu by the pointer,
---- 2 CSS pixels to its right, its top at the pointer (Radix's
---- ContextMenu: side `right`, align `start`, sideOffset 2); where the
+--- 2 CSS pixels to its right, its top at the pointer; where the
 --- page has no room on the right it opens on the left, and it is moved
 --- up to stay 8 from the page's foot; the left button with Control opens
 --- it too
@@ -2899,7 +2888,7 @@ test a_right_press_opens_a_context_menu_by_the_pointer_and_it_flips_at_the_edge[
     _canvas_page[176.0, '[]'].boxes['canvas:level:0'][0] eq 202.0
 
 --- a touch held still on the area for 700 ms opens its menu where it is
---- held (Radix's long press); a touch that moves first does not
+--- held (a long press); a touch that moves first does not
 test a_touch_held_700_ms_opens_a_context_menu_and_one_that_moves_does_not[]
     _begun[]
     _canvas_page[0.0, '[]']
@@ -2933,9 +2922,8 @@ fn _bar_page[t, given]
 --- a press on a title opens its menu under it with no row highlighted;
 --- the pointer onto another title opens that one in its place; in an
 --- open menu the arrows along the bar open the next menu and the one
---- before (round past the ends), each with no row highlighted (Radix's
---- Menubar highlights a first row only where its title's keys opened
---- it); Escape closes it and gives the bar the focus, where the arrows
+--- before (round past the ends), each with no row highlighted (a first
+--- row is highlighted only where its title's keys opened it); Escape closes it and gives the bar the focus, where the arrows
 --- move between the titles and Enter opens one on its first row; Tab
 --- closes it. Each menu tells its opening once it is drawn, and its
 --- closing before the next opens
@@ -2978,7 +2966,7 @@ test a_menubar_opens_its_menus_on_a_press_and_moves_with_the_pointer_and_the_arr
 
 --- a navigation menu of two items with panels and a link
 fn _site_items[]
-    [nav_item['learn', 'Learn', [gui.button['start', 'Start'], gui.text['Docs']]], nav_item['overview', 'Overview', [gui.button['intro', 'Intro']]], nav_link['github', 'Github']]
+    [nav_item['learn', 'Learn', [gui.button['start', 'Start'], gui.text['Docs']]], nav_item['overview', 'Overview', [gui.button['intro', 'Intro']]], nav_link['source', 'Source']]
 
 fn _site_page[t, given]
     c = _frame_at[t, given]
@@ -2988,8 +2976,7 @@ fn _site_page[t, given]
 --- 6 CSS pixels away; once one is open, the pointer onto another opens
 --- that at once; leaving the bar and the panel closes it 150 ms later,
 --- and for 300 ms after that an item opens at once, then waits its rest
---- again (Radix's NavigationMenu: delayDuration 200, skipDelayDuration
---- 300, its close timer 150). A press closes an open item, which the
+--- again. A press closes an open item, which the
 --- pointer resting on does not open until it has left; Escape closes it;
 --- a link is chosen; the keys along the bar move and open
 test a_navigation_menu_opens_after_a_rest_and_at_once_while_one_is_open[]
@@ -3011,7 +2998,7 @@ test a_navigation_menu_opens_after_a_rest_and_at_once_while_one_is_open[]
     _site_page[564.0, _move[600.0, 400.0]]
     _told_words[_site_page[580.0, _move[48.0, 44.0]]] eq 'site/open/learn/0'
     _told_words[_site_page[600.0, _typed_key['Escape']]] eq 'site/dismiss/learn/0'
-    _told_words[_site_page[616.0, _press[240.0, 44.0]]] eq 'site/choose/github/0'
+    _told_words[_site_page[616.0, _press[240.0, 44.0]]] eq 'site/choose/source/0'
     _site_page[1000.0, _move[132.0, 44.0]]
     _told_words[_site_page[1199.0, '[]']] eq ''
     _told_words[_site_page[1200.0, '[]']] eq 'site/open/overview/0'
@@ -3024,7 +3011,7 @@ test a_navigation_menu_opens_after_a_rest_and_at_once_while_one_is_open[]
     _site_page[1464.0, '[]']
     _told_words[_site_page[1480.0, _typed_key['Enter']]] eq 'site/dismiss/overview/0'
 
---- cmdk's own demo's commands, in two groups
+--- a palette's commands, in two groups
 fn _palette_commands[]
     [command['calendar', 'Calendar', family = 'Suggestions'], command['emoji', 'Search Emoji', family = 'Suggestions'], command['calculator', 'Calculator', family = 'Suggestions'], command['profile', 'Profile', shortcut = 'Ctrl+P', family = 'Settings'], command['billing', 'Billing', shortcut = 'Ctrl+B', family = 'Settings'], command['settings', 'Settings', shortcut = 'Ctrl+S', family = 'Settings']]
 
@@ -3085,7 +3072,7 @@ fn _dial_page[t, given]
     gui.show[c, gui.column[[gui.button['before', 'Before'], speed_dial[c, 'dial', _dial_actions[]]]]]
 
 --- a speed dial's button stands 16 CSS pixels in from the page's corner
---- (gui's margin and the layer's own 8), 56 square (Vuetify's VFab); a press opens its actions above it, 8
+--- (gui's margin and the layer's own 8), 56 square; a press opens its actions above it, 8
 --- apart, the first nearest it, each growing in 50 ms after the one
 --- before over 300 ms; choosing one tells it and closes the dial; a press
 --- outside and Escape close it
@@ -3101,7 +3088,7 @@ test a_speed_dial_opens_its_actions_above_it_and_closes_as_one_is_chosen[]
     share[1] eq edit[1] - 8.0 - 40.0
     opened_dial.boxes['dial:delete'][1] eq share[1] - 48.0
     --- (each action's growth: the first's begins as the dial opens, the
-    --- next's 50 ms later, on Vuetify's standard curve)
+    --- next's 50 ms later, on the standard curve)
     _standard[0.0, fab_time[]] eq 0.0
     _standard[fab_time[], fab_time[]] eq 1.0
     abs[_standard[150.0, 300.0] - motion.eased[motion.cubic_bezier[0.4, 0.0, 0.2, 1.0], 0.5]] lt 0.0000001

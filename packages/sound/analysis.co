@@ -1,18 +1,16 @@
---- Analysis: what a sound holds, measured. Tone's own analysers are here
---- as the page's AnalyserNode computes them — `fft` the decibels of each
+--- Analysis: what a sound holds, measured. Analysers are here as the
+--- page's own analyser computes them — `fft` the decibels of each
 --- band of the last samples under a Blackman window, smoothed against the
 --- last reading; `waveform` the samples themselves; `meter` the level,
 --- falling no faster than its smoothing lets it; `dc` the first sample;
 --- `follower` a sound's size smoothed — so a drawn spectrum or meter shows
---- what Tone's would on the same input, number for number.
+--- what the page's would on the same input.
 ---
 --- The measures a test holds a render by are here too: RMS every few
 --- milliseconds, a stretch's level, its spectrum under a Hann window, the
 --- fundamental found near a pitch (refined between bands), the first
 --- harmonics' levels against it, the spectrum's centroid, and where a
---- response falls 3 dB below its passband. tests/sound/reference.js
---- computes the same measures of Tone's renders, so the two are compared
---- measure for measure.
+--- response falls 3 dB below its passband.
 ---
 ---     m = analysis.measured[samples, 16000.0, 0.1, 0.3, 440.0]
 ---     m.fundamental        (Hz, near 440)
@@ -26,12 +24,12 @@ use sound
 --- levels against the fundamental's (dB, the first 0)
 struct Measure [rms, level, centroid, fundamental, harmonics]
 
---- one of Tone's analysers: what it reads (`fft` or `waveform`), how many values it
+--- an analyser: what it reads (`fft` or `waveform`), how many values it
 --- answers (its FFT is twice as long), its smoothing (0 to 1), and the
 --- smoothed magnitudes of its last reading
 struct Analyser [reads, size, smoothing, last]
 
---- Tone's meter: its smoothing and the level it last read (a gain)
+--- a meter: its smoothing and the level it last read (a gain)
 struct Meter [smoothing, last]
 
 --- an analyser's reading: its values, and the analyser holding it (the
@@ -181,11 +179,11 @@ fn response_of_impulse[impulse, rate, size, freqs]
         i = i + 1
     out
 
---- ---- Tone's analysers ----
+--- ---- analysers ----
 
 --- an analyser of `size` values (a power of two): `fft` answers the
 --- decibels of that many bands, `waveform` that many samples; smoothing
---- 0.8, as Tone's
+--- 0.8
 fn analyser[kind, size]
     Analyser[kind, size, 0.8, zeros[size]]
 
@@ -227,7 +225,7 @@ fn values_of[an, recent]
 fn band_hz[an, index, rate]
     index * rate / (an.size * 2.0)
 
---- a meter (Tone's Meter), smoothing 0.8, that has read nothing
+--- a meter, smoothing 0.8, that has read nothing
 fn meter[]
     Meter[0.8, 0.0]
 
@@ -240,12 +238,12 @@ fn metered[m, recent]
     value = max[rms[heard], m.last * m.smoothing]
     Metered[20.0 * (ln[value] / ln[10.0]), value, Meter[m.smoothing, value]]
 
---- a DC meter's reading (Tone's DCMeter): the first of the samples a
+--- a DC meter's reading: the first of the samples a
 --- waveform analyser of 256 reads
 fn dc_of[recent]
     _last[recent, 512][0]
 
---- a sound's size smoothed (Tone's Follower): each sample's size through
+--- a sound's size smoothed (a follower): each sample's size through
 --- a one-pole lowpass at `1 / smoothing` Hz
 fn followed[xs, rate, smoothing]
     a = 2.0 * pi * (1.0 / smoothing) / rate

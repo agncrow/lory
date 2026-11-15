@@ -1,20 +1,20 @@
---- A chart read from a Chart.js configuration (`{type, data, options}`,
+--- A chart read from a chart configuration (`{type, data, options}`,
 --- parsed JSON): its datasets with their values in each of the forms
---- Chart.js takes (numbers, `{x, y, r}` points, `[start, end]` floating
---- bars, labels for a category axis), its axes as Chart.js makes them
+--- a configuration takes (numbers, `{x, y, r}` points, `[start, end]` floating
+--- bars, labels for a category axis), its axes as a configuration makes them
 --- (those the options name, then those its datasets need), and the options
 --- of its legend, titles, tooltip, interactions, layout, animation and
---- decimation. What a configuration leaves out is Chart.js's default.
+--- decimation. What a configuration leaves out takes its default.
 ---
 --- A parsed object keeps no order, so the axes the options name come in
---- the order of their ids; Chart.js takes them in the order written. Where
+--- the order of their ids, not in the order written. Where
 --- the order matters (two axes on one side), give them with
 --- `charts.with_axis` in the order wanted.
 use math
 use lory
 use charts_model
 
---- the chart a Chart.js configuration describes, kept under `id` (a
+--- the chart a configuration describes, kept under `id` (a
 --- bar chart of nothing where it cannot be read)
 fn chart_from[id, config]
     ch = _chart_read[id, config]
@@ -460,7 +460,7 @@ fn _stepped[d]
         return ''
     _text[d, 'stepped', '']
 
---- what a line is filled to, as Chart.js reads its `fill`
+--- what a line is filled to, read from its `fill`
 fn _fill_of[d, default]
     k = _kind[d, 'fill']
     j = d
@@ -516,7 +516,7 @@ fn _skipped_of[d, default]
 --- ---- axes ----
 
 --- the chart's axes: those its options name (in the order of their ids),
---- then those its datasets need that are not named, as Chart.js makes
+--- then those its datasets need that are not named, as a chart makes
 --- each from its kind's defaults
 fn _axes_from[kind, index_axis, data, options, labels]
     named = _part[options, 'scales']
@@ -827,7 +827,7 @@ fn _tip_from[t0, o]
 
 --- ---- tests ----
 
-test configurations_are_read_as_chart_js_reads_them[]
+test configurations_are_read_with_their_defaults[]
     ch = chart_from['c', json['{"type": "bar", "data": {"labels": ["a", "b"], "datasets": [{"label": "S", "data": [1, null], "stack": "one"}]}, "options": {"indexAxis": "y", "plugins": {"legend": {"position": "left"}}}}']]
     len[ch.sets] eq 1
     ch.sets[0].ys[0] eq 1.0
@@ -839,7 +839,7 @@ test configurations_are_read_as_chart_js_reads_them[]
     ch.axes[1].from_zero
     ch.legend.position eq 'left'
 
-test values_come_in_every_form_chart_js_takes[]
+test values_come_in_every_form_a_configuration_takes[]
     ch = chart_from['c', json['{"type": "line", "data": {"labels": ["ON", "OFF"], "datasets": [{"data": [{"x": 1, "y": 2}, {"x": 3, "y": 4}]}, {"type": "bar", "data": [[1, 5], [2, 3]]}, {"data": ["OFF", "ON"]}]}, "options": {"scales": {"y": {"type": "category", "grace": "10%"}}}}']]
     ch.sets[0].xs[1] eq 3.0
     ch.sets[1].starts[0] eq 1.0

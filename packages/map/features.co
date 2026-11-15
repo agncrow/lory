@@ -1,10 +1,10 @@
 --- A map's shapes: GeoJSON read into features — points, lines and
 --- polygons with their holes, one or many to a feature, Features and
 --- FeatureCollections and collections of geometries — each drawn in a
---- style (Leaflet's Path options: a stroke's colour, width, opacity and
+--- style (a stroke's colour, width, opacity and
 --- dashes, a fill's colour and opacity, a point's radius), a style that
 --- may be read from a feature's properties (steps of a number: a
---- choropleth), filled by triangles cut once (by Lory's earcut, in
+--- choropleth), filled by triangles cut once (by ear clipping, in
 --- `lory.geometry`), and found under a pointer.
 ---
 --- A feature's places are kept as they were read and as points of the
@@ -43,7 +43,7 @@ struct Feature [id, layer, pieces, south, west, north, east, words, numbers, sty
 
 --- ---- styles ----
 
---- Leaflet's own style for a path: a blue stroke 3 pixels wide, a fill of
+--- the default style for a path: a blue stroke 3 pixels wide, a fill of
 --- the same blue at a fifth of its opacity where a polygon or circle is
 --- filled, points drawn as markers (a circle's radius 10)
 fn style[]
@@ -321,12 +321,11 @@ fn _found[xs, ys, x, y]
 
 --- a polygon with holes cut into triangles: three indexes into its points
 --- each. Its rings (each starting where `ring_at` says, the outer one
---- first) are cut by Lory's earcut, as `lory.geometry` cuts a shape and
---- three.js and Mapbox's fills are cut: each hole bridged into the outer
---- ring, then ears cut off in turn. The shape's corners are its rings'
---- points, each ring turned the way earcut wants it, so each is found
---- again among the points: in turn, forwards or backwards, or else by
---- where it is.
+--- first) are cut as `lory.geometry` cuts a shape: each hole bridged into
+--- the outer ring, then ears cut off in turn. The shape's corners are its
+--- rings' points, each ring turned the way the cutting wants it, so each
+--- is found again among the points: in turn, forwards or backwards, or
+--- else by where it is.
 fn triangulate[xs, ys, ring_at]
     out = slice[[0], 0, 0]
     rings = []
@@ -461,8 +460,7 @@ fn hits[f, x, y, per]
 
 --- a marker's pin with its point at (x, y) of the canvas, `s` canvas
 --- pixels a CSS pixel: a round head over a point, a light dot in the
---- head, a shadow under the point (25 by 41 CSS pixels, as Leaflet's
---- marker stands)
+--- head, a shadow under the point (25 by 41 CSS pixels)
 fn pin[c, x, y, s, color]
     c = lory.round_rect[c, x - 7.0 * s, y - 2.5 * s, 14.0 * s, 5.0 * s, 2.5 * s, lory.rgba[0.0, 0.0, 0.0, 0.22]]
     r = 11.5 * s
@@ -490,7 +488,7 @@ fn _stroke_path[c, xs, ys, st, s, closed]
     if st.dash_on gt 0.0
         return lory.dashed_path[c, px, py, w, color, st.dash_on * s, st.dash_off * s]
     c = lory.path[c, px, py, w, color]
-    --- (round joins, as Leaflet's lines have, where the line is opaque)
+    --- (round joins where the line is opaque)
     if w gte 2.0 and st.opacity gte 1.0
         for i in range[len[px]]
             c = lory.circle[c, px[i], py[i], w / 2.0, color]
@@ -587,7 +585,6 @@ fn marker_of[layer, id, lat, lng, s]
 
 --- the middle of a feature where its popup or tooltip points: a point's
 --- place, the middle of a line, the middle of a polygon's outer ring
---- (Leaflet's getCenter)
 fn middle_of[f]
     if len[f.pieces] eq 0
         return geo.Place[0.0, 0.0]
@@ -635,7 +632,7 @@ test a_concave_polygon_keeps_its_notch_unfilled[]
     abs[area - 70.0] lt 0.000001
 
 --- (a ring of 240 corners, a star with deep notches, is cut whole: its
---- triangles cover its area exactly, as many as earcut cuts any polygon)
+--- triangles cover its area exactly, n - 2 of them as for any polygon)
 test a_ring_of_many_corners_is_cut_whole[]
     xs = []
     ys = []

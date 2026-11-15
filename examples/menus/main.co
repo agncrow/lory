@@ -42,7 +42,7 @@ fn commands[]
 
 --- the accordion's questions
 fn questions[]
-    [disclosure.fold['what', 'What is this?', [gui.text['A page of Lory’s menus, overlays and disclosure, each answering the keys and the pointer as the library it follows does.']]], disclosure.fold['keys', 'Which keys work?', [gui.text['The arrows move along menus, the bar, the palette, these questions and the tree; Enter and space choose; Escape closes; F8 goes to the newest toast.']]], disclosure.fold['where', 'Where are the numbers from?', [gui.text['Radix’s primitives, cmdk, Vuetify and Semantic UI: tests/menus/reference.json holds them.']]]]
+    [disclosure.fold['what', 'What is this?', [gui.text['A page of Lory’s menus, overlays and disclosure, each answering the keys, the pointer and touch.']]], disclosure.fold['keys', 'Which keys work?', [gui.text['The arrows move along menus, the bar, the palette, these questions and the tree; Enter and space choose; Escape closes; F8 goes to the newest toast.']]]]
 
 --- the tree of files: each file the reader made a folder is one
 fn files[a]

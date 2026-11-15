@@ -1,16 +1,17 @@
---- Lory's editors (docs/components/forms.md): a Markdown editor, its
+--- Lory's editors: a Markdown editor, its
 --- words typed in a field of lines beside a preview Lory draws (and that
 --- preview alone, to be read), and an image editor that crops, turns,
 --- flips and zooms a picture and draws on it (a pen, lines, boxes, rings
 --- and words), each step undone and done again.
 ---
---- The Markdown is read as CommonMark reads it (commonmark 0.31.2, held to
---- its trees in tests/forms/reference.co): headings of both kinds,
+--- The Markdown read is the standard's: headings of both kinds,
 --- paragraphs, hard and soft breaks, block quotes, lists of bullets and of
 --- numbers (tight and loose, nested), fenced and indented code, thematic
---- breaks, and within a line emphasis and strong emphasis by CommonMark's
---- rules of delimiter runs, code spans, backslash escapes and inline
---- links. What it does not read is in docs/components/forms.md.
+--- breaks, and within a line emphasis and strong emphasis by the rules of
+--- delimiter runs, code spans, backslash escapes and inline links. Not
+--- read: HTML (Lory draws none), link reference definitions, entities,
+--- autolinks, images and the percent-encoding of a destination. A tab is
+--- read as spaces to the next multiple of four.
 ---
 ---     doc = editors.markdown_blocks['# Notes\n\nSome *words*.']
 ---     editors.tree_text[doc]
@@ -32,7 +33,7 @@ fn _no_words[]
 fn _no_ints[]
     slice[[0], 0, 0]
 
---- ---- Markdown: the blocks (CommonMark's block structure) ----
+--- ---- Markdown: the blocks ----
 
 --- one inline piece of a paragraph or heading: `text`, `code` (its words
 --- the code's), `softbreak`, `linebreak`, `link` and `unlink` (where a
@@ -119,7 +120,7 @@ fn _holds[parent, child]
 --- the block closed at a line: a fenced block's first line its info, an
 --- indented block's last blank lines left out, a list tight unless one of
 --- its items, or one of an item's blocks, ends with a blank line before
---- the next (CommonMark's rule, by the lines each starts and ends on)
+--- the next (by the lines each starts and ends on)
 fn _finalized[r, i, line]
     bs = r.blocks
     b = bs[i]
@@ -265,7 +266,7 @@ fn _run_of[r, i, ch]
         n = n + 1
     n
 
---- ---- the starts of blocks, in CommonMark's order ----
+--- ---- the starts of blocks, in the order they are tried ----
 
 fn _quote_started[r]
     if _indented[r] or _peek[r, r.next] ne '>'
@@ -477,7 +478,8 @@ fn _started[r, container]
         r = _code_started[r]
     r
 
---- one line read into the blocks (CommonMark's incorporateLine)
+--- one line read into the blocks: the open ones it continues, then any
+--- it starts
 fn _line_read[r, words]
     line = _untabbed[words]
     r.chars = _no_words[]
@@ -533,8 +535,8 @@ fn _line_read[r, words]
         r = _line_added[r]
     r
 
---- the document's blocks, read as CommonMark reads them, each paragraph's
---- and heading's words read into its inline pieces
+--- the document's blocks, each paragraph's and heading's words read into
+--- its inline pieces
 fn markdown_blocks[text]
     r = Reading[[_block['document', -1, 1]], 0, 0, _no_words[], 0, 0, 0, false, true, 0, 0, 0]
     lines = split[replace[replace[text, '\r\n', '\n'], '\r', '\n'], '\n']
@@ -557,11 +559,11 @@ fn markdown_blocks[text]
             bs[j] = b
     bs
 
---- ---- Markdown: within a line (CommonMark's inlines) ----
+--- ---- Markdown: within a line ----
 
 --- a run of `*` or `_` that may open or close emphasis: its piece's
 --- place, its character, how many of it are left and were at first, and
---- whether it may open and close (CommonMark's flanking rules)
+--- whether it may open and close (by what flanks it)
 struct Delim [at, ch, count, first, opens, closes]
 
 --- a `[` that may open a link: its piece's place, how many runs stood
@@ -877,7 +879,7 @@ fn _link_end[p, chars, after]
                 return found.end
     after
 
---- ---- emphasis (CommonMark's process emphasis) ----
+--- ---- emphasis ----
 
 --- the runs from `bottom` on matched, closer by closer: each closer to the
 --- nearest opener of its character before it (not one whose lengths make
@@ -939,7 +941,7 @@ fn _emphasized[p, bottom]
     p.delims = slice[ds, 0, min[bottom, len[ds]]]
     p
 
---- ---- the tree as text (the reference's S-expressions) ----
+--- ---- the tree as text (S-expressions) ----
 
 --- words quoted as JSON writes them
 fn _quoted[words]
@@ -960,8 +962,8 @@ fn _quoted[words]
     inner = join[out, '']
     '"`inner`"'
 
---- the document as the reference writes CommonMark's tree: each node in
---- brackets with what it holds, texts that touch as one
+--- the document's tree as text: each node in brackets with what it
+--- holds, texts that touch as one
 fn tree_text[blocks]
     _block_text[blocks, 0]
 
@@ -987,7 +989,7 @@ fn _block_text[bs, i]
     inner = join[parts, ' ']
     '(`inner`)'
 
---- the inline pieces as the reference writes them: texts that touch as
+--- the inline pieces as text: texts that touch as
 --- one, each node opened and closed in brackets
 fn _inline_parts[items]
     out = _no_words[]
@@ -1082,7 +1084,7 @@ fn markdown_editor[id, s, wide = 640.0, lines = 14]
     preview = gui.drawn['`id`:preview', s.scroll, half, tall, _preview_painted, words = id]
     gui.row[[field, preview], gap = 12.0]
 
---- the preview alone, to be read and not edited (TOAST UI's viewer): the
+--- the preview alone, to be read and not edited (a viewer): the
 --- blocks `doc` (as `markdown_blocks` read them) drawn `wide` by `tall`
 --- CSS pixels, scrolled `scroll` down by the wheel, or by the arrows and
 --- Page Up and Page Down while it has the focus; each scroll tells `change`

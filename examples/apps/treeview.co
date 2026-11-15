@@ -1,0 +1,143 @@
+--- Tree View: a tree of folders and entries. A press on a row opens or
+--- closes it (a folder shows `[+]` closed and `[-]` open, its entries and
+--- a `+` under them while open); a double press on an entry makes it a
+--- folder holding one new entry, opened; a press on `+` adds a new entry
+--- to its folder. A folder closed and opened again shows its folders as
+--- they were left: a hidden folder keeps its state.
+use lory
+use lory.gui
+use common
+
+--- a row of the tree: its name, how many entries it holds, and whether it
+--- is open (an entry may be "open" too: its toggle flips it, unseen)
+struct Branch [name, holding, open]
+
+--- every row, by its place: `r` the top, `r.2` its third entry, `r.2.0`
+--- that one's first
+struct Tree [branches]
+
+fn _put[t, path, name, holding]
+    b = t.branches
+    b[path] = Branch[name, holding, false]
+    t.branches = b
+    t
+
+fn fresh[]
+    t = Tree[map['r' = Branch['My Tree', 3, false]]]
+    t = _put[t, 'r.0', 'hello', 0]
+    t = _put[t, 'r.1', 'world', 0]
+    t = _put[t, 'r.2', 'child folder', 4]
+    t = _put[t, 'r.2.0', 'child folder', 2]
+    t = _put[t, 'r.2.0.0', 'hello', 0]
+    t = _put[t, 'r.2.0.1', 'world', 0]
+    t = _put[t, 'r.2.1', 'hello', 0]
+    t = _put[t, 'r.2.2', 'world', 0]
+    t = _put[t, 'r.2.3', 'child folder', 2]
+    t = _put[t, 'r.2.3.0', 'hello', 0]
+    t = _put[t, 'r.2.3.1', 'world', 0]
+    t
+
+fn ticked[s, c]
+    s
+
+fn _depth_of[path]
+    len[split[path, '.']] - 1
+
+--- a row's words: its name, and a folder's `[+]` or `[-]`
+fn _words_of[b]
+    if b.holding eq 0
+        return b.name
+    if b.open
+        return '`b.name` [-]'
+    '`b.name` [+]'
+
+--- the rows shown from `path` down, each indented by its depth
+fn _rows_of[s, path, c]
+    b = s.branches[path]
+    pad = 20.0 * float[_depth_of[path]]
+    words = _words_of[b]
+    shown = gui.text[words]
+    if b.holding gt 0
+        shown = common.titled['', words, 15.0, c]
+    line = gui.row[[gui.space[pad], gui.item['tree:row:`path`', [shown], words = words]], gap = 0.0]
+    if b.holding gt 0
+        line = common.named[line, 'tree:bold:`path`']
+    out = [line]
+    if b.holding gt 0 and b.open
+        i = 0
+        while i lt b.holding
+            for r in _rows_of[s, '`path`.`i`', c]
+                out = push[out, r]
+            i = i + 1
+        add = gui.row[[gui.space[pad + 20.0], gui.item['tree:add:`path`', [gui.text['+']], words = '+']], gap = 0.0]
+        out = push[out, add]
+    out
+
+fn controls[s, c, room]
+    gui.sized[gui.column[_rows_of[s, 'r', c], gap = 0.0], 360.0]
+
+fn _branch[s, path]
+    s.branches[path]
+
+fn _set[s, path, b]
+    every = s.branches
+    every[path] = b
+    s.branches = every
+    s
+
+--- a new entry at the end of the folder
+fn added[s, path]
+    b = _branch[s, path]
+    s = _set[s, '`path`.`b.holding`', Branch['new stuff', 0, false]]
+    b.holding = b.holding + 1
+    _set[s, path, b]
+
+--- an entry made a folder holding a new entry, opened
+fn changed[s, path]
+    b = _branch[s, path]
+    if b.holding gt 0
+        return s
+    s = added[s, path]
+    b = _branch[s, path]
+    b.open = true
+    _set[s, path, b]
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if starts[ev.id, 'tree:row:'] and ev.act eq 'press'
+            path = slice[ev.id, 9, len[ev.id]]
+            b = _branch[s, path]
+            b.open = not b.open
+            s = _set[s, path, b]
+        if starts[ev.id, 'tree:add:'] and ev.act eq 'press'
+            s = added[s, slice[ev.id, 9, len[ev.id]]]
+    --- (a double press on a row: its two presses came before it)
+    for ev in lory.events[c]
+        if ev.on eq 'double'
+            for path in keys[s.branches]
+                b = common.box_of[shown, 'tree:row:`path`']
+                if len[b] eq 4 and ev.x gte b[0] and ev.y gte b[1] and ev.x lt b[0] + b[2] and ev.y lt b[1] + b[3]
+                    s = changed[s, '`path`']
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    lines = slice[[''], 0, 0]
+    for n in common.nodes_of[tree]
+        if starts[n.id, 'tree:row:']
+            path = slice[n.id, 9, len[n.id]]
+            line = '`_depth_of[path]` `common.normalized[n.words]`'
+            if common.holds[tree, 'tree:bold:`path`']
+                line = '`line` bold'
+            lines = push[lines, line]
+        if starts[n.id, 'tree:add:']
+            lines = push[lines, '`_depth_of[slice[n.id, 9, len[n.id]]] + 1` +']
+    out['lines'] = join[lines, '\n']
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

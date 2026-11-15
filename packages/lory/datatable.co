@@ -11,40 +11,31 @@
 ---     m = dt.models[t]
 ---     … m.page.rows are the rows to draw, in order …
 ---
---- It does what TanStack Table's table-core (9.3.1) does and answers what
---- it answers: sorting (one column or several, six sort functions, the
---- toggle cycle), filtering (column filters, a global filter, fuzzy ranks
---- as match-sorter-utils ranks them, sub-rows filtered from the root or from
---- the leaves, faceted values and ranges), grouping with aggregation,
---- expanding, pages, row selection, row pinning, and columns (visibility,
---- order, pinning, sizes, resizing, header groups). Grid.js's search, its
---- sort cycle and its pagination (the buttons and the words) are here too.
----
---- Every behaviour was written anew from the libraries' documentation and
---- from running them: tests/datatable/reference.mjs runs TanStack Table,
---- match-sorter-utils and Grid.js on fixed data and writes what they
---- answered to reference.json, and tests/datatable/reference.co holds this
---- module to it, value for value. No library's source, prose or data table
---- is copied; the accent fold the fuzzy ranks use is written here from
---- Unicode's letters.
+--- It covers sorting (one column or several, six sort functions, the
+--- toggle cycle), filtering (column filters, a global filter, fuzzy ranks,
+--- sub-rows filtered from the root or from the leaves, faceted values and
+--- ranges), grouping with aggregation, expanding, pages, row selection, row
+--- pinning, and columns (visibility, order, pinning, sizes, resizing, header
+--- groups). A simpler grid (search, a sort cycle and pagination with its
+--- buttons and words) is here too. The accent fold the fuzzy ranks use is
+--- written from Unicode's letters.
 ---
 --- A table is a record: its column definitions, its rows, its options and
 --- its state. A function that changes the state answers the table changed
---- (`t = dt.sorted_by[t, [dt.Sort['age', true]]]`) and applies TanStack's
+--- (`t = dt.sorted_by[t, [dt.Sort['age', true]]]`) and applies the
 --- automatic resets there and then (a new filter goes back to the first
 --- page), as a page that draws after each change sees them. `models[t]`
 --- computes the rows the state makes, once; the functions that answer
 --- about rows take them (`dt.page_count[t, m]`).
 ---
---- A cell is a Value, which says which JavaScript value TanStack would
---- have held there (undefined, null, a number, text, a truth, a date or a
---- list), because the libraries' answers turn on it: a missing age sorts
+--- A cell is a Value, which says which kind of value it holds there
+--- (undefined, null, a number, text, a truth, a date or a list), because
+--- the table's answers turn on it: a missing age sorts
 --- after the others, a null one counts as 0 to a range, text that holds
 --- digits sorts as words and numbers. Two things differ, and say so where
 --- they act: a date is the same as any date of its instant (JavaScript
---- compares two Date objects by identity), and a date's text is the one
---- JavaScript writes in UTC (where JavaScript writes the machine's local
---- time, so the reference is made in UTC).
+--- compares two Date objects by identity), and a date's text is always
+--- written in UTC (where JavaScript writes the machine's local time).
 use bits
 
 --- What a cell holds: `is` names the kind ('missing', 'null', 'number',
@@ -63,11 +54,10 @@ struct Row [id, index, depth, parent, cells, subs, column, group, leaves, ranks]
 
 --- A column definition. `key` is the cell a column reads ('' for a column
 --- that only draws, which cannot sort, filter or group); `columns` holds a
---- group's children. The rest are TanStack's column options under plain
---- names (see `column`).
+--- group's children. The rest are the column's options (see `column`).
 struct Column [id, header, key, columns, sort_with, first, absent, invert, sortable, multi, filter_with, filterable, searchable, aggregate_with, groupable, hideable, pinnable, size, smallest, largest, resizable]
 
---- The table's options: TanStack's under plain names (see `options`).
+--- The table's options (see `options`).
 struct Options [sortable, multi, removable, multi_removable, most_sorted, first, manual_sorting, reset_sorting, filtering, column_filtering, searching, search_filter, from_leaves, filter_depth, manual_filtering, groupable, grouped_columns, manual_grouping, expandable, page_expanded, manual_expanding, reset_expanded, manual_pages, known_pages, known_rows, reset_pages, selectable, unselectable, multi_select, select_subs, closed, row_pinnable, unpinnable, keep_pinned, hideable, column_pinnable, resizable, resize_mode, resize_direction]
 
 --- One column of the sorting: its id, and whether it sorts descending.
@@ -85,8 +75,7 @@ struct Sized [id, size]
 --- the sizes of the columns under the header when it began.
 struct Resizing [offset, size, moved, share, column, sizes]
 
---- A table's state: what TanStack holds in its state slices. `expanded_all`
---- is TanStack's `expanded: true`; `expanded`, `selected`, `visible` and
+--- A table's state. `expanded_all` says every row is expanded; `expanded`, `selected`, `visible` and
 --- `sizes` are maps by id; `start` and `end` are the columns pinned to each
 --- side, `top` and `bottom` the rows pinned there; `search` is the global
 --- filter's value (missing for none).
@@ -97,7 +86,7 @@ struct State [sorting, filters, search, grouping, expanded_all, expanded, page_i
 --- expanded rows goes back to).
 struct Table [columns, rows, options, state, initial]
 
---- Rows as one of TanStack's row models holds them: the rows at the top
+--- Rows as one of the table's row models holds them: the rows at the top
 --- (each with its sub-rows) and every row of the model in its order.
 struct Model [rows, flat]
 
@@ -107,8 +96,8 @@ struct Model [rows, flat]
 --- the data's: positions in their `flat` lists.)
 struct Models [core, filtered, grouped, sorted, expanded, page, held, found]
 
---- A fuzzy rank: how well a value matched (0 to 7, as match-sorter's
---- rankings run) and whether that passes the threshold.
+--- A fuzzy rank: how well a value matched (0 to 7, as the fuzzy
+--- ranks run) and whether that passes the threshold.
 struct Rank [rank, passed]
 
 --- One faceted value and how many rows hold it.
@@ -354,15 +343,15 @@ fn _digit_value[c]
         return code[lowered] - code['a'] + 10
     -1
 
-fn _radix_value[t, radix]
+fn _scale_value[t, digits_base]
     if len[t] eq 0
         return _nan[]
     total = 0.0
     for c in split[t, '']
         d = _digit_value[c]
-        if d lt 0 or d gte radix
+        if d lt 0 or d gte digits_base
             return _nan[]
-        total = total * radix + d
+        total = total * digits_base + d
     total
 
 --- The number JavaScript's Number() reads in text: blank text is 0, a
@@ -374,11 +363,11 @@ fn text_number[t]
         return 0.0
     head = lower[slice[s, 0, 2]]
     if head eq '0x'
-        return _radix_value[slice[s, 2, len[s]], 16]
+        return _scale_value[slice[s, 2, len[s]], 16]
     if head eq '0o'
-        return _radix_value[slice[s, 2, len[s]], 8]
+        return _scale_value[slice[s, 2, len[s]], 8]
     if head eq '0b'
-        return _radix_value[slice[s, 2, len[s]], 2]
+        return _scale_value[slice[s, 2, len[s]], 2]
     if _decimal_length[s] ne len[s]
         return _nan[]
     _decimal_value[s]
@@ -471,7 +460,7 @@ fn js_less[a, b]
 
 -------------------------------------------------------------------- sort functions
 
---- The text TanStack's text sort functions read from a value: a finite
+--- The text the text sort functions read from a value: a finite
 --- number as JavaScript writes it, text as it is, and nothing else ('').
 fn _sort_text[v]
     if v.is eq 'number'
@@ -487,7 +476,7 @@ fn _date_as_number[v]
         return number[v.num]
     v
 
---- How a sorts against b under one of TanStack's sort functions, below zero
+--- How a sorts against b under one of the table's sort functions, below zero
 --- when a comes first: 'alphanumeric' (words and the numbers in them, any
 --- case), 'alphanumericCaseSensitive', 'text' (any case),
 --- 'textCaseSensitive', 'datetime' (a date by its instant, anything else as
@@ -553,7 +542,7 @@ fn _number_chunk_compare[a, from_a, to_a, b, from_b, to_b]
         return -1
     0
 
---- How a sorts against b as TanStack's alphanumeric functions find it: in
+--- How a sorts against b as the alphanumeric functions find it: in
 --- runs of digits and of other characters, words by character codes and
 --- then by length, a number after a word, numbers by value, and then the
 --- one with fewer runs left first.
@@ -589,8 +578,7 @@ fn _falsy[v]
 fn _has_length[v]
     (v.is eq 'list' and len[v.items] gt 0) or (v.is eq 'text' and len[v.words] gt 0)
 
---- The value a filter function compares with, as TanStack resolves it once
---- per filter: the text functions read it as text (in lower case where case
+--- The value a filter function compares with, resolved once per filter: the text functions read it as text (in lower case where case
 --- is ignored), a range reads its two ends as numbers or dates (an end that
 --- is null or reads as no number is open; ends the wrong way round are
 --- swapped), and the others take it as it is.
@@ -630,7 +618,7 @@ fn _number_range[value]
     high = _range_end[_end_of[value, 1], _infinity[]]
     _ordered_range[low, high]
 
---- A value as a date's milliseconds, as TanStack's date range reads it: a
+--- A value as a date's milliseconds, as the date range reads it: a
 --- date or a number as it is, a truth as 1 or 0, nothing (or blank text)
 --- as NaN, and text as an ISO moment (JavaScript reads more ways of writing
 --- a date).
@@ -713,7 +701,7 @@ fn _filter_items[filter]
         return out
     _no_values[]
 
---- Whether a value passes one of TanStack's filter functions, given the
+--- Whether a value passes one of the table's filter functions, given the
 --- filter value as resolved_filter resolves it: 'includesString',
 --- 'includesStringSensitive', 'equalsString', 'equalsStringSensitive',
 --- 'startsWith', 'endsWith', 'equals', 'weakEquals', 'empty', 'notEmpty',
@@ -794,8 +782,8 @@ fn filter_passes[name, data, filter]
         return false
     false
 
---- Whether setting a filter to this value takes the filter away, as
---- TanStack's filter functions decide: undefined always does, null and ''
+--- Whether setting a filter to this value takes the filter away, as the
+--- filter functions decide: undefined always does, null and ''
 --- do for every built-in function, anything with no items does for the
 --- list functions, a range with two empty ends does for the ranges, false
 --- does for 'empty' and 'notEmpty', and a function with no rule of its own
@@ -819,7 +807,7 @@ fn filter_removes[name, value]
 
 --- A letter with its accent taken off (and Æ, Œ, Þ and their kind written
 --- out), as the fuzzy ranks compare letters: Latin-1's and Latin
---- Extended-A's. Ł folds to a small l, as match-sorter's ranks fold it.
+--- Extended-A's. Ł folds to a small l.
 fn _plain_letter[c]
     if c lt 'À'
         return c
@@ -952,7 +940,7 @@ fn _closeness[t, q]
         k = k + 1
     1.0 + 1.0 / (at - first)
 
---- How well text matches a query, as match-sorter ranks it: 7 the same
+--- How well text matches a query: 7 the same
 --- text, 6 the same in any case, 5 starting with it, 4 a word starting with
 --- it, 3 holding it, 2 its words' initials holding it, between 1 and 2 its
 --- letters in order (closer letters rank higher), 0 no match. A query
@@ -982,14 +970,13 @@ fn match_rank[item, query]
         return 2.0
     _closeness[t, q]
 
---- A value's fuzzy rank against a query, as match-sorter's rankItem gives
---- it: the rank of the value's text, and whether it reaches the threshold
+--- A value's fuzzy rank against a query: the rank of the value's text, and whether it reaches the threshold
 --- (1, letters in order, unless told).
 fn rank_of[v, query, threshold = 1.0]
     r = match_rank[shown[v], shown[query]]
     Rank[r, r gte threshold]
 
---- How two fuzzy ranks sort, the better first (match-sorter's compareItems).
+--- How two fuzzy ranks sort, the better first.
 fn rank_compare[a, b]
     if a eq b
         return 0
@@ -1015,7 +1002,7 @@ fn _no_sizes[]
     del[m, '']
 
 --- A column that reads the cell under `key`, which is its id too. Its
---- options are TanStack's column options under plain names: `header`, its
+--- options: `header`, its
 --- words; `sort_with`, its sort function ('auto' chooses one from the first
 --- rows' values, or one of sort_compare's names, or 'rank' for the fuzzy
 --- rank its filter gave and then 'alphanumeric'); `first`, the direction
@@ -1547,8 +1534,8 @@ fn _header_size[t, heads, id]
     total
 
 --- The rows of headers over a part of the table ('all', 'start', 'center'
---- or 'end'), the top row first, as TanStack's getHeaderGroups lays them
---- out: every row of headers reaches down to the deepest group that shows;
+--- or 'end'), the top row first, laid out
+--- so: every row of headers reaches down to the deepest group that shows;
 --- a header over a group spans its leaves' columns; where a column has no
 --- group above it, a placeholder header of that column stands in for one,
 --- and the topmost of a column's placeholders spans the rows down to its
@@ -1773,7 +1760,7 @@ fn _cored[rows, depth, parent]
         i = i + 1
     out
 
---- The data's rows as TanStack's core row model holds them: each knows its
+--- The data's rows as the core row model holds them: each knows its
 --- place among its siblings, its depth and its parent.
 fn core_model[t]
     rows = _cored[t.rows, 0, '']
@@ -1969,8 +1956,8 @@ fn _filtered_rows[t, rows, fates, ids]
     kept = _ranked[kept, fates]
     Model[kept, _flattened[kept]]
 
---- The rows the table's filters keep, as TanStack's filtered row model
---- holds them: each row that a fuzzy filter ranked carries its ranks.
+--- The rows the table's filters keep, as the filtered row model holds
+--- them: each row that a fuzzy filter ranked carries its ranks.
 fn filtered_model[t, core]
     if t.options.manual_filtering or len[core.rows] eq 0 or not _filters_on[t.state]
         return core
@@ -2313,7 +2300,7 @@ fn _not_grouped_by[subs, id]
             return false
     true
 
---- The rows the grouping makes, as TanStack's grouped row model holds them:
+--- The rows the grouping makes, as the grouped row model holds them:
 --- a group row for each value of the first grouping column (in the order
 --- first met) holding its rows' groups by the next column, down to the rows
 --- themselves; its id is the column and value (`status:single`, under its
@@ -2469,8 +2456,8 @@ fn _sorted_rows[sorters, rows]
         out = push[out, r]
     out
 
---- The rows sorted as the table's sorting says, as TanStack's sorted row
---- model holds them: by each sorting column in turn (rows missing a value
+--- The rows sorted as the table's sorting says, as the sorted row model
+--- holds them: by each sorting column in turn (rows missing a value
 --- placed as the column says), then in their own order; every row's
 --- sub-rows sorted the same way.
 fn sorted_model[t, filtered, grouped]
@@ -2498,8 +2485,8 @@ fn _opened[t, rows]
 fn _any_expanded[s]
     s.expanded_all or len[keys[s.expanded]] gt 0
 
---- The rows with the expanded ones' sub-rows listed after them, as
---- TanStack's expanded row model holds them (only when expanded rows are
+--- The rows with the expanded ones' sub-rows listed after them, as the
+--- expanded row model holds them (only when expanded rows are
 --- paged with the rest, or the pages are the program's own).
 fn expanded_model[t, sorted]
     if t.options.manual_expanding or len[sorted.rows] eq 0 or not _any_expanded[t.state]
@@ -2517,7 +2504,7 @@ fn _page_flat[rows]
             out = push[out, r]
     out
 
---- The page's rows, as TanStack's paginated row model holds them: the
+--- The page's rows, as the paginated row model holds them: the
 --- page's share of the rows (with the expanded rows' sub-rows opened inside
 --- the page when expanded rows are not paged with the rest), and every row
 --- on the page and under it once.
@@ -2567,33 +2554,26 @@ fn _no_filters[]
     one = [Filter['', missing[]]]
     slice[one, 0, 0]
 
---- A table's options, TanStack's under plain names, each with its default:
---- `sortable` (enableSorting), `multi` (enableMultiSort: 'auto' lets every
---- column that reads a cell join a sort of several, 'yes', 'no'),
---- `removable` (enableSortingRemoval), `multi_removable`
---- (enableMultiRemove), `most_sorted` (maxMultiSortColCount, -1 for no
---- limit), `first` (sortDescFirst: 'auto', 'asc' or 'desc'),
---- `reset_sorting` (autoResetSorting: whether new data takes the sorting
---- back to the state the table began with), `filtering` (enableFilters),
---- `column_filtering` (enableColumnFilters), `searching`
---- (enableGlobalFilter), `search_filter` (globalFilterFn), `from_leaves`
---- (filterFromLeafRows), `filter_depth` (maxLeafRowFilterDepth),
---- `groupable` (enableGrouping), `grouped_columns` (groupedColumnMode:
---- 'reorder', 'remove' or 'keep'), `expandable` (enableExpanding),
---- `page_expanded` (paginateExpandedRows), `reset_expanded`
---- (autoResetExpanded: 'auto', 'yes', 'no'), `known_pages` (pageCount: -2
---- counts the rows, -1 is unknown), `known_rows` (rowCount, -1 counts the
---- rows), `reset_pages` (autoResetPageIndex: 'auto', 'yes', 'no'),
---- `selectable` (enableRowSelection), `multi_select`
---- (enableMultiRowSelection), `select_subs` (enableSubRowSelection),
---- `row_pinnable` (enableRowPinning), `keep_pinned` (keepPinnedRows),
---- `hideable` (enableHiding), `column_pinnable` (enableColumnPinning),
---- `resizable` (enableColumnResizing), `resize_mode` (columnResizeMode:
---- 'end' or 'change') and `resize_direction` ('ltr' or 'rtl'); and the
---- manual flags, by which the program does a step itself (`manual_sorting`,
---- `manual_filtering`, `manual_grouping`, `manual_expanding`,
---- `manual_pages`). Three lists name rows by id where TanStack takes a
---- function of the row: `unselectable` (rows that cannot be selected),
+--- A table's options, each with its default: `sortable`, `multi` ('auto'
+--- lets every column that reads a cell join a sort of several, 'yes',
+--- 'no'), `removable` (a press can take a sort away), `multi_removable`,
+--- `most_sorted` (-1 for no limit), `first` (the first direction: 'auto',
+--- 'asc' or 'desc'), `reset_sorting` (whether new data takes the sorting
+--- back to the state the table began with), `filtering`,
+--- `column_filtering`, `searching` (the global filter), `search_filter`
+--- (its function), `from_leaves` (filter from the leaf rows up),
+--- `filter_depth` (how deep leaf rows are filtered), `groupable`,
+--- `grouped_columns` ('reorder', 'remove' or 'keep'), `expandable`,
+--- `page_expanded` (expanded rows paged with the rest), `reset_expanded`
+--- ('auto', 'yes', 'no'), `known_pages` (-2 counts the rows, -1 is
+--- unknown), `known_rows` (-1 counts the rows), `reset_pages` ('auto',
+--- 'yes', 'no'), `selectable`, `multi_select`, `select_subs` (selecting a
+--- row selects its sub-rows), `row_pinnable`, `keep_pinned` (pinned rows
+--- stay when filtered or paged away), `hideable`, `column_pinnable`,
+--- `resizable`, `resize_mode` ('end' or 'change') and `resize_direction`
+--- ('ltr' or 'rtl'); and the manual flags, by which the program does a
+--- step itself (`manual_sorting`, `manual_filtering`, `manual_grouping`,
+--- `manual_expanding`, `manual_pages`). Three lists name rows by id: `unselectable` (rows that cannot be selected),
 --- `closed` (rows whose sub-rows are not selected with them) and
 --- `unpinnable` (rows that cannot be pinned); set them on the record.
 fn options[sortable = true, multi = 'auto', removable = true, multi_removable = true, most_sorted = -1, first = 'auto', manual_sorting = false, reset_sorting = false, filtering = true, column_filtering = true, searching = true, search_filter = 'auto', from_leaves = false, filter_depth = 100, manual_filtering = false, groupable = true, grouped_columns = 'reorder', manual_grouping = false, expandable = true, page_expanded = true, manual_expanding = false, reset_expanded = 'auto', manual_pages = false, known_pages = -2, known_rows = -1, reset_pages = 'auto', selectable = true, multi_select = true, select_subs = true, row_pinnable = true, keep_pinned = true, hideable = true, column_pinnable = true, resizable = true, resize_mode = 'end', resize_direction = 'ltr']
@@ -2738,8 +2718,8 @@ fn sorted_by[t, sorting]
         return t
     _page_reset[t]
 
---- The table after a press on a column's sort, as TanStack's sorting
---- toggle answers it (`multi` when the press asks for a sort of several, a
+--- The table after a press on a column's sort, as the sorting toggle
+--- answers it (`multi` when the press asks for a sort of several, a
 --- shift-press): a column that cannot sort is left as it is; alone, the
 --- column replaces the sorting or turns round; in a sort of several it is
 --- added at the end (the oldest dropped past most_sorted) or turns round;
@@ -2958,7 +2938,7 @@ fn can_some_expand[t, m]
     false
 
 --- How deep the expanded rows reach, counted in the parts of their ids
---- (TanStack's rule: `t3.0` is 2): the expanded rows', or when every row is
+--- (`t3.0` is 2): the expanded rows', or when every row is
 --- expanded, every row's that can expand.
 fn expanded_depth[t, m]
     most = 0
@@ -3419,13 +3399,13 @@ fn some_rows_pinned[t, side = '']
         return len[t.state.bottom] gt 0
     len[t.state.top] gt 0 or len[t.state.bottom] gt 0
 
--------------------------------------------------------------------- Grid.js
+-------------------------------------------------------------------- simple grid
 
---- One column of a Grid.js sort: the column's index and its direction (1
+--- One column of a simple grid's sort: the column's index and its direction (1
 --- ascending, -1 descending).
 struct GridSort [index, direction]
 
---- A grid as Grid.js keeps one: its rows (each a list of cells), the
+--- A simple grid: its rows (each a list of cells), the
 --- search keyword, the sort (the columns in the order pressed), the page
 --- shown (from 0), the rows to a page and how many page buttons it shows
 --- between the gaps.
@@ -3436,23 +3416,22 @@ struct Grid [rows, keyword, sorts, page, limit, count]
 --- the page it goes to (-1 for none).
 struct GridButton [label, disabled, current, spread, title, goes]
 
---- A grid's words, Grid.js's language: the search field's placeholder, the
+--- A grid's words: the search field's placeholder, the
 --- sort buttons' titles, the page buttons' words and titles (`{page}` and
 --- `{pages}` stand for numbers), the summary's words, and what an empty or
 --- failed grid says.
 struct Language [placeholder, sort_ascending, sort_descending, previous, following, navigate, page_title, first_page, showing, of_words, to_words, results, loading, none_found, failed]
 
---- Grid.js's own words (its en_US language). Its first page button's
---- title is the key it looks up, which en_US does not hold.
+--- A grid's words in English.
 fn grid_language[]
-    Language['Type a keyword...', 'Sort column ascending', 'Sort column descending', 'Previous', 'Next', 'Page {page} of {pages}', 'Page {page}', 'pagination.firstPage', 'Showing', 'of', 'to', 'results', 'Loading...', 'No matching records found', 'An error happened while fetching the data']
+    Language['Type a keyword...', 'Sort column ascending', 'Sort column descending', 'Previous', 'Next', 'Page {page} of {pages}', 'Page {page}', 'First page', 'Showing', 'of', 'to', 'results', 'Loading...', 'No matching records found', 'An error happened while fetching the data']
 
 fn _no_grid_sorts[]
     one = [GridSort[0, 1]]
     slice[one, 0, 0]
 
 --- A grid of these rows on its first page: `limit` rows to a page and
---- `count` page buttons, as Grid.js's pagination has them unless told.
+--- `count` page buttons, unless told.
 fn grid[rows, limit = 10, count = 3]
     Grid[rows, '', _no_grid_sorts[], 0, limit, count]
 
@@ -3479,8 +3458,7 @@ fn _grid_text[v]
         return ''
     shown[v]
 
---- Whether a row of cells holds a search keyword, as Grid.js's search finds
---- it: in any cell, the keyword's text (trimmed) anywhere in the cell's,
+--- Whether a row of cells holds a search keyword: in any cell, the keyword's text (trimmed) anywhere in the cell's,
 --- whatever the case; an empty keyword holds every row.
 fn grid_matches[cells, keyword]
     if keyword eq ''
@@ -3563,8 +3541,7 @@ fn grid_searched[g, keyword]
     g.page = 0
     g
 
---- The grid after a press on a column's sort button, as Grid.js answers it
---- (`multi` for a shift-press): an unsorted column sorts ascending, a sorted
+--- The grid after a press on a column's sort button (`multi` for a shift-press): an unsorted column sorts ascending, a sorted
 --- one turns round; alone, the column replaces the sort (or turns round in
 --- it when it is the only one); in a sort of several it is added at the
 --- end, turns round when ascending, and leaves when descending. A sort goes
@@ -3633,7 +3610,7 @@ fn grid_sort_title[g, lang, index]
 fn _paged_title[lang, page]
     replace[lang.page_title, '{page}', str[page]]
 
---- A grid's page buttons as Grid.js lays them out: Previous; a run of
+--- A grid's page buttons as they are laid out: Previous; a run of
 --- `count` page buttons around the page shown (as near the middle as the
 --- pages allow), with the first page and a gap before it when the run does
 --- not reach the first, and a gap and the last page after it when it does

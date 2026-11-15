@@ -1,9 +1,8 @@
---- Kite: candlestick charts drawn by Lory — klinecharts' behaviour,
---- written in Crow. Candles of six kinds, klinecharts' twenty-seven
---- indicators computed to its last digit, panes below the candles, axes
+--- Kite: candlestick charts drawn by Lory, written in Crow. Candles of
+--- six kinds, twenty-seven built-in indicators, panes below the candles, axes
 --- that fit their labels (normal, percentage, logarithmic), a crosshair
 --- and tooltips, high and low marks and the last price, drawing tools
---- (`overlays`), every style klinecharts names, and a drag to scroll, the
+--- (`overlays`), a style for every part, and a drag to scroll, the
 --- wheel or a pinch to zoom, a drag of an axis to stretch it.
 ---
 --- A chart is a record the program keeps between frames (in process
@@ -25,7 +24,7 @@
 ---
 --- Places a program hands Kite (a chart's box) are the canvas's pixels,
 --- as Lory's are; everything inside a chart is in CSS pixels, as
---- klinecharts' styles are.
+--- its styles are.
 use memory
 use lory
 use store
@@ -60,17 +59,17 @@ fn update[c, k, x, y, w, h]
         r = overlays.take[k, ev]
         k = r.k
         --- (the crosshair follows the pointer while a tool is drawn or
-        --- moved, as klinecharts' does)
+        --- moved)
         if not r.taken or ev.on eq 'move'
             k = store.take[k, ev]
     store.settle[c, k]
 
---- the chart drawn: everything klinecharts draws, and the overlays
+--- the chart drawn: candles, panes, axes, marks, and the overlays
 fn draw[c, k]
     c = views.everything[c, k]
     overlays.draw_all[c, k]
 
---- what the frame did: `scroll`, `zoom` (klinecharts' actions)
+--- what the frame did: `scroll`, `zoom`
 fn actions[k]
     k.actions
 
@@ -136,7 +135,7 @@ fn locale[k, name]
 
 --- ---- the styles ----
 
---- one style, by its path as klinecharts names it
+--- one style, by its path
 fn style[k, key, value]
     k.styles[key] = value
     k
@@ -310,7 +309,7 @@ fn set_values[k, name, given]
     k.inds = out
     k
 
---- ---- the drawing tools (klinecharts' overlays) ----
+--- ---- the drawing tools (overlays) ----
 
 --- the tools there are: `segment`, `priceLine`, `fibonacciLine`, …
 fn tools[]

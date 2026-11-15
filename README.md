@@ -1,20 +1,22 @@
 # Lory
 
 Lory is a UI and graphics library for [Crow](https://github.com/agncrow/crow).
-A Crow program built for the web (`crow build --target web main.co`) is
-WebAssembly that draws everything itself through WebGL2. That covers controls,
-charts, maps, 3D scenes and games, and the same program runs in a page, on a
-phone and in a VR headset.
+A Crow program built for the web is WebAssembly that draws everything itself
+with WebGL2: controls, forms, tables, charts, maps, 3D scenes, sound and
+games. The same program runs in a page, on a phone and in a VR or AR
+headset.
 
-**The site:** [agncrow.github.io/lory](https://agncrow.github.io/lory/) has
-every example running live and a page for each area of components.
+**The site:** [agncrow.github.io/lory](https://agncrow.github.io/lory/) has a
+guide to every part of Lory and every example running live.
 
 ## Packages
 
-| Package | `use` | What it draws |
+| Package | `use` | What it gives you |
 |---|---|---|
-| `packages/lory` | `lory`, `lory.gui`, `lory.plot`, `lory.space`, `lory.xr`, … | The renderer, the controls and the component modules, plotting, 3D, and the headset |
-| `packages/kite` | `kite`, `kite.charts`, … | Financial charts (candles, indicators, a scanner) and Chart.js-style charts |
+| `packages/lory` | `lory`, `lory.gui`, `lory.forms`, `lory.datatable`, `lory.space`, … | The renderer, the controls and the components, 3D, and the headset |
+| `packages/kite` | `kite`, `kite.charts` | Charts: lines, bars, pies, scatter and more, and financial charts |
+| `packages/map` | `map` | Maps of tiles with markers, popups, shapes and clusters |
+| `packages/sound` | `sound` | Synths, effects, a sequencer and analysers, rendered in Crow |
 | `packages/window` | `window` | A window of panels standing around the reader in a headset |
 | `packages/game` | `game` | A fixed-rate clock, collisions, sparks and sounds |
 
@@ -46,45 +48,39 @@ A view is a tree rebuilt from the program's state every frame. Lory keeps
 what the controls hold between frames, such as the focus, a field's caret and
 which menus are open. The program reads what the reader did as events.
 
-## Components
+## What is in it
 
-[docs/components](docs/components/README.md) is the catalog Lory is built
-to: 379 components and features, gathered from Vue's, Solid's and Lit's
-examples, Radix, Headless UI, Semantic UI, Vuetify, Motion, anime.js, AOS,
-fullPage.js, three.js, Chart.js, SortableJS, TanStack Table, Grid.js,
-react-datepicker, TOAST UI, react-slick, Mapbox GL JS, Leaflet and Tone.js.
-Each row names the module that holds it and its status.
+- **Controls:** buttons, fields, sliders, toggles, checkboxes, radios, tabs,
+  selects, tables, layers, tips, roving focus and themes.
+- **Colours, icons and motion:** colour scales and themes, an icon set, and
+  easings, springs and timelines.
+- **Forms:** validation, masks, comboboxes, ratings, code inputs, a
+  Markdown editor and a drawing pad.
+- **Menus and overlays:** menubars, context menus, a command palette,
+  dialogs, drawers, popovers, tooltips, notifications, accordions and trees.
+- **Navigation and display:** app bars, breadcrumbs, steppers, pagination,
+  cards, chips, avatars, badges, timelines, skeletons and spinners.
+- **Dates and times:** date, range, month, year and time pickers, and a
+  calendar with month, week and day views.
+- **Data:** a data table (search, sort, pages, groups) and a data grid
+  (editing, ranges, a live feed, a spreadsheet).
+- **Charts, carousels, scrolling, drag and drop, maps, 3D, model files and
+  sound.**
 
-Every component is held to its reference three ways:
-
-- its behaviour as test blocks: keys, states, events and their order;
-- its numbers against the reference library itself, run at a pinned version
-  by a script, wherever the reference computes them (placements, easings,
-  ticks, dates, sorting);
-- both of Crow's modes, interpreted and compiled, and the browser.
-
-None of the references' code is copied: each component is Lory's own,
-written from what the reference documents and does.
+Every part works in a headset: the controller's ray points and presses, the
+trigger drags, the thumbstick scrolls, and a keyboard is drawn for typing.
 
 ## Examples
 
-[examples/](examples/README.md) holds programs that each build for the web,
-and the site runs them live.
+[examples/](examples/README.md) holds programs that each build for the web.
+The site runs them live.
 
 ## Testing
 
-`./test.sh` runs the whole suite:
-
-- every package's tests in both modes;
-- the parity checks against the reference libraries;
-- every example built for the web;
-- a walk of the scene example in a made-up headset, when Chrome is installed.
-
-## Design
-
-[docs/lory-design.md](docs/lory-design.md) holds the decisions and why they
-were made, and [docs/progress.md](docs/progress.md) holds what was built and
-when.
+`./test.sh` runs every package's tests, in both of Crow's modes
+(interpreted and compiled), builds every example for the web, drives the
+examples in headless Chrome, and walks the 3D and headset examples in a
+made-up headset.
 
 ## License
 

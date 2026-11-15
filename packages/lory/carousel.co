@@ -1,4 +1,4 @@
---- Lory's carousels (docs/components/carousel.md): slides moved by arrows,
+--- Lory's carousels: slides moved by arrows,
 --- dots, keys, swipes and autoplay, one at a time or several, wrapping or
 --- not, centred, of their own widths, faded, vertical, right to left,
 --- loaded lazily, in rows, by the page's width (breakpoints), and two moving
@@ -6,23 +6,8 @@
 --- scrolled and chosen (a slide group); and a strip that never stops (a
 --- ticker).
 ---
---- What react-slick 0.31.0 does is re-implemented here, and
---- tests/carousel/reference.co holds it to react-slick's own numbers: the
---- slide shown and aimed at after every press, swipe and tick, where the
---- track stands, which slides are cloned, active, centred and loaded, the
---- dots and arrows, and when each hook is told. None of its source is
---- included: what its components and functions do was read from that
---- version and written anew, in the same order, so that the numbers come
---- out the same. A move is eased by its CSS timing function (react-slick's
---- `cssEase`, 'ease' at first) as `lory.motion` eases one, and the test
---- holds those curves to Chrome's own progress at fixed times too.
----
---- The panes follow Vuetify 4.3.3's v-window, the slide group its
---- v-slide-group, and the ticker Motion's Ticker (motion-plus-react
---- 1.5.4): their curves, timings and arithmetic were read from those
---- versions and written anew, and the same test holds the slide group's
---- scroll targets and eased positions, the swipes Vuetify's touch hears
---- and the ticker's copies and wrap to the libraries' own functions.
+--- A move is eased by its CSS timing function (`ease`, 'ease' at first)
+--- as `lory.motion` eases one.
 ---
 ---     s = carousel.settings[show = 3, scroll = 3, dots = true]
 ---     tree = carousel.carousel[c, 'hero', slides, s]
@@ -46,8 +31,7 @@ use motion
 
 --- ---- settings ----
 
---- what a carousel is asked to be, by react-slick's settings (its names
---- spelt Lory's way, its defaults kept):
+--- what a carousel is asked to be, by its settings (with their defaults):
 ---   show, scroll       slides shown at once, and moved by a press (1, 1)
 ---   infinite           whether it wraps (true)
 ---   center, padding    the slide shown centred, its neighbours peeking by
@@ -78,22 +62,22 @@ use motion
 ---   focus_on_select    a slide pressed made the one shown
 ---   wait_for_animate   a press during a move waits for it (true)
 ---   accessibility      moved by the arrow keys while it has the focus (true)
----   unslick            its slides only stood side by side, never moved
+---   unmoved            its slides only stood side by side, never moved
 ---   rows, per_row      slides grouped into a grid of `rows` rows of
 ---                      `per_row` each, the group moved as one slide
 ---   nav_for            the id of a carousel that moves with this one
 ---   wide, tall         its width (0: its column's) and its slides'
 ---                      height in CSS pixels (0: their own, measured)
---- and `plain`: its slides one under another, as react-slick's 'unslick'
---- breakpoint leaves them.
-struct Settings [show, scroll, infinite, center, padding, variable, fade, speed, ease, autoplay, autoplay_speed, pause_on_hover, pause_on_dots_hover, pause_on_focus, dots, arrows, initial, rtl, vertical, vertical_swiping, adaptive_height, lazy, swipe, draggable, touch_move, touch_threshold, swipe_to_slide, focus_on_select, wait_for_animate, edge_friction, accessibility, unslick, rows, per_row, nav_for, plain, wide, tall, arrows_on_hover]
+--- and `plain`: its slides one under another, as a plain breakpoint leaves
+--- them.
+struct Settings [show, scroll, infinite, center, padding, variable, fade, speed, ease, autoplay, autoplay_speed, pause_on_hover, pause_on_dots_hover, pause_on_focus, dots, arrows, initial, rtl, vertical, vertical_swiping, adaptive_height, lazy, swipe, draggable, touch_move, touch_threshold, swipe_to_slide, focus_on_select, wait_for_animate, edge_friction, accessibility, unmoved, rows, per_row, nav_for, plain, wide, tall, arrows_on_hover]
 
---- the settings, react-slick's defaults where none is given
-fn settings[show = 1, scroll = 1, infinite = true, center = false, padding = '50px', variable = false, fade = false, speed = 500.0, ease = 'ease', autoplay = false, autoplay_speed = 3000.0, pause_on_hover = true, pause_on_dots_hover = false, pause_on_focus = false, dots = false, arrows = true, initial = 0, rtl = false, vertical = false, vertical_swiping = false, adaptive_height = false, lazy = '', swipe = true, draggable = true, touch_move = true, touch_threshold = 5.0, swipe_to_slide = false, focus_on_select = false, wait_for_animate = true, edge_friction = 0.35, accessibility = true, unslick = false, rows = 1, per_row = 1, nav_for = '', wide = 0.0, tall = 0.0, arrows_on_hover = false]
-    Settings[show, scroll, infinite, center, padding, variable, fade, speed, ease, autoplay, autoplay_speed, pause_on_hover, pause_on_dots_hover, pause_on_focus, dots, arrows, initial, rtl, vertical, vertical_swiping, adaptive_height, lazy, swipe, draggable, touch_move, touch_threshold, swipe_to_slide, focus_on_select, wait_for_animate, edge_friction, accessibility, unslick, rows, per_row, nav_for, false, wide, tall, arrows_on_hover]
+--- the settings, the defaults where none is given
+fn settings[show = 1, scroll = 1, infinite = true, center = false, padding = '50px', variable = false, fade = false, speed = 500.0, ease = 'ease', autoplay = false, autoplay_speed = 3000.0, pause_on_hover = true, pause_on_dots_hover = false, pause_on_focus = false, dots = false, arrows = true, initial = 0, rtl = false, vertical = false, vertical_swiping = false, adaptive_height = false, lazy = '', swipe = true, draggable = true, touch_move = true, touch_threshold = 5.0, swipe_to_slide = false, focus_on_select = false, wait_for_animate = true, edge_friction = 0.35, accessibility = true, unmoved = false, rows = 1, per_row = 1, nav_for = '', wide = 0.0, tall = 0.0, arrows_on_hover = false]
+    Settings[show, scroll, infinite, center, padding, variable, fade, speed, ease, autoplay, autoplay_speed, pause_on_hover, pause_on_dots_hover, pause_on_focus, dots, arrows, initial, rtl, vertical, vertical_swiping, adaptive_height, lazy, swipe, draggable, touch_move, touch_threshold, swipe_to_slide, focus_on_select, wait_for_animate, edge_friction, accessibility, unmoved, rows, per_row, nav_for, false, wide, tall, arrows_on_hover]
 
 --- the settings a carousel of `count` slides (its groups, where in rows)
---- runs by, as react-slick's Slider hands them on: a centred one moves by
+--- runs by: a centred one moves by
 --- one, a fade shows one and moves by one, slides in rows keep no widths
 --- of their own, and too few slides to move are only stood side by side
 fn _resolved[s, count]
@@ -109,7 +93,7 @@ fn _resolved[s, count]
     s.rows = max[1, s.rows]
     s.per_row = max[1, s.per_row]
     if count lte s.show
-        s.unslick = true
+        s.unmoved = true
     s
 
 --- how many slides the track holds of the `count` given: in rows, the
@@ -119,24 +103,23 @@ fn grouped[s, count]
     per = max[1, s.rows] * max[1, s.per_row]
     (count + per - 1) / per
 
---- settings for page widths up to `width` CSS pixels (react-slick's
---- `responsive`): whole settings, made from the carousel's own
---- (`b = base` then `b.show = 2`), or none at all (`unslicked`: the
---- slides one under another)
+--- settings for page widths up to `width` CSS pixels: whole settings,
+--- made from the carousel's own (`b = base` then `b.show = 2`), or none at
+--- all (`plain_breakpoint`: the slides one under another)
 struct Breakpoint [width, s]
 
 fn breakpoint[width, s]
     Breakpoint[width, s]
 
-fn unslicked[width]
+fn plain_breakpoint[width]
     s = settings[]
     s.plain = true
     Breakpoint[width, s]
 
 --- the settings a page `width` CSS pixels wide is given: those of the
 --- narrowest breakpoint it is within, or the base where it is wider than
---- every one (react-slick's media queries, as they answer once the window
---- is resized to that width)
+--- every one (as media queries answer once the window is resized to that
+--- width)
 fn at_width[base, points, width]
     out = base
     best = -1.0
@@ -158,7 +141,7 @@ fn responsive[c, base, points]
 
 --- ---- what a carousel holds ----
 
---- a timer, as react-slick sets them: due `at` ms (`every` again, for an
+--- a timer: due `at` ms (`every` again, for an
 --- interval), fired in the order set where two are due at once (`order`);
 --- `what` it does: 'end' a move (its slide, track offset, target, how it
 --- moved: 'slide', 'fade' or 'still', and the slide its `after` hook tells),
@@ -166,8 +149,7 @@ fn responsive[c, base, points]
 --- more loaded, progressively)
 struct Timer [id, at, every, order, what, slide, left, target, mode, after]
 
---- what is done once a change is committed, as react-slick's setState
---- callbacks: 'mounted', 'resized', 'changed' (its slides or settings),
+--- what is done once a change is committed: 'mounted', 'resized', 'changed' (its slides or settings),
 --- 'slid' (a move begun: link the carousel it navigates, set its end) and
 --- 'ended' (a move ended: tell `after`)
 struct Callback [what, index, mode, slide, left, target, after]
@@ -185,8 +167,7 @@ struct Slot [index, active, center, cloned, current, loaded, alpha]
 --- the dots: how many, and which is active (-1: none, or no dots)
 struct Dots [count, active]
 
---- a carousel's state (react-slick's InnerSlider's, and what it keeps
---- beside it): its settings and slides; the slide shown and aimed at,
+--- a carousel's state: its settings and slides; the slide shown and aimed at,
 --- whether a move animates, autoplay's state ('' none, 'playing',
 --- 'hovered', 'focused', 'paused'); a swipe (dragging, a page's scroll
 --- instead, swiping, an end dragged, where the track was dragged to and
@@ -204,7 +185,7 @@ struct Dots [count, active]
 --- move (to draw it between); each slide's opacity as its fade began and
 --- when; the pointer that drags it and what it pressed; whether the
 --- pointer is over the track and over the dots
-struct Slick [s, count, current, target, animating, autoplaying, dragging, scrolling, swiping, swiped, edge_dragged, swipe_left, has_swipe_left, start_x, start_y, cur_x, cur_y, swipe_length, has_length, left, moving, transform, slide_width, slide_height, list_width, list_height, adapted, loaded, clickable, drawn_clickable, nav_index, timers, made, end_id, autoplay_id, lazy_id, dirty, callbacks, told, links, widths, heights, now, mounted, changed, from_left, moved_at, alpha_from, alpha_at, device, press, hovered, dots_hovered]
+struct Carousel [s, count, current, target, animating, autoplaying, dragging, scrolling, swiping, swiped, edge_dragged, swipe_left, has_swipe_left, start_x, start_y, cur_x, cur_y, swipe_length, has_length, left, moving, transform, slide_width, slide_height, list_width, list_height, adapted, loaded, clickable, drawn_clickable, nav_index, timers, made, end_id, autoplay_id, lazy_id, dirty, callbacks, told, links, widths, heights, now, mounted, changed, from_left, moved_at, alpha_from, alpha_at, device, press, hovered, dots_hovered]
 
 fn _no_ints[]
     out = []
@@ -230,11 +211,11 @@ fn _no_told[]
 fn _no_slots[]
     slice[[Slot[0, false, false, false, false, false, 1.0]], 0, 0]
 
---- (index the carousel never sent: react-slick's asNavForIndex unset)
+--- (index the carousel never sent)
 fn _unsent[]
     -1000000000
 
---- ---- react-slick's arithmetic ----
+--- ---- the arithmetic ----
 
 fn _one_if[b]
     if b
@@ -244,11 +225,11 @@ fn _one_if[b]
 fn _clamp[x, lo, hi]
     max[lo, min[x, hi]]
 
---- JavaScript's Math.round: halves up
-fn _js_round[x]
+--- rounded, halves up
+fn _round_half_up[x]
     floor[x + 0.5]
 
---- JavaScript's parseInt of a CSS length: its leading digits ('60px' 60,
+--- the whole number a CSS length begins with: its leading digits ('60px' 60,
 --- '10%' 10; none 0)
 fn _int_of[t]
     digits = split['0123456789', '']
@@ -300,11 +281,10 @@ fn _share[t]
     chars = split[t, '']
     len[chars] gt 0 and chars[len[chars] - 1] eq '%'
 
---- the clones before the slides and after them (getPreClones,
---- getPostClones), and all the track holds (getTotalSlides)
+--- the clones before the slides and after them, and all the track holds
 fn _pre[k]
     s = k.s
-    if s.unslick or not s.infinite
+    if s.unmoved or not s.infinite
         return 0
     if s.variable
         return k.count
@@ -315,7 +295,7 @@ fn _total[k]
         return 1
     _pre[k] + k.count + _pre[k]
 
---- whether the carousel may move on from `current` (canGoNext)
+--- whether the carousel may move on from `current`
 fn _can_go_next[k, current]
     s = k.s
     if s.infinite
@@ -327,7 +307,6 @@ fn _can_go_next[k, current]
     true
 
 --- the slides before and after the one shown that are loaded with it
---- (lazySlidesOnLeft, lazySlidesOnRight)
 fn _lazy_left[k]
     s = k.s
     if s.center
@@ -340,7 +319,7 @@ fn _lazy_right[k]
         return (s.show - 1) / 2 + 1 + _one_if[_int_of[s.padding] gt 0]
     s.show
 
---- the slides near `current` not yet loaded (getOnDemandLazySlides)
+--- the slides near `current` not yet loaded
 fn _on_demand[k, current, loaded]
     out = _no_ints[]
     i = current - _lazy_left[k]
@@ -358,7 +337,6 @@ fn _joined[xs, ys]
     out
 
 --- the slides to the right of the shown one and to its left
---- (slidesOnRight, slidesOnLeft)
 fn _on_right[k]
     s = k.s
     if s.center
@@ -386,7 +364,6 @@ fn _on_left[k]
     0.0
 
 --- which way a slide lies from the one shown, the short way round
---- (siblingDirection)
 fn _sibling[k, target, current]
     if target gt current
         if target + 0.0 gt current + _on_right[k]
@@ -403,7 +380,7 @@ fn _order[k]
     n = k.count
     pre = _no_ints[]
     post = _no_ints[]
-    cloned = s.infinite and n gt 1 and not s.fade and not s.unslick
+    cloned = s.infinite and n gt 1 and not s.fade and not s.unmoved
     i = 0
     while i lt n
         if cloned
@@ -457,10 +434,10 @@ fn _along[k, order, at]
         i = i + 1
     x
 
---- the offset of the track that shows slide `index` (getTrackLeft)
+--- the offset of the track that shows slide `index`
 fn _track_left[k, index]
     s = k.s
-    if s.unslick
+    if s.unmoved
         return 0.0
     if s.fade or k.count eq 1
         return 0.0
@@ -496,8 +473,7 @@ fn _track_left[k, index]
             if not s.infinite
                 at = index
             left = 0.0
-            --- (a slide past the track's end is no number: JavaScript's
-            --- undefined subtracted)
+            --- (a slide past the track's end is no number)
             if at gt len[order] or at lt 0
                 return nan
             left = 0.0 - _along[k, order, at]
@@ -507,14 +483,14 @@ fn _track_left[k, index]
             left = left + (k.list_width - _slot_wide[k, order[at]]) / 2.0
     left
 
---- the direction of the drag so far (getSwipeDirection): 'left', 'right',
+--- the direction of the drag so far: 'left', 'right',
 --- 'up', 'down', or 'vertical' (a scroll of the page) where it does not
 --- swipe up and down
 fn _swipe_direction[k]
     dx = k.start_x - k.cur_x
     dy = k.start_y - k.cur_y
     r = atan2[dy, dx]
-    angle = _js_round[r * 180.0 / pi]
+    angle = _round_half_up[r * 180.0 / pi]
     if angle lt 0.0
         angle = 360.0 - abs[angle]
     if (angle lte 45.0 and angle gte 0.0) or (angle lte 360.0 and angle gte 315.0)
@@ -527,8 +503,8 @@ fn _swipe_direction[k]
         return 'down'
     'vertical'
 
---- the slides a swipe may stop at (getNavigableIndexes), and the one a
---- swipe to `index` stops at (checkNavigable)
+--- the slides a swipe may stop at, and the one a
+--- swipe to `index` stops at
 fn _navigable_indexes[k]
     s = k.s
     most = k.count
@@ -560,7 +536,7 @@ fn _navigable[k, index]
         i = i + 1
     index
 
---- how many slides a swipe crossed (getSlideCount): to the slide it reached
+--- how many slides a swipe crossed: to the slide it reached
 --- where it swipes to a slide, else a move's worth
 fn _swiped_count[k]
     s = k.s
@@ -597,7 +573,7 @@ fn _swiped_count[k]
 --- ---- the carousel's state, made and changed ----
 
 fn _fresh[s, count, wide, heights, widths, at]
-    Slick[_resolved[s, count], count, s.initial, s.initial, false, '', false, false, false, false, false, 0.0, false, 0.0, 0.0, 0.0, 0.0, 0.0, false, 0.0, false, true, 0.0, 0.0, wide, 0.0, -1.0, _no_ints[], true, true, _unsent[], _no_timers[], 0, 0, 0, 0, false, _no_callbacks[], _no_told[], _no_ints[], widths, heights, at, false, false, 0.0, at, _no_floats[], at, '', '', false, false]
+    Carousel[_resolved[s, count], count, s.initial, s.initial, false, '', false, false, false, false, false, 0.0, false, 0.0, 0.0, 0.0, 0.0, 0.0, false, 0.0, false, true, 0.0, 0.0, wide, 0.0, -1.0, _no_ints[], true, true, _unsent[], _no_timers[], 0, 0, 0, 0, false, _no_callbacks[], _no_told[], _no_ints[], widths, heights, at, false, false, 0.0, at, _no_floats[], at, '', '', false, false]
 
 --- something told at the carousel's time
 fn _tell[k, what, a, b]
@@ -618,7 +594,7 @@ fn _tell_loaded[k, loaded]
         k.told = push[k.told, Told[k.now, 'lazy', 0, 0, '', fresh]]
     k
 
---- ---- the clock: react-slick's timers ----
+--- ---- the clock: timers ----
 
 fn _timeout[k, at, what, slide, left, target, mode, after]
     k.made = k.made + 1
@@ -706,9 +682,9 @@ fn _fired[k, t]
         return _progressive[k]
     k
 
---- ---- committing: react-slick's componentDidUpdate and callbacks ----
+--- ---- committing: updates and callbacks ----
 
---- what a change set off, once it is committed: componentDidUpdate (a
+--- what a change set off, once it is committed: the update (a
 --- slide near loaded, the height adapted, the settings or slides changed),
 --- then what was to follow it, round after round while anything changed
 fn _committed[k]
@@ -737,7 +713,7 @@ fn _did_update[k]
         k = _updated[k, true, 'changed', false]
     k
 
---- the list as tall as the slide shown (adaptHeight)
+--- the list as tall as the slide shown
 fn _adapted[k]
     if k.s.adaptive_height
         order = _order[k]
@@ -779,8 +755,7 @@ fn _called_back[k, cb]
     k
 
 --- the sizes measured afresh, the slide shown kept and its slides near
---- loaded, the track set there where `track` (updateState with
---- initializedState); `mount`: as the carousel is first drawn, at its
+--- loaded, the track set there where `track`; `mount`: as the carousel is first drawn, at its
 --- initial slide
 fn _updated[k, track, after_it, mount]
     s = k.s
@@ -814,7 +789,7 @@ fn _updated[k, track, after_it, mount]
 
 --- the carousel of `count` slides as first drawn, `wide` CSS pixels wide,
 --- each slide `heights` tall (and `widths` wide, where each has its own),
---- at `at` ms (componentDidMount)
+--- at `at` ms
 fn mount_at[s, count, wide, heights, widths, at]
     k = _fresh[s, count, wide, heights, widths, at]
     if k.s.lazy ne ''
@@ -907,7 +882,7 @@ fn _unwaited[k, was]
     k
 
 --- a move to slide `index` (a clone's index for the way round), at once
---- where `still` (react-slick's slideHandler)
+--- where `still`
 fn _slide_to[k, index, still]
     s = k.s
     was = k.current
@@ -990,7 +965,7 @@ fn _slide_to[k, index, still]
     k.callbacks = push[k.callbacks, Callback['slid', index, mode, final, final_left, target, final]]
     k
 
---- the slide a press aims at (react-slick's changeSlide): 'previous',
+--- the slide a press aims at: 'previous',
 --- 'next', 'dots' (dot `index`), 'children' (slide `index` pressed) or
 --- 'index' (slide `index`)
 fn _aimed[k, message, index]
@@ -1046,7 +1021,7 @@ fn _changed_by[k, message, index, still]
 
 --- ---- autoplay ----
 
---- autoplay begun again (react-slick's autoPlay: 'update' after a move,
+--- autoplay begun again ('update' after a move,
 --- 'leave' as the pointer leaves, 'blur' as the focus leaves, 'play' asked)
 fn _autoplay[k, how]
     if k.autoplay_id ne 0
@@ -1097,7 +1072,7 @@ fn _played[k]
     k
 
 --- one more slide loaded each way from the one shown, each second, until
---- all are (progressiveLazyLoad)
+--- all are
 fn _progressive[k]
     more = _no_ints[]
     i = k.current
@@ -1126,11 +1101,11 @@ fn _progressive[k]
 
 --- ---- swipes ----
 
---- a press on the list: a drag begun (react-slick's swipeStart), unless it
+--- a press on the list: a drag begun, unless it
 --- is not swiped, or is a mouse's and not dragged
 fn _swipe_start[k, device, x, y]
     s = k.s
-    if s.unslick or not s.touch_move
+    if s.unmoved or not s.touch_move
         return k
     if not s.swipe or (not s.draggable and device eq 'mouse')
         return k
@@ -1145,21 +1120,21 @@ fn _swipe_start[k, device, x, y]
     k.dirty = true
     k
 
---- the drag moved (swipeMove): the track follows the pointer, past an end
+--- the drag moved: the track follows the pointer, past an end
 --- that does not wrap at its friction; mostly up and down, it is the
 --- page's scroll and no swipe
 fn _swipe_move[k, x, y]
     s = k.s
-    if s.unslick or not s.touch_move or not k.dragging
+    if s.unmoved or not s.touch_move or not k.dragging
         return k
     if k.scrolling or k.animating
         return k
     from = _track_left[k, k.current]
     k.cur_x = x
     k.cur_y = y
-    k.swipe_length = _js_round[sqrt[(x - k.start_x) * (x - k.start_x)]]
+    k.swipe_length = _round_half_up[sqrt[(x - k.start_x) * (x - k.start_x)]]
     k.has_length = true
-    upward = _js_round[sqrt[(y - k.start_y) * (y - k.start_y)]]
+    upward = _round_half_up[sqrt[(y - k.start_y) * (y - k.start_y)]]
     if not s.vertical_swiping and not k.swiping and upward gt 10.0
         k.scrolling = true
         k.dirty = true
@@ -1204,11 +1179,11 @@ fn _swipe_move[k, x, y]
         k.clickable = false
     k
 
---- the drag let go (swipeEnd): far enough, a move the way it went (to the
+--- the drag let go: far enough, a move the way it went (to the
 --- slide it reached, swiping to a slide); not, the track back where it was
 fn _swipe_end[k]
     s = k.s
-    if s.unslick or not s.touch_move
+    if s.unmoved or not s.touch_move
         return k
     if not k.dragging
         k.dirty = true
@@ -1275,7 +1250,7 @@ fn acted[k, what, index, at]
     if what eq 'next' or what eq 'previous'
         --- (no arrow where they are off or it stands still; none to press
         --- where it may go no further)
-        if s.arrows and not s.unslick
+        if s.arrows and not s.unmoved
             if what eq 'next' and _can_go_next[k, k.current]
                 k = _changed_by[k, 'next', 0, false]
             if what eq 'previous' and not _prev_disabled[k]
@@ -1289,7 +1264,7 @@ fn acted[k, what, index, at]
             k = _changed_by[k, 'children', ((index % n) + n) % n, false]
         k = _clicked[k]
     if what eq 'key'
-        if s.accessibility and not s.unslick
+        if s.accessibility and not s.unmoved
             if index eq 37
                 if s.rtl
                     k = _changed_by[k, 'next', 0, false]
@@ -1339,7 +1314,7 @@ fn _clicked[k]
 fn pointed[k, what, device, x, y, at]
     k = advanced[k, at]
     s = k.s
-    if s.plain or s.unslick or not s.touch_move
+    if s.plain or s.unmoved or not s.touch_move
         return _committed[k]
     if what eq 'down'
         k = _swipe_start[k, device, x, y]
@@ -1354,7 +1329,7 @@ fn pointed[k, what, device, x, y, at]
 
 --- the list now `wide` CSS pixels (its slides `heights` tall and `widths`
 --- wide), at `at` ms: the sizes measured again, the track set, a move under
---- way cut short (resizeWindow)
+--- way cut short
 fn resized[k, wide, heights, widths, at]
     k = advanced[k, at]
     if k.s.plain
@@ -1371,7 +1346,7 @@ fn resized[k, wide, heights, widths, at]
     _committed[k]
 
 --- the carousel handed other settings or another number of slides at `at`
---- ms (react-slick's componentDidUpdate with props changed): its sizes
+--- ms: its sizes
 --- measured again, the slide shown kept, or the last there is where it is
 --- past the end
 fn reslid[k, s, count, heights, widths, at]
@@ -1384,8 +1359,8 @@ fn reslid[k, s, count, heights, widths, at]
     k.dirty = true
     _committed[k]
 
---- the slide the carousel it navigates is sent, for each move it made
---- (asNavFor): taken from it, to be sent
+--- the slide the carousel it navigates is sent, for each move it made:
+--- taken from it, to be sent
 fn links_of[k]
     k.links
 
@@ -1414,9 +1389,9 @@ fn _prev_disabled[k]
     not k.s.infinite and (k.current eq 0 or k.count lte k.s.show)
 
 fn _dots_shown[k]
-    k.s.dots and k.count gte k.s.show and not k.s.unslick
+    k.s.dots and k.count gte k.s.show and not k.s.unmoved
 
---- how many dots, and which is active (getDotCount and the Dots' classes)
+--- how many dots, and which is active
 fn dots_of[k]
     s = k.s
     if not _dots_shown[k]
@@ -1446,7 +1421,7 @@ fn dots_of[k]
 
 --- whether the arrows are shown, and each is pressable
 fn arrows_shown[k]
-    k.s.arrows and not k.s.unslick and not k.s.plain
+    k.s.arrows and not k.s.unmoved and not k.s.plain
 
 fn previous_off[k]
     _prev_disabled[k]
@@ -1454,7 +1429,7 @@ fn previous_off[k]
 fn next_off[k]
     not _can_go_next[k, k.current]
 
---- the slide a slot shows as react-slick's track classes it
+--- the slide a slot shows, as the track marks it
 fn _slot_of[k, index, loaded]
     s = k.s
     n = k.count
@@ -1482,7 +1457,7 @@ fn _slot_of[k, index, loaded]
             alpha = 1.0
     Slot[index, active, center, cloned, at eq focused, loaded, alpha]
 
---- the track's slides, in the order they stand (renderSlides)
+--- the track's slides, in the order they stand
 fn slots_of[k]
     s = k.s
     n = k.count
@@ -1492,7 +1467,7 @@ fn slots_of[k]
     pre = _no_slots[]
     mid = _no_slots[]
     post = _no_slots[]
-    cloned = s.infinite and n gt 1 and not s.fade and not s.unslick
+    cloned = s.infinite and n gt 1 and not s.fade and not s.unmoved
     i = 0
     while i lt n
         loaded = not lazy or i in k.loaded
@@ -1523,7 +1498,7 @@ fn slots_of[k]
         return back
     out
 
---- where the track stands, as react-slick's track style says it (0 for a
+--- where the track stands, as the track's style says it (0 for a
 --- fade's, which has none), and whether it moves there; an offset that is
 --- no number (a centred slide of its own width past the track's end) is
 --- a transform the browser ignores, so the track stands at 0
@@ -1598,7 +1573,7 @@ fn _arrow_size[]
 --- the room either side of the list its arrows stand in (none where they
 --- show only while the pointer rests on it, over the slides)
 fn _gutter[s]
-    if s.arrows and not s.arrows_on_hover and not s.unslick
+    if s.arrows and not s.arrows_on_hover and not s.unmoved
         return _arrow_size[] + 4.0
     0.0
 
@@ -1615,8 +1590,7 @@ fn _dots_gap[]
 --- `change` as a move begins (`num` the slide it goes to, `words` the one
 --- it leaves), `settle` as it ends (`num` the slide shown), `swipe` and
 --- `edge` (a swipe let go, an end dragged: `words` its direction), `load`
---- (slides drawn for the first time, as react-slick's lazy loading loads
---- them: `words` their indices, `num` how many)
+--- (slides drawn for the first time, as lazy loading loads them: `words` their indices, `num` how many)
 fn carousel[c, id, slides, s]
     at = _now[c]
     remember['lory.carousel.input', _input_of[c, at]]
@@ -1633,8 +1607,7 @@ fn carousel[c, id, slides, s]
         wide = sizes.wide
     if wide lte 0.0
         wide = max[1.0, lory.width[c] / lory.px[c] - 48.0]
-    --- (the list narrowed by its arrows' room: react-slick's stand outside
-    --- it)
+    --- (the list narrowed by its arrows' room: they stand outside it)
     wide = max[1.0, wide - 2.0 * _gutter[s]]
     heights = _heights_of[sizes, s, count]
     widths = _widths_of[slides, s, count]
@@ -1673,7 +1646,7 @@ fn _heights_of[sizes, s, count]
     out
 
 --- each slide's own width (its control's `wide`, gui.sized), where each
---- has its own: a group's is its last slide's, as react-slick takes it
+--- has its own: a group's is its last slide's
 fn _widths_of[slides, s, count]
     out = _no_floats[]
     if not s.variable
@@ -1691,8 +1664,7 @@ fn _widths_of[slides, s, count]
         i = i + 1
     out
 
---- the links a move sent the carousel it navigates (react-slick's
---- asNavFor), carried to it, and what it sends back, until neither sends
+--- the links a move sent the carousel it navigates, carried to it, and what it sends back, until neither sends
 fn _carried[k, at]
     other = k.s.nav_for
     if other eq '' or len[k.links] eq 0
@@ -1765,7 +1737,7 @@ fn _list_tall[k, s, sizes]
         return tall + 2.0 * _padding_px[s, k.list_width]
     if s.tall gt 0.0
         return s.tall
-    if s.adaptive_height and not s.unslick
+    if s.adaptive_height and not s.unmoved
         return _own[k.heights, k.current, k.count]
     if s.fade
         most = 0.0
@@ -2065,7 +2037,7 @@ fn _now_drawn[]
 fn _within[x, y, bx, by, bw, bh]
     x gte bx and y gte by and x lt bx + bw and y lt by + bh
 
---- the device react-slick hears a press as: a mouse's events (a pen's
+--- the device a press is heard as: a mouse's events (a pen's
 --- too, as a browser sends them) are dragged only where `draggable`; a
 --- touch's and a headset's ray are always swiped
 fn _swiped_by[device]
@@ -2178,8 +2150,7 @@ fn _dot_painted[d]
         remember[_kept_key[id], kept]
     d
 
---- ---- the program's calls (react-slick's slickNext, slickPrev,
---- slickGoTo, slickPlay and slickPause) ----
+--- ---- the program's calls ----
 
 fn _called_on[id, what, index]
     kept = _kept_of[id]
@@ -2216,7 +2187,7 @@ fn slide_of[id]
         return 0
     kept.k.current
 
---- the carousel's state, as `carousel` keeps it (`Slick`)
+--- the carousel's state, as `carousel` keeps it (`Carousel`)
 fn state_of[id]
     _kept_of[id].k
 
@@ -2332,7 +2303,7 @@ fn _roomed[d]
     remember[_room_key[d.id], Room[d.x / d.s, d.y / d.s, d.w / d.s, d.h / d.s]]
     d
 
---- a swipe's way, as Vuetify's touch hears one (its `v-touch`): more than
+--- a swipe's way: more than
 --- 16 pixels along an axis, and more than twice as far along it as across
 --- ('left', 'right', 'up', 'down', or '' for none)
 fn swipe_way[x0, y0, x1, y1]
@@ -2350,19 +2321,18 @@ fn swipe_way[x0, y0, x1, y1]
             return 'down'
     ''
 
---- ---- panes: Vuetify's v-window ----
+--- ---- panes: a window ----
 
 --- One pane of several shown at a time, the program's `index` choosing it
---- (Vuetify's v-window and its v-model). When the index changes the new
---- pane slides in over 300 ms (Vuetify's `cubic-bezier(0.25, 0.8, 0.5,
---- 1)`), from the right (below where `vertical`) as the index goes up and
+--- When the index changes the new pane slides in over 300 ms
+--- (`cubic-bezier(0.25, 0.8, 0.5, 1)`), from the right (below where `vertical`) as the index goes up and
 --- from the left as it goes down, the old one sliding out the other way;
 --- `backward` turns that round (as right to left does across, `rtl`), and
 --- the height moves from the old pane's to the new one's on the same
 --- curve. Its arrows (`arrows`: 'always', 'hover' or 'never') are shown
 --- only where there is a pane that way (`continuous`: round from the last
---- to the first); they, the arrow keys while it was_chosen the focus, and a
---- touch's or a headset ray's swipe (as Vuetify's `v-touch` hears one)
+--- to the first); they, the arrow keys while it has the focus, and a
+--- touch's or a headset ray's swipe
 --- tell `change` under its id, `num` the pane asked for: the program sets
 --- the index to it (`step` names it from the index and a way)
 struct Panes [made, shown, from, began, back, heights, way, down, device, start_x, start_y, count, continuous, rtl, vertical, backward]
@@ -2593,18 +2563,18 @@ fn pane_after[shown, id, index]
             out = 0 + floor[ev.num]
     out
 
---- ---- a slide group: Vuetify's v-slide-group ----
+--- ---- a slide group ----
 
---- A row of the program's controls wider than its room, scrolled along it
---- (Vuetify's v-slide-group). Pressing one chooses it (`multiple`: as
+--- A row of the program's controls wider than its room, scrolled along
+--- it. Pressing one chooses it (`multiple`: as
 --- many as are pressed, at most `most` where that is over 0; `mandatory`:
 --- one stays chosen) and tells `change` under its id, `words` the chosen
 --- indices with commas between; a choice scrolls into view (`center`:
---- into the middle) as Vuetify scrolls one, 0.4 of its width past the
+--- into the middle), else 0.4 of its width past the
 --- edge. Its arrows (`arrows`: 'auto' while it overflows or is scrolled,
 --- 'always', 'never'), 52 pixels wide either side and faint at an end,
 --- scroll it a room's width (`distance` pixels where over 0) over 200 ms
---- (Vuetify's easeOutQuart, at whole pixels); `snap` ('start', 'center',
+--- (eased out on a quartic, at whole pixels); `snap` ('start', 'center',
 --- 'end' or '' for none) stops each scroll where a control's start,
 --- middle or end lines up as a scroll-snap does. A touch or a headset's
 --- ray drags it along.
@@ -2628,8 +2598,7 @@ fn group_offset[id, at]
     _group_px[_group_of[id], at]
 
 --- where a slide group's scroll from `from` to `to` stands `turn` of the
---- way through its 200 ms: Vuetify's easeOutQuart, at whole pixels as its
---- goTo writes them
+--- way through its 200 ms: eased out on a quartic, at whole pixels
 fn group_eased[from, to, turn]
     floor[from + (to - from) * motion.ease_at['outQuart', max[0.0, min[1.0, turn]]]]
 
@@ -2653,8 +2622,7 @@ fn _group_scrolled[g, target, at]
     g.began = at
     g
 
---- where a scroll stops to show control `i`, as Vuetify scrolls to a
---- choice: its middle at the room's (`center`), or past the edge it was
+--- where a scroll stops to show control `i`: its middle at the room's (`center`), or past the edge it was
 --- hidden behind by 0.4 of its width
 fn _group_target[g, i, at]
     here = _group_px[g, at]
@@ -2663,8 +2631,7 @@ fn _group_target[g, i, at]
     group_target[g.room, here, g.begins[i], g.finishes[i] - g.begins[i], g.center]
 
 --- where a slide group scrolled to `here` in its `room` scrolls to show a
---- control at `start` `size` wide, as Vuetify's scroll to a choice finds it
---- (before it is held between the group's ends): its middle at the room's
+--- control at `start` `size` wide (before it is held between the group's ends): its middle at the room's
 --- (`center`), or past the edge it was hidden behind by 0.4 of its width,
 --- or where it is if it is not hidden
 fn group_target[room, here, start, size, center]
@@ -2702,7 +2669,7 @@ fn _snap_showing[g, i, here]
         j = j + 1
     best
 
---- a page's scroll where `snap` is set, as Vuetify finds one: the furthest
+--- a page's scroll where `snap` is set: the furthest
 --- snap position that way within the page (one showing the control cut at
 --- the edge where there is one), else the nearest beyond
 fn _snapped_page[g, from, way]
@@ -2934,17 +2901,16 @@ fn _group_arrow[d]
         remember[_group_key[id], g]
     d
 
---- ---- a ticker: Motion's Ticker ----
+--- ---- a ticker ----
 
 --- The program's controls in an endless line moving at `velocity` pixels a
---- second (Motion's Ticker: leftward, or upward where `vertical`; a
+--- second (leftward, or upward where `vertical`; a
 --- negative velocity, or `rtl`, the other way), `gap` pixels apart,
 --- copies of them following so that the room never shows an end: each
---- control is drawn again a whole line on once it was_chosen left the room.
+--- control is drawn again a whole line on once it has left the room.
 --- While the pointer rests on it its speed is `hover_factor` of itself
---- (eased there over 300 ms as Motion eases a value, its
---- `cubic-bezier(0.25, 0.1, 0.35, 1)`). `draggable`: a press drags it, and
---- let go it is thrown on (Motion's inertia, `lory.motion`'s `glide`)
+--- (eased there over 300 ms on `cubic-bezier(0.25, 0.1, 0.35, 1)`). `draggable`: a press drags it, and
+--- let go it is thrown on (`lory.motion`'s `glide`)
 --- before it ticks on again.
 struct Ticker [made, offset, last, factor_from, factor_to, factor_began, hovered, down, start, start_offset, last_x, last_at, speed, thrown, throw_at, glide, inertia, measured, total, room, vertical, draggable]
 
@@ -2964,7 +2930,7 @@ fn _factor_at[k, at]
     turn = max[0.0, min[1.0, (at - k.factor_began) / 300.0]]
     k.factor_from + (k.factor_to - k.factor_from) * motion.ease_at['cubic-bezier(0.25, 0.1, 0.35, 1)', turn]
 
---- Motion's wrap: `v` brought into [low, high)
+--- `v` brought into [low, high)
 fn ticker_wrapped[low, high, v]
     size = high - low
     if size lte 0.0
@@ -2972,7 +2938,7 @@ fn ticker_wrapped[low, high, v]
     r = (v - low) - size * floor[(v - low) / size]
     r + low
 
---- how many copies of the line follow it, as Motion counts them: enough
+--- how many copies of the line follow it: enough
 --- that the room is filled with its largest control out of it
 fn ticker_copies[room, total, largest, gap]
     copies = 0
@@ -3258,7 +3224,7 @@ test a_dot_pressed_moves_it_to_its_slides_and_the_program_hears_it[]
     began and settled and shown_slide eq 4 and marks.active eq 2 and marks.count eq 3
 
 --- autoplay moves it on by the frames' clock, `autoplay_speed` ms after it
---- was shown and after each move (react-slick's interval, 50 ms on), and
+--- was shown and after each move (its interval, 50 ms on), and
 --- holds still while the pointer rests on it
 test autoplay_moves_it_on_by_the_frames_clock_and_holds_while_hovered[]
     gui.unfocus[]
@@ -3543,10 +3509,10 @@ test a_slide_group_pages_with_its_arrows_and_chooses_what_is_pressed[]
     log['slide group: room `g.room`, content `g.content`, arrows `arrows`, back at the start `unmoved`, paged `halfway` at 100 ms, `paged` at 200 ms; chose `chosen` told `told`, scrolled to `_group_px[g, t + 300.0]`']
     arrows and unmoved eq 0.0 and paged eq g.room and halfway eq floor[g.room * motion.ease_at['outQuart', 0.5]] and len[chosen] eq 1 and told eq '`chosen[0]`' and _group_px[g, t + 300.0] lt paged
 
---- a group's choices, as Vuetify's group takes presses: one at a time
+--- a group's choices, as the group takes presses: one at a time
 --- (pressed again, let go, but not where `mandatory`), or `multiple`, at
 --- most `most`, one kept where `mandatory`
-test a_slide_group_chooses_as_vuetify_s_group_does[]
+test a_slide_group_chooses_one_or_several_as_told[]
     g = _no_group[]
     one = _group_chose[g, 2]
     again = _group_chose[one, 2]
@@ -3601,7 +3567,7 @@ test a_ticker_moves_at_its_velocity_slows_when_hovered_and_follows_a_drag[]
         shown = gui.show[c, gui.column[[ticker[c, 'tick', items, hover_factor = 0.0, draggable = true]]]]
     dragged = _ticker_of['tick'].offset
     --- (let go moving 100 pixels a second: thrown on 0.8 of that, as
-    --- Motion's inertia throws, and resting there while hovered)
+    --- a throw goes, and resting there while hovered)
     t = t + 16.0
     c = _screen[t, _one_event[_pointer['up', 'mouse', x, y]], over]
     shown = gui.show[c, gui.column[[ticker[c, 'tick', items, hover_factor = 0.0, draggable = true]]]]

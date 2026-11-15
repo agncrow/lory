@@ -1,15 +1,12 @@
---- Channels: where a sound stands and how loud it is, as Tone's and the
---- page's nodes set them. `panned` lays a sound from left (-1) to right
---- (1) at equal power, as the page's StereoPannerNode does (a sound of two
+--- Channels: where a sound stands and how loud it is. `panned` lays a sound from left (-1) to right
+--- (1) at equal power (a sound of two
 --- channels kept on its own side and the other's folded in); `volumed`
---- sets its level in decibels; strips mix with Tone's mute and solo (once
+--- sets its level in decibels; strips mix with mute and solo (once
 --- one is soloed only the soloed are heard); `crossfaded` fades from one
 --- sound to another at equal power; `mono_of` hears a sound on both sides;
---- a sound's middle and sides come apart and join again as Tone's
---- MidSideSplit and MidSideMerge make them.
+--- a sound's middle and sides come apart and join again.
 ---
---- A place puts a sound around a listener, as the page's PannerNode does
---- with its equal-power panning: where the sound is from the listener
+--- A place puts a sound around a listener with equal-power panning: where the sound is from the listener
 --- (its azimuth and elevation, the listener's forward and up), how far
 --- (the inverse, linear or exponential distance model, from the reference
 --- distance and by the rolloff), and which way the sound faces (its cone:
@@ -69,7 +66,7 @@ fn volumed[s, db]
 fn muted[s]
     sound.scaled[s, 0.0]
 
---- a sound panned and then set to a level (Tone's PanVol)
+--- a sound panned and then set to a level
 fn pan_vol[s, pan, db]
     volumed[panned[s, pan], db]
 
@@ -118,7 +115,7 @@ fn crossfaded[a, b, fade]
     sound.mixed[sound.scaled[a, cos[x * pi * 0.5]], sound.scaled[b, sin[x * pi * 0.5]]]
 
 --- a sound heard the same on both sides (two channels folded into one
---- first), as Tone's Mono gives it
+--- first)
 fn mono_of[s]
     sound.widened[sound.narrowed[s]]
 
@@ -155,7 +152,7 @@ fn listener_of[c]
     up = [0.0 - sin[turn] * sin[nod], cos[nod], cos[turn] * sin[nod]]
     Listener[[h[0], h[1], h[2]], forward, up]
 
---- a sound at a place, as Tone's Panner3D starts one: facing every way,
+--- a sound at a place: facing every way,
 --- the inverse distance model from 1 m, rolloff 1, farthest 10000 m
 fn place[x, y, z]
     Place[[0.0 + x, 0.0 + y, 0.0 + z], [0.0, 0.0, 0.0], 'inverse', 1.0, 10000.0, 1.0, 360.0, 360.0, 0.0]

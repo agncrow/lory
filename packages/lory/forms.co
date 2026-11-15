@@ -1,5 +1,4 @@
---- Lory's form controls (docs/components/forms.md says what each holds
---- to and how it was held to its reference): a button that stays pressed,
+--- Lory's form controls: a button that stays pressed,
 --- a group of them, a segmented control, a switch, a rating, cards to tick
 --- or choose, a slider of two thumbs, a number stepper, a password field
 --- with its reveal, a one-time code, a combobox, a field kept to a mask, the
@@ -113,7 +112,7 @@ fn _holds[words_list, words]
 fn _no_words[]
     slice[[''], 0, 0]
 
---- ---- a toggle button (Radix Toggle) ----
+--- ---- a toggle button ----
 
 --- a button that stays pressed: pressed, or Enter or space while it has the
 --- focus, it tells `toggle` (`num` 1 now pressed, 0 let up; `words` its
@@ -163,7 +162,7 @@ fn _pressable_ground[c, d, on, r]
     c = lory.round_rect[c, d.x, d.y, d.w, d.h, r, ground]
     lory.round_outline[c, d.x, d.y, d.w, d.h, r, 1.0 * s, edge]
 
---- ---- a toggle group (Radix Toggle Group) and a segmented control ----
+--- ---- a toggle group and a segmented control ----
 
 --- buttons that stay pressed, side by side (`along` 'row') or one under
 --- another ('column'): one stop of Tab, the arrows along it moving the
@@ -236,8 +235,8 @@ fn _group_drawing[d]
     d.c = c
     d
 
---- choices side by side on one track, one always chosen (Radix Themes'
---- segmented control, Vuetify's mandatory group): pressing another, or
+--- choices side by side on one track, one always chosen (a segmented
+--- control, a group that is never empty): pressing another, or
 --- Enter or space on the one with the focus, tells `choose` with its words
 --- and place; the arrows move the focus along it, round past the ends.
 --- `wide` 0 sizes each to its words, or the track is `wide` and shared out.
@@ -330,14 +329,14 @@ fn _ground_under[d, i, n]
         return lory.mix[look.field, look.hover, 0.7]
     look.field
 
---- ---- a switch (Headless UI, Radix and Vuetify's) ----
+--- ---- a switch ----
 
 --- a switch, on or off, with its words beside it: pressed (its words as
 --- well), or space while it has the focus, it tells `toggle` (`num` 1 now
---- on, 0 off). Enter toggles it too (Radix's), or, `submits`, tells
---- `submit` (Headless UI's: Enter sends the form). `size` is `small`,
+--- on, 0 off). Enter toggles it too, or, `submits`, tells `submit`
+--- (Enter sends the form). `size` is `small`,
 --- `medium` or `large`, `tone` the colour of its track when on (a tone of
---- the look), and `busy` shows it working (Vuetify's loading): it turns
+--- the look), and `busy` shows it working (loading): it turns
 --- and takes no input until it is not.
 fn switch[id, words, on, size = 'medium', tone = 'accent', submits = false, busy = false]
     tw = _switch_w[size]
@@ -398,7 +397,7 @@ fn _switch_drawing[d]
     x = d.x
     y = d.y + (d.h - th) / 2.0
     --- (the thumb slides and the track takes its colour over 150
-    --- milliseconds, as Headless UI's example and Radix's switch move)
+    --- milliseconds)
     k = motion.tween[c, '`d.id`:thumb', _one[on], 150.0, 'outQuad']
     track = lory.mix[look.edge, _tone[look, tone], k]
     if d.hover and not busy
@@ -417,7 +416,7 @@ fn _switch_drawing[d]
     d.c = c
     d
 
---- ---- a rating (Semantic UI's and Vuetify's) ----
+--- ---- a rating ----
 
 --- stars, `value` of `most` lit: pressing one sets the rating to it (its
 --- left half to a half star, where `half`), pressing the one set again
@@ -509,7 +508,7 @@ fn _rating_drawing[d]
     d.c = c
     d
 
---- ---- cards to choose and to tick (Radix Themes' radio and checkbox cards) ----
+--- ---- cards to choose and to tick (radio and checkbox cards) ----
 
 --- a card: the words it stands for, its title and the words under it
 struct Card [value, title, words]
@@ -519,7 +518,7 @@ fn card[value, title, words = '']
 
 --- cards one of which is chosen, `columns` to a row, `tall` CSS pixels
 --- high: one stop of Tab, a press on one or a key choosing (`card_after_key`:
---- Radix's radio group), each choice a `choose` with the card's value and
+--- a radio group's keys), each choice a `choose` with the card's value and
 --- place; the one chosen is outlined in the accent
 fn radio_cards[id, cards, chosen, columns = 2, tall = 64.0]
     k = max[1, columns]
@@ -533,8 +532,8 @@ fn radio_cards[id, cards, chosen, columns = 2, tall = 64.0]
             at = i
     gui.drawn[id, at + 0.0, 0.0, rows * tall + (rows - 1) * 10.0, _radio_cards_painted, lo = k + 0.0, hi = tall, words = join[lines, '\n']]
 
---- the card a radio group's key moves to from `at`, of `n`: Radix's
---- roving focus, along the cards as they are written whatever the
+--- the card a radio group's key moves to from `at`, of `n`: a roving
+--- focus, along the cards as they are written whatever the
 --- columns (the right and down arrows to the next, round past the last;
 --- the left and up arrows to the one before; Home and Page Up to the
 --- first, End and Page Down to the last)
@@ -663,14 +662,14 @@ fn _checkbox_card_drawing[d]
     d.c = c
     d
 
---- ---- a slider of two thumbs (Radix's range, Vuetify's range slider) ----
+--- ---- a slider of two thumbs (a range slider) ----
 
 --- a range from `low` to `high` within `lo` to `hi`, set by two thumbs on
 --- one track `wide` CSS pixels long, each its own stop of Tab: a press on
 --- the track moves the thumb nearer it there and drags it, the arrows move
 --- the thumb with the focus a `step` (Page Up and Page Down ten), Home
---- takes the low thumb to `lo` and End the high one to `hi` (Radix's, from
---- either thumb), and a thumb stops `gap_steps` steps short of the other.
+--- takes the low thumb to `lo` and End the high one to `hi` (from either
+--- thumb), and a thumb stops `gap_steps` steps short of the other.
 --- Each move tells `change` under its id, `words` `low` or `high`, `num`
 --- the thumb's value, snapped to the steps from `lo`.
 fn range_slider[id, low, high, lo, hi, step = 1.0, gap_steps = 0, wide = 240.0]
@@ -696,7 +695,7 @@ fn range_after[low, high, e]
         return [low, e.num]
     [low, high]
 
---- a value snapped to the steps from `lo` (Radix's: the nearest step, to
+--- a value snapped to the steps from `lo` (the nearest step, to
 --- the step's decimals) and kept from `lo` to `hi`
 fn snapped[v, lo, hi, step]
     if step lte 0.0
@@ -816,7 +815,7 @@ fn _number_in[words]
         return 0.0
     v
 
---- ---- masks (Vuetify's mask input) ----
+--- ---- masks ----
 ---
 --- A mask is written with tokens and the characters kept as they are:
 --- `#` a digit, `A` a letter made upper case, `a` a letter made lower
@@ -965,7 +964,7 @@ fn mask_complete[words, mask]
         return false
     len[mask_text[words, mask]] eq len[mask_named[mask]] and mask_valid[words, mask]
 
---- ---- filtering choices as they are typed (Vuetify's filter) ----
+--- ---- filtering choices as they are typed ----
 
 --- the words in lower case, a final sigma as any other
 fn _folded[words]
@@ -990,8 +989,8 @@ fn match_ranges[words, query]
 
 --- the places of the choices the query is found in, in their order (all
 --- of them for an empty query); `prefix`, those found as a whole first,
---- then at their start, then at a word's start, then anywhere (Vuetify's
---- filtered order `prefix`)
+--- then at their start, then at a word's start, then anywhere (the
+--- prefix order)
 fn filtered[choices, query, prefix = false]
     found = []
     for i in range[len[choices]]
@@ -1027,11 +1026,11 @@ fn matching[choices, query, prefix = true]
         out = push[out, choices[i]]
     out
 
---- ---- numbers written as a number input writes them (Vuetify's, en-US) ----
+--- ---- numbers written as a number input writes them (en-US) ----
 
 --- the number written with `places` decimals (-1: as few as it needs, at
---- most 20), rounded half away from zero on its shortest digits as
---- Intl.NumberFormat rounds, no grouping; a negative number rounded to
+--- most 20), rounded half away from zero on its shortest digits, no
+--- grouping; a negative number rounded to
 --- nothing keeps its sign
 fn number_text[x, places = -1]
     if x ne x
@@ -1136,8 +1135,7 @@ fn number_kept[words, places = -1]
 --- what typing `data` does to a number's words `value` with the caret at
 --- `start` (a selection to `end`), `how` it is taken: `as_typed` (the
 --- field takes it as it is), `refused` (nothing of it is a number's), or
---- `changed` to the words and the caret's place given (Vuetify's
---- processPlainInput)
+--- `changed` to the words and the caret's place given
 struct Typed [how, words, caret]
 
 fn number_typed[data, value, start, end, places = -1]
@@ -1173,11 +1171,11 @@ fn _without_first[words, part]
     rest = join[slice[pieces, 1, len[pieces]], part]
     '`pieces[0]``rest`'
 
---- ---- a file's size (Vuetify's) ----
+--- ---- a file's size ----
 
 --- bytes as words: below `base` as they are, else in kilo-, mega- or
 --- gigabytes (kibi-, mebi- and gibibytes where `base` is 1024) to a
---- decimal, as JavaScript's toFixed(1) rounds the number held
+--- decimal, the number held rounded as `fixed_text` rounds it
 fn file_size[bytes, base = 1000]
     if bytes lt base
         return '`js_text[bytes + 0.0]` B'
@@ -1191,8 +1189,8 @@ fn file_size[bytes, base = 1000]
         unit = unit + 1
     '`fixed_text[x, 1]` `units[unit]`B'
 
---- the number to `places` decimals as JavaScript's toFixed writes it: from
---- the float's exact value, a half rounded up
+--- the number to `places` decimals: rounded from the float's exact value,
+--- a half rounded up
 fn fixed_text[x, places]
     neg = x lt 0.0
     exact = _exact_digits[abs[x]]
@@ -1229,9 +1227,9 @@ fn _exact_digits[x]
         digits = '`_zeros[k - len[digits] + 1]``digits`'
     [slice[digits, 0, len[digits] - k], slice[digits, len[digits] - k, len[digits]]]
 
---- ---- numbers as JavaScript reads and writes them ----
+--- ---- numbers as a web page reads and writes them ----
 
---- the number words are as JavaScript's Number reads them: white space
+--- the number words are, read as a web page reads them: white space
 --- round them aside, nothing 0, a decimal (a sign, a point, an exponent),
 --- Infinity, or a whole number in hex, octal or binary (`0x`, `0o`, `0b`);
 --- anything else is not a number
@@ -1262,7 +1260,7 @@ fn _based[digits, base]
         v = v * base + len[split[lower['0123456789abcdef'], lower[ch]][0]]
     v
 
---- the number as JavaScript writes it (String(x)): its shortest digits,
+--- the number as a web page writes it: its shortest digits,
 --- with an exponent from 1e21 up and below 1e-6, NaN, Infinity, and
 --- nought for a negative nought
 fn js_text[x]
@@ -1308,19 +1306,20 @@ fn js_text[x]
         return '`digits`e`sign``abs[e]`'
     '`slice[digits, 0, 1]`.`slice[digits, 1, k]`e`sign``abs[e]`'
 
---- ---- fields linked by a conversion (7GUIs' temperature converter) ----
+--- ---- fields linked by a conversion (a temperature converter) ----
 
---- the other field's words once one is typed in, as JavaScript computes
---- and writes them: no rounding, and words that are no number make NaN
+--- the other field's words once one is typed in, computed and written
+--- with `js_number` and `js_text`: no rounding, and words that are no
+--- number make NaN
 fn fahrenheit_of[celsius]
     js_text[js_number[celsius] * (9.0 / 5.0) + 32.0]
 
 fn celsius_of[fahrenheit]
     js_text[(js_number[fahrenheit] - 32.0) * (5.0 / 9.0)]
 
---- ---- the rules a form is checked by (Semantic UI's) ----
+--- ---- the rules a form is checked by ----
 ---
---- A rule is written as Semantic UI writes it, its name and, in brackets,
+--- A rule is written as its name and, in brackets,
 --- what it is measured against: `empty` (something is written), `checked`
 --- (a box is ticked: its value is not ''), `email`, `url`, `integer`
 --- (`integer[1..10]`, `integer[5]`, `integer[..3]`, `integer[3..]`: within
@@ -1406,9 +1405,8 @@ fn passes[rule, value, fields]
         return _counted[name, v, arg]
     false
 
---- a web address in the words (Semantic UI's pattern, its look-ahead
---- written out: after `http://` either `www.` or a part not starting
---- with `www`)
+--- a web address in the words (a look-ahead written out: after the
+--- scheme either `www.` or a part not starting with `www`)
 fn _is_url[v]
     run = '(?:[^\s.w][^\s.]*|w(?:[^\s.w][^\s.]*)?|ww(?:[^\s.w][^\s.]*)?)'
     matches[v, '(?i)(https?://(?:www\.[^\s.]+|`run`)\.[^\s]{2,}|www\.[^\s]+\.[^\s]{2,})']
@@ -1542,8 +1540,8 @@ fn want[field, label, rules, says = [], optional = false]
         words = push[words, w]
     Want[field, label, rules, words, optional]
 
---- what each failing rule of the field says, in the rules' order (Semantic
---- UI lists them all; the first is the one shown under the field)
+--- what each failing rule of the field says, in the rules' order (all of
+--- them; the first is the one shown under the field)
 fn failures_of[w, fields]
     value = ''
     if w.field in fields
@@ -1630,7 +1628,7 @@ fn _events_of[shown, id]
             out = push[out, e]
     out
 
---- ---- a number stepper (Vuetify's number input) ----
+--- ---- a number stepper ----
 
 --- a number being typed and stepped: the words its field shows, the
 --- number they stand for (`empty`: none), whether its field has the focus,
@@ -1701,8 +1699,8 @@ fn _stepped_by[x, step, up]
 fn _clamped[x, lo, hi]
     max[lo, min[hi, x]]
 
---- the number the stepper's words stand for, as Vuetify reads them: all
---- but digits, points and minus signs left out, then JavaScript's Number
+--- the number the stepper's words stand for: all but digits, points and
+--- minus signs left out, then read by `js_number`
 fn _stepper_number[words]
     kept = []
     for ch in split[replace[words, '−', '-'], '']
@@ -1710,7 +1708,7 @@ fn _stepper_number[words]
             kept = push[kept, ch]
     js_number[join[kept, '']]
 
---- the decimals JavaScript writes a number with (Vuetify's inferPrecision)
+--- the decimals `js_text` writes a number with
 fn _js_places[x]
     parts = split[js_text[x], '.']
     len[_part[parts, 1]]
@@ -1732,7 +1730,7 @@ fn _stepper_set[s, words, lo, hi]
         s.text = words
     s
 
---- the stepper stepped once (Vuetify's toggleUpDown)
+--- the stepper stepped once, up or down
 fn _stepper_stepped[s, lo, hi, step, places, up]
     if not _can_step[s, lo, hi, step, up]
         return s
@@ -1839,7 +1837,7 @@ fn stepper_after[id, s, shown, lo = -9007199254740991.0, hi = 9007199254740991.0
             s.text = number_text[s.value, places = -1]
     --- (the field given words the reader did not type, its caret at their
     --- end: a step, or the words written anew as it is come back to; a
-    --- press on a button keeps the focus in the field, as Vuetify's does.
+    --- press on a button keeps the focus in the field.
     --- What was typed and is kept but for a character stays in the field
     --- as it is, its caret where it was.)
     if focus and (stepped or pressed_button or (not was and s.text ne before))
@@ -1848,7 +1846,7 @@ fn stepper_after[id, s, shown, lo = -9007199254740991.0, hi = 9007199254740991.0
         gui.focus[field, s.text]
     s
 
---- ---- a password field with its reveal (Radix's password toggle field) ----
+--- ---- a password field with its reveal ----
 
 --- a field whose words are dots until its button reveals them: a press on
 --- the button shows or hides them and gives the field back the focus,
@@ -1909,7 +1907,7 @@ fn password_after[id, value, shown, frame_shown]
             out = false
     out
 
---- ---- a one-time code (Radix's one-time password field, Vuetify's OTP input) ----
+--- ---- a one-time code ----
 
 --- a code being typed a character to a box: its characters (always the
 --- first ones: a code has no gaps), the box with the focus, whether one of
@@ -1998,7 +1996,7 @@ fn code_kept[words, kind = 'numeric']
     join[out, '']
 
 --- the code once a character (or a paste of more) is typed at the box
---- `at` (Radix's: a paste replaces the code; a character the box holds
+--- `at` (a paste replaces the code; a character the box holds
 --- already moves on; one refused is passed over)
 fn code_typed[s, words, size, kind = 'numeric']
     clean = code_kept[words, kind = kind]
@@ -2110,7 +2108,7 @@ fn _code_box_at[shown, id, size, x, y]
                 hit = i
     hit
 
---- ---- a combobox (Headless UI's, Vuetify's autocomplete and combobox) ----
+--- ---- a combobox (an autocomplete that may take free words) ----
 
 --- a choice being typed for: the words in its field, the choice made
 --- ('' none), whether its list is open, the entry the keys stand on (-1
@@ -2123,7 +2121,7 @@ fn combo_of[chosen = '']
     Combo[chosen, chosen, false, -1, false, 0, false, false]
 
 --- the choices the list shows: those the words typed are found in, in
---- Vuetify's prefix order (every one until the reader types)
+--- the prefix order (every one until the reader types)
 fn combo_choices[s, choices, prefix = true]
     if not s.typed or s.query eq ''
         return choices
@@ -2196,7 +2194,7 @@ fn _option_drawing[d]
     d
 
 --- the combobox once the reader's frame is answered (`free`: what is typed
---- is the choice where no entry is, as Vuetify's combobox takes it)
+--- is the choice where no entry is)
 fn combobox_after[id, s, choices, shown, prefix = true, free = false]
     c = shown.canvas
     px = lory.px[c]
@@ -2323,7 +2321,7 @@ fn _combo_closed[s, id, free]
             gui.focus['`id`:field:`s.gen`', s.chosen]
     s
 
---- ---- a field kept to a mask (Vuetify's mask input) ----
+--- ---- a field kept to a mask ----
 
 --- the words a masked field shows, whether it has the focus and its turn
 struct Masked [text, focused, gen]
@@ -2362,8 +2360,8 @@ fn masked_after[id, s, mask, shown]
 
 --- a form being filled: each field's value by its id, the words shown
 --- under each (its first failed rule, '' none), the field the focus was
---- last seen in, when a field in error is to be checked again (Semantic
---- UI's 200 milliseconds after typing stops), and what happened this
+--- last seen in, when a field in error is to be checked again (200
+--- milliseconds after typing stops), and what happened this
 --- frame: `sent` (checked and passing), `failed` (checked and not)
 struct Form [fields, errors, at, due, sent, failed]
 
@@ -2492,9 +2490,9 @@ fn error_of[f, field]
     ''
 
 --- a field with its label over it (a press on the label gives the field
---- the focus, unless `passive`: Headless UI's), words that say more under
---- it (`note`) and, where there is one, its error (`fault`) under them in the
---- look's danger
+--- the focus, unless `passive`), words that say more under it (`note`)
+--- and, where there is one, its error (`fault`) under them in the look's
+--- danger
 fn labelled[field_id, label, control, note = '', fault = '', passive = false]
     head = gui.label[label]
     if not passive
@@ -2507,14 +2505,14 @@ fn labelled[field_id, label, control, note = '', fault = '', passive = false]
     gui.column[kids, gap = 6.0]
 
 --- controls grouped under a legend; `disabled` sets every one of them
---- aside (Headless UI's fieldset)
+--- aside
 fn fieldset[legend, kids, disabled = false]
     n = gui.column[concat[[gui.text[legend, size = 16.0]], kids], gap = 12.0]
     if disabled
         return gui.disabled[n]
     n
 
---- ---- the temperature converter's two fields (7GUIs') ----
+--- ---- the temperature converter's two fields ----
 
 --- the converter's two fields' words
 struct Linked [celsius, fahrenheit]
@@ -2537,15 +2535,14 @@ fn temperature_after[id, t, shown]
             t.celsius = celsius_of[e.words]
     t
 
---- ---- binding words to controls (Vue's form bindings) ----
+--- ---- binding words to controls ----
 
---- the words' characters the other way round (Vue's example of handling
---- input)
+--- the words' characters the other way round
 fn reversed[words]
     reverse[words]
 
 --- the values ticked, in the order they were ticked: one ticked goes at
---- the end, one let go is taken out (Vue's checkbox group)
+--- the end, one let go is taken out (a checkbox group)
 fn ticked_after[ticked, value, on]
     out = _no_words[]
     for w in ticked
@@ -2674,7 +2671,7 @@ fn _badge_mark[c, mark, cx, cy, k, ink]
         return icons.draw[c, 'cross-2', cx - r, cy - r, 2.0 * r, ink]
     lory.circle[c, cx, cy, 4.0 * k, ink]
 
---- ---- a colour picker (react-colorful's and Vuetify's) ----
+--- ---- a colour picker ----
 
 --- a colour being picked, in HSV: its hue (0 to 360, kept while the
 --- colour is a gray, which has none, so the square keeps its hue as the
@@ -2952,7 +2949,7 @@ fn _picked[p, code]
         out.hue = hue
     out
 
---- ---- a zone to drop files on (Vuetify's file input and file upload) ----
+--- ---- a zone to drop files on ----
 
 --- a file chosen: its name and its size in bytes
 struct Picked [name, bytes]
@@ -3348,7 +3345,7 @@ test a_password_is_revealed_by_its_button_and_hidden_again_once_sent[]
 fn _code_view[s]
     otp['code', s, size = 4]
 
-test a_code_takes_a_character_a_box_and_backspace_and_delete_as_radix_does[]
+test a_code_takes_a_character_a_box_and_backspace_and_delete[]
     s = code_of['']
     first = _first[_code_view[s]]
     --- (a press past the first empty box lands on it)
@@ -3513,7 +3510,7 @@ test linked_fields_write_each_other_as_either_is_typed[]
     t.fahrenheit eq '212.5' and t.celsius eq '100.27777777777779'
 
 test words_bound_to_controls_are_reversed_and_ticked_in_order[]
-    reversed['Hello, Vue'] eq 'euV ,olleH'
+    reversed['Hello, Lory'] eq 'yroL ,olleH'
     ticked_after[['Jack', 'John'], 'Mike', true] eq ['Jack', 'John', 'Mike']
     ticked_after[['Jack', 'John', 'Mike'], 'John', false] eq ['Jack', 'Mike']
     ticked_after[['Jack'], 'Jack', true] eq ['Jack']
@@ -3522,10 +3519,10 @@ test small_controls_count_copy_and_go_round_their_states[]
     count_tone['abc', 10] eq 'muted'
     count_tone['abcdefghi', 10] eq 'warning'
     count_tone['abcdefghijk', 10] eq 'danger'
-    first = _first[copy_button['copy', 'npm i lory']]
-    copied = _shown[copy_button['copy', 'npm i lory'], _press_on[first, 'copy'], t = 500.0]
-    _said[copied, 'copy'] eq ['copy npm i lory 500']
-    ['@copy', '=npm i lory'] in copied.canvas.asks
+    first = _first[copy_button['copy', 'use lory']]
+    copied = _shown[copy_button['copy', 'use lory'], _press_on[first, 'copy'], t = 500.0]
+    _said[copied, 'copy'] eq ['copy use lory 500']
+    ['@copy', '=use lory'] in copied.canvas.asks
     badge_next['idle'] eq 'busy'
     badge_next['busy'] eq 'done'
     badge_next['done'] eq 'idle'

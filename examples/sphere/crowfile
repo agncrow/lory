@@ -1,0 +1,2 @@
+name = 'lory_sphere'
+deps = map[lory = '../../packages/lory']

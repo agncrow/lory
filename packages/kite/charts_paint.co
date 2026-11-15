@@ -1,4 +1,4 @@
---- How a laid chart is drawn with Lory, as Chart.js paints one: its axes
+--- How a laid chart is drawn with Lory: its axes
 --- first (grid lines, tick marks, the axis line, tick labels and the
 --- axis's title; a radial axis's rings, spokes, point labels and tick
 --- labels on their backdrops), its legend and titles, then its datasets
@@ -8,14 +8,11 @@
 --- marks under the pointer are drawn in their hover colours and sizes, and
 --- the tooltip over everything.
 ---
---- A chart is laid in CSS pixels, as Chart.js lays one, and drawn at its
---- place on the canvas (`Place`), so the numbers held to Chart.js are the
+--- A chart is laid in CSS pixels and drawn at its
+--- place on the canvas (`Place`), so the numbers it is laid by are the
 --- ones drawn. Lory draws no turned text: a turned tick label is written
 --- letter by letter along its turn, and a title beside the area letter
 --- under letter, each letter upright.
----
---- These are Chart.js 4.5.1's ways of drawing, read from it and written
---- anew (see charts_model.co).
 use math
 use lory
 use charts_model
@@ -191,7 +188,7 @@ fn _turned_words[c0, p, x, y, words, size, color, turn, align]
     c
 
 --- words written letter under letter, centred on (x, y): a title beside
---- the area, which Chart.js turns a quarter round
+--- the area, turned a quarter round
 fn _column_words[c0, p, x, y, words, size, color]
     c = c0
     if words eq '' or color.a lte 0.0
@@ -472,7 +469,7 @@ fn _heading_drawn[c0, h, part, p]
 
 --- every shown dataset drawn, the highest `order` first, so that the
 --- lowest is drawn on top; lines and points kept to the area and the
---- room their points spill past it, as Chart.js clips them
+--- room their points spill past it
 fn _datasets_drawn[c0, ch, laid, layers, hits, p]
     c = c0
     ps = charts_scales.parsed_of[ch, laid.scales]
@@ -505,7 +502,7 @@ fn _is_hit[hits, d, j]
     false
 
 --- the colour a mark is filled with under the pointer: its dataset's
---- hover colour, else its own darkened as Chart.js darkens it
+--- hover colour, else its own darkened
 fn _hover_fill[s, j, color]
     if len[s.hover_fills] gt 0
         return charts_model.color_at[s.hover_fills, j, color]
@@ -524,7 +521,7 @@ fn _bars_drawn[c0, ch, layer, hits, p]
     j = 0
     while j lt len[layer.marks]
         m = layer.marks[j]
-        --- (a bar stands in its bounds, as Chart.js draws one: a vertical
+        --- (a bar stands in its bounds: a vertical
         --- bar's height is none while it grows from its base at first)
         b = charts_hits.bar_bounds[m]
         if charts_model.finite[b[0]] and charts_model.finite[b[1]] and charts_model.finite[b[2]] and charts_model.finite[b[3]]
@@ -946,9 +943,9 @@ fn _arcs_drawn[c0, ch, layer, hits, p]
     j = 0
     while j lt len[layer.marks]
         m = layer.marks[j]
-        --- (as Chart.js: none where it turns through nothing or a radius
+        --- (none where it turns through nothing or a radius
         --- is below naught; a polar area's arcs have only their angles,
-        --- and one that turns through nothing Chart.js draws as a sliver
+        --- and one that turns through nothing is drawn as a sliver
         --- too thin to see, which is left out)
         if m.end_angle gt m.start_angle and not (m.inner lt 0.0) and not (m.outer lt 0.0) and charts_model.finite[m.outer]
             fill = m.fill
@@ -962,7 +959,7 @@ fn _arcs_drawn[c0, ch, layer, hits, p]
         j = j + 1
     c
 
---- an arc drawn as Chart.js draws one: moved out from the centre a
+--- an arc drawn: moved out from the centre a
 --- quarter of its offset along its middle, its radii grown by its spacing
 --- (and by its offset, where it is narrow), its ends drawn in so that
 --- the room between arcs is as wide all along; its ring filled, then

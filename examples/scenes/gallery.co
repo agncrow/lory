@@ -1,0 +1,417 @@
+--- The gallery's further scenes: views side by side through two lenses, helpers, lines
+--- coloured and dashed, points and sprites, copies drawn at once, a shape
+--- cut by planes, levels of detail, the materials side by side, and a
+--- lamp's shadows, picking by the pointer, controls, marching cubes and a
+--- shape read from SVG.
+use math
+use memory
+use lory
+use lory.space
+use lory.geometry
+use lory.xr
+use lory.controls
+use kit
+
+fn _once[c, name, g]
+    if space.made[name]
+        return c
+    space.mesh_form[c, name, geometry.space_form[g]]
+
+--- three things to see: a box, a ball and a knot
+fn _things[c, t]
+    c = _once[c, 'views.box', geometry.box[2.0, 2.0, 2.0]]
+    c = _once[c, 'views.ball', geometry.sphere[1.2, 32, 16]]
+    c = _once[c, 'views.knot', geometry.torus_knot[0.8, 0.3, 100, 16]]
+    s = t / 1000.0
+    turned = [s * 0.3, s * 0.5, 0.0]
+    c = space.draw[c, 'views.box', kit.placed[[-3.0, 0.0, 0.0], turned, [1.0, 1.0, 1.0]], space.glossy[lory.hex['#4488cc'], lory.hex['#222222'], 60.0]]
+    c = space.draw[c, 'views.ball', kit.placed[[0.0, 0.0, 0.0], turned, [1.0, 1.0, 1.0]], space.glossy[lory.hex['#cc8844'], lory.hex['#222222'], 60.0]]
+    space.draw[c, 'views.knot', kit.placed[[3.0, 0.0, 0.0], turned, [1.0, 1.0, 1.0]], space.glossy[lory.hex['#88cc44'], lory.hex['#222222'], 60.0]]
+
+fn _things_lit[c]
+    space.lamps[c, [space.ambient[lory.white[], 0.3], space.directional[lory.white[], 2.0, [1.0, 2.0, 3.0], [0.0, 0.0, 0.0]]]]
+
+--- the scene's box: the one framed (`space.within`), or the whole canvas
+fn _box_of[c]
+    if c.box[2] gt 0.0
+        return c.box
+    [0.0, 0.0, 0.0 + lory.width[c], 0.0 + lory.height[c]]
+
+--- the same things seen twice side by side: left through a perspective lens, right through
+--- an orthographic one, each view cleared to its own colour; in a headset
+--- once, around the reader
+fn views[c, t]
+    b = _box_of[c]
+    half = floor[b[2] / 2.0]
+    c = space.view_box[c, [b[0], b[1], half, b[3]], lory.hex['#202830']]
+    cam = kit.camera[c, 45.0, 0.1, 100.0, [0.0, 4.0, 16.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    c = _things_lit[c]
+    c = _things[c, t]
+    if not space.in_view[c, 1]
+        return c
+    c = space.view_box[c, [b[0] + half, b[1], b[2] - half, b[3]], lory.hex['#302820']]
+    a = space.proportion[c]
+    h = 4.5
+    straight = space.camera_at[space.lens_straight[0.0 - h * a, h * a, h, 0.0 - h, 0.1, 100.0], [0.0, 4.0, 16.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+    c = space.through[c, straight, space.daylight[]]
+    c = _things_lit[c]
+    _things[c, t]
+
+--- helpers: a grid on the ground, the axes, a
+--- box's outline around a ball and an arrow, all lit by nothing
+fn helpers[c, t]
+    c = _once[c, 'helpers.ball', geometry.sphere[1.0, 32, 16]]
+    if not space.made['helpers.grid']
+        c = space.mesh_form[c, 'helpers.grid', space.grid_form[10.0, 10, lory.hex['#444444'], lory.hex['#888888']]]
+        c = space.mesh_form[c, 'helpers.axes', space.axes_form[3.0]]
+        c = space.mesh_form[c, 'helpers.box', space.box_lines_form[]]
+    cam = kit.camera[c, 45.0, 0.1, 100.0, [6.0, 5.0, 8.0], [0.0, 0.5, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    white = space.basic[lory.white[]]
+    c = space.draw[c, 'helpers.grid', kit.at[0.0, 0.0, 0.0], white]
+    c = space.draw[c, 'helpers.axes', kit.at[0.0, 0.0, 0.0], white]
+    s = t / 1000.0
+    c = space.draw[c, 'helpers.ball', kit.at[0.0, 1.0, 0.0], space.basic[lory.hex['#3366cc']]]
+    c = space.draw[c, 'helpers.box', space.box_lines_at[[-1.0, 0.0, -1.0], [1.0, 2.0, 1.0]], space.basic[lory.hex['#ffff00']]]
+    way = [sin[s] * 0.6, 0.8, cos[s] * 0.6]
+    geometry.arrow[c, [2.0, 0.0, 2.0], way, 2.0, lory.hex['#ff00ff'], 0.4, 0.08]
+
+--- a line through three hundred points going round and up, each point
+--- in its own colour, and a wave drawn in dashes
+fn _spiral[]
+    at = []
+    colors = []
+    i = 0
+    while i lt 300
+        a = 0.1 * i
+        r = 0.5 + 0.01 * i
+        at = push[push[push[at, r * cos[a]], 0.01 * (i - 150)], r * sin[a]]
+        k = space.linear_of[kit.hsl[(0.0 + i) / 300.0, 1.0, 0.5]]
+        colors = push[push[push[colors, k[0]], k[1]], k[2]]
+        i = i + 1
+    space.colored[space.polyline[at], colors]
+
+fn _wave[]
+    at = []
+    i = 0
+    while i lt 100
+        x = -4.0 + 0.08 * i
+        at = push[push[push[at, x], -2.5 + 0.5 * sin[x * 2.0]], 0.0]
+        i = i + 1
+    space.measured[space.polyline[at]]
+
+fn lines[c, t]
+    if not space.made['lines.spiral']
+        c = space.mesh_form[c, 'lines.spiral', _spiral[]]
+        c = space.mesh_form[c, 'lines.wave', _wave[]]
+    cam = kit.camera[c, 50.0, 0.1, 100.0, [0.0, 2.0, 9.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    s = t / 1000.0
+    c = space.draw[c, 'lines.spiral', kit.placed[[0.0, 0.5, 0.0], [0.0, s * 0.5, 0.0], [1.0, 1.0, 1.0]], space.basic[lory.white[]]]
+    space.draw[c, 'lines.wave', kit.at[0.0, 0.0, 0.0], space.dashed[space.basic[lory.hex['#ffaa00']], 0.3, 0.15, 1.0]]
+
+--- three thousand points in a cube, each coloured by where it stands,
+--- smaller the farther
+fn _cloud[]
+    r = kit.randoms[7, 9000]
+    at = []
+    colors = []
+    for x in r
+        at = push[at, x * 10.0 - 5.0]
+        colors = push[colors, x]
+    space.colored[space.dots[at], colors]
+
+fn points[c, t]
+    if not space.made['points.cloud']
+        c = space.mesh_form[c, 'points.cloud', _cloud[]]
+    cam = kit.camera[c, 60.0, 0.1, 100.0, [0.0, 0.0, 15.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    s = t / 1000.0
+    space.draw[c, 'points.cloud', kit.placed[[0.0, 0.0, 0.0], [s * 0.1, s * 0.2, 0.0], [1.0, 1.0, 1.0]], space.dotted[space.shrinks[space.basic[lory.white[]]], 0.1]]
+
+--- four hundred sprites: points each drawn as a picture of a disc, its
+--- clear corners cut away
+fn _sprinkled[]
+    r = kit.randoms[11, 1200]
+    at = []
+    for x in r
+        at = push[at, x * 8.0 - 4.0]
+    space.dots[at]
+
+fn sprites[c, t]
+    if not space.made['sprites.dots']
+        c = space.mesh_form[c, 'sprites.dots', _sprinkled[]]
+        c = space.texture[c, 'sprites.disc', 16, 16, kit.disc[16]]
+    cam = kit.camera[c, 60.0, 0.1, 100.0, [0.0, 0.0, 9.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    s = t / 1000.0
+    look = space.cut_out[space.with_texture[space.dotted[space.shrinks[space.basic[kit.hsl[0.6, 0.8, 0.6]]], 0.5], 'sprites.disc'], 0.5]
+    space.draw[c, 'sprites.dots', kit.placed[[0.0, 0.0, 0.0], [0.0, s * 0.2, 0.0], [1.0, 1.0, 1.0]], look]
+
+--- a hundred and twenty-five boxes drawn at once, each placed, turned and
+--- coloured on its own
+fn _copies[]
+    r = kit.randoms[5, 500]
+    matrices = []
+    colors = []
+    i = 0
+    while i lt 125
+        x = 0.0 + (i % 5) - 2.0
+        y = 0.0 + ((i / 5) % 5) - 2.0
+        z = 0.0 + (i / 25) - 2.0
+        m = kit.placed[[x, y, z], [r[i * 4] * 3.0, r[i * 4 + 1] * 3.0, r[i * 4 + 2] * 3.0], [1.0, 1.0, 1.0]]
+        for v in m
+            matrices = push[matrices, v]
+        k = space.linear_of[kit.hsl[r[i * 4 + 3], 0.7, 0.5]]
+        colors = push[push[push[colors, k[0]], k[1]], k[2]]
+        i = i + 1
+    [matrices, colors]
+
+fn instancing[c, t]
+    if not space.made['copies.box']
+        made = _copies[]
+        c = space.mesh_copies[c, 'copies.box', geometry.space_form[geometry.box[0.5, 0.5, 0.5]], made[0], made[1]]
+    cam = kit.camera[c, 60.0, 0.1, 100.0, [6.0, 4.0, 8.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    c = space.lamps[c, [space.hemisphere[lory.white[], lory.hex['#444444'], 1.0], space.directional[lory.white[], 2.0, [3.0, 5.0, 2.0], [0.0, 0.0, 0.0]]]]
+    s = t / 1000.0
+    space.draw[c, 'copies.box', kit.placed[[0.0, 0.0, 0.0], [0.0, s * 0.2, 0.0], [1.0, 1.0, 1.0]], space.matte[lory.white[]]]
+
+--- a knot cut by two planes, its inside seen through the cut
+fn clipping[c, t]
+    c = _once[c, 'clipping.knot', geometry.torus_knot[1.0, 0.3, 128, 16]]
+    cam = kit.camera[c, 45.0, 0.1, 100.0, [0.0, 1.0, 6.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    c = space.lamps[c, [space.ambient[lory.white[], 0.4], space.directional[lory.white[], 2.0, [1.0, 2.0, 3.0], [0.0, 0.0, 0.0]]]]
+    s = t / 1000.0
+    c = space.cut[c, [-1.0, 0.0, 0.0, 0.5, 0.0, -1.0, 0.0, 0.3]]
+    c = space.draw[c, 'clipping.knot', kit.placed[[0.0, 0.0, 0.0], [s * 0.3, s * 0.4, 0.0], [1.0, 1.0, 1.0]], space.two_sided[space.glossy[kit.hsl[0.1, 0.8, 0.5], lory.hex['#222222'], 60.0]]]
+    space.uncut[c]
+
+--- four balls going away, each drawn in the detail its distance asks
+--- (levels of detail): an icosahedron split three times near, once farther,
+--- not at all farthest
+fn lod[c, t]
+    c = _once[c, 'lod.0', geometry.icosahedron[1.0, 3]]
+    c = _once[c, 'lod.1', geometry.icosahedron[1.0, 1]]
+    c = _once[c, 'lod.2', geometry.icosahedron[1.0, 0]]
+    cam = kit.camera[c, 50.0, 0.1, 100.0, [0.0, 1.0, 6.0], [0.0, 0.0, -6.0]]
+    c = space.through[c, cam, space.daylight[]]
+    c = space.lamps[c, [space.ambient[lory.white[], 0.4], space.directional[lory.white[], 2.0, [1.0, 2.0, 3.0], [0.0, 0.0, 0.0]]]]
+    s = t / 1000.0
+    look = space.faceted[space.matte[lory.hex['#66aaff']]]
+    i = 0
+    while i lt 4
+        m = kit.placed[[(0.0 + i) * 1.5 - 2.25, 0.0, 0.0 - 6.0 * i], [0.0, s * 0.3, 0.0], [1.0, 1.0, 1.0]]
+        c = space.draw[c, space.level[c, ['lod.0', 'lod.1', 'lod.2'], [8.0, 16.0], m], m, look]
+        i = i + 1
+    c
+
+--- the materials side by side: basic, Lambert's,
+--- Phong's, standard (rough, then metal) and the way each point faces
+fn _material[i]
+    k = lory.hex['#ff8844']
+    if i eq 0
+        return space.basic[k]
+    if i eq 1
+        return space.matte[k]
+    if i eq 2
+        return space.glossy[k, lory.hex['#444444'], 100.0]
+    if i eq 3
+        return space.standard[k, 0.0, 0.5]
+    if i eq 4
+        return space.standard[k, 1.0, 0.3]
+    space.facing_colors[]
+
+fn materials[c, t]
+    c = _once[c, 'materials.ball', geometry.sphere[0.8, 32, 16]]
+    cam = kit.camera[c, 45.0, 0.1, 100.0, [0.0, 0.0, 8.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    c = space.lamps[c, [space.hemisphere[lory.white[], lory.hex['#444444'], 1.0], space.directional[lory.white[], 2.0, [2.0, 3.0, 4.0], [0.0, 0.0, 0.0]]]]
+    s = t / 1000.0
+    i = 0
+    while i lt 6
+        m = kit.placed[[(0.0 + i % 3 - 1.0) * 2.2, 1.1 - 2.2 * (i / 3), 0.0], [0.0, s * 0.3, 0.0], [1.0, 1.0, 1.0]]
+        c = space.draw[c, 'materials.ball', m, _material[i]]
+        i = i + 1
+    c
+
+--- a box, a ball and a ring over a floor, a directional lamp's shadows
+--- falling from them
+fn shadows[c, t]
+    c = _once[c, 'shadows.floor', geometry.plane[20.0, 20.0]]
+    c = _once[c, 'shadows.box', geometry.box[2.0, 2.0, 2.0]]
+    c = _once[c, 'shadows.ball', geometry.sphere[1.0, 32, 16]]
+    c = _once[c, 'shadows.ring', geometry.torus[0.8, 0.3, 16, 48]]
+    cam = kit.camera[c, 45.0, 0.1, 100.0, [0.0, 8.0, 12.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    sun = space.casting[space.directional[lory.white[], 2.5, [5.0, 10.0, 5.0], [0.0, 0.0, 0.0]], 8.0, 0.5, 30.0, -0.001]
+    c = space.lamps[c, [space.ambient[lory.white[], 0.4], sun]]
+    s = t / 1000.0
+    c = space.draw[c, 'shadows.floor', kit.placed[[0.0, 0.0, 0.0], [0.0 - pi / 2.0, 0.0, 0.0], [1.0, 1.0, 1.0]], space.matte[lory.hex['#888888']]]
+    c = space.draw[c, 'shadows.box', kit.placed[[-2.0, 1.0, 0.0], [0.0, s * 0.4, 0.0], [1.0, 1.0, 1.0]], space.matte[lory.hex['#4488cc']]]
+    c = space.draw[c, 'shadows.ball', kit.at[2.0, 1.0, 0.0], space.matte[lory.hex['#cc8844']]]
+    space.draw[c, 'shadows.ring', kit.placed[[0.0, 1.5, 2.0], [s * 0.5, s * 0.3, 0.0], [1.0, 1.0, 1.0]], space.matte[lory.hex['#88cc44']]]
+
+--- ---- picking ----
+
+--- the ray picking: through the point of the canvas `p` (pixels; where
+--- its first is below 0, where the pointer is), or the controller's in a
+--- headset
+fn picking_ray[c, cam, p]
+    if p[0] lt 0.0 or xr.in_headset[c]
+        return space.pointer_ray[c, cam]
+    b = _box_of[c]
+    space.ray_from[cam, (p[0] - b[0]) / b[2] * 2.0 - 1.0, 1.0 - (p[1] - b[1]) / b[3] * 2.0]
+
+--- forty cubes standing about, each placed, turned and sized by numbers
+--- drawn from a seed
+fn cube_places[]
+    r = kit.randoms[3, 280]
+    out = []
+    i = 0
+    while i lt 40
+        k = i * 7
+        size = r[k + 6] * 0.8 + 0.6
+        out = push[out, kit.placed[[r[k] * 16.0 - 8.0, r[k + 1] * 12.0 - 6.0, r[k + 2] * 8.0 - 6.0], [r[k + 3] * 2.0 * pi, r[k + 4] * 2.0 * pi, r[k + 5] * 2.0 * pi], [size, size, size]]]
+        i = i + 1
+    out
+
+--- which of the cubes the ray meets first (its index), or -1
+fn picked_cube[r, places]
+    if not r.there
+        return -1
+    f = geometry.space_form[geometry.box[1.0, 1.0, 1.0]]
+    best = -1
+    nearest = 0.0
+    i = 0
+    while i lt len[places]
+        met = space.hits[r, f, places[i]]
+        if len[met] gt 0 and (best lt 0 or met[0].distance lt nearest)
+            best = i
+            nearest = met[0].distance
+        i = i + 1
+    best
+
+--- the cube under the pointer glowing red
+fn picking[c, t, p]
+    c = _once[c, 'picking.cube', geometry.box[1.0, 1.0, 1.0]]
+    cam = kit.camera[c, 70.0, 0.1, 100.0, [0.0, 0.0, 10.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    c = space.lamps[c, [space.ambient[lory.white[], 0.5], space.directional[lory.white[], 2.0, [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]]]]
+    places = cube_places[]
+    chosen = picked_cube[picking_ray[c, cam, p], places]
+    r = kit.randoms[4, 40]
+    i = 0
+    while i lt len[places]
+        look = space.matte[kit.hsl[r[i], 0.6, 0.5]]
+        if i eq chosen
+            look = space.glowing[look, lory.hex['#ff0000']]
+        c = space.draw[c, 'picking.cube', places[i], look]
+        i = i + 1
+    c
+
+--- of a cloud's points, the one the ray passes nearest within a tenth
+--- of a metre: its index, or -1
+fn picked_point[r, f]
+    if not r.there
+        return -1
+    met = space.hits[r, f, kit.at[0.0, 0.0, 0.0], 'front', 0.1]
+    if len[met] eq 0
+        return -1
+    met[0].index
+
+--- five hundred points in a cube, drawn from a seed
+fn speckle[]
+    r = kit.randoms[9, 1500]
+    out = []
+    for x in r
+        out = push[out, x * 8.0 - 4.0]
+    out
+
+--- five hundred points, the one under the pointer marked by a small
+--- white ball
+fn picking_points[c, t, p]
+    spots = speckle[]
+    if not space.made['picking.cloud']
+        c = space.mesh_form[c, 'picking.cloud', space.dots[spots]]
+    c = _once[c, 'picking.mark', geometry.sphere[0.06, 8, 6]]
+    cam = kit.camera[c, 60.0, 0.1, 100.0, [0.0, 0.0, 8.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    c = space.draw[c, 'picking.cloud', kit.at[0.0, 0.0, 0.0], space.dotted[space.shrinks[space.basic[lory.hex['#3399ff']]], 0.08]]
+    k = picked_point[picking_ray[c, cam, p], space.dots[spots]]
+    if k lt 0
+        return c
+    space.draw[c, 'picking.mark', kit.at[spots[k * 3], spots[k * 3 + 1], spots[k * 3 + 2]], space.basic[lory.white[]]]
+
+--- ---- controls ----
+
+--- the things seen through a camera the reader moves: flying (W, A, S,
+--- D, R, F, Q, E and the arrows, or the pointer held down), turned about
+--- the middle every way (a trackball), or held still while the cubes are
+--- dragged about; in a
+--- headset the reader walks instead
+fn steered[c, t, form]
+    lens_of = space.lens[50.0, space.proportion[c], 0.1, 100.0]
+    cam = kit.camera[c, 50.0, 0.1, 100.0, [0.0, 4.0, 16.0], [0.0, 0.0, 0.0]]
+    if form eq 'fly'
+        cam = controls.fly[c, 'scenes', lens_of, [0.0, 1.0, 12.0], 4.0, 0.8]
+    if form eq 'trackball'
+        cam = controls.trackball[c, 'scenes', lens_of, [0.0, 0.0, 0.0], [0.0, 4.0, 16.0]]
+    c = space.walk[c, 'scenes.controls']
+    c = space.through[c, cam, space.daylight[]]
+    c = _things_lit[c]
+    if form ne 'drag'
+        return _things[c, t]
+    c = _once[c, 'controls.cube', geometry.box[1.5, 1.5, 1.5]]
+    first_places = push[push[push[push[[], [-4.0, 0.0, 0.0]], [-1.5, 1.0, 0.0]], [1.5, -1.0, 0.0]], [4.0, 0.0, 0.0]]
+    d = controls.drag[c, 'scenes', cam, geometry.space_form[geometry.box[1.5, 1.5, 1.5]], first_places]
+    i = 0
+    while i lt len[d.places]
+        p = d.places[i]
+        look = space.matte[kit.hsl[(0.0 + i) / 4.0, 0.6, 0.5]]
+        if i eq d.held
+            look = space.glowing[look, lory.hex['#333333']]
+        c = space.draw[c, 'controls.cube', kit.at[p[0], p[1], p[2]], look]
+        i = i + 1
+    c
+
+--- ---- marching cubes ----
+
+--- the surface of four balls' field where it comes to one, found by
+--- marching through a grid of twenty a side, lit
+--- and turning
+fn _blobs[]
+    balls = [1.0, 0.0, 0.0, 0.6, -1.0, 0.3, 0.0, 0.5, 0.0, -0.8, 0.6, 0.4, 0.2, 1.0, -0.6, 0.35]
+    geometry.marched[geometry.ball_field[balls, 20, 5.0], 20, 5.0, 1.0]
+
+fn marching[c, t]
+    c = _once[c, 'marching.blobs', _blobs[]]
+    cam = kit.camera[c, 45.0, 0.1, 100.0, [0.0, 1.0, 7.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    c = space.lamps[c, [space.hemisphere[lory.white[], lory.hex['#334455'], 1.0], space.directional[lory.white[], 2.0, [2.0, 3.0, 4.0], [0.0, 0.0, 0.0]]]]
+    s = t / 1000.0
+    space.draw[c, 'marching.blobs', kit.placed[[0.0, 0.0, 0.0], [0.0, s * 0.4, 0.0], [1.0, 1.0, 1.0]], space.standard[lory.hex['#e6a23c'], 0.2, 0.35]]
+
+--- ---- SVG ----
+
+--- a heart drawn in an SVG path's words (its y running down the page),
+--- read by `geometry.svg_paths`, stood out a quarter of its width
+--- (`geometry.extrude`)
+fn heart_path[]
+    'M 50 30 C 50 10 20 0 10 20 C 0 40 20 60 50 85 C 80 60 100 40 90 20 C 80 0 50 10 50 30 Z'
+
+fn svg[c, t]
+    if not space.made['svg.heart']
+        outlines = []
+        for p in geometry.svg_paths[heart_path[]]
+            outlines = push[outlines, geometry.outline[p]]
+        c = space.mesh_form[c, 'svg.heart', geometry.space_form[geometry.extrude[outlines, 25.0, 1, true, 4.0, 3.0, 0.0, 3, 16]]]
+    cam = kit.camera[c, 45.0, 0.1, 1000.0, [0.0, 0.0, 220.0], [0.0, 0.0, 0.0]]
+    c = space.through[c, cam, space.daylight[]]
+    c = space.lamps[c, [space.ambient[lory.white[], 0.5], space.directional[lory.white[], 2.5, [1.0, 2.0, 3.0], [0.0, 0.0, 0.0]]]]
+    s = t / 1000.0
+    --- (turned over, SVG's y running down; moved so its middle is the origin)
+    m = space.times[kit.placed[[0.0, 0.0, 0.0], [0.0, s * 0.5, 0.0], [1.0, 1.0, 1.0]], space.compose[[-50.0, 45.0, -12.5], [0.0, 0.0, 0.0, 1.0], [1.0, -1.0, 1.0]]]
+    space.draw[c, 'svg.heart', m, space.two_sided[space.glossy[lory.hex['#e03131'], lory.hex['#333333'], 40.0]]]

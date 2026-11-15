@@ -1,11 +1,9 @@
---- Ways to move a camera, or things, by the pointer and the keys, as
---- three.js's addon controls do: flying through a scene (its
---- FlyControls), turning the scene about a point every way like a ball
---- in the hand (TrackballControls), and dragging things over the plane
---- that faces the eye (DragControls). Each keeps its state under an id,
---- as `space.orbit` does, and answers a camera (`space.Camera`) or the
---- things' new places. Lory's own orbit (`space.orbit`) is three's
---- OrbitControls.
+--- Ways to move a camera, or things, by the pointer and the keys: flying
+--- through a scene, turning the scene about a point every way like a ball
+--- in the hand (a trackball), and dragging things over the plane that
+--- faces the eye. Each keeps its state under an id, as `space.orbit` does,
+--- and answers a camera (`space.Camera`) or the things' new places. A
+--- camera that orbits a point, keeping up level, is `space.orbit`.
 use memory
 use math
 use lory
@@ -21,7 +19,7 @@ struct Flight [at, turn, dragging, from_x, from_y, look_x, look_y]
 --- `start` looking down -z: W and S fly forward and back, A and D to the
 --- sides, R and F up and down, Q and E roll, the arrow keys turn, and
 --- holding the pointer down and moving it from there turns toward it the
---- farther it goes (three's FlyControls with `dragToLook`). `speed` is in
+--- farther it goes. `speed` is in
 --- metres a second, `turning` in radians a second
 fn fly[c, id, lens_of, start, speed, turning]
     key = 'lory.controls.fly.`id`'
@@ -86,7 +84,7 @@ struct Ball [offset, up, target, dragging, last_x, last_y]
 
 --- the camera turned about `target` every way by dragging (no up held
 --- level: the scene turns as a ball in the hand), the wheel bringing it
---- nearer or farther (three's TrackballControls), kept under `id`,
+--- nearer or farther, kept under `id`,
 --- starting at `from`
 fn trackball[c, id, lens_of, target, from]
     key = 'lory.controls.trackball.`id`'
@@ -151,7 +149,7 @@ fn _dot[a, b]
 --- the thing it was taken (from its place)
 struct Dragged [places, held, point, facing, offset]
 
---- things dragged by the pointer (three's DragControls), kept under `id`:
+--- things dragged by the pointer, kept under `id`:
 --- the thing whose `form` (each where its place puts it) the pointer's
 --- ray meets first is taken where it is pressed and moved over the plane
 --- through that point facing the camera, as the pointer moves, until it

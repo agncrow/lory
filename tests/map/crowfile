@@ -1,9 +1,0 @@
---- Lory's maps held to Leaflet's own answers (reference.co, run from the
---- repository's root: `crow test tests/map/reference.co`). The map package
---- and Lory, beside it in this repository, are linked in crow_modules/ by
---- relative links the repository keeps, as the examples' are:
----
----     ln -s ../../../packages/lory crow_modules/lory
----     ln -s ../../../packages/map crow_modules/map
-name = 'lory_map_reference'
-deps = map[lory = '../../packages/lory', map = '../../packages/map']

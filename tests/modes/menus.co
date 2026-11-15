@@ -1,6 +1,6 @@
 --- What lory.menus, lory.overlays and lory.disclosure compute on fixed
 --- inputs, written out to diff the interpreter's run against the compiled
---- program's (tests/modes.sh): cmdk's scores and a palette's order, the
+--- program's (tests/modes.sh): a palette's scores and its order, the
 --- typeahead's matches, a submenu's grace, a tooltip's hull, a toast's
 --- swipe, an accordion's folds, a tree laid flat and its ticks, and a
 --- page of menus, a palette, toasts, an accordion and a tree laid out and
@@ -40,7 +40,7 @@ fn _box[shown, id]
         return _all[shown.boxes[id]]
     'none'
 
---- cmdk's scores, and a palette's order of them
+--- a palette's scores, and its order of them
 cmds = [menus.command['open', 'Open file'], menus.command['recent', 'Open recent', keywords = 'history'], menus.command['save', 'Save'], menus.command['side', 'Toggle sidebar', keywords = 'panel', family = 'View'], menus.command['term', 'Toggle terminal', keywords = 'console shell', family = 'View'], menus.command['def', 'Go to definition', keywords = 'jump', family = 'Go'], menus.command['line', 'Go to line', family = 'Go'], menus.command['theme', 'Change theme', keywords = 'dark light'], menus.command['cal', 'Calculator', off = true]]
 for q in ['', 'o', 'of', 'tsb', 'go to', 'gt', 'dark', 'sa', 'xyz', 'TOGGLE', 'cal']
     scores = slice[[0.0], 0, 0]
@@ -110,7 +110,7 @@ for one in [['', 'a', '0', '0'], ['a', 'b', '0', '0'], ['a', 'a', '0', '0'], ['a
     after = join[disclosure.folds_after[was, one[1], one[2] eq '1', one[3] eq '1'], ',']
     log['folds `one[0]` + `one[1]` multiple `one[2]` collapsible `one[3]`: `after`']
 
---- a tree laid flat, and its ticks as Vuetify's classic choosing answers
+--- a tree laid flat, and its ticks: a folder's tick answered by its twigs
 lib = disclosure.branch['lib', 'lib', [disclosure.leaf['gui', 'gui.co'], disclosure.leaf['xr', 'xr.co']]]
 src = disclosure.branch['src', 'src', [lib, disclosure.leaf['main', 'main.co'], disclosure.leaf['old', 'old.co', off = true]]]
 files = [src, disclosure.branch['docs', 'docs', [disclosure.leaf['guide', 'guide.md']]], disclosure.leaf['readme', 'README.md']]
@@ -181,7 +181,7 @@ fn _second[c, open]
     box = overlays.dialog[c, 'edit', 'Edit profile', [gui.field['name', 'Ada'], gui.button['save', 'Save']], open]
     snacks = overlays.snackbars[c, 'snacks', [overlays.notice['one', 'First saved'], overlays.notice['two', 'Second saved', act = 'Undo']]]
     --- (the snackbars before the dialog: gui's Escape goes to the last layer
-    --- laid that keeps the pointer, docs/components/menus.md)
+    --- laid that keeps the pointer)
     gui.column[[gui.row[[tip, card, gui.button['opener', 'Open']]], snacks, box]]
 
 dialog_open = false

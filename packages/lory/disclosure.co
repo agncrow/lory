@@ -1,12 +1,10 @@
 --- Lory's disclosure: the accordion and the collapsible, which show and
 --- hide what is under their triggers, and the tree view, whose folders
---- open and close. Each answers the pointer and the keys as the library
---- or the pattern it follows does: Radix's Accordion and Collapsible, the
---- tree of Vue's own example (a press opens a folder; a double press
---- makes a leaf a folder), Vuetify's VTreeview with checkboxes (its
---- `classic` choosing: a folder ticks all under it, and is ticked, unticked
---- or mixed as they are; held to Vuetify's own numbers by
---- tests/menus/reference.json), and the WAI-ARIA tree's keys. The program
+--- open and close. Each answers the pointer and the keys: a press on a
+--- trigger opens or closes its fold; in the tree a press opens a folder, a
+--- double press makes a leaf a folder, the arrows, Home, End and letters
+--- typed ahead move along it, and with checkboxes a folder ticks all under
+--- it and is ticked, unticked or mixed as they are. The program
 --- holds which folds are open (it keeps what the events say); a tree's
 --- open folders, its ticks and where its keys are, Lory holds.
 
@@ -19,8 +17,8 @@ use menus
 
 --- ---- folds coming and going ----
 
---- the time and the curve Radix's demos open and close a fold over
---- (300 ms, cubic-bezier(0.87, 0, 0.13, 1)), its height growing from
+--- the time and the curve a fold opens and closes over (300 ms,
+--- cubic-bezier(0.87, 0, 0.13, 1)), its height growing from
 --- nothing to its own
 fn fold_time[]
     300.0
@@ -42,8 +40,7 @@ fn _height_of[key]
     0.0
 
 --- how far open a fold is (0 to 1, eased): open as it is first laid, it
---- is shown whole at once (Radix's Collapsible keeps its first opening
---- from moving); after, it grows and shrinks over `fold_time`
+--- is shown whole at once (its first opening does not move); after, it grows and shrinks over `fold_time`
 struct Seen [keys]
 
 fn _fold_shown[c, key, open]
@@ -64,7 +61,7 @@ fn _fold_shown[c, key, open]
 --- grows to (or shrinks from) `k` of that height, and what it holds is
 --- shown once the fold is wholly open. (gui has no clipping column but a
 --- scroll, whose bar and wheel a fold must not have, so the room grows
---- empty: docs/components/menus.md.) A fold never yet laid whole has no
+--- empty.) A fold never yet laid whole has no
 --- height to grow to, and opens whole at once
 fn _unfolded[key, kids, k, pad]
     probed = gui.overlay[gui.overlay[gui.column[kids, pad = pad], _height_probe[key, 0.0], anchor = 'top_left'], _height_probe[key, 1.0], anchor = 'bottom_right']
@@ -100,7 +97,7 @@ fn _moved_focus[]
 fn _ask_focus[id]
     remember['lory.disclosure.focus', Moving[id]]
 
---- ---- an accordion (Radix's Accordion) ----
+--- ---- an accordion ----
 
 --- one fold of an accordion: its id, its trigger's words, what it shows
 --- open, and whether it is set aside
@@ -243,7 +240,7 @@ fn _along[ids, me, key]
         return ids[n - 1]
     ''
 
---- ---- a collapsible (Radix's Collapsible) ----
+--- ---- a collapsible ----
 
 --- a trigger of `words` and, `open`, its `kids` under it (growing in over
 --- 300 ms): a press on the trigger, Enter or space tells `toggle` (its
@@ -285,8 +282,7 @@ fn _collapse_trigger[d]
     d.c = icons.draw[c, mark, d.x + d.w - 28.0 * s, d.y + (d.h - 15.0 * s) / 2.0, 15.0 * s, look.muted]
     d
 
---- ---- a tree view (Vue's tree example; Vuetify's VTreeview with
---- checkboxes; the WAI-ARIA tree's keys) ----
+--- ---- a tree view, with checkboxes where asked ----
 
 --- one twig of a tree: its id, its words, the twigs under it, whether it
 --- is a folder (a folder may be empty), whether it is set aside
@@ -308,7 +304,7 @@ fn branch[id, words, kids, off = false]
 struct Line [id, words, depth, folder, parent, under, off]
 
 --- what each tree holds between frames: its twigs laid flat, the folders
---- open, each twig's tick (`on`, `off`, `indeterminate`: Vuetify's), the
+--- open, each twig's tick (`on`, `off`, `indeterminate`), the
 --- twig the keys are on, the one last chosen, the letters typed ahead
 --- and when
 struct Grove [lines, open, ticks, at, chosen, search, searched]
@@ -348,7 +344,7 @@ fn _flattened[twigs, depth, parent, out]
     out
 
 --- the folders of tree `id` open, the twigs ticked (its leaves, as
---- Vuetify's classic choosing answers them) and a twig's tick
+--- `ticked_after` answers them) and a twig's tick
 fn tree_open[id]
     grove = _grove[id]
     out = slice[[''], 0, 0]
@@ -383,7 +379,7 @@ fn open_twigs[id, ids]
     id
 
 --- the ticks after twig `r` (a place among the lines) is ticked (`on`)
---- or not, as Vuetify's classic choosing answers: it and every twig under
+--- or not: it and every twig under
 --- it not set aside take the tick; then each folder over it is `on` where
 --- every twig under it (not set aside) is, `off` where none is ticked or
 --- mixed, else `indeterminate`
@@ -746,7 +742,7 @@ fn _trigger_at[shown, id]
     b = shown.boxes['faq:`id`']
     _press[b[0] + 20.0, b[1] + 20.0]
 
---- what a press on a trigger opens, as Radix's Accordion: one at a time
+--- what a press on a trigger opens: one at a time
 --- the one pressed (pressed again, closed only where `collapsible`); with
 --- `multiple`, each opens and closes alone
 test a_press_on_a_trigger_opens_its_fold_one_at_a_time_or_many[]
@@ -773,7 +769,7 @@ test a_press_on_a_trigger_opens_its_fold_one_at_a_time_or_many[]
     --- (a fold set aside tells nothing)
     _told_words[_accordion_page[632.0, _trigger_at[prior, 'x'], ['b'], true, false]] eq ''
 
---- Radix's Accordion's keys: Enter and space open and close the fold
+--- an accordion's keys: Enter and space open and close the fold
 --- whose trigger has the focus; the arrows down and up move the focus to
 --- the next trigger and the one before it, round past the ends (`loop`),
 --- passing one set aside; Home and End to the first and the last
@@ -806,7 +802,7 @@ test the_arrows_move_between_triggers_and_loop_and_home_and_end_go_to_the_ends[]
     _accordion_page[256.0, '[{"type": "key", "key": "Tab", "code": "Tab"}]', ['a'], false, true]
     _focus_now[] eq 'after'
 
---- a fold's room grows over Radix's demos' 300 ms on their curve to
+--- a fold's room grows over 300 ms on `fold_time`'s curve to
 --- the height it has open (what it holds shown once it is whole), and
 --- shrinks the same way back; a fold open as it is first laid stands open
 --- at once
@@ -833,7 +829,7 @@ test a_fold_grows_in_over_300_ms_and_shrinks_out[]
 
 fn _collapsible_page[t, given, open]
     c = _frame_at[t, given]
-    gui.show[c, gui.column[[collapsible[c, 'more', 'Show 2 more', [gui.text['@radix-ui/colors'], gui.text['@stitches/react']], open], gui.button['after', 'After']]]]
+    gui.show[c, gui.column[[collapsible[c, 'more', 'Show 2 more', [gui.text['colours.co'], gui.text['themes.co']], open], gui.button['after', 'After']]]]
 
 --- a collapsible's trigger tells `toggle` (1 to open, 0 to close) on a
 --- press, Enter and space; open, what it holds stands under the trigger
@@ -888,7 +884,7 @@ test a_tree_is_laid_flat_each_before_what_is_under_it[]
     lines[9].folder
     lines[9].under eq 0
 
---- Vue's tree example: a press on a folder opens it (its rows shown
+--- a tree's presses: a press on a folder opens it (its rows shown
 --- under it) and again closes it; a press on a leaf chooses it; a double
 --- press on a leaf tells `fold` (the program makes it a folder) and Lory
 --- opens it
@@ -912,12 +908,12 @@ test a_press_opens_a_folder_and_a_double_press_makes_a_leaf_a_folder[]
     _told_words[closed] eq 'files/toggle/src/0'
     _tree_page[112.0, '[]', false].boxes['files'][3] eq 4.0 * tree_row[] + 4.0
 
---- the WAI-ARIA tree's keys: down and up move along the rows shown
+--- a tree's keys: down and up move along the rows shown
 --- (passing one set aside), right opens a closed folder and then goes to
 --- its first twig, left closes an open folder or goes to the twig's
 --- folder, Home and End go to the ends, Enter opens or closes a folder
 --- and chooses a leaf, and * opens every folder beside the twig
-test the_keys_of_a_tree_move_open_and_close_as_the_aria_pattern_says[]
+test the_keys_of_a_tree_move_along_it_and_open_and_close_its_folders[]
     _begun[]
     first = _tree_page[0.0, '[]', false]
     _tree_page[16.0, _row_press[first, 2, 80.0], false]
@@ -952,8 +948,8 @@ test the_keys_of_a_tree_move_open_and_close_as_the_aria_pattern_says[]
     _told_words[_tree_page[256.0, _typed_key['Home'], false]] eq ''
 
 --- letters typed go to the next twig shown whose words start so, the
---- letters typed within a second making one search (Radix's and the
---- ARIA pattern's typeahead, as menus answer it)
+--- letters typed within a second making one search (the typeahead
+--- menus answer with)
 test typing_ahead_goes_to_the_next_twig_whose_words_start_so[]
     _begun[]
     first = _tree_page[0.0, '[]', false]
@@ -977,7 +973,7 @@ test typing_ahead_goes_to_the_next_twig_whose_words_start_so[]
     _grove['files'].at eq 'lib'
     menus.typeahead_time[] eq 1000.0
 
---- Vuetify's classic choosing: a folder ticked ticks every twig under it
+--- ticks in a tree: a folder ticked ticks every twig under it
 --- not set aside; a folder is ticked where every twig under it is,
 --- unticked where none is, mixed (`indeterminate`) else
 test ticking_a_folder_ticks_what_is_under_it_and_a_folder_shows_what_its_twigs_are[]

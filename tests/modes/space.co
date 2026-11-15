@@ -120,7 +120,7 @@ for call in c.deep
     words = join[call, ' ']
     log['  `words`']
 
---- (three's looks: colours in linear light, lamps, their shadows' cameras,
+--- (material looks: colours in linear light, lamps, their shadows' cameras,
 --- helpers' forms, and the calls a scene of them makes)
 orange = lory.hex['#ff8844']
 dim = lory.hex['#0a0b0c']
@@ -161,7 +161,7 @@ cam_b = space.camera_at[space.lens_straight[-6.0, 6.0, 4.5, -4.5, 0.1, 100.0], [
 d = space.through[d, cam_b, space.daylight[]]
 d = space.draw[d, 'knot', lory.identity[], space.dotted[space.shrinks[space.basic[lory.white[]]], 0.1]]
 d = space.draw[d, 'knot', lory.identity[], space.facing_colors[]]
-log['three asked: `len[d.asks]` calls, early `len[d.early]`']
+log['materials asked: `len[d.asks]` calls, early `len[d.early]`']
 for call in d.asks
     words = join[call, ' ']
     if len[words] gt 160
@@ -171,7 +171,7 @@ for call in d.asks
 for call in d.early
     words = join[call, ' ']
     log['  early `words`']
-log['three drawn: `len[d.deep]` calls']
+log['materials drawn: `len[d.deep]` calls']
 for call in d.deep
     words = join[call, ' ']
     if len[words] gt 400

@@ -1,18 +1,18 @@
---- Effects: Tone's effects, each a patch laid as Tone lays it and run as
+--- Effects: each a patch of delays, filters and slow oscillators, run as
 --- the page runs it. An effect hears a sound and answers what comes out:
 --- the sound as it came and the effect's own, crossfaded at equal power
---- by `wet` (0 is the sound untouched, 1 the effect alone, Tone's default
+--- by `wet` (0 is the sound untouched, 1 the effect alone, the default
 --- for most):
 ---
 ---     e = effect.with_wet[effect.feedback_delay[], 0.5]
 ---     out = effect.applied[e, tune, 0.0]
 ---
---- Modulation sweeps by a slow oscillator (Tone's LFO): `auto_filter` a
+--- Modulation sweeps by a slow oscillator (an LFO): `auto_filter` a
 --- filter's frequency, `auto_panner` where the sound stands, `auto_wah` a
 --- filter by how loud the sound is, `chorus` and `vibrato` a short delay,
 --- `phaser` a chain of allpasses, `tremolo` the level. Delays echo
 --- (`feedback_delay`, `ping_pong_delay` from side to side); reverbs ring
---- (`freeverb` and `jc_reverb` of combs and allpasses, `reverb` a
+--- (`damped_reverb` and `schroeder_reverb` of combs and allpasses, `reverb` a
 --- convolution with decaying noise); `distortion`, `chebyshev` and
 --- `bit_crusher` reshape each sample; `frequency_shifter` moves every
 --- partial by the same number of hertz and `pitch_shift` by the same
@@ -38,7 +38,7 @@ use filter
 
 --- an effect: which (`auto_filter`, `auto_panner`, `auto_wah`,
 --- `bit_crusher`, `chebyshev`, `chorus`, `distortion`, `feedback_delay`,
---- `ping_pong_delay`, `freeverb`, `jc_reverb`, `reverb`,
+--- `ping_pong_delay`, `damped_reverb`, `schroeder_reverb`, `reverb`,
 --- `frequency_shifter`, `phaser`, `pitch_shift`, `stereo_widener`,
 --- `tremolo`, `vibrato`), how much of it is heard, its slow oscillator's
 --- rate (Hz), depth (0 to 1), wave and spread between the sides
@@ -54,7 +54,7 @@ struct Effect [name, wet, frequency, depth, wave, spread, delay, feedback, base_
 fn _plain[name]
     Effect[name, 1.0, 1.0, 1.0, 'sine', 180.0, 0.25, 0.125, 200.0, 2.6, 1.0, 0.0, 0.0, 0.2, 4.0, 1, 0.4, 0.7, 3000.0, 1.5, 0.01, 0.0, 0.1, 0.5, 10, 'lowpass', -12]
 
---- ---- the effects, with Tone's defaults ----
+--- ---- the effects, with their defaults ----
 
 --- a filter swept by a slow sine: a lowpass from 200 Hz up 2.6 octaves,
 --- once a second
@@ -79,8 +79,7 @@ fn auto_wah[]
 fn bit_crusher[]
     _plain['bit_crusher']
 
---- each sample through a Chebyshev-like polynomial (Tone's recursion) of
---- order 1
+--- each sample through a Chebyshev polynomial of order 1
 fn chebyshev[]
     _plain['chebyshev']
 
@@ -109,15 +108,14 @@ fn ping_pong_delay[]
     p.feedback = 0.5
     p
 
---- Jezar's Freeverb: eight lowpass combs and four allpasses, room 0.7,
---- dampening 3000 Hz
-fn freeverb[]
-    _plain['freeverb']
+--- a damped Schroeder reverb: eight lowpass combs and four allpasses,
+--- room 0.7, dampening 3000 Hz
+fn damped_reverb[]
+    _plain['damped_reverb']
 
---- the Chowning–Schroeder reverb: three allpasses and four combs, room
---- 0.5
-fn jc_reverb[]
-    j = _plain['jc_reverb']
+--- a Schroeder reverb: three allpasses and four combs, room 0.5
+fn schroeder_reverb[]
+    j = _plain['schroeder_reverb']
     j.room_size = 0.5
     j
 
@@ -169,11 +167,11 @@ fn vibrato[]
     v.delay = 0.005
     v
 
---- every effect's name, in the order Tone lists them
+--- every effect's name, in alphabetical order
 fn names[]
-    ['auto_filter', 'auto_panner', 'auto_wah', 'bit_crusher', 'chebyshev', 'chorus', 'distortion', 'feedback_delay', 'freeverb', 'frequency_shifter', 'jc_reverb', 'phaser', 'ping_pong_delay', 'pitch_shift', 'reverb', 'stereo_widener', 'tremolo', 'vibrato']
+    ['auto_filter', 'auto_panner', 'auto_wah', 'bit_crusher', 'chebyshev', 'chorus', 'damped_reverb', 'distortion', 'feedback_delay', 'frequency_shifter', 'phaser', 'ping_pong_delay', 'pitch_shift', 'reverb', 'schroeder_reverb', 'stereo_widener', 'tremolo', 'vibrato']
 
---- the effect of a name, with Tone's defaults (a name not known is an
+--- the effect of a name, with its defaults (a name not known is an
 --- effect that changes nothing: a Chebyshev of order 1)
 fn named[name]
     if name eq 'auto_filter'
@@ -190,12 +188,12 @@ fn named[name]
         return distortion[]
     if name eq 'feedback_delay'
         return feedback_delay[]
-    if name eq 'freeverb'
-        return freeverb[]
+    if name eq 'damped_reverb'
+        return damped_reverb[]
     if name eq 'frequency_shifter'
         return frequency_shifter[]
-    if name eq 'jc_reverb'
-        return jc_reverb[]
+    if name eq 'schroeder_reverb'
+        return schroeder_reverb[]
     if name eq 'phaser'
         return phaser[]
     if name eq 'ping_pong_delay'
@@ -267,7 +265,7 @@ fn with_amount[unit, amount]
     unit.amount = 0.0 + amount
     unit
 
---- a reverb of this room (0 to 1; Freeverb and JCReverb)
+--- a reverb of this room (0 to 1; the damped and the Schroeder reverb)
 fn with_room[unit, size]
     unit.room_size = 0.0 + size
     unit
@@ -292,7 +290,7 @@ fn with_width[unit, width]
 
 --- a slow oscillator's place `from` seconds after it started at
 --- `degrees`, in degrees from 0 to 360
---- `n` samples of a slow oscillator as Tone's LFO makes them: a wave of
+--- `n` samples of a slow oscillator: a wave of
 --- `hz`, `amplitude` of it, laid from `low` to `high`, `degrees` into its
 --- wave when it started, `from` seconds before the first
 fn _lfo[wave, hz, amplitude, low, high, degrees, from, n, rate]
@@ -303,7 +301,7 @@ fn _lfo[wave, hz, amplitude, low, high, degrees, from, n, rate]
 
 --- samples from `a` to `b` of a delay line read `delays` samples late
 --- (one delay a sample, a fraction read between the two nearest as the
---- page's DelayNode reads), nothing before the first
+--- page's delay reads), nothing before the first
 fn _read_between[xs, delays, a, b]
     n = len[xs]
     pad = 2 + int[ceil[max[delays]]]
@@ -353,7 +351,8 @@ fn _grown[xs, n]
         return xs
     concat[xs, zeros[n - len[xs]]]
 
---- the curve Tone's Abs lays (1024 points; nothing near nothing)
+--- the curve that gives a sample's size (1024 points; nothing near
+--- nothing)
 fn _size_curve[]
     x = (0.0 + range[1024]) / 1023.0 * 2.0 - 1.0
     where[abs[x] lt 0.001, 0.0 * x, abs[x]]
@@ -365,7 +364,7 @@ fn _distortion_curve[amount]
     bent = (3.0 + k) * 20.0 * (pi / 180.0) * x ./ (pi + k * abs[x])
     where[abs[x] lt 0.001, 0.0 * x, bent]
 
---- the curve of Tone's Chebyshev recursion of an order (1024 points):
+--- the curve of the Chebyshev recursion of an order (1024 points):
 --- order 0 is nothing, 1 the sample, each after twice the sample times the
 --- last less the one before
 fn _chebyshev_curve[order]
@@ -431,7 +430,7 @@ fn _crushed[unit, xs]
     floor[xs / step + 0.5] * step
 
 --- samples through a pitch shift: two delays swept across the window by
---- sawtooths half a turn apart, crossfaded by a triangle, then Tone's
+--- sawtooths half a turn apart, crossfaded by a triangle, then a
 --- delay and its feedback (which goes round through the shift again)
 fn _pitch_shifted[unit, xs, from, rate]
     n = len[xs]
@@ -513,7 +512,7 @@ fn _panned[unit, s, from]
 
 --- the impulse a convolution reverb is made of: noise on each side under
 --- a gain that waits `pre_delay` seconds and then falls away over `decay`
---- (Tone's exponential approach), as Tone renders it
+--- (an exponential approach)
 fn reverb_response[unit, rate]
     n = sound.frames_in[rate, unit.decay + unit.pre_delay]
     p = signal.set_at[signal.param[0.0], 1.0, unit.pre_delay]
@@ -522,7 +521,7 @@ fn reverb_response[unit, rate]
     sound.stereo[rate, source.noise['white', n, 1] .* gain, source.noise['white', n, 2] .* gain]
 
 --- a sound through a convolution reverb: each side convolved with its
---- side of the impulse, scaled as the page's ConvolverNode scales it
+--- side of the impulse, scaled as the page's convolver scales it
 fn _reverberated[unit, s]
     ir = reverb_response[unit, s.rate]
     scale = filter.convolver_scale[concat[ir.left, ir.right], 2, s.rate]
@@ -532,9 +531,9 @@ fn _reverberated[unit, s]
     right = slice[_grown[filter.convolved[w.right, ir.right], n], 0, n] * scale
     sound.stereo[s.rate, left, right]
 
---- a sound through Freeverb: each side's four lowpass combs summed, then
---- four allpasses (the tunings at 44.1 kHz, Jezar's)
-fn _freeverb[unit, s]
+--- a sound through the damped reverb: each side's four lowpass combs
+--- summed, then four allpasses (the tunings in samples at 44.1 kHz)
+fn _damped_reverb[unit, s]
     rate = s.rate
     w = sound.widened[s]
     room = min[0.9999, max[0.0, unit.room_size]]
@@ -551,14 +550,14 @@ fn _freeverb[unit, s]
         right = filter.biquad_filtered[filter.biquad['allpass', hz], right, rate]
     sound.stereo[rate, left, right]
 
---- a JCReverb comb's feedback at a room size: its own resonance moved by
+--- a Schroeder reverb comb's feedback at a room size: its own resonance moved by
 --- the room (from -0.733 to 0.197), within what the page allows
-fn _jc_resonance[base, room]
+fn _comb_resonance[base, room]
     min[0.9999, max[0.0, base - 0.733 + 0.93 * room]]
 
---- a sound through JCReverb: both sides summed through three allpasses,
+--- a sound through the Schroeder reverb: both sides summed through three allpasses,
 --- then two combs a side
-fn _jc_reverb[unit, s]
+fn _schroeder_reverb[unit, s]
     rate = s.rate
     w = sound.widened[s]
     heard = w.left + w.right
@@ -567,7 +566,7 @@ fn _jc_reverb[unit, s]
     delays = [1687.0, 1601.0, 2053.0, 2251.0]
     bases = [0.773, 0.802, 0.753, 0.733]
     combed = for i in range[4]
-        filter.comb[heard, rate, delays[i] / 25000.0, _jc_resonance[bases[i], unit.room_size]]
+        filter.comb[heard, rate, delays[i] / 25000.0, _comb_resonance[bases[i], unit.room_size]]
     sound.stereo[rate, combed[0] + combed[1], combed[2] + combed[3]]
 
 --- a sound through a chorus: each side a delay swept about the chorus's
@@ -656,10 +655,10 @@ fn _wet[unit, s, from]
         return _panned[unit, s, from]
     if unit.name eq 'reverb'
         return _reverberated[unit, s]
-    if unit.name eq 'freeverb'
-        return _freeverb[unit, s]
-    if unit.name eq 'jc_reverb'
-        return _jc_reverb[unit, s]
+    if unit.name eq 'damped_reverb'
+        return _damped_reverb[unit, s]
+    if unit.name eq 'schroeder_reverb'
+        return _schroeder_reverb[unit, s]
     if unit.name eq 'chorus'
         return _chorused[unit, s, from]
     if unit.name eq 'phaser'
@@ -692,11 +691,11 @@ fn tail_of[unit]
         return min[10.0, unit.window_size + unit.delay + repeats * (trip + unit.window_size)]
     if unit.name eq 'reverb'
         return unit.decay + unit.pre_delay
-    if unit.name eq 'freeverb'
+    if unit.name eq 'damped_reverb'
         room = min[0.9999, max[0.001, unit.room_size]]
         return min[10.0, 1617.0 / 44100.0 * ln[0.001] / ln[room] + 0.05]
-    if unit.name eq 'jc_reverb'
-        room = max[0.001, _jc_resonance[0.802, unit.room_size]]
+    if unit.name eq 'schroeder_reverb'
+        room = max[0.001, _comb_resonance[0.802, unit.room_size]]
         return min[10.0, 2251.0 / 25000.0 * ln[0.001] / ln[room] + 0.05]
     if unit.name eq 'phaser' or unit.name eq 'auto_filter' or unit.name eq 'auto_wah'
         return 0.05
@@ -794,7 +793,7 @@ test each_echo_comes_a_render_quantum_after_its_delay[]
     _where_loud[slice[p.right, 0, 4000], 0.000001] eq [2000, 2128]
     abs[p.right[2128] - 0.5] lt 0.000001
 
-test the_sweeps_start_where_tone_starts_them[]
+test the_sweeps_start_at_their_phase[]
     s = sound.mono[16000.0, _click[400, 0]]
     t = applied[tremolo[], s, 0.0]
     abs[t.left[0] - 0.5] lt 0.000001
@@ -808,9 +807,9 @@ test the_sweeps_start_where_tone_starts_them[]
     abs[w.left[0] - 1.0] lt 0.000000001
     abs[w.right[0]] lt 0.000000001
 
-test the_reverbs_ring_as_tone_rings_them[]
+test the_reverbs_first_ring_after_their_delays[]
     s = sound.mono[16000.0, _click[2000, 0]]
-    jc = applied[jc_reverb[], s, 0.0]
+    jc = applied[schroeder_reverb[], s, 0.0]
     first = 2.0
     for hz in [347.0, 113.0, 37.0]
         c = filter.coefficients[filter.biquad['allpass', hz], 16000.0]
@@ -819,7 +818,7 @@ test the_reverbs_ring_as_tone_rings_them[]
     abs[jc.left[1025] - first] lt 0.000001
     abs[jc.right[1314] - first] lt 0.000001
     abs[first - 1.645748] lt 0.000001
-    fv = applied[freeverb[], s, 0.0]
+    fv = applied[damped_reverb[], s, 0.0]
     _where_loud[slice[fv.left, 0, 600], 0.000001][0] eq 516
     _where_loud[slice[fv.right, 0, 600], 0.000001][0] eq 405
 

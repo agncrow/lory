@@ -1,11 +1,11 @@
---- Model files, read and written by Lory's models as three.js reads and
---- writes them: pick one of six models written below as the text of their
---- files (an OBJ with its MTL, a PLY, an STL, an XYZ, a VTK and an OFF),
---- read when it is picked and drawn in the scene — drag to turn it, the
---- wheel to come nearer. The panel says what the model holds, and a
---- writer's button shows the file Lory writes of it (OBJ, STL, PLY or
---- glTF), as three's exporters write it. In a headset the model stands
---- to the right of the page, and the controller's ray presses the buttons.
+--- 3D model files, read and written by lory.models: pick one of six
+--- models written below as the text of their files (an OBJ with its MTL,
+--- a PLY, an STL, an XYZ, a VTK and an OFF), read when it is picked and
+--- drawn in the scene — drag to turn it, the wheel to come nearer. The
+--- panel says what the model holds, and a writer's button shows the file
+--- Lory writes of it (OBJ, STL, PLY or glTF). In a headset the model
+--- stands to the right of the page, and the controller's ray presses the
+--- buttons.
 use sys
 use math
 use memory
@@ -238,7 +238,7 @@ fn _form_words[form]
 --- writers, and the first lines of the file the chosen one writes
 fn view_of[a, h]
     m = h.model
-    kids = [gui.heading['Models'], gui.note['Files read as three.js reads them, written as its exporters write them. Drag the model to turn it; the wheel brings it nearer.'], gui.label['Model'], gui.select['model', _names[], a.chosen], gui.note[h.told], gui.label['Write it as'], gui.row[[gui.button['obj', 'OBJ'], gui.button['stl', 'STL'], gui.button['ply', 'PLY'], gui.button['gltf', 'glTF']]]]
+    kids = [gui.heading['3D model files'], gui.note['Six model files read, drawn and written again. Drag the model to turn it; the wheel brings it nearer.'], gui.label['Model'], gui.select['model', _names[], a.chosen], gui.note[h.told], gui.label['Write it as'], gui.row[[gui.button['obj', 'OBJ'], gui.button['stl', 'STL'], gui.button['ply', 'PLY'], gui.button['gltf', 'glTF']]]]
     if a.form ne ''
         named = _form_words[a.form]
         kids = push[kids, gui.label['`named`, `h.length` bytes:']]

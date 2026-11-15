@@ -1,0 +1,71 @@
+--- The small apps in a headset: pressed by the right hand's ray, typed
+--- on the keyboard Lory draws while a field has the focus, scrolled by
+--- the thumbstick. The stick is tried on the Spreadsheet's own scroll
+--- area: the Grid example's four rows never overflow theirs.
+use lory
+use lory.gui
+use driver
+use examples.apps.gallery
+use examples.apps.common
+
+test the_counter_counts_a_press_of_the_ray[]
+    shown = driver.started_in_headset['counter']
+    b = common.box_of[shown, 'counter:count']
+    len[b] eq 4
+    driver.aimed_at[100, b]
+    driver.pressed_by_ray[200, b]
+    after = driver.aimed_at[300, b]
+    gallery.seen_now[after.canvas]['count'] eq '1'
+    driver.pressed_by_ray[400, b]
+    again = driver.aimed_at[500, b]
+    gallery.seen_now[again.canvas]['count'] eq '2'
+
+--- the keys of the drawn keyboard pressed one a frame by the ray
+fn _typed_on_keys[shown, words, t]
+    last = shown
+    at = t
+    for ch in split[words, '']
+        for k in gui.keys_of[last.canvas, false]
+            if k.face eq ch
+                b = [k.x, k.y, k.w, k.h]
+                driver.aimed_at[at, b]
+                last = driver.pressed_by_ray[at + 50, b]
+                at = at + 100
+    last
+
+test a_crud_entry_is_typed_on_the_drawn_keyboard[]
+    shown = driver.started_in_headset['crud']
+    first = common.box_of[shown, 'crud:first']
+    driver.aimed_at[100, first]
+    shown = driver.pressed_by_ray[200, first]
+    shown = driver.aimed_at[300, first]
+    shown = _typed_on_keys[shown, 'jane', 400]
+    last = common.box_of[shown, 'crud:last']
+    driver.aimed_at[2000, last]
+    shown = driver.pressed_by_ray[2100, last]
+    shown = driver.aimed_at[2200, last]
+    shown = _typed_on_keys[shown, 'doe', 2300]
+    seen = gallery.seen_now[shown.canvas]
+    seen['first'] eq 'jane'
+    seen['last'] eq 'doe'
+    --- (the keyboard is drawn over the page's lower half while a field
+    --- has the focus, Create under it: a press on the page's empty top
+    --- lets the focus go and the keyboard with it)
+    driver.headset_frame[3800, driver.ray_press[], 900.0, 30.0, 0]
+    shown = driver.headset_frame[3900, '[]', 900.0, 30.0, 0]
+    create = common.box_of[shown, 'crud:create']
+    driver.aimed_at[4000, create]
+    driver.pressed_by_ray[4100, create]
+    done = driver.aimed_at[4200, create]
+    gallery.seen_now[done.canvas]['names'] eq 'Emil, Hans\nMustermann, Max\nTisch, Roman\ndoe, jane'
+
+test the_cells_sheet_scrolls_by_the_thumbstick[]
+    shown = driver.started_in_headset['cells']
+    b = common.box_of[shown, 'cells:cell:B3']
+    before = common.box_of[shown, 'cells:cell:A10']
+    driver.headset_frame[100, '[]', driver.mid_x[b], driver.mid_y[b], 0]
+    driver.headset_frame[200, '[]', driver.mid_x[b], driver.mid_y[b], 1]
+    turned = driver.headset_frame[300, '[]', driver.mid_x[b], driver.mid_y[b], 1]
+    after = common.box_of[turned, 'cells:cell:A10']
+    log['the sheet moved `before[1] - after[1]` pixels up under the stick']
+    before[1] - after[1] gt 50.0

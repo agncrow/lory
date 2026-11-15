@@ -72,7 +72,7 @@ fn _day_words[chosen]
     calendar.format[chosen[0], 'EEE, MMM d', calendar.locale['en-US']]
 
 fn page_of[a]
-    fields = gui.panel[[gui.heading['Pickers'], gui.label['Due'], pickers.control[due_of[], a.due], gui.label['Stay'], pickers.control[stay_of[], a.stay], gui.row[[gui.column[[gui.label['Month'], pickers.control[month_of[], a.month]]], gui.column[[gui.label['Year'], pickers.control[year_of[], a.year]]]]], gui.note['Due `_day_words[a.due]`, staying `pickers.written[stay_of[], a.stay]`.']]]
+    fields = gui.panel[[gui.heading['Dates and times'], gui.label['Due'], pickers.control[due_of[], a.due], gui.label['Stay'], pickers.control[stay_of[], a.stay], gui.row[[gui.column[[gui.label['Month'], pickers.control[month_of[], a.month]]], gui.column[[gui.label['Year'], pickers.control[year_of[], a.year]]]]], gui.note['Due `_day_words[a.due]`, staying `pickers.written[stay_of[], a.stay]`.']]]
     seen = gui.panel[[gui.heading['Seen'], gui.row[[pickers.control[seen_of[], a.seen], pickers.control[at_of[], a.at]], align = 'start'], gui.note['Seen `_day_words[a.seen]` at `pickers.written[at_of[], a.at]`.']]]
     opened = 'Press a meeting to open it.'
     if a.opened ne ''

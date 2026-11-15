@@ -1,5 +1,5 @@
 # vtk DataFile Version 2.0
-Sections three reads its own way, written for Lory's tests: lines after polygons, scalars after colours, a number with a plus sign; its title runs on so that three's first 250 bytes hold the header
+Sections in an unusual order, written for Lory's tests: lines after polygons, scalars after colours, a number with a plus sign; its title runs on so that the first 250 bytes of the file hold nothin
 ASCII
 DATASET POLYDATA
 POINTS 4 float

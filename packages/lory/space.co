@@ -1,5 +1,4 @@
---- Lory in three dimensions (docs/lory-design.md, phase 4): meshes held
---- on the page, drawn lit — a sky and a ground light and a sun, with a
+--- Lory in three dimensions: meshes held on the page, drawn lit — a sky and a ground light and a sun, with a
 --- highlight — through a camera that orbits what it looks at on a screen,
 --- and through the headset's own eyes in one; and models read from glTF
 --- files, their geometry fetched by the page straight into its buffers.
@@ -17,9 +16,8 @@
 --- a box on a screen. Distances are metres: in a headset the floor is at 0
 --- and the reader stands at the origin.
 ---
---- A surface is drawn in a look: `plain[color]`, the standard material
---- (the one Babylon.js's StandardMaterial is: examples/babylon holds the
---- two to each other), or `surface[color, metallic, roughness]`, glTF's
+--- A surface is drawn in a look: `plain[color]`, a plain lit colour with a
+--- highlight, or `surface[color, metallic, roughness]`, glTF's
 --- metallic-roughness material, lit physically in linear light and tone
 --- mapped (ACES) — a glTF model's parts are drawn in their own. The sun
 --- casts shadows where `shadows` is asked for after `scene`, and `level`
@@ -28,10 +26,8 @@
 --- A mesh may also be held as a form (`mesh_form`): triangles drawn by
 --- their indices, lines — segments two vertices each, one line through its
 --- points, or that line closed — or points, with a colour a vertex where
---- it has them, multiplied with its look's: what three.js draws as a Mesh,
---- LineSegments, Line, LineLoop and Points. Lines are a pixel wide, as
---- WebGL draws them (and three's are), and lines and points are lit by
---- nothing; both are drawn in the scene, behind what is nearer, for each
+--- it has them, multiplied with its look's. Lines are a pixel wide, as
+--- WebGL draws them, and lines and points are lit by nothing; both are drawn in the scene, behind what is nearer, for each
 --- eye in a headset. A line measured along (`measured`) is drawn in
 --- dashes by a `dashed` look; points are a size across (`spots`), smaller
 --- far away where the look `shrinks`.
@@ -63,12 +59,12 @@ struct Part [vao, count, indexed, itype, ioffset, mode, matrix, color, image, no
 --- measure is taken at: none where the first is 0), whether it is drawn
 --- pushed a little deeper than it is (so lines along its edges show over
 --- it), and whether it is blended over what is behind it by its alpha;
---- and, where three.js's materials draw it (`basic`, `matte`, `glossy`,
---- `standard`, `facing_colors`: '' where Lory's own light does), which of
+--- and, where the material program draws it (`basic`, `matte`, `glossy`,
+--- `standard`, `facing_colors`: '' where the scene's own light does), which of
 --- them, its highlight's colour and shininess (Phong's), the sides it is
 --- drawn on ('front', 'back' or 'double'), whether it is lit as flat
 --- faces, the picture it is painted with ('' for none), how its picture
---- points are turned (three's texture matrix, nine numbers) and the alpha
+--- points are turned (a texture matrix, nine numbers) and the alpha
 --- below which it is not drawn
 struct Look [color, metal, rough, glow, physical, flat, unit, size, shrinking, dash, pushed, blending, shading, specular, shininess, side, flat_shaded, picture, uv_turn, cutoff]
 
@@ -79,8 +75,8 @@ struct Mesh [name, parts, ready, waiting, lo, hi, ask, url, buffers]
 
 --- what the scene holds between frames: whether its program is made, its
 --- meshes, the next object id, whether the shadows' target is made,
---- whether three's looks' program is made, and the pictures held
-struct Held [made, meshes, next, shadowing, three, pictures]
+--- whether the material program is made, and the pictures held
+struct Held [made, meshes, next, shadowing, materials, pictures]
 
 --- a camera that orbits a point: its turn about the vertical, its tilt,
 --- its distance, the point, and a drag under way
@@ -90,7 +86,7 @@ struct Orbit [yaw, pitch, distance, target, dragging, from_x, from_y, from_yaw, 
 --- below, the sun's, the way the sun's light travels, and the colour of
 --- the highlight it makes on a surface (a light's sum on a surface is held
 --- to 1 once the surface's colour has taken it, then its picture's colour
---- taken and the highlight added, as Babylon.js's standard material does)
+--- taken and the highlight added)
 struct Light [sky, ground, sun, way, shine]
 
 fn _program_id[]
@@ -441,15 +437,12 @@ fn look_at[from, to]
     y = _cross[z, x]
     [x[0], y[0], z[0], 0.0, x[1], y[1], z[1], 0.0, x[2], y[2], z[2], 0.0, 0.0 - _dot[x, from], 0.0 - _dot[y, from], 0.0 - _dot[z, from], 1.0]
 
---- ---- cameras, turns, rays and bounds, as three.js reckons them ----
+--- ---- cameras, turns, rays and bounds ----
 ---
---- Each of these is three's arithmetic step for step, so its numbers are
---- three's own (tests/space/reference.co holds them to three 0.187.0's):
---- matrices are sixteen numbers column by column, quaternions four (x, y,
---- z, w), angles radians but a lens's field of view, which is degrees, as
---- three takes it.
+--- Matrices are sixteen numbers column by column, quaternions four (x, y,
+--- z, w), angles radians but a lens's field of view, which is degrees.
 
---- a camera's lens, as three's PerspectiveCamera makes its projection: the
+--- a camera's lens, a perspective projection: the
 --- vertical field of view in degrees, the width over the height, the
 --- nearest and farthest distances drawn, and how far it is zoomed in
 fn lens[fov, aspect, near, far, zoom = 1.0]
@@ -468,8 +461,7 @@ fn _frustum_matrix[left, right, top, bottom, near, far]
     deep_shift = -2.0 * far * near / (far - near)
     [x, 0.0, 0.0, 0.0, 0.0, y, 0.0, 0.0, a, b, deep_scale, -1.0, 0.0, 0.0, deep_shift, 0.0]
 
---- a lens that sees straight along, as three's OrthographicCamera makes
---- its projection: the box from `left` to `right`, `top` to `bottom`
+--- a lens that sees straight along, an orthographic projection: the box from `left` to `right`, `top` to `bottom`
 --- (from the middle of the view) and `near` to `far` in front, zoomed in
 --- `zoom` times about its middle
 fn lens_straight[left, right, top, bottom, near, far, zoom = 1.0]
@@ -488,8 +480,8 @@ fn _box_matrix[left, right, top, bottom, near, far]
     deep_shift = -(far + near) / (far - near)
     [x, 0.0, 0.0, 0.0, 0.0, y, 0.0, 0.0, 0.0, 0.0, deep_scale, 0.0, a, b, deep_shift, 1.0]
 
---- a vector of length one the way `v` points (three's `normalize`: `v`
---- itself where it has no length)
+--- a vector of length one the way `v` points (`v` itself where it has no
+--- length)
 fn _toward[v]
     l = sqrt[v[0] * v[0] + v[1] * v[1] + v[2] * v[2]]
     if l eq 0.0
@@ -497,9 +489,8 @@ fn _toward[v]
     k = 1.0 / l
     [v[0] * k, v[1] * k, v[2] * k]
 
---- the turn that aims an eye at `place` toward `target`, `up` being up, as
---- three's Matrix4.lookAt makes it (its z the way from the target to the
---- eye); nudged a ten thousandth where `up` is the way it looks
+--- the turn that aims an eye at `place` toward `target`, `up` being up
+--- (its z the way from the target to the eye); nudged a ten thousandth where `up` is the way it looks
 fn aimed[place, target, up]
     z = _sub[place, target]
     if z[0] * z[0] + z[1] * z[1] + z[2] * z[2] eq 0.0
@@ -517,8 +508,7 @@ fn aimed[place, target, up]
     y = _cross[z, x]
     [x[0], x[1], x[2], 0.0, y[0], y[1], y[2], 0.0, z[0], z[1], z[2], 0.0, 0.0, 0.0, 0.0, 1.0]
 
---- a matrix of a place, a turn (a quaternion) and a scale, as three's
---- Matrix4.compose makes it
+--- a matrix of a place, a turn (a quaternion) and a scale
 fn compose[position, q, scale]
     x = q[0]
     y = q[1]
@@ -544,8 +534,7 @@ fn compose[position, q, scale]
 --- where a matrix puts things, how it turns them and how it scales them
 struct Placement [position, quaternion, scale]
 
---- a matrix taken apart into its place, turn and scale, as three's
---- Matrix4.decompose takes it (a matrix that turns inside out has its
+--- a matrix taken apart into its place, turn and scale (a matrix that turns inside out has its
 --- first scale negative; one that flattens everything none of either)
 fn decompose[m]
     position = [m[12], m[13], m[14]]
@@ -563,7 +552,7 @@ fn decompose[m]
     turned = [m[0] * ix, m[1] * ix, m[2] * ix, m[3], m[4] * iy, m[5] * iy, m[6] * iy, m[7], m[8] * iz, m[9] * iz, m[10] * iz, m[11], m[12], m[13], m[14], m[15]]
     Placement[position, quaternion_of_matrix[turned], [sx, sy, sz]]
 
---- a matrix's determinant, as three's Matrix4.determinant reckons it
+--- a matrix's determinant
 fn determinant[m]
     t11 = m[9] * m[14] - m[13] * m[10]
     t12 = m[5] * m[14] - m[13] * m[6]
@@ -573,8 +562,7 @@ fn determinant[m]
     t23 = m[1] * m[6] - m[5] * m[2]
     m[0] * (m[7] * t11 - m[11] * t12 + m[15] * t13) - m[4] * (m[3] * t11 - m[11] * t21 + m[15] * t22) + m[8] * (m[3] * t12 - m[7] * t21 + m[15] * t23) - m[12] * (m[3] * t13 - m[7] * t22 + m[11] * t23)
 
---- a matrix's inverse, as three's Matrix4.invert makes it (all zeros
---- where it has none)
+--- a matrix's inverse (all zeros where it has none)
 fn inverse[m]
     n11 = m[0]
     n21 = m[1]
@@ -610,8 +598,8 @@ fn inverse[m]
     k = 1.0 / volume
     [(n22 * t12 - n32 * t11 + n42 * t10) * k, (n31 * t11 - n21 * t12 - n41 * t10) * k, (n24 * t6 - n34 * t5 + n44 * t4) * k, (n33 * t5 - n23 * t6 - n43 * t4) * k, (n32 * t9 - n12 * t12 - n42 * t8) * k, (n11 * t12 - n31 * t9 + n41 * t8) * k, (n34 * t3 - n14 * t6 - n44 * t2) * k, (n13 * t6 - n33 * t3 + n43 * t2) * k, (n12 * t11 - n22 * t9 + n42 * t7) * k, (n21 * t9 - n11 * t11 - n41 * t7) * k, (n14 * t5 - n24 * t3 + n44 * t1) * k, (n23 * t3 - n13 * t5 - n43 * t1) * k, (n22 * t8 - n12 * t10 - n32 * t7) * k, (n11 * t10 - n21 * t8 + n31 * t7) * k, (n24 * t2 - n14 * t4 - n34 * t1) * k, (n13 * t4 - n23 * t2 + n33 * t1) * k]
 
---- one matrix times another (`a` then applied after `b`), as three's
---- Matrix4.multiplyMatrices adds the products, left to right
+--- one matrix times another (`a` then applied after `b`), the products
+--- added left to right
 fn times[a, b]
     out = []
     for k in range[16]
@@ -627,8 +615,7 @@ fn largest_scale[m]
     z = m[8] * m[8] + m[9] * m[9] + m[10] * m[10]
     sqrt[max[x, max[y, z]]]
 
---- where a matrix puts a point, divided through by its fourth number, as
---- three's Vector3.applyMatrix4 puts it
+--- where a matrix puts a point, divided through by its fourth number
 fn point_through[m, p]
     x = p[0]
     y = p[1]
@@ -636,8 +623,7 @@ fn point_through[m, p]
     w = 1.0 / (m[3] * x + m[7] * y + m[11] * z + m[15])
     [(m[0] * x + m[4] * y + m[8] * z + m[12]) * w, (m[1] * x + m[5] * y + m[9] * z + m[13]) * w, (m[2] * x + m[6] * y + m[10] * z + m[14]) * w]
 
---- the way a matrix turns a way, of length one (three's
---- `transformDirection`)
+--- the way a matrix turns a way, of length one
 fn way_through[m, v]
     x = v[0]
     y = v[1]
@@ -653,8 +639,7 @@ fn quaternion_of_axis[axis, angle]
     [axis[0] * s, axis[1] * s, axis[2] * s, cos[half]]
 
 --- the quaternion of turns about x, y and z (radians) taken in an order —
---- `XYZ`, `YXZ`, `ZXY`, `ZYX`, `YZX` or `XZY` — as three's Euler angles
---- are (three's Quaternion.setFromEuler)
+--- `XYZ`, `YXZ`, `ZXY`, `ZYX`, `YZX` or `XZY`
 fn quaternion_of_angles[angles, order]
     c1 = cos[angles[0] / 2.0]
     c2 = cos[angles[1] / 2.0]
@@ -674,8 +659,7 @@ fn quaternion_of_angles[angles, order]
         return [s1 * c2 * c3 - c1 * s2 * s3, c1 * s2 * c3 - s1 * c2 * s3, c1 * c2 * s3 + s1 * s2 * c3, c1 * c2 * c3 + s1 * s2 * s3]
     [s1 * c2 * c3 + c1 * s2 * s3, c1 * s2 * c3 - s1 * c2 * s3, c1 * c2 * s3 + s1 * s2 * c3, c1 * c2 * c3 - s1 * s2 * s3]
 
---- the quaternion of a matrix's turn (its upper three by three, unscaled),
---- as three's Quaternion.setFromRotationMatrix finds it
+--- the quaternion of a matrix's turn (its upper three by three, unscaled)
 fn quaternion_of_matrix[m]
     m11 = m[0]
     m12 = m[4]
@@ -700,13 +684,13 @@ fn quaternion_of_matrix[m]
     [(m13 + m31) / s, (m23 + m32) / s, 0.25 * s, (m21 - m12) / s]
 
 --- one quaternion's turn after another's (`a` times `b`: `b` turns
---- first), as three's multiplyQuaternions makes it
+--- first)
 fn quaternion_times[a, b]
     [a[0] * b[3] + a[3] * b[0] + a[1] * b[2] - a[2] * b[1], a[1] * b[3] + a[3] * b[1] + a[2] * b[0] - a[0] * b[2], a[2] * b[3] + a[3] * b[2] + a[0] * b[1] - a[1] * b[0], a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]]
 
 --- the turn `t` of the way from `a` to `b` (0 is `a`, 1 is `b`), along
---- the shorter arc, as three's Quaternion.slerp turns it (nearly the
---- same turns are blended straight, then made of length one)
+--- the shorter arc (nearly the same turns are blended straight, then made
+--- of length one)
 fn turn_between[a, b, t]
     x = b[0]
     y = b[1]
@@ -733,14 +717,13 @@ fn turn_between[a, b, t]
     k = 1.0 / l
     [q[0] * k, q[1] * k, q[2] * k, q[3] * k]
 
---- a matrix of a quaternion's turn alone (three's
---- makeRotationFromQuaternion: composed at the origin, unscaled)
+--- a matrix of a quaternion's turn alone (composed at the origin,
+--- unscaled)
 fn turn_matrix[q]
     compose[[0.0, 0.0, 0.0], q, [1.0, 1.0, 1.0]]
 
 --- the turns about x, y and z, taken in an order, that make a matrix's
---- turn, as three's Euler.setFromRotationMatrix finds them (where the
---- middle turn is a quarter, the last is none)
+--- turn (where the middle turn is a quarter, the last is none)
 fn angles_of_matrix[m, order]
     m11 = m[0]
     m12 = m[4]
@@ -797,8 +780,8 @@ fn angles_of_quaternion[q, order]
 struct Camera [projection, unprojection, world, viewing]
 
 --- a camera with a lens (`lens` or `lens_straight`) standing at `position`
---- and turned to look at `target`, `up` being up, as three's camera is
---- placed, turned by `lookAt` and its matrices brought up to date
+--- and turned to look at `target`, `up` being up, its matrices brought up
+--- to date
 fn camera_at[projection, position, target, up]
     q = quaternion_of_matrix[aimed[position, target, up]]
     world = compose[position, q, [1.0, 1.0, 1.0]]
@@ -808,8 +791,7 @@ fn camera_at[projection, position, target, up]
 fn camera_placed[projection, world]
     Camera[projection, inverse[projection], world, _view_of[world]]
 
---- the view from a camera's world matrix, as three's Camera keeps it: the
---- matrix undone, made again unscaled first where its scale comes out
+--- the view from a camera's world matrix: the matrix undone, made again unscaled first where its scale comes out
 --- other than one
 fn _view_of[world]
     p = decompose[world]
@@ -826,8 +808,7 @@ fn straight_lens[cam]
     cam.projection[15] eq 1.0
 
 --- the ray through a point of the camera's view, `x` and `y` from -1 to
---- 1 across and up it, as three's Raycaster.setFromCamera casts it: from
---- the eye through the point on a lens; from the point, straight ahead,
+--- 1 across and up it: from the eye through the point on a lens; from the point, straight ahead,
 --- on a straight one
 fn ray_from[cam, x, y]
     if straight_lens[cam]
@@ -879,7 +860,7 @@ fn _missed[]
     Meeting[false, [0.0, 0.0, 0.0]]
 
 --- where a ray first meets a box (its lowest and highest corners), from
---- outside or from within it, as three's Ray.intersectBox finds it
+--- outside or from within it
 fn meets_box[r, lo, hi]
     o = r.from
     ix = 1.0 / r.way[0]
@@ -918,8 +899,7 @@ fn meets_box[r, lo, hi]
         return Meeting[true, _along[r, tmin]]
     Meeting[true, _along[r, tmax]]
 
---- where a ray first meets a sphere (from within it, where it leaves),
---- as three's Ray.intersectSphere finds it
+--- where a ray first meets a sphere (from within it, where it leaves)
 fn meets_sphere[r, center, radius]
     if radius lt 0.0
         return _missed[]
@@ -943,8 +923,7 @@ fn meets_sphere[r, center, radius]
     Meeting[true, _along[r, t0]]
 
 --- where a ray meets a triangle — from its front alone where `culled`
---- (its corners turning anticlockwise as the ray sees them) — as three's
---- Ray.intersectTriangle finds it, watertight: a ray along an edge two
+--- (its corners turning anticlockwise as the ray sees them), watertight: a ray along an edge two
 --- triangles share meets one of them
 fn meets_triangle[r, a, b, c, culled]
     o = r.from
@@ -1018,8 +997,7 @@ fn meets_triangle[r, a, b, c, culled]
 --- squared, and the nearest points on the ray and on the segment
 struct Nearest [apart, on_ray, on_segment]
 
---- how near a ray comes to a segment, as three's Ray.distanceSqToSegment
---- reckons it
+--- how near a ray comes to a segment
 fn nearest_to_segment[r, v0, v1]
     center = [(v0[0] + v1[0]) * 0.5, (v0[1] + v1[1]) * 0.5, (v0[2] + v1[2]) * 0.5]
     way = _toward[[v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]]]
@@ -1080,7 +1058,7 @@ fn nearest_to_segment[r, v0, v1]
     Nearest[apart, _along[r, s0], [center[0] + way[0] * s1, center[1] + way[1] * s1, center[2] + way[2] * s1]]
 
 --- how far a ray passes from a point, squared (from its start, where the
---- point is behind it), as three's Ray.distanceSqToPoint reckons it
+--- point is behind it)
 fn apart_from_ray[r, p]
     o = r.from
     d = r.way
@@ -1099,15 +1077,14 @@ fn nearest_on_ray[r, p]
         return [o[0], o[1], o[2]]
     _along[r, along]
 
---- a ray carried by a matrix: its start put, its way turned (three's
---- Ray.applyMatrix4)
+--- a ray carried by a matrix: its start put, its way turned
 fn ray_through[r, m]
     Ray[point_through[m, r.from], way_through[m, r.way], r.there]
 
 --- ---- bounds ----
 
 --- the box that holds points (three numbers each, in single precision as
---- three's buffers hold them): its lowest corner, then its highest
+--- the screen's buffers hold them): its lowest corner, then its highest
 fn box_of[points]
     held = _single[points]
     lo = [_huge[], _huge[], _huge[]]
@@ -1120,8 +1097,7 @@ fn box_of[points]
         i = i + 3
     [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]]
 
---- the sphere that holds points, as three's computeBoundingSphere finds
---- it: about the middle of their box, out to the farthest (its centre,
+--- the sphere that holds points: about the middle of their box, out to the farthest (its centre,
 --- then its radius)
 fn sphere_of[points]
     held = _single[points]
@@ -1155,9 +1131,8 @@ fn sphere_through[s, m]
 --- ---- what a camera sees ----
 
 --- the six planes of what a matrix (a projection times a view) sees, four
---- numbers each — the way a plane faces, inward, and how far it is — as
---- three's Frustum.setFromProjectionMatrix finds them: right, left,
---- bottom, top, far and near
+--- numbers each — the way a plane faces, inward, and how far it is: right,
+--- left, bottom, top, far and near
 fn frustum_of[m]
     planes = []
     for p in [[m[3] - m[0], m[7] - m[4], m[11] - m[8], m[15] - m[12]], [m[3] + m[0], m[7] + m[4], m[11] + m[8], m[15] + m[12]], [m[3] + m[1], m[7] + m[5], m[11] + m[9], m[15] + m[13]], [m[3] - m[1], m[7] - m[5], m[11] - m[9], m[15] - m[13]], [m[3] - m[2], m[7] - m[6], m[11] - m[10], m[15] - m[14]], [m[3] + m[2], m[7] + m[6], m[11] + m[10], m[15] + m[14]]]
@@ -1165,8 +1140,7 @@ fn frustum_of[m]
         planes = push[push[push[push[planes, p[0] * k], p[1] * k], p[2] * k], p[3] * k]
     planes
 
---- whether any of a sphere is inside the planes (as three's
---- Frustum.intersectsSphere tells)
+--- whether any of a sphere is inside the planes
 fn holds_sphere[planes, center, radius]
     for i in range[6]
         p = i * 4
@@ -1175,7 +1149,7 @@ fn holds_sphere[planes, center, radius]
     true
 
 --- whether any of a box is inside the planes: its corner farthest along
---- each plane's way is (three's Frustum.intersectsBox)
+--- each plane's way is
 fn holds_box[planes, lo, hi]
     for i in range[6]
         p = i * 4
@@ -1193,7 +1167,7 @@ fn holds_box[planes, lo, hi]
     true
 
 --- whether a camera sees any of a form put by a matrix: its sphere, put
---- there, inside what the camera sees (three's frustum culling)
+--- there, inside what the camera sees (frustum culling)
 fn in_sight[cam, f, matrix]
     s = sphere_through[sphere_of[f.shape.at], matrix]
     holds_sphere[frustum_of[seen_through[cam]], [s[0], s[1], s[2]], s[3]]
@@ -1210,20 +1184,19 @@ struct Hit [distance, point, index, face, facing, off_ray]
 fn _no_hits[]
     slice[[Hit[0.0, [0.0, 0.0, 0.0], 0, [0, 0, 0], [0.0, 0.0, 0.0], 0.0]], 0, 0]
 
---- what a ray hits of a form put by a matrix, nearest first, as three's
---- Raycaster.intersectObject finds them on a Mesh, a Line, LineSegments, a
---- LineLoop or Points: triangles from their front (`side` 'front'), back
+--- what a ray hits of a form put by a matrix, nearest first, on
+--- triangles, lines or points: triangles from their front (`side` 'front'), back
 --- ('back') or either ('double'); lines and points within `threshold` of
 --- the ray, in the scene's units; nothing nearer than `near` or farther
 --- than `far` (no limit where it is less than 0). The form's vertices are
---- read in single precision, as three's buffers hold them
+--- read in single precision, as the screen's buffers hold them
 fn hits[r, f, matrix, side = 'front', threshold = 1.0, near = 0.0, far = -1.0]
     placed = decompose[matrix]
     hits_scaled[r, f, matrix, placed.scale, side, threshold, near, far]
 
 --- what a ray hits, as `hits` finds it, a line's or a point's threshold
---- taken in the thing's own units by `scale`, the scale it was given (three
---- divides the threshold by that scale's mean)
+--- taken in the thing's own units by `scale`, the scale it was given (the
+--- threshold is divided by that scale's mean)
 fn hits_scaled[r, f, matrix, scale, side, threshold, near, far]
     if not r.there or len[f.shape.at] eq 0
         return _no_hits[]
@@ -1231,8 +1204,7 @@ fn hits_scaled[r, f, matrix, scale, side, threshold, near, far]
         return _line_hits[r, f, matrix, scale, threshold, near, far]
     _mesh_hits[r, f, matrix, side, near, far]
 
---- the way a triangle faces, of length one (none where it has no area),
---- as three's Triangle.getNormal finds it
+--- the way a triangle faces, of length one (none where it has no area)
 fn _facing_of[a, b, c]
     n = _cross[[c[0] - b[0], c[1] - b[1], c[2] - b[2]], [a[0] - b[0], a[1] - b[1], a[2] - b[2]]]
     square = n[0] * n[0] + n[1] * n[1] + n[2] * n[2]
@@ -1642,7 +1614,7 @@ fn triangles[s]
     Form[Shape[_float_list[s.at], _float_list[s.facing], _float_list[s.uv]], [], [], 'TRIANGLES']
 
 --- a shape's corners drawn as triangles by index: each three indices a
---- triangle, as three.js draws an indexed BufferGeometry
+--- triangle
 fn indexed[s, indices]
     Form[Shape[_float_list[s.at], _float_list[s.facing], _float_list[s.uv]], [], _int_list[indices], 'TRIANGLES']
 
@@ -1650,21 +1622,19 @@ fn indexed[s, indices]
 fn _lined[points, mode]
     Form[Shape[_float_list[points], [], []], [], [], mode]
 
---- segments: each two points (three numbers each) a line, as three's
---- LineSegments draws them
+--- segments: each two points (three numbers each) a line
 fn segments[points]
     _lined[points, 'LINES']
 
---- one line through the points in turn (three's Line)
+--- one line through the points in turn
 fn polyline[points]
     _lined[points, 'LINE_STRIP']
 
---- the line through the points closed, back to the first (three's
---- LineLoop)
+--- the line through the points closed, back to the first
 fn closed_line[points]
     _lined[points, 'LINE_LOOP']
 
---- the points themselves (three's Points), drawn by a look of `spots`
+--- the points themselves, drawn by a look of `spots`
 fn dots[points]
     _lined[points, 'POINTS']
 
@@ -1684,11 +1654,10 @@ fn by_index[f, indices]
 fn form_count[f]
     len[f.shape.at] / 3
 
---- the lines measured along, as three's `computeLineDistances` measures
---- them: each vertex's distance from the line's start, along it (for
+--- the lines measured along: each vertex's distance from the line's start, along it (for
 --- segments, along each in turn, a segment starting where the one before
 --- it ended) — what a `dashed` look's dashes are laid along. The vertices
---- are read in single precision, as three's buffers hold them, and the
+--- are read in single precision, as the screen's buffers hold them, and the
 --- measure is kept as each vertex's first picture number
 fn measured[f]
     at = _single[f.shape.at]
@@ -1708,7 +1677,7 @@ fn measured[f]
     f.shape.uv = _measures_as_uv[gone]
     f
 
---- the numbers as single precision keeps them, as three's Float32Arrays do
+--- the numbers as single precision (32-bit floats) keeps them
 fn _single[numbers]
     if len[numbers] eq 0
         return numbers
@@ -1943,7 +1912,7 @@ fn shining[l, color]
 fn _black[]
     lory.Color[0.0, 0.0, 0.0, 1.0]
 
---- (three's Phong highlight, 0x111111)
+--- (the glossy look's default highlight, 0x111111)
 fn _dim_specular[]
     lory.Color[17.0 / 255.0, 17.0 / 255.0, 17.0 / 255.0, 1.0]
 
@@ -1978,44 +1947,41 @@ fn glowing[look, color]
 fn _no_dashes[]
     [0.0, 0.0, 1.0]
 
---- points in a colour, `size` pixels across at every distance (three's
---- PointsMaterial without `sizeAttenuation`), lit by nothing
+--- points in a colour, `size` pixels across at every distance, lit by
+--- nothing
 fn spots[color, size]
     look = shown[color]
     look.size = 0.0 + size
     look
 
---- the points drawn smaller far away, as three's `sizeAttenuation` draws
---- them: `size` across where they stand as far off as half the drawing is
+--- the points drawn smaller far away: `size` across where they stand as far off as half the drawing is
 --- high in pixels, and in proportion nearer or farther
 fn shrinks[look]
     look.shrinking = true
     look
 
---- the lines drawn in dashes, as three's LineDashedMaterial draws them:
---- each `dash` long, then a gap `gap` long, along what `measured` measured
+--- the lines drawn in dashes: each `dash` long, then a gap `gap` long, along what `measured` measured
 --- times `scale`
 fn dashed[look, dash, gap, scale]
     look.dash = [0.0 + dash, 0.0 + gap, 0.0 + scale]
     look
 
 --- the surface drawn a little deeper than it is (WebGL's polygon offset,
---- 1 and 1, as three's examples push a solid under its edges), so lines
+--- 1 and 1), so lines
 --- drawn along its edges show over it
 fn pushed_back[look]
     look.pushed = true
     look
 
 --- the surface blended over what is drawn behind it by its colour's alpha
---- (three's transparent materials: what is behind shows through, and it
---- leaves the depth as it was). Draw what is blended after what is not,
+--- (what is behind shows through, and it leaves the depth as it was). Draw what is blended after what is not,
 --- the farthest first (`farthest_first`)
 fn blended[look]
     look.blending = true
     look
 
---- the order to draw things placed by these matrices in, farthest first,
---- as three sorts what it blends: by depth in the scene's eye on a screen
+--- the order to draw things placed by these matrices in, farthest first:
+--- by depth in the scene's eye on a screen
 --- (where each matrix puts its origin), by distance from the head in a
 --- headset
 fn farthest_first[c, matrices]
@@ -2043,8 +2009,8 @@ fn within[c, place]
     c.box = [0.0 + place[0], 0.0 + place[1], 0.0 + place[2], 0.0 + place[3]]
     c
 
---- one of several views of the scene on a screen (three's viewport and
---- scissor, rendered once a view): what is drawn after this, until the
+--- one of several views of the scene on a screen (a viewport and scissor,
+--- rendered once a view): what is drawn after this, until the
 --- next view, is drawn inside `place` (left, top, width, height in
 --- pixels), over that box cleared to `color` (and its depth). Begin each
 --- view's scene after it (`through`, `scene`), so its lens is made for
@@ -2130,7 +2096,7 @@ fn through[c, cam, l]
 fn proportion[c]
     _aspect[c]
 
---- (what three's looks are given this scene, kept for its draws; it is
+--- (what the material program is given this scene, kept for its draws; it is
 --- begun when the first asks for it)
 fn _begin_split[projection, viewing, straight]
     remember['lory.space.split', Split[projection, viewing, straight, false, _no_split[].planes, false]]
@@ -2190,26 +2156,26 @@ fn cut[c, planes]
     held = []
     for x in planes
         held = push[held, 0.0 + x]
-    --- (four planes for three's looks: the rest keep everything)
+    --- (four planes for the material program: the rest keep everything)
     while len[held] lt 16
         held = push[push[push[push[held, 0.0], 0.0], 0.0], 1.0]
-    _cut_three[c, held, true]
+    _cut_materials[c, held, true]
 
 fn uncut[c]
     c.deep = push[c.deep, ['uniform1f', '#`_cutting_id[]`', '0']]
-    _cut_three[c, _no_split[].planes, false]
+    _cut_materials[c, _no_split[].planes, false]
 
---- (three's looks cut as the scene is: now, where they are begun, else
+--- (the material program cut as the scene is: now, where they are begun, else
 --- as they begin)
-fn _cut_three[c, planes, cutting]
+fn _cut_materials[c, planes, cutting]
     s = _split_of[c]
     s.planes = planes
     s.cutting = cutting
     remember['lory.space.split', s]
     if not s.begun
         return c
-    deep = push[c.deep, ['useProgram', '#`_three_program_id[]`']]
-    deep = _three_cut[deep, c, s]
+    deep = push[c.deep, ['useProgram', '#`_material_program_id[]`']]
+    deep = _material_cut[deep, c, s]
     c.deep = push[deep, ['useProgram', '#`_program_id[]`']]
     c
 
@@ -2320,7 +2286,7 @@ fn draw[c, name, matrix, look]
     if m.name eq '' or not m.ready
         return c
     if look.shading ne ''
-        return _draw_three[c, m, matrix, look]
+        return _draw_material[c, m, matrix, look]
     deep = c.deep
     early = c.early
     casting = len[early] gt 0
@@ -2337,7 +2303,7 @@ fn draw[c, name, matrix, look]
     set_points = was.points
     set_dashes = was.dashes
     --- (a point's size in pixels, and the scale it shrinks by: half the
-    --- height of what it is drawn in, as three takes it)
+    --- height of what it is drawn in)
     ratio = lory.px[c]
     high = 0.0 + c.height
     if c.box[2] gt 0.0
@@ -2458,38 +2424,34 @@ fn _matrix[m]
     joined = join[parts, ' ']
     'f32:`joined`'
 
---- ---- three.js's materials, lit by its lamps ----
+--- ---- materials, lit by lamps ----
 ---
---- A second program draws a look as three.js's materials draw a surface:
---- its basic, Lambert, Phong, standard and normal materials (`basic`,
---- `matte`, `glossy`, `standard`, `facing_colors`), lit by its lights
---- (`lamps`: ambient, hemisphere, directional, point and spot), with its
---- colour management (a look's colours are given as they are seen, lit
+--- A second program, the material program, draws a surface in one of five
+--- materials — unlit, Lambert, Phong, physically based and coloured by its
+--- facing (`basic`, `matte`, `glossy`, `standard`, `facing_colors`) — lit
+--- by lamps (`lamps`: ambient, hemisphere, directional, point and spot),
+--- with colour management (a look's colours are given as they are seen, lit
 --- in linear light and written back as the screen shows them), its fog
---- (`fog`, `haze`), its sides and flat shading, a picture on a surface or
+--- (`fog`, `haze`), sides and flat shading, a picture on a surface or
 --- a point (`texture`, `with_texture`), copies of a mesh drawn at once
 --- (`mesh_copies`), dashes, and the shadows of one lamp (`casting`). On a
---- screen it is given what three gives its shaders — the lens's
---- projection, and each draw's view times its matrix, worked out here as
---- three works them — so a picture three draws unlit is the picture drawn
---- here pixel for pixel (tests/threejs/picture.py holds them so); in a
---- headset each eye's matrix is given it and it lights the world itself.
---- Its standard material takes the light a rough surface loses to its
---- own bumps from a published fit of the integral (three reads a table
---- of it), so a standard surface may differ from three's by a few levels
---- of 255.
+--- screen it is given the lens's projection, and each draw's view times
+--- its matrix, worked out here; in a headset each eye's matrix is given it
+--- and it lights the world itself. Its standard material takes the light a
+--- rough surface loses to its own bumps from a published fit of the
+--- integral, not a table.
 
-fn _three_program_id[]
+fn _material_program_id[]
     18
 
-fn _three_vertex_id[]
+fn _material_vertex_id[]
     19
 
-fn _three_fragment_id[]
+fn _material_fragment_id[]
     48
 
 --- the second program's uniforms, from 53 on (the page's object ids)
-fn _three_names[]
+fn _material_names[]
     ['eye', 'model', 'turning', 'uv_turn', 'points', 'how', 'lens', 'diffuse', 'emissive', 'specular', 'finish', 'eyepos', 'map', 'ambient', 'hemi_way', 'hemi_sky', 'hemi_ground', 'counts', 'sun_way', 'sun_color', 'bulb_at', 'bulb_color', 'bulb_reach', 'spot_at', 'spot_way', 'spot_color', 'spot_cone', 'fog', 'fog_color', 'dash', 'cut', 'cutting', 'shadow_map', 'shadow_eye', 'shadow_how', 'sides']
 
 --- a uniform's id: the ones a draw sets told at once, the rest looked up
@@ -2516,14 +2478,14 @@ fn _u[name]
         return '#82'
     if name eq 'sides'
         return '#88'
-    names = _three_names[]
+    names = _material_names[]
     at = 0
     for i in range[len[names]]
         if names[i] eq name
             at = i
     '#`53 + at`'
 
-fn _three_shaders[]
+fn _material_shaders[]
     vs = '#version 300 es
 layout(location = 0) in vec3 at;
 layout(location = 1) in vec3 facing;
@@ -2790,13 +2752,13 @@ void main() {
     [vs, fs]
 
 --- the second program's calls, once
-fn _three_setup[c]
-    shaders = _three_shaders[]
+fn _material_setup[c]
+    shaders = _material_shaders[]
     vs = shaders[0]
     fs = shaders[1]
-    v = '#`_three_vertex_id[]`'
-    f = '#`_three_fragment_id[]`'
-    p = '#`_three_program_id[]`'
+    v = '#`_material_vertex_id[]`'
+    f = '#`_material_fragment_id[]`'
+    p = '#`_material_program_id[]`'
     asks = c.asks
     asks = push[asks, [v, 'createShader', 'VERTEX_SHADER']]
     asks = push[asks, ['shaderSource', v, '=`vs`']]
@@ -2808,14 +2770,13 @@ fn _three_setup[c]
     asks = push[asks, ['attachShader', p, v]]
     asks = push[asks, ['attachShader', p, f]]
     asks = push[asks, ['linkProgram', p]]
-    for u in _three_names[]
+    for u in _material_names[]
         asks = push[asks, [_u[u], 'getUniformLocation', p, '=`u`']]
     c.asks = asks
     c
 
 --- what a scene gives the second program: its lens's projection and its
---- view (on a screen the view goes into each draw's matrix, as three's
---- does; in a headset each eye's whole matrix is given), whether the lens
+--- view (on a screen the view goes into each draw's matrix; in a headset each eye's whole matrix is given), whether the lens
 --- sees straight along, whether the program has been begun in this scene,
 --- and the planes the scene is cut by (and whether it is)
 struct Split [projection, viewing, straight, begun, planes, cutting]
@@ -2826,20 +2787,20 @@ fn _no_split[]
 fn _split_of[c]
     recall['lory.space.split', _no_split[]]
 
---- the second program begun in this scene, the first time a look of
---- three's, a lamp or the fog asks for it: its program made (once on the
+--- the second program begun in this scene, the first time a material
+--- look, a lamp or the fog asks for it: its program made (once on the
 --- page), told the lens and the eye, lit by nothing, cut as the scene is
-fn _three_begun[c]
+fn _material_begun[c]
     s = _split_of[c]
     if s.begun
         return c
     h = _held[]
-    if not h.three
-        c = _three_setup[c]
-        h.three = true
+    if not h.materials
+        c = _material_setup[c]
+        h.materials = true
         remember['lory.space', h]
     deep = c.deep
-    deep = push[deep, ['useProgram', '#`_three_program_id[]`']]
+    deep = push[deep, ['useProgram', '#`_material_program_id[]`']]
     if xr.in_headset[c]
         deep = push[deep, ['uniformMatrix4fv', _u['eye'], 'false', '@eye']]
         deep = push[deep, ['uniform3fv', _u['eyepos'], '@eyepos']]
@@ -2860,7 +2821,7 @@ fn _three_begun[c]
     deep = push[deep, ['uniform3f', _u['hemi_way'], '0', '1', '0']]
     deep = push[deep, ['uniform4f', _u['fog'], '0', '0', '0', '0']]
     deep = push[deep, ['uniform4f', _u['shadow_how'], '0', '0', '0', '0']]
-    deep = _three_cut[deep, c, s]
+    deep = _material_cut[deep, c, s]
     deep = push[deep, ['useProgram', '#`_program_id[]`']]
     c.deep = deep
     s.begun = true
@@ -2869,7 +2830,7 @@ fn _three_begun[c]
 
 --- the scene's planes given the second program (while it is in use): on
 --- a screen turned into the view, where its points are
-fn _three_cut[deep, c, s]
+fn _material_cut[deep, c, s]
     if not s.cutting
         return push[deep, ['uniform1f', _u['cutting'], '0']]
     planes = s.planes
@@ -2884,25 +2845,24 @@ fn _three_cut[deep, c, s]
     deep = push[deep, ['uniform4fv', _u['cut'], _matrix[planes]]]
     push[deep, ['uniform1f', _u['cutting'], '1']]
 
---- ---- three's colours ----
+--- ---- colours in linear light ----
 
---- a part of a colour taken into linear light, as three's colour
---- management takes it (its SRGBToLinear)
+--- a part of a colour taken into linear light (sRGB to linear)
 fn _to_linear[x]
     if x lt 0.04045
         return x * 0.0773993808
     (x * 0.9478672986 + 0.0521327014) ^ 2.4
 
---- a part of a colour in linear light as the screen shows it (three's
---- LinearToSRGB)
+--- a part of a colour in linear light as the screen shows it (linear to
+--- sRGB)
 fn _to_seen[x]
     if x lt 0.0031308
         return x * 12.92
     1.055 * (x ^ 0.41666) - 0.055
 
---- a colour's red, green and blue in linear light, as three holds a
---- colour it is given (and as it reads a geometry's colours: give a form
---- these where it is drawn in three's looks)
+--- a colour's red, green and blue in linear light, as the material program
+--- holds a colour it is given (and as it reads a form's colours: give a
+--- form these where it is drawn in a material look)
 fn linear_of[color]
     [_to_linear[color.r], _to_linear[color.g], _to_linear[color.b]]
 
@@ -2910,9 +2870,9 @@ fn _linear_text[color]
     k = linear_of[color]
     'f32:`k[0]` `k[1]` `k[2]`'
 
---- ---- three's lamps ----
+--- ---- lamps ----
 
---- a light of three.js's: its form ('ambient', 'hemisphere',
+--- a lamp: its form ('ambient', 'hemisphere',
 --- 'directional', 'point' or 'spot'), its colour (as seen) and intensity,
 --- where it stands and what it is aimed at, the colour from below (a
 --- hemisphere's), how far it reaches (0: without end) and how it falls
@@ -2926,35 +2886,33 @@ struct Lamp [form, color, intensity, at, toward, under, reach, decay, angle, pen
 fn _no_shadow[]
     [5.0, 0.5, 500.0, 0.0, 1.0]
 
---- light from everywhere alike (three's AmbientLight)
+--- light from everywhere alike
 fn ambient[color, intensity]
     Lamp['ambient', color, 0.0 + intensity, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], color, 0.0, 2.0, 0.0, 0.0, false, _no_shadow[]]
 
 --- the sky's colour from above and the ground's from below, blended by
---- the way a surface faces (three's HemisphereLight, standing straight
---- above: its `at` is the way up)
+--- the way a surface faces (standing straight above: its `at` is the way
+--- up)
 fn hemisphere[sky, under, intensity]
     Lamp['hemisphere', sky, 0.0 + intensity, [0.0, 1.0, 0.0], [0.0, 0.0, 0.0], under, 0.0, 2.0, 0.0, 0.0, false, _no_shadow[]]
 
---- light from far off, all one way: from `at` toward `toward` (three's
---- DirectionalLight and its target)
+--- light from far off, all one way: from `at` toward `toward`
 fn directional[color, intensity, at, toward]
     Lamp['directional', color, 0.0 + intensity, at, toward, color, 0.0, 2.0, 0.0, 0.0, false, _no_shadow[]]
 
 --- light from a point every way, falling off with distance as `decay`
---- says (2: as light does), to nothing at `reach` (0: never) — three's
---- PointLight
+--- says (2: as light does), to nothing at `reach` (0: never)
 fn bulb[color, intensity, at, reach, decay]
     Lamp['point', color, 0.0 + intensity, at, [0.0, 0.0, 0.0], color, 0.0 + reach, 0.0 + decay, 0.0, 0.0, false, _no_shadow[]]
 
 --- light from a point in a cone toward `toward`, `angle` (radians) from
 --- its middle to its edge, its edge softened over `penumbra` of it (0 to
---- 1), falling off as a bulb's does — three's SpotLight
+--- 1), falling off as a bulb's does
 fn spotlight[color, intensity, at, toward, angle, penumbra, reach, decay]
     Lamp['spot', color, 0.0 + intensity, at, toward, color, 0.0 + reach, 0.0 + decay, 0.0 + angle, 0.0 + penumbra, false, _no_shadow[]]
 
---- the lamp casting shadows (a directional light's or a spot's), as
---- three's `castShadow` and its shadow's camera: a directional light's
+--- the lamp casting shadows (a directional light's or a spot's) through
+--- its shadow's camera: a directional light's
 --- drawn through a box `half` metres either side of it, a spot's through
 --- its cone; from `near` to `far`, its depth biased by `bias`
 fn casting[lamp, half, near, far, bias]
@@ -2962,14 +2920,14 @@ fn casting[lamp, half, near, far, bias]
     lamp.shadow = [0.0 + half, 0.0 + near, 0.0 + far, 0.0 + bias, 1.0]
     lamp
 
---- the scene's looks of three's lit by these lamps (at most four
+--- the scene's material looks lit by these lamps (at most four
 --- directional, four point and four spot lights, the ambient lights
---- summed, one hemisphere's), as three sends its lights to its shaders:
+--- summed, one hemisphere's), sent to the shaders as
 --- each light's colour in linear light times its intensity, and on a
 --- screen where it is and which way it shines turned into the view. The
 --- first lamp that casts shadows has them drawn (`casting`)
 fn lamps[c, list]
-    c = _three_begun[c]
+    c = _material_begun[c]
     s = _split_of[c]
     on_screen = not xr.in_headset[c]
     v = s.viewing
@@ -3029,7 +2987,7 @@ fn lamps[c, list]
             spot_cones = push[spot_cones, [lamp.reach, lamp.decay, cos[lamp.angle], cos[lamp.angle * (1.0 - lamp.penumbra)]]]
         i = i + 1
     deep = c.deep
-    deep = push[deep, ['useProgram', '#`_three_program_id[]`']]
+    deep = push[deep, ['useProgram', '#`_material_program_id[]`']]
     deep = push[deep, ['uniform3f', _u['ambient'], str[glow[0]], str[glow[1]], str[glow[2]]]]
     deep = push[deep, ['uniform3f', _u['hemi_sky'], str[sky[0]], str[sky[1]], str[sky[2]]]]
     deep = push[deep, ['uniform3f', _u['hemi_ground'], str[below[0]], str[below[1]], str[below[2]]]]
@@ -3063,7 +3021,7 @@ fn _four_of[rows, per]
     joined = join[parts, ' ']
     'f32:`joined`'
 
---- a lamp's shadow camera, as three places it: standing where the lamp
+--- a lamp's shadow camera: standing where the lamp
 --- does, looking where it aims, through a box (a directional light's) or
 --- the lamp's cone (a spot's, as wide as the cone, as far as it reaches)
 fn lamp_camera[lamp]
@@ -3077,17 +3035,16 @@ fn lamp_camera[lamp]
     camera_at[lens_of, lamp.at, lamp.toward, [0.0, 1.0, 0.0]]
 
 --- the matrix that takes a point of the scene to where it lies in a
---- lamp's shadow (its depth texture's 0 to 1 each way), as three's
---- shadow matrix
+--- lamp's shadow (its depth texture's 0 to 1 each way)
 fn shadow_matrix[lamp]
     cam = lamp_camera[lamp]
     times[[0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.5, 0.5, 0.5, 1.0], times[cam.projection, cam.viewing]]
 
---- the lamp's shadows drawn: what is drawn after this, in three's looks
---- or Lory's, into the depth the lamp's camera sees (before the frame's
---- views), and three's looks darkened where something nearer the lamp
---- stands (the light it casts not reaching there), as three's basic
---- shadow map darkens them
+--- the lamp's shadows drawn: what is drawn after this, in material looks
+--- or the scene's own, into the depth the lamp's camera sees (before the
+--- frame's views), and material looks darkened where something nearer the
+--- lamp stands (the light it casts not reaching there), by a basic shadow
+--- map
 fn _lamp_shadows[c, lamp, which]
     h = _held[]
     size = _shadow_size[]
@@ -3116,94 +3073,91 @@ fn _lamp_shadows[c, lamp, which]
     deep = push[deep, ['activeTexture', 'TEXTURE3']]
     deep = push[deep, ['bindTexture', 'TEXTURE_2D', '#`_depth_texture_id[]`']]
     deep = push[deep, ['activeTexture', 'TEXTURE0']]
-    deep = push[deep, ['useProgram', '#`_three_program_id[]`']]
+    deep = push[deep, ['useProgram', '#`_material_program_id[]`']]
     deep = push[deep, ['uniformMatrix4fv', _u['shadow_eye'], 'false', _matrix[seen]]]
     deep = push[deep, ['uniform4f', _u['shadow_how'], str[which], str[1.0 / size], str[sh[3]], str[sh[4]]]]
     deep = push[deep, ['useProgram', '#`_program_id[]`']]
     c.deep = deep
     c
 
---- ---- three's fog ----
+--- ---- fog ----
 
---- what is drawn in three's looks fading into a colour from `near` to
---- `far` along the view (three's Fog), its colour mixed in as the screen
+--- what is drawn in material looks fading into a colour from `near` to
+--- `far` along the view, its colour mixed in as the screen
 --- shows it, after the surface's own
 fn fog[c, color, near, far]
     _fogged[c, color, '1', str[0.0 + near], str[0.0 + far]]
 
---- what is drawn in three's looks fading into a colour the thicker the
---- deeper it stands, `density` a metre (three's FogExp2)
+--- what is drawn in material looks fading into a colour the thicker the
+--- deeper it stands, `density` a metre (exponential squared)
 fn haze[c, color, density]
     _fogged[c, color, '2', str[0.0 + density], '0']
 
 fn _fogged[c, color, form, a, b]
-    c = _three_begun[c]
+    c = _material_begun[c]
     r = _to_seen[_to_linear[color.r]]
     g = _to_seen[_to_linear[color.g]]
     bl = _to_seen[_to_linear[color.b]]
     deep = c.deep
-    deep = push[deep, ['useProgram', '#`_three_program_id[]`']]
+    deep = push[deep, ['useProgram', '#`_material_program_id[]`']]
     deep = push[deep, ['uniform4f', _u['fog'], form, a, b, '0']]
     deep = push[deep, ['uniform3f', _u['fog_color'], str[r], str[g], str[bl]]]
     deep = push[deep, ['useProgram', '#`_program_id[]`']]
     c.deep = deep
     c
 
---- ---- three's looks ----
+--- ---- material looks ----
 
 fn _unturned[]
     [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 
-fn _three_look[color, shading]
+fn _material_look[color, shading]
     Look[color, 0.0, 1.0, _black[], false, false, -1, 1.0, false, _no_dashes[], false, false, shading, lory.hex['#111111'], 30.0, 'front', false, '', _unturned[], 0.0]
 
---- a colour lit by nothing, as three's basic material draws it (and its
---- lines' and points' materials): in its colour as given, through three's
---- colour management and fog
+--- a colour lit by nothing (on surfaces, lines and points): in its colour
+--- as given, through colour management and fog
 fn basic[color]
-    _three_look[color, 'basic']
+    _material_look[color, 'basic']
 
---- a matte surface, as three's Lambert material draws it: each light's
+--- a matte surface, Lambert's shading: each light's
 --- colour on it in proportion to how squarely it faces the light
 fn matte[color]
-    _three_look[color, 'lambert']
+    _material_look[color, 'lambert']
 
---- a glossy surface, as three's Phong material draws it: matte, with a
---- highlight of the specular colour, the sharper the higher its
---- shininess (three's are 0x111111 and 30)
+--- a glossy surface, Phong's shading: matte, with a highlight of the
+--- specular colour, the sharper the higher its shininess (by default
+--- 0x111111 and 30)
 fn glossy[color, specular, shininess]
-    look = _three_look[color, 'phong']
+    look = _material_look[color, 'phong']
     look.specular = specular
     look.shininess = 0.0 + shininess
     look
 
---- a surface of a metalness and a roughness (0 to 1 each), as three's
---- standard material draws it, lit physically
+--- a surface of a metalness and a roughness (0 to 1 each), lit physically
 fn standard[color, metalness, roughness]
-    look = _three_look[color, 'standard']
+    look = _material_look[color, 'standard']
     look.metal = max[0.0, min[1.0, metalness]]
     look.rough = max[0.0, min[1.0, roughness]]
     look
 
---- a surface coloured by the way it faces the eye (three's normal
---- material: red to the right, green up, blue toward the eye)
+--- a surface coloured by the way it faces the eye (red to the right, green
+--- up, blue toward the eye)
 fn facing_colors[]
-    _three_look[lory.white[], 'normal']
+    _material_look[lory.white[], 'normal']
 
---- the look drawn on both sides of a surface (three's DoubleSide; its
---- looks are drawn on the front alone, the side whose corners go round
+--- the look drawn on both sides of a surface (looks are otherwise drawn
+--- on the front alone, the side whose corners go round
 --- against the clock)
 fn two_sided[look]
     look.side = 'double'
     look
 
---- the look drawn on the back of a surface alone (three's BackSide)
+--- the look drawn on the back of a surface alone
 fn back_sided[look]
     look.side = 'back'
     look
 
 --- the look lit as flat faces, each facing the way its triangle does
---- (three's `flatShading`)
 fn faceted[look]
     look.flat_shaded = true
     look
@@ -3215,18 +3169,17 @@ fn with_texture[look, name]
     look
 
 --- the look's picture repeated `across` times across and `up` times up
---- (three's texture `repeat`)
+--- (the picture wrapping past its edges)
 fn repeated[look, across, up]
     look.uv_turn = [0.0 + across, 0.0, 0.0, 0.0, 0.0 + up, 0.0, 0.0, 0.0, 1.0]
     look
 
---- the look not drawn where its alpha is below `alpha` (three's
---- `alphaTest`)
+--- the look not drawn where its alpha is below `alpha` (an alpha test)
 fn cut_out[look, alpha]
     look.cutoff = 0.0 + alpha
     look
 
---- the look's points `size` pixels across (three's PointsMaterial size)
+--- the look's points `size` pixels across
 fn dotted[look, size]
     look.size = 0.0 + size
     look
@@ -3235,7 +3188,7 @@ fn dotted[look, size]
 
 --- a picture held on the page under a name, of its pixels: four numbers a
 --- pixel (red, green, blue, alpha, 0 to 255, as seen), its first row where
---- a picture point's second number is 0 — three's DataTexture, as sRGB —
+--- a picture point's second number is 0, read as sRGB —
 --- sampled at the nearest pixel or blended between (`smooth`), repeated
 --- past its edges or held at them
 fn texture[c, name, width, height, pixels, smooth = false, tiled = false]
@@ -3280,8 +3233,8 @@ fn texture_made[name]
 
 --- ---- copies ----
 
---- copies of a form held under a name, drawn at once by three's looks
---- (three's InstancedMesh): each placed by its own matrix (sixteen
+--- copies of a form held under a name, drawn at once by the material
+--- program (instanced): each placed by its own matrix (sixteen
 --- numbers a copy, after the draw's own), coloured by its own colour
 --- where colours are given (three numbers a copy, in linear light)
 fn mesh_copies[c, name, f, matrices, colors]
@@ -3350,10 +3303,10 @@ fn move_copies[c, name, matrices, colors]
         _keep_mesh[h, name]
     c
 
---- ---- drawn in three's looks ----
+--- ---- drawn in material looks ----
 
 --- the matrix that turns a surface's facing as `m` turns its points (the
---- inverse of its turn, turned over), as three's normal matrix
+--- inverse of its turn, turned over): the normal matrix
 fn _normal_matrix[me]
     n11 = me[0]
     n21 = me[1]
@@ -3393,17 +3346,17 @@ fn _shading_code[look]
         return '4'
     '0'
 
---- a mesh drawn in a look of three's: by the second program, each part's
+--- a mesh drawn in a material look: by the second program, each part's
 --- matrix the view's times its own on a screen, its colours in linear
 --- light, on the sides the look is drawn on
-fn _draw_three[c, m, matrix, look]
-    c = _three_begun[c]
+fn _draw_material[c, m, matrix, look]
+    c = _material_begun[c]
     s = _split_of[c]
     on_screen = not xr.in_headset[c]
     deep = c.deep
     early = c.early
     casting = len[early] gt 0
-    deep = push[deep, ['useProgram', '#`_three_program_id[]`']]
+    deep = push[deep, ['useProgram', '#`_material_program_id[]`']]
     ratio = lory.px[c]
     high = 0.0 + c.height
     if c.box[2] gt 0.0
@@ -3493,7 +3446,7 @@ fn _draw_three[c, m, matrix, look]
         if culled
             deep = push[deep, ['disable', 'CULL_FACE']]
         --- (into the lamp's depth: a surface's back faces where its front
-        --- is drawn, as three draws its shadows, a copy-less part alone)
+        --- is drawn, a copy-less part alone)
         if casting and not lined and not look.blending and part.copies eq 0
             if look.side ne 'double'
                 early = push[early, ['enable', 'CULL_FACE']]
@@ -3520,7 +3473,7 @@ fn _draw_three[c, m, matrix, look]
 --- ---- helpers ----
 
 --- three lines from the origin along x, y and z, `size` long, coloured
---- red, green and blue fading toward their ends (three's AxesHelper), to
+--- red, green and blue fading toward their ends, to
 --- draw in `basic[lory.white[]]`
 fn axes_form[size]
     s = 0.0 + size
@@ -3528,8 +3481,8 @@ fn axes_form[size]
     colored[f, [1.0, 0.0, 0.0, 1.0, 0.6, 0.0, 0.0, 1.0, 0.0, 0.6, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.6, 1.0]]
 
 --- a square grid on the ground, `size` a side, of `divisions` squares
---- each way: its middle lines in `middle`, the rest in `rest` (three's
---- GridHelper, whose are 0x444444 and 0x888888), to draw in
+--- each way: its middle lines in `middle`, the rest in `rest` (0x444444
+--- and 0x888888 are good greys), to draw in
 --- `basic[lory.white[]]`
 fn grid_form[size, divisions, middle, rest]
     half = size / 2.0
@@ -3553,7 +3506,7 @@ fn grid_form[size, divisions, middle, rest]
     colored[segments[at], colors]
 
 --- the twelve edges of a box from -1 to 1 each way, to draw where a box
---- stands (`box_lines_at`), as three's Box3Helper outlines a box
+--- stands (`box_lines_at`)
 fn box_lines_form[]
     corners = Shape[[1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0], [], []]
     Form[corners, [], [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7], 'LINES']

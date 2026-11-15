@@ -1,12 +1,9 @@
---- How a chart shares out its room, as Chart.js lays a chart: the
+--- How a chart shares out its room: the
 --- legend, the subtitle and title and the axes are boxes along the sides
 --- (each side's boxes in order of their weight), fitted in turn into the
 --- room the others leave, the axes fitted again where another box's size
 --- changed theirs, and what is left in the middle is the chart's area,
 --- where the datasets are drawn and a radial axis is laid.
----
---- These are Chart.js 4.5.1's rules (its layouts, legend and title),
---- written anew (see charts_model.co).
 use math
 use charts_model
 use charts_scales
@@ -762,7 +759,7 @@ fn legend_item_at[laid, x, y]
 --- ---- points spilling past the area ----
 
 --- how far the datasets' points and lines spill past the chart's area:
---- the room Chart.js keeps about it (half a point at a line's ends, and
+--- the room kept about it (half a point at a line's ends, and
 --- half its line's width once the chart has been laid before; a bubble's
 --- radius and edge)
 fn overflow_of[ch, ps]
@@ -794,7 +791,7 @@ fn overflow_of[ch, ps]
         d = d + 1
     most
 
---- a point's size as Chart.js counts its overflow: its radius (its
+--- a point's size as its overflow counts it: its radius (its
 --- radius under the pointer, if more) and its edge, across
 fn _point_size[s, radius]
     r = radius
@@ -809,7 +806,7 @@ fn _point_size[s, radius]
 
 --- ---- tests ----
 
-test legends_are_laid_in_rows_as_chart_js_lays_them[]
+test legends_are_laid_in_rows[]
     ch = charts_model.chart_of['c', 'bar', ['a', 'b']]
     s = charts_model.dataset['bar', 'Sales', [1.0, 2.0]]
     ch.sets = [s, s]

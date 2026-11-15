@@ -1,16 +1,8 @@
 --- What Kite's charts are made of (`kite.charts` is their face): a chart,
 --- its datasets and its axes, its legend, titles and tooltip, as records a
---- program fills in or `charts.of` reads from a Chart.js configuration;
+--- program fills in or `charts.of` reads from a chart configuration;
 --- and the small rules every part of a chart shares — how a number is
 --- written on an axis, how a CSS colour is read, how wide a text is.
----
---- Kite reimplements, in Crow, the behaviour of Chart.js (Copyright the
---- Chart.js contributors, MIT licence, https://www.chartjs.org): its
---- charts, scales, layout, legend, tooltip, interactions, animations and
---- decimation, held to the numbers and pixels it lays. No Chart.js source
---- is included; its layout rules and formulas were read from version 4.5.1
---- and written anew, and its numbers are taken from running it
---- (tests/charts/reference.py).
 use math
 use lory
 
@@ -52,7 +44,7 @@ struct Set [form, label, ys, xs, rs, starts, x_axis, y_axis, stack, order, hidde
 --- a share of the range where `grace_share`), whether the range ends on a
 --- tick (`bounds`: ticks or data), whether the ends are half a slot in
 --- (`offset`), whether it runs backwards, how its datasets are stacked
---- (`stacked`: '' as Chart.js leaves it, true, false, single); a stack of
+--- (`stacked`: '' left unsaid, true, false, single); a stack of
 --- axes it shares a side with, its weight in that stack, and its weight
 --- among the boxes of its side; a category axis's own labels; a tick's
 --- step (nan: chosen), how many ticks (nan: chosen), the most ticks
@@ -112,14 +104,14 @@ struct Tip [shown, mode, intersect, axis, position, padding, caret_size, caret_p
 --- points on (nan: four times the width)); the values hidden by the legend
 --- of a pie, a doughnut or a polar area (their places); the size of its
 --- text and its colours (text, grid lines); and whether it has been laid
---- before (Chart.js counts a line's width in the room about its area only
+--- before (a line's width counts in the room about its area only
 --- from its second layout on, its line not yet styled at its first)
 struct Chart [id, form, labels, sets, axes, index_axis, legend, title, subtitle, tip, mode, intersect, axis, padding, auto_padding, cutout, cutout_share, rotation, circumference, radius_share, animated, duration, easing, animate_rotate, animate_scale, decimate, algorithm, samples, threshold, hidden_points, size, ink, grid_ink, laid_before]
 
 --- ---- making them ----
 
---- a dataset of `kind` named `label` holding `ys`, as Chart.js would make
---- it for that kind of chart
+--- a dataset of `kind` named `label` holding `ys`, with the defaults
+--- for that kind of chart
 fn dataset[kind, label, ys]
     point_radius = 3.0
     edge_width = 3.0
@@ -134,7 +126,7 @@ fn dataset[kind, label, ys]
     Set[kind, label, ys, no_numbers[], no_numbers[], no_numbers[], '', '', '', 0.0, false, no_colors[], no_colors[], no_colors[], no_colors[], edge_width, 0.0, false, '', fill, 0.0, show_line, 'circle', point_radius, 4.0, 1.0, 1.0, 0.9, 0.8, nan, inf, 0.0, true, false, nan, [0.0, 0.0, 0.0, 0.0], false, 'start', no_numbers[], 0.0, 0.0, 1.0]
 
 --- an axis of `kind` with that id, running `axis` (x, y or r), on its
---- side, as Chart.js would make it
+--- side, with its defaults
 fn axis_of[id, kind, axis, position]
     Axis[id, kind, axis, position, true, nan, nan, nan, nan, false, 0.0, false, _bounds_of[kind], false, false, '', '', 1.0, 0.0, slice[[''], 0, 0], nan, nan, nan, nan, true, true, 3.0, 12.0, false, 0.0, 50.0, true, 3.0, false, kind eq 'logarithmic', 'auto', true, false, true, true, 8.0, 1.0, false, true, 1.0, false, '', 12.0, false, 4.0, 4.0, '', '', 'millisecond', _time_formats[], '', 0.0, true, 10.0, 5.0, true, false, kind eq 'radialLinear', 2.0, lory.rgba[0, 0, 0, 0.1], lory.hex['#666666'], lory.rgba[0, 0, 0, 0.1], lory.hex['#666666']]
 
@@ -143,7 +135,7 @@ fn _bounds_of[kind]
         return 'data'
     'ticks'
 
---- a legend as Chart.js shows one: above the chart, centred
+--- a legend as it is shown by default: above the chart, centred
 fn legend_of[]
     Legend[true, 'top', 'center', false, 40.0, nan, 10.0, 12.0, false, nan, nan, nan, true, 1000.0, false, '', lory.hex['#666666']]
 
@@ -156,12 +148,12 @@ fn heading_of[bold]
         weight = 2000.0
     Heading[false, slice[[''], 0, 0], 'top', 'center', 12.0, bold, padding, padding, true, weight, lory.hex['#666666']]
 
---- a tooltip as Chart.js shows one
+--- a tooltip as it is shown by default
 fn tip_of[]
     Tip[true, '', '', '', 'average', 6.0, 5.0, 2.0, 6.0, 12.0, 12.0, 12.0, 2.0, 6.0, 2.0, true, nan, nan, 0.0, '', '', lory.rgba[0, 0, 0, 0.8], lory.white[]]
 
 --- a chart of `kind` with that id and labels, of no datasets yet: its
---- axes are Chart.js's for that kind (`charts.with_set` adds a dataset,
+--- axes are the defaults for that kind (`charts.with_set` adds a dataset,
 --- `charts.with_axis` sets an axis)
 fn chart_of[id, kind, labels]
     mode = 'nearest'
@@ -174,7 +166,7 @@ fn chart_of[id, kind, labels]
     grows = kind eq 'polarArea'
     Chart[id, kind, labels, slice[[dataset['bar', '', no_numbers[]]], 0, 0], default_axes[kind, 'x'], 'x', legend_of[], heading_of[true], heading_of[false], tip_of[], mode, true, '', [0.0, 0.0, 0.0, 0.0], true, cutout, true, 0.0, 360.0, 1.0, true, 1000.0, 'easeOutQuart', rotate, grows, false, 'min-max', nan, nan, no_numbers[], 12.0, lory.hex['#666666'], lory.rgba[0, 0, 0, 0.1], false]
 
---- the axes Chart.js gives a chart of `kind` laid along `index_axis`
+--- the axes a chart of `kind` is given, laid along `index_axis`
 fn default_axes[kind, index_axis]
     if kind eq 'pie' or kind eq 'doughnut'
         return slice[[axis_of['x', 'linear', 'x', 'bottom']], 0, 0]
@@ -210,8 +202,8 @@ fn side_of[a]
         return 'chartArea'
     'left'
 
---- the formats a time axis writes each unit's ticks in (date-fns
---- tokens), as Chart.js's date-fns adapter gives them
+--- the formats a time axis writes each unit's ticks in (date format
+--- tokens)
 fn _time_formats[]
     map['datetime' = 'MMM d, yyyy, h:mm:ss aaaa', 'millisecond' = 'h:mm:ss.SSS aaaa', 'second' = 'h:mm:ss aaaa', 'minute' = 'h:mm aaaa', 'hour' = 'ha', 'day' = 'MMM d', 'week' = 'PP', 'month' = 'MMM yyyy', 'quarter' = 'qqq - yyyy', 'year' = 'yyyy']
 
@@ -335,7 +327,7 @@ fn modulo[a, b]
 
 --- an angle brought into 0 to 2π as JavaScript brings it, a remainder
 --- taken twice (`(a % 2π + 2π) % 2π`), so that an angle in a chart lands
---- on the very number Chart.js's does
+--- on the same number each time
 fn normal_angle[a]
     tau = pi * 2.0
     _remainder[_remainder[a, tau] + tau, tau]
@@ -356,7 +348,7 @@ fn _remainder[a, b]
         return 0.0 - r
     r
 
---- degrees as radians, and radians as degrees, as Chart.js turns them
+--- degrees as radians, and radians as degrees
 fn radians[degrees_of]
     degrees_of * (pi / 180.0)
 
@@ -374,7 +366,7 @@ fn pow10[k]
     10.0 ^ k
 
 --- whether the angle falls between `start` and `end` going round
---- forwards (Chart.js's rule: an angle on either end is between them, and
+--- forwards (an angle on either end is between them, and
 --- where `full` an arc of no length is the whole circle)
 fn angle_between[angle, start, end, whole]
     a = normal_angle[angle]
@@ -422,7 +414,7 @@ fn decimals_of[x]
 --- ---- writing numbers ----
 
 --- the number as en-US writes it with exactly `places` decimals, its
---- thousands parted by commas: what Chart.js's axes and tooltips write
+--- thousands parted by commas: what the axes and tooltips write
 --- (Intl.NumberFormat)
 fn written[x, places]
     if x ne x
@@ -619,7 +611,7 @@ fn color_at[colors, i, fallback]
         return fallback
     colors[i % n]
 
---- a colour as Chart.js darkens one under the pointer: half again as
+--- a colour darkened under the pointer: half again as
 --- saturated, then a tenth darker (each in HSL, back to whole bytes
 --- between)
 fn hover_color[c]
@@ -676,7 +668,7 @@ fn _hsl_part[n, h, l, a]
 
 --- what a chart measures its words with: Lory's atlas of glyphs (a
 --- canvas's `held`) and widths a browser measured (keyed `b12|text` or
---- `12|text`; the reference's, or none)
+--- `12|text`; or none)
 struct Pen [held, widths]
 
 --- a pen for the canvas's atlas, with the widths given
@@ -722,7 +714,7 @@ fn _width_key[size, bold, words]
         return 'b`s`|`words`'
     '`s`|`words`'
 
---- the height of a line of text of that size, as Chart.js counts it
+--- the height of a line of text of that size
 fn line_of[size]
     size * 1.2
 
@@ -755,7 +747,7 @@ test colours_are_read_as_css_writes_them[]
     hover_color[lory.hex['#ffcd56']].b eq 52.0 / 255.0
     hover_color[lory.hex['#c9cbcf']].r eq 178.0 / 255.0
 
-test angles_are_between_as_chart_js_finds_them[]
+test angles_are_between_their_ends_going_round[]
     normal_angle[0.1] eq 0.09999999999999964
     normal_angle[0.0 - pi / 2.0] eq 4.71238898038469
     normal_angle[pi * 5.0] eq 3.141592653589793

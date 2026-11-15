@@ -1,22 +1,16 @@
---- Lory's drag and drop (docs/components/drag.md): lists reordered, and
---- items carried between them, by dragging, as SortableJS 1.15.7 does it;
---- and the drags that are not a list's, as Motion 14.7.1 does them: a
---- control dragged freely and thrown, a stack of cards swiped away, a row
+--- Lory's drag and drop: lists reordered, and items carried between them,
+--- by dragging; and the drags that are not a list's: a control dragged
+--- freely and thrown, a stack of cards swiped away, a row
 --- swiped to show its actions, a slider that reveals one picture over
 --- another, two fingers that zoom, turn and pan, and a honeycomb of icons
 --- dragged and zoomed.
 ---
---- What SortableJS and Motion do is re-implemented here, and
---- tests/drag/reference.co holds it to what they did: SortableJS driven in
---- a browser by tests/drag/reference.py, Motion run in Node by
---- tests/drag/motion.mjs. None of their source is included: their
---- behaviour was read from those versions and written anew. A thrown
---- drag's glide and the springs are lory.motion's, held to Motion there.
+--- A thrown drag's glide and the springs are lory.motion's.
 ---
 --- A list is a column, row or grid of controls, each with an id. gui draws
 --- it, through `drag.show` (or `drag.show_at`) in place of `gui.show`, and
---- what the reader does to it comes back as `Told` records, the events
---- SortableJS tells, in its order:
+--- what the reader does to it comes back as `Told` records, the events a
+--- list tells, in their order:
 ---
 ---     todo = drag.grouped[drag.list['todo', items, gap = 0.0], 'tasks']
 ---     done = drag.grouped[drag.list['done', others, gap = 0.0], 'tasks']
@@ -82,8 +76,7 @@ fn list[id, kids, along = 'column', gap = 10.0, pad = 0.0, columns = 2, tall = 0
 --- that takes them, 'no' nowhere, 'clone' a copy goes and the item
 --- stays, or the names of the groups that may take them, separated by
 --- commas) and `take` what it takes ('' its own group's items, 'yes' any,
---- 'no' none, or the names of the groups it takes from): SortableJS's
---- `group`, its `pull` and `put`
+--- 'no' none, or the names of the groups it takes from)
 fn grouped[n, name, pull = '', take = '']
     n.opts['drag_group'] = name
     n.opts['drag_pull'] = pull
@@ -91,19 +84,18 @@ fn grouped[n, name, pull = '', take = '']
     n
 
 --- the list's own order kept: its items may be carried out, and back,
---- but not reordered (SortableJS's `sort: false`)
+--- but not reordered
 fn unsorted[n]
     n.nums['drag_unsorted'] = 1.0
     n
 
 --- its items slide to their places over `ms` milliseconds as the order
---- changes (SortableJS's `animation`, eased as CSS's `ease`)
+--- changes (eased as CSS's `ease`)
 fn animated[n, ms]
     n.nums['drag_animation'] = ms
     n
 
---- where a neighbour is passed (SortableJS's swapThreshold, invertSwap,
---- invertedSwapThreshold and emptyInsertThreshold): over `swap` of its
+--- where a neighbour is passed: over `swap` of its
 --- length about its middle; with `invert`, over its outer parts,
 --- `inverted` of its length (-1: as `swap`); an empty list is met
 --- `empty` CSS pixels outside its edge
@@ -116,14 +108,14 @@ fn thresholds[n, swap = 1.0, invert = false, inverted = -1.0, empty = 5.0]
     n.nums['drag_empty_at'] = empty
     n
 
---- an item let go over another trades places with it (SortableJS's Swap
---- plugin; the list it is let go in swaps too)
+--- an item let go over another trades places with it (the list
+--- it is let go in swaps too)
 fn swapping[n]
     n.nums['drag_swaps'] = 1.0
     n
 
 --- items pressed are selected (pressed again, let go), and the selected
---- are dragged together (SortableJS's MultiDrag plugin); with a `key`
+--- are dragged together; with a `key`
 --- ('ctrl', 'meta', 'shift' or 'alt'), a press without it held selects
 --- only the item pressed; Shift selects from the last one selected
 fn multiple[n, key = '']
@@ -132,14 +124,14 @@ fn multiple[n, key = '']
     n
 
 --- an item let go outside every list goes back where it came from
---- (`how` 'revert') or is taken out ('remove'): SortableJS's OnSpill
+--- (`how` 'revert') or is taken out ('remove')
 fn spilled[n, how]
     n.opts['drag_spill'] = how
     n
 
 --- dragged within `sensitivity` CSS pixels of an edge of the scroll area
 --- the list stands in (its first control), the area scrolls `speed`
---- pixels every 24 ms (SortableJS's AutoScroll; 0 sensitivity: never)
+--- pixels every 24 ms (0 sensitivity: never)
 fn scrolling[n, sensitivity = 30.0, speed = 10.0]
     n.nums['drag_sensitivity'] = sensitivity
     n.nums['drag_speed'] = speed
@@ -155,18 +147,17 @@ fn delayed[n, ms, touch_only = false]
     n
 
 --- a drag starts only once the pointer has moved `px` CSS pixels
---- (SortableJS's fallbackTolerance)
 fn tolerance[n, px]
     n.nums['drag_tolerance'] = px
     n
 
---- the list's items stay where they are (SortableJS's `disabled`)
+--- the list's items stay where they are
 fn disabled[n]
     n.nums['drag_off'] = 1.0
     n
 
 --- an item of the list is dragged only by its grip (`grip[]` among its
---- controls: SortableJS's `handle`)
+--- controls)
 fn handled[n]
     n.nums['drag_handled'] = 1.0
     n
@@ -198,7 +189,6 @@ fn _painters_typed[c]
     d.c
 
 --- the item is not dragged: pressed, its list tells `filter`
---- (SortableJS's `filter`)
 fn filtered[n]
     n.opts['drag_filtered'] = 'yes'
     n
@@ -355,8 +345,8 @@ fn _has_spec[specs, id]
         i = i + 1
     false
 
---- whether items lie top to bottom in the list (SortableJS's direction:
---- a column's and a one-column grid's), else side by side
+--- whether items lie top to bottom in the list (a column's and a
+--- one-column grid's), else side by side
 fn _vertical[sp]
     if sp.along eq 'row'
         return false
@@ -368,7 +358,7 @@ fn _vertical[sp]
 
 --- the drag under way (`stage` '' none, 'pending' held for its delay,
 --- 'held' its delay let go, 'chosen' pressed, 'dragging'), and what
---- SortableJS keeps of it; the lists' orders while it lasts; the slides
+--- is kept of it; the lists' orders while it lasts; the slides
 --- and their history; the selection; the scroll it turns; and where each
 --- list and item was laid out last
 struct Kept [stage, item, source, parent, next_id, old_index, start_index, new_index, down_x, down_y, last_x, last_y, chose_at, loop_at, touched, touch_x, touch_y, ghost, ghost_dx, ghost_dy, last_target, last_direction, past_first, circumstantial, move_distance, silent_until, put_list, put_modes, clone_shown, orders, swap_with, selected, sel_list, last_select, multi_on, sorted_index, scroll_id, scroll_v, scroll_since, scroll_done, scroll_quirk, scroll_shift, anims, slides_until, prev_from, prev_to, lasting, reset_at, ignores, ignore_until, told, key_down, layouts, pointer, device, pointer_x, pointer_y, pressed, moved_drag, finished]
@@ -403,8 +393,8 @@ fn _original[id]
         return slice[id, 0, len[id] - 5]
     id
 
---- where the item stands among its list's (SortableJS's index: the copy
---- left behind not counted), -1 where it is not in it
+--- where the item stands among its list's (the copy left behind not
+--- counted), -1 where it is not in it
 fn _index_in[order, id]
     i = 0
     at = 0
@@ -465,8 +455,8 @@ fn _index_of[k, specs, id]
         return -1
     _index_in[_order[k, holder], id]
 
---- the item moved into `into` before `before` (SortableJS's insertBefore:
---- an item put before itself stays)
+--- the item moved into `into` before `before` (an item put before itself
+--- stays)
 fn _moved_to[k, specs, id, into, before]
     if before eq id
         return k
@@ -518,23 +508,23 @@ fn _rect_at[k, id, t]
     o = _offset[k, id, t]
     [r[0] + o[0], r[1] + o[1], r[2], r[3]]
 
---- whether the item is sliding (SortableJS's `animated`)
+--- whether the item is sliding
 fn _sliding[k, id, t]
     id in k.slides_until and t lt k.slides_until[id]
 
---- sliding along both axes (SortableJS's animatingX and animatingY)
+--- sliding along both axes
 fn _both_ways[k, id, t]
     if not _sliding[k, id, t] or not (id in k.anims)
         return false
     a = k.anims[id]
     a[0] ne 0.0 and a[1] ne 0.0
 
---- whether a slide's time is still kept for it (thisAnimationDuration)
+--- whether a slide's time is still kept for it
 fn _lasting[k, id, t]
     id in k.reset_at and t lt k.reset_at[id]
 
 --- whether the list waits for its item to slide past before it is met
---- again (SortableJS's _ignoreWhileAnimating)
+--- again
 fn _ignored[k, list_id, target, t]
     if not (list_id in k.ignores) or k.ignores[list_id] eq ''
         return false
@@ -543,11 +533,11 @@ fn _ignored[k, list_id, target, t]
 fn _inside[x, y, r]
     x gte r[0] and y gte r[1] and x lt r[0] + r[2] and y lt r[1] + r[3]
 
---- JavaScript's Math.round: the nearest whole number, a half up
+--- the nearest whole number, a half up
 fn _js_round[x]
     float[floor[x + 0.5]]
 
---- SortableJS's isRectEqual: the same box, rounded
+--- whether two boxes are the same, rounded
 fn _same_rect[a, b]
     _js_round[a[1]] eq _js_round[b[1]] and _js_round[a[0]] eq _js_round[b[0]] and _js_round[a[3]] eq _js_round[b[3]] and _js_round[a[2]] eq _js_round[b[2]]
 
@@ -715,8 +705,8 @@ fn _relaid_list[k, sensed, sp]
 
 --- ---- what is told ----
 
---- the told record, with what SortableJS adds to every event of the list
---- that tells it: the item swapped with (a swapping list's) and the
+--- the told record, with what is added to every event of the list that
+--- tells it: the item swapped with (a swapping list's) and the
 --- selection (a list of `multiple`'s)
 fn _tell[k, sensed, act, list_id, item, from, to, old, new_at]
     sp = _spec_of[sensed.specs, list_id]
@@ -747,12 +737,11 @@ fn _sorted_at[k, id]
         return k.sorted_index[id]
     -1
 
---- an event of the dragged item, from its list, as SortableJS fills one
---- in: from the list it came from, its indices as they stand
+--- an event of the dragged item, from its list, filled in from the list it came from, its indices as they stand
 fn _told_drag[k, sensed, act, list_id, to]
     _tell[k, sensed, act, list_id, k.item, k.source, to, k.old_index, k.new_index]
 
---- the move SortableJS's onMove is asked about: over `related`, before
+--- the move a list is asked about: over `related`, before
 --- or after it
 fn _tell_move[k, el, related, after]
     k.told = push[k.told, Told['move', k.source, k.item, k.source, el, -1, -1, '', '', _no_texts[], _no_ints[], _no_ints[], related, after]]
@@ -763,7 +752,7 @@ fn _changed[k, sensed, el]
     k.new_index = _index_of[k, sensed.specs, k.item]
     _tell[k, sensed, 'change', el, k.item, k.source, el, k.old_index, k.new_index]
 
---- ---- slides (SortableJS's animation) ----
+--- ---- slides ----
 
 --- an item's box as it showed and where it stood, as the order changed
 struct Caught [id, x, y, w, h, fx, fy, fw, fh]
@@ -771,7 +760,7 @@ struct Caught [id, x, y, w, h, fx, fy, fw, fh]
 fn _no_caught[]
     slice[[Caught['', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], 0, 0]
 
---- the list's items before its order changes (captureAnimationState)
+--- the list's items before its order changes
 fn _caught[k, sp, t]
     out = _no_caught[]
     if sp.id eq '' or sp.animation lte 0.0
@@ -799,7 +788,7 @@ fn _joined_caught[a, b]
     out
 
 --- the items caught set sliding from where they showed to where they now
---- stand (animateAll), and the longest slide's time
+--- stand, and the longest slide's time
 struct Slid [k, time]
 
 fn _slid[k, sp, caught, t]
@@ -833,9 +822,9 @@ fn _slid[k, sp, caught, t]
         i = i + 1
     Slid[k, most]
 
---- SortableJS's check that a slide turned back runs along the line it
+--- the check that a slide turned back runs along the line it
 --- came on: the slopes from where it now stands to where it shows and to
---- where it set out from, as JavaScript divides (a vertical line's slope
+--- where it set out from, as floating point divides (a vertical line's slope
 --- infinite, its sign kept; none where both are nothing)
 fn _same_slope[shown, to, from]
     ay = shown[1] - to[1]
@@ -851,7 +840,7 @@ fn _same_slope[shown, to, from]
     ay / ax eq fy / fx
 
 --- the part of the slide's time a slide back takes: as far as it had
---- come of the way it was going (SortableJS's calculateRealTime)
+--- come of the way it was going
 fn _real_time[shown, from, to, animation]
     gone = sqrt[(from[1] - shown[1]) * (from[1] - shown[1]) + (from[0] - shown[0]) * (from[0] - shown[0])]
     whole = sqrt[(from[1] - to[1]) * (from[1] - to[1]) + (from[0] - to[0]) * (from[0] - to[0])]
@@ -862,7 +851,7 @@ fn _real_time[shown, from, to, animation]
 --- ---- groups ----
 
 --- what the source list lets go to the list `to`: '' nothing, 'yes',
---- 'clone' (SortableJS's checkPull)
+--- 'clone'
 fn _pulled[from, to]
     v = from.pull
     same = from.name ne '' and to.name ne '' and from.name eq to.name
@@ -876,7 +865,7 @@ fn _pulled[from, to]
         return 'yes'
     ''
 
---- whether the list takes from the source (SortableJS's checkPut)
+--- whether the list takes from the source
 fn _taken[to, from]
     v = to.take
     same = to.name ne '' and from.name ne '' and to.name eq from.name
@@ -908,7 +897,7 @@ fn _clone_hidden[k]
     k
 
 --- the copy shown in the source while the item is over a list it was
---- pulled into as a clone (SortableJS's _showClone)
+--- pulled into as a clone
 fn _clone_shown[k, el]
     mode = ''
     if el in k.put_modes
@@ -928,7 +917,7 @@ fn _clone_shown[k, el]
     k.clone_shown = true
     k
 
---- ---- a dragover (SortableJS's _onDragOver) ----
+--- ---- a dragover ----
 
 --- the drag after a dragover, and whether it was done with there (it
 --- goes no further out)
@@ -977,7 +966,7 @@ fn _over[k, sensed, sp, under, x, y, t]
         return Went[k, false]
     vertical = _vertical[sp]
     drag_rect = _rect_at[k, k.item, t]
-    --- (SortableJS's Swap: the item over is marked, nothing moves)
+    --- (swapping: the item over is marked, nothing moves)
     if sp.swaps and src.swaps
         if target ne el
             k = _tell_move[k, el, target, false]
@@ -1120,7 +1109,7 @@ fn _in_texts[xs, x]
         i = i + 1
     false
 
---- the dragover done with (SortableJS's `completed`): after an insertion,
+--- the dragover done with: after an insertion,
 --- the copy shown or hidden, the list put into noted, and the lists'
 --- items set sliding
 fn _completed[k, sensed, sp, owner, from_list, target, insertion, caught, from_caught, t]
@@ -1151,8 +1140,7 @@ fn _completed[k, sensed, sp, owner, from_list, target, insertion, caught, from_c
         k.last_target = ''
     k
 
---- whether two boxes stand in one row or column (SortableJS's
---- _dragElInRowColumn): an edge across the way shared, or their middles
+--- whether two boxes stand in one row or column: an edge across the way shared, or their middles
 fn _in_line[a, b, vertical]
     a1 = a[1]
     a2 = a[1] + a[3]
@@ -1170,7 +1158,7 @@ fn _in_line[a, b, vertical]
     a1 eq b1 or a2 eq b2 or a1 + al / 2.0 eq b1 + bl / 2.0
 
 --- the drag and which way past the target it goes (1 after, -1 before,
---- 0 not yet): SortableJS's _getSwapDirection
+--- 0 not yet)
 struct Way [k, direction]
 
 fn _swap_direction[k, sensed, x, y, target, r, vertical, threshold, inverted, invert_swap, is_last]
@@ -1216,8 +1204,7 @@ fn _swap_direction[k, sensed, x, y, target, r, vertical, threshold, inverted, in
             return Way[k, -1]
     Way[k, 0]
 
---- the box around the list's items not sliding (SortableJS's
---- getChildContainingRectFromElement), and whether there is one
+--- the box around the list's items not sliding, and whether there is one
 struct Around [x0, y0, x1, y1, some]
 
 fn _around[k, order, t]
@@ -1237,7 +1224,7 @@ fn _around[k, order, t]
         i = i + 1
     a
 
---- the pointer before the list's first item (SortableJS's _ghostIsFirst)
+--- the pointer before the list's first item
 fn _ghost_first[k, sp, x, y, vertical, t]
     order = _order[k, sp.id]
     f = _rect_at[k, order[0], t]
@@ -1246,7 +1233,7 @@ fn _ghost_first[k, sp, x, y, vertical, t]
         return (a.some and x lt a.x0 - 10.0) or (y lt f[1] and x lt f[0] + f[2])
     (a.some and y lt a.y0 - 10.0) or (y lt f[1] + f[3] and x lt f[0])
 
---- the pointer past the list's last item (SortableJS's _ghostIsLast)
+--- the pointer past the list's last item
 fn _ghost_last[k, sp, x, y, vertical, t]
     order = _order[k, sp.id]
     l = _rect_at[k, order[len[order] - 1], t]
@@ -1258,7 +1245,7 @@ fn _ghost_last[k, sp, x, y, vertical, t]
 --- ---- the drag's course ----
 
 --- a press: the lists under it, the nearest first, each asked whether
---- one of its items is pressed to be dragged (SortableJS's _onTapStart)
+--- one of its items is pressed to be dragged
 fn _pressed_down[k, sensed, e, t]
     if k.stage ne ''
         return k
@@ -1287,7 +1274,7 @@ fn _on_grip[k, kid, x, y]
     g = '`kid`:grip'
     _laid_out[k, g] and _inside[x, y, _layout[k, g]]
 
---- the item pressed is the one to drag (SortableJS's _prepareDragStart):
+--- the item pressed is the one to drag:
 --- chosen at once, or once its delay has passed
 fn _prepared[k, sensed, sp, kid, old, e, t]
     k.item = kid
@@ -1335,7 +1322,7 @@ fn _pointer_moved[k, sensed, e, t]
     k = _zoned[k, sensed, e.x, e.y, t]
     _nearest_empty[k, sensed, e.x, e.y, t]
 
---- the drag started (SortableJS's _onDragStart and _dragStarted): where
+--- the drag started: where
 --- it started noted, the selection's indices kept, the other selected
 --- items gathered out of their lists, and the item's picture taken up
 fn _started[k, sensed, t]
@@ -1397,7 +1384,7 @@ fn _by_index[k, ids]
     out
 
 --- the other selected items back in the source at their indices, as the
---- drag reverts into a list it may not sort (MultiDrag's revert)
+--- drag reverts into a list it may not sort
 fn _folded_back[k, sensed]
     if not k.multi_on or len[k.selected] lte 1
         return k
@@ -1414,8 +1401,7 @@ fn _folded_back[k, sensed]
         i = i + 1
     k
 
---- an empty list near the pointer is met at once (SortableJS's
---- _detectNearestEmptySortable): the first of the tree's whose box, its
+--- an empty list near the pointer is met at once: the first of the tree's whose box, its
 --- threshold wider, holds the point
 fn _nearest_empty[k, sensed, x, y, t]
     if k.stage ne 'dragging'
@@ -1431,8 +1417,8 @@ fn _nearest_empty[k, sensed, x, y, t]
         i = i + 1
     k
 
---- the dragover SortableJS runs every 50 ms while an item is dragged
---- (_emulateDragOver), at the pointer's last place: the lists under it
+--- the dragover run every 50 ms while an item is dragged, at the
+--- pointer's last place: the lists under it
 --- asked, the nearest first, until one is done with it
 fn _looped[k, sensed, t]
     if k.stage ne 'dragging' or t lt k.loop_at
@@ -1455,7 +1441,7 @@ fn _looped[k, sensed, t]
         i = i + 1
     k
 
---- ---- the scroll the drag turns (SortableJS's AutoScroll) ----
+--- ---- the scroll the drag turns ----
 
 --- where the scroll area stands, how far it is turned and how far it may
 --- turn: its box, its first control's place under it, and that
@@ -1501,8 +1487,8 @@ fn _zoned[k, sensed, x, y, t]
     k
 
 --- how many 24 ms turns are due `ms` after the scroll set out: a first
---- one at 24, then from 30 on, as SortableJS starts it again once it
---- finds the scroll area under the pointer (`quirk`), else every 24
+--- one at 24, then from 30 on, as it starts again once it finds
+--- the scroll area under the pointer (`quirk`), else every 24
 fn _turns_due[ms, quirk]
     if not quirk
         return floor[ms / 24.0]
@@ -1557,8 +1543,7 @@ fn _shifted[k, id, by]
 
 --- ---- let go ----
 
---- the drag over: its item left where it is (SortableJS's _onDrop and
---- its plugins' drops), and what changed told
+--- the drag over: its item left where it is, and what changed told
 fn _let_go[k, sensed, e, t]
     if k.stage ne '' and e.id ne k.pointer
         return k
@@ -1576,7 +1561,7 @@ fn _let_go[k, sensed, e, t]
     k.new_index = _index_of[k, specs, k.item]
     k.scroll_v = 0
     k.scroll_id = ''
-    --- (OnSpill: let go outside the list it is over)
+    --- (spilled: let go outside the list it is over)
     if src.spill ne ''
         to_list = k.put_list
         if to_list eq ''
@@ -1604,7 +1589,7 @@ fn _let_go[k, sensed, e, t]
     --- (Swap: the item and the one it was let go over trade places)
     if src.swaps and k.swap_with ne '' and k.swap_with ne k.item
         k = _swapped[k, sensed, k.item, k.swap_with, t]
-    --- (MultiDrag: the selected put in after the item, in their order)
+    --- (several dragged: the selected put in after the item, in their order)
     if src.multi and k.multi_on
         k = _gathered[k, sensed, t]
     k.parent = _list_holding[k, specs, k.item]
@@ -1696,7 +1681,7 @@ fn _ended[k]
     k.touched = false
     k
 
---- two items trade places (SortableJS's swapNodes), and slide there
+--- two items trade places, and slide there
 fn _swapped[k, sensed, a, b, t]
     specs = sensed.specs
     la = _list_holding[k, specs, a]
@@ -1732,7 +1717,7 @@ fn _swapped[k, sensed, a, b, t]
     k
 
 --- the selected items set down after the item dragged, in the order
---- they stood in when the drag started (MultiDrag's drop)
+--- they stood in when the drag started
 fn _gathered[k, sensed, t]
     specs = sensed.specs
     if len[k.selected] lte 1 or k.parent eq ''
@@ -1840,7 +1825,7 @@ fn _deselect_all[k, sensed, list_id]
     k
 
 --- a press let go off the selection's list, no drag made, lets the
---- selection go (MultiDrag's _deselectMultiDrag)
+--- selection go
 fn _deselected_on_up[k, sensed, e, t]
     if k.stage eq 'dragging' or k.sel_list eq '' or e.button ne 0
         return k
@@ -2160,10 +2145,9 @@ fn busy[c]
     o = recall['lory.drag/others', _no_others[]]
     _busy[k, lory.time[c]] or o.grabbing or o.moving
 
---- ---- Motion's drag: free, thrown, snapped back ----
+--- ---- free drags: thrown, snapped back ----
 
---- what a drag is released into on one axis, as Motion's drag sets it
---- up (VisualElementDragControls' startAnimation): a glide at the
+--- what a drag is released into on one axis: a glide at the
 --- release's velocity (none without `momentum`), slowing over 750 ms, a
 --- bound met (`low`, `high`; a billion or more: none) springing it back
 --- (soft where the drag is `elastic`, else at once), or its place of
@@ -2190,7 +2174,7 @@ fn released[value, velocity, low = -1000000000.0, high = 1000000000.0, elastic =
 
 --- a place dragged to, held to its bounds: past one, pulled back toward
 --- it by `elastic` of the way (0 holds it at the bound, 1 lets it go
---- free), as Motion's applyConstraints
+--- free)
 fn pulled[p, low, high, elastic]
     if p lt low
         return low + (p - low) * elastic
@@ -2198,7 +2182,7 @@ fn pulled[p, low, high, elastic]
         return high + (p - high) * elastic
     p
 
---- a control dragged freely (Motion's `drag`): along `axis` ('x', 'y' or
+--- a control dragged freely: along `axis` ('x', 'y' or
 --- 'both'), kept `left`, `right`, `top` and `bottom` CSS pixels at most
 --- from where it stands (pulled past by `elastic`), thrown on with its
 --- speed when let go (`momentum`), or sent back home (`snap`); with
@@ -2331,9 +2315,9 @@ fn honeycomb[id, icons, wide, tall, size = 64.0]
 
 --- ---- the drags that are not a list's, kept ----
 
---- one drag of Motion's under way or at rest: its value (CSS pixels from
+--- one free drag under way or at rest: its value (CSS pixels from
 --- home), whether it is held and by which pointer, the pointer's history
---- since it was pressed (Motion's pan session), whether it has started,
+--- since it was pressed, whether it has started,
 --- the value it started from and the axis it locked to, the move this
 --- frame not yet taken, the glide or spring it was let go into, and a
 --- card's, a row's, a pinch's or a honeycomb's own
@@ -2344,7 +2328,7 @@ fn _no_grab[kind]
     g = motion.glide[th]
     Grab[kind, 0.0, 0.0, false, '', '', [0.0], [0.0], [0.0], false, 0.0, 0.0, '', false, 0.0, 0.0, false, 0.0, th, th, g, g, false, 0.0, 0.0, 0.0, 0.0, '', false, 1.0, 0.0, _no_texts[], [0.0], [0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
 
---- the drags of Motion's by id, the one held, what they told this frame,
+--- the free drags by id, the one held, what they told this frame,
 --- whether one is held or moving, whether a press made into a drag is
 --- not to be told as a press, and where each was laid out
 struct Others [grabs, active, told, grabbing, moving, suppress, boxes, device, pointer_x, pointer_y]
@@ -2390,7 +2374,7 @@ fn _grab_box[o, n, g]
 fn _is_kind[n, kind]
     _opt[n, 'drag', ''] eq kind
 
---- Motion's pan session's velocity (getVelocity): from the last point
+--- a drag's velocity: from the last point
 --- back to the first more than 100 ms before it (the second, where that
 --- is the press and the history runs past 200 ms), in pixels a second
 fn _pan_velocity[g]
@@ -2480,7 +2464,7 @@ fn _grabbed[o, n, g, e, t]
     o.grabs[n.id] = g
     o
 
---- the move this frame taken (Motion's updatePoint): the drag starts
+--- the move this frame taken: the drag starts
 --- once the pointer has gone 3 pixels; a locked drag waits until it has
 --- gone 10 along one way
 fn _panned[o, n, g, t]
@@ -2607,8 +2591,7 @@ fn _sign_of[x]
         return -1.0
     1.0
 
---- a card's or row's spring to `to` (Motion's spring, 300 stiff, 30
---- damped), from `origin` at `velocity`
+--- a card's or row's spring to `to` (300 stiff, 30 damped), from `origin` at `velocity`
 fn _sprung[g, origin, to, velocity, t]
     g.springing = true
     g.sp_from = origin
@@ -2897,7 +2880,7 @@ fn _other_event[o, sensed, e, t, taken]
         if len[g.touch_ids] gte 2
             if _in_texts[g.touch_ids, e.id]
                 --- (one finger lifted: the pinch is over, its turn come to
-                --- the nearest quarter, as Motion's pinch to rotate)
+                --- the nearest quarter)
                 g.touch_ids = _no_texts[]
                 g.turn = 90.0 * _js_round[g.turn / 90.0]
                 g.held = false
@@ -3045,7 +3028,7 @@ fn _acts[shown]
     out
 
 --- an item pressed, carried down two places and let go: the list tells
---- what SortableJS tells, and its order is the drag's
+--- what a list tells, and its order is the drag's
 test an_item_dragged_down_a_list_takes_its_new_place[]
     _forgotten[]
     first = show[_frame[0, '[]'], _two_lists[]]
@@ -3179,8 +3162,7 @@ test a_card_let_go_short_springs_back[]
 fn _thrown_tree[]
     free['ball', gui.sized[gui.panel[[gui.space[40.0]]], 80.0], axis = 'x', left = -100.0, right = 300.0]
 
---- a control dragged and thrown glides on at its speed, as Motion's
---- drag does, and comes to rest at its bound, sprung back from past it
+--- a control dragged and thrown glides on at its speed, and comes to rest at its bound, sprung back from past it
 test a_thrown_control_glides_on_and_rests_at_its_bound[]
     _forgotten[]
     first = show[_frame[0, '[]'], _thrown_tree[]]
@@ -3196,7 +3178,7 @@ test a_thrown_control_glides_on_and_rests_at_its_bound[]
     show[_frame[64, _ev['move', x + 60.0, y]], _thrown_tree[]]
     let_go = show[_frame[80, _ev['up', x + 60.0, y]], _thrown_tree[]]
     _all_acts[let_go.told] eq ['let_go ball ball ']
-    --- (its speed: 40 px over the last 32 ms, 1250 a second: Motion's own
+    --- (its speed: 40 px over the last 32 ms, 1250 a second: the
     --- glide, from 60, toward 60 + 0.8 × 1250, caught at 300)
     rested = false
     t = 96

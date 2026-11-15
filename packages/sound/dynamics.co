@@ -1,14 +1,13 @@
---- Dynamics: Tone's compressor, limiter and gate, and its compressors of
+--- Dynamics: a compressor, a limiter and a gate, and compressors of
 --- three bands and of a middle and sides. A compressor turns down what
---- is louder than its threshold, by its ratio above a soft knee, as the
---- page's DynamicsCompressorNode does: its curve is the page's (straight
+--- is louder than its threshold, by its ratio above a soft knee: its curve is straight
 --- below the threshold, an exponential bend over the knee, then the ratio
---- in decibels), its makeup gain the page's (the curve's answer to a full
---- level, inverted, to the power 0.6), and it hears 6 ms ahead of what it
+--- in decibels, its makeup gain the curve's answer to a full
+--- level, inverted, to the power 0.6, and it hears 6 ms ahead of what it
 --- turns down. How fast it turns down and back up is a plain envelope of
 --- this module's own (three quarters of the way in the attack time; back
---- up with the release time as its time constant), so what is held to the
---- page is where a steady sound settles, not the shape of the way there.
+--- up with the release time as its time constant), so a steady sound settles
+--- where the curve says.
 ---
 ---     c = dynamics.compressor[]
 ---     out = dynamics.compressed[c, loud]
@@ -29,7 +28,7 @@ struct Compressor [threshold, ratio, attack, release, knee]
 --- (seconds)
 struct Gate [threshold, smoothing]
 
---- Tone's compressor: -24 dB, 12 to 1, attack 3 ms, release 0.25 s,
+--- the plain compressor: -24 dB, 12 to 1, attack 3 ms, release 0.25 s,
 --- knee 30 dB
 fn compressor[]
     Compressor[-24.0, 12.0, 0.003, 0.25, 30.0]
@@ -38,12 +37,12 @@ fn compressor[]
 fn compressor_of[threshold, ratio, attack, release, knee]
     Compressor[0.0 + threshold, 0.0 + ratio, 0.0 + attack, 0.0 + release, 0.0 + knee]
 
---- Tone's limiter: a compressor of 20 to 1 from `threshold` dB (Tone's
---- default -12), attack 3 ms, release 10 ms
+--- a limiter: a compressor of 20 to 1 from `threshold` dB (-12 is
+--- usual), attack 3 ms, release 10 ms
 fn limiter[threshold]
     Compressor[0.0 + threshold, 20.0, 0.003, 0.01, 30.0]
 
---- Tone's gate: -40 dB, following over 0.1 s
+--- the plain gate: -40 dB, following over 0.1 s
 fn gate[]
     Gate[-40.0, 0.1]
 
@@ -182,8 +181,8 @@ fn compressed[c, s]
 fn limited[threshold, s]
     compressed[limiter[threshold], s]
 
---- a sound split in three bands (Tone's MultibandCompressor splits at
---- 250 and 2000 Hz), each through its own compressor, and summed: Tone's
+--- a sound split in three bands (split at 250 and 2000 Hz by
+--- default), each through its own compressor, and summed: the default
 --- bands' compressors are 6 to 1 from -30 dB below (attack 30 ms,
 --- release 0.25 s, knee 10 dB) and 3 to 1 from -24 dB in the middle and
 --- above (attack 20 ms, release 30 ms, knee 16 dB)
@@ -196,12 +195,12 @@ fn multiband_compressed[s, low_frequency, high_frequency, low, middle, high]
     c = compressed[high, sound.mono[rate, parts[2]]]
     sound.mono[rate, a.left + b.left + c.left]
 
---- the three compressors Tone's MultibandCompressor starts with
+--- the three compressors a multiband compressor starts with
 fn multiband_defaults[]
     [compressor_of[-30.0, 6.0, 0.03, 0.25, 10.0], compressor_of[-24.0, 3.0, 0.02, 0.03, 16.0], compressor_of[-24.0, 3.0, 0.02, 0.03, 16.0]]
 
---- a sound's middle and sides compressed apart and joined again (Tone's
---- MidSideCompressor: the middle 3 to 1 from -24 dB, the sides 6 to 1
+--- a sound's middle and sides compressed apart and joined again (by
+--- default the middle 3 to 1 from -24 dB, the sides 6 to 1
 --- from -30 dB); a sound of one channel splits as the left alone
 fn mid_side_compressed[s, middle, sides]
     rate = s.rate
@@ -212,7 +211,7 @@ fn mid_side_compressed[s, middle, sides]
     d = compressed[sides, sound.mono[rate, (s.left - right) * sqrt[0.5]]].left
     sound.stereo[rate, (m + d) * sqrt[0.5], (m - d) * sqrt[0.5]]
 
---- the curve Tone's comparison with nothing lays (127 points: nothing up
+--- the curve that compares a sample with nothing (127 points: nothing up
 --- to nothing, one beyond), read at ten thousand times a difference
 fn _above_curve[]
     x = (0.0 + range[127]) / 126.0 * 2.0 - 1.0

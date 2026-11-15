@@ -1,6 +1,6 @@
---- three.js's shapes, made by Lory's geometry: pick one, move the sliders
---- of its numbers, and turn it with the pointer (drag to turn, the wheel
---- to come nearer). It is drawn solid, by its indices as three draws it,
+--- 3D shapes, made by Lory's geometry: pick one, move the sliders of its
+--- numbers, and turn it with the pointer (drag to turn, the wheel to come
+--- nearer). It is drawn solid, by its indices,
 --- with its edges (where its faces meet at more than twenty degrees) and
 --- its wireframe as lines in the scene, behind what is nearer (in a
 --- headset too); the panel says how many vertices and triangles it has.
@@ -239,7 +239,7 @@ fn _shown_number[p, value]
 --- is drawn, and what it came to
 fn view_of[a, made]
     v = _numbers_of[a]
-    kids = [gui.heading['Geometry'], gui.note['three.js shapes, laid out as three lays them out. Drag the shape to turn it; the wheel brings it nearer.'], gui.label['Shape'], gui.select['shape', _shape_names[], a.shape]]
+    kids = [gui.heading['3D shapes'], gui.note['Boxes, spheres, knots, extrusions and more, built vertex by vertex. Drag the shape to turn it; the wheel brings it nearer.'], gui.label['Shape'], gui.select['shape', _shape_names[], a.shape]]
     params = _params_of[a.shape]
     for k in range[len[params]]
         p = params[k]

@@ -1,4 +1,4 @@
---- Lory's games (docs/lory-design.md, phase 6), a package of their own
+--- Lory's games, a package of their own
 --- beside Lory, as Kite is: a clock that steps a game at a fixed rate
 --- whatever the frame rate, shapes that meet, a value eased and held in
 --- bounds, sparks that fly and fade, and sounds made by the page. A game's

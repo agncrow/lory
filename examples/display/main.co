@@ -74,7 +74,7 @@ fn page_cards[page]
     gui.column[rows, gap = 12.0]
 
 fn page_of[a, tall]
-    bar = navigation.app_bar['bar', 'Ωdisplay', [navigation.tool_button['bar:search', '', 'search'], navigation.tool_button['bar:more', '', 'dots-vertical']], navigation.unscrolled[], 'menu']
+    bar = navigation.app_bar['bar', 'Navigation and display', [navigation.tool_button['bar:search', '', 'search'], navigation.tool_button['bar:more', '', 'dots-vertical']], navigation.unscrolled[], 'menu']
     trail = navigation.breadcrumbs['trail', crumbs_of[], '/', 4]
     steps = navigation.stepper['steps', steps_of[], a.step, a.done]
     actions = navigation.step_actions['steps', a.step, len[steps_of[]]]

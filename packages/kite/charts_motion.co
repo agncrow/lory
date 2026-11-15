@@ -1,13 +1,9 @@
---- How a chart's marks move, as Chart.js moves them: the easings that
+--- How a chart's marks move: the easings that
 --- shape a motion's pace, a number and a colour part way to another, and
 --- a chart's marks on their way from where they stood to where its data
 --- puts them (growing from their base as it first shows, moving on when
 --- the data changes, sent on from wherever they are when it changes again
 --- part way).
----
---- These are Chart.js 4.5.1's animations (its easings are Robert Penner's
---- equations; its colours are mixed as its colour library mixes them),
---- read from it and written anew (see charts_model.co).
 use math
 use lory
 use charts_model
@@ -21,7 +17,7 @@ struct Motion [from, to, start, duration, easing]
 
 --- ---- easings ----
 
---- the easings Chart.js knows, by name
+--- the easings a chart knows, by name
 fn easings[]
     ['linear', 'easeInQuad', 'easeOutQuad', 'easeInOutQuad', 'easeInCubic', 'easeOutCubic', 'easeInOutCubic', 'easeInQuart', 'easeOutQuart', 'easeInOutQuart', 'easeInQuint', 'easeOutQuint', 'easeInOutQuint', 'easeInSine', 'easeOutSine', 'easeInOutSine', 'easeInExpo', 'easeOutExpo', 'easeInOutExpo', 'easeInCirc', 'easeOutCirc', 'easeInOutCirc', 'easeInElastic', 'easeOutElastic', 'easeInOutElastic', 'easeInBack', 'easeOutBack', 'easeInOutBack', 'easeInBounce', 'easeOutBounce', 'easeInOutBounce']
 
@@ -174,8 +170,7 @@ fn _bounce_out[t]
 fn number_between[a, b, share]
     a + (b - a) * share
 
---- a colour `share` of the way from `from` to `to`, as Chart.js's colour
---- library mixes them: each part in whole bytes, the two weighed by how
+--- a colour `share` of the way from `from` to `to`: each part in whole bytes, the two weighed by how
 --- far along and how opaque each is, the opacity kept to a whole byte
 fn color_between[from, to, share]
     a1 = _alpha_of[to]
@@ -195,7 +190,7 @@ fn color_between[from, to, share]
     alpha_byte = max[min[0.0 + floor[alpha * 255.0 + 0.5], 255.0], 0.0]
     lory.Color[r / 255.0, g / 255.0, b / 255.0, alpha_byte / 255.0]
 
---- a colour's opacity as the colour library weighs it: to the hundredth
+--- a colour's opacity as it is weighed: to the hundredth
 fn _alpha_of[c]
     byte = c.a * 255.0
     max[min[(0.0 + floor[byte / 2.55 + 0.5]) / 100.0, 1.0], 0.0]

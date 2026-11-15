@@ -1,0 +1,199 @@
+--- Clock: an analogue clock redrawn every animation frame from the
+--- seconds since midnight, its four hands turned by the time's fraction
+--- of a second, a minute, an hour and twelve hours, each turn written to
+--- a tenth of a degree, over a white dial with 60 short marks and 12 long
+--- ones.
+---
+--- The seconds are a float, the remainders exact, and the tenths rounded
+--- from the float's exact binary value, half up. Lory's page tells the
+--- program no time zone, so this clock keeps UTC's midnight.
+use lory
+use lory.gui
+
+--- the milliseconds since midnight at the frame time 0
+struct State [base]
+
+--- the milliseconds since midnight (UTC) at a frame's time
+fn _since_midnight[at]
+    t = now[]
+    1000.0 * (float[t] - float[bucket[t, 86400]]) - at
+
+fn fresh[at]
+    State[_since_midnight[at]]
+
+--- the clock set to `base` ms since midnight at the frame time 0 (a
+--- test's clock)
+fn based[s, base]
+    s.base = base
+    s
+
+fn before[s, at]
+    s
+
+fn after[s, shown, at]
+    s
+
+--- the seconds since midnight at a frame's time, as the page divides them
+fn seconds_at[s, at]
+    (s.base + at) / 1000.0
+
+--- the remainder of `x` by `y` (both 0 or more): exact, a whole number of `y` taken away (the quotient's
+--- rounding put right)
+fn remainder[x, y]
+    k = floor[x / y]
+    r = x - k * y
+    if r lt 0.0
+        r = r + y
+    if r gte y
+        r = r - y
+    r
+
+--- a number 0 or more written with `places` places (0 or 1): its exact
+--- binary value, `m` times a
+--- power of two, rounded half up
+fn fixed[v, places]
+    scale = 1
+    if places gt 0
+        scale = 10
+    n = 0
+    if v gt 0.0
+        e = 0
+        p = 1.0
+        while p gt v
+            p = p / 2.0
+            e = e - 1
+        while p * 2.0 lte v
+            p = p * 2.0
+            e = e + 1
+        m = int[v * 2.0 ^ (52 - e)]
+        k = 52 - e
+        q = m * scale
+        if k lte 0
+            n = q * 2 ^ (0 - k)
+        else
+            d = 2 ^ k
+            n = (2 * q + d) / (2 * d)
+    if places eq 0
+        return '`n`'
+    whole = n / 10
+    tenth = n % 10
+    '`whole`.`tenth`'
+
+--- each hand's turn in degrees: the fraction of a second, a minute, an
+--- hour and twelve hours the time has gone
+fn turns_at[s, at]
+    time = seconds_at[s, at]
+    subsecond = remainder[time, 1.0] * 360.0
+    second = remainder[time, 60.0] / 60.0 * 360.0
+    minute = remainder[time / 60.0, 60.0] / 60.0 * 360.0
+    hour = remainder[time / 60.0 / 60.0, 12.0] / 12.0 * 360.0
+    [subsecond, hour, minute, second]
+
+fn _rotate[v]
+    'rotate(`fixed[v, 1]`)'
+
+--- ---- the face ----
+
+--- a hand: what it shows, its length and width (the dial's units, 200
+--- across) and its colour
+struct Hand [name, length, width, color]
+
+fn hands[]
+    [Hand['subsecond', 85, 5, '#c0c0c0'], Hand['hour', 50, 4, '#000000'], Hand['minute', 70, 3, '#000000'], Hand['second', 80, 2, '#ff6347']]
+
+--- a ring of marks: how many, their length and width, and their colour
+--- (each runs in to the dial's edge at 95)
+fn minor[]
+    Hand['minor', 2, 1, '#c0c0c0']
+
+fn major[]
+    Hand['major', 5, 2, '#000000']
+
+fn _marks_count[mark]
+    if mark.name eq 'minor'
+        return 60
+    12
+
+--- a hand drawn from the middle (or a mark in from 95) at `degrees`
+fn _stroke[c, cx, cy, k, degrees, inner, outer, width, color]
+    a = degrees * 3.141592653589793 / 180.0
+    x0 = cx + inner * k * sin[a]
+    y0 = cy - inner * k * cos[a]
+    x1 = cx + outer * k * sin[a]
+    y1 = cy - outer * k * cos[a]
+    c = lory.line[c, x0, y0, x1, y1, width * k, color]
+    c = lory.circle[c, x0, y0, width * k / 2.0, color]
+    lory.circle[c, x1, y1, width * k / 2.0, color]
+
+--- the clock drawn in its box, `num` the seconds since midnight
+fn faced[d]
+    c = d.c
+    k = min[d.w, d.h] / 200.0
+    cx = d.x + d.w / 2.0
+    cy = d.y + d.h / 2.0
+    c = lory.circle[c, cx, cy, 99.0 * k, lory.white[]]
+    c = lory.ring[c, cx, cy, 99.0 * k, 1.0 * k, lory.hex['#171717']]
+    for mark in [minor[], major[]]
+        n = _marks_count[mark]
+        for i in range[n]
+            c = _stroke[c, cx, cy, k, 360.0 * i / n, 95.0 - mark.length, 95.0, 0.0 + mark.width, lory.hex[mark.color]]
+    time = d.num
+    turns = [remainder[time, 1.0] * 360.0, remainder[time / 60.0 / 60.0, 12.0] / 12.0 * 360.0, remainder[time / 60.0, 60.0] / 60.0 * 360.0, remainder[time, 60.0] / 60.0 * 360.0]
+    every = hands[]
+    for i in range[4]
+        h = every[i]
+        c = _stroke[c, cx, cy, k, turns[i], 0.0, 0.0 + h.length, 0.0 + h.width, lory.hex[h.color]]
+    d.c = c
+    d
+
+fn tree[s, at, dark]
+    gui.drawn['', seconds_at[s, at], 0.0, 420.0, faced]
+
+--- ---- what the example shows, as the tests read it ----
+
+fn _marks_seen[mark]
+    n = _marks_count[mark]
+    turns = for i in range[n]
+        'rotate(`360 * i / n`)'
+    '{"count": `n`, "from": `95 - mark.length`, "to": 95, "width": `mark.width`, "color": `encode[mark.color]`, "turns": `encode[turns]`}'
+
+fn seen[s, at]
+    t = turns_at[s, at]
+    least = _rotate[t[0]]
+    hour = _rotate[t[1]]
+    minute = _rotate[t[2]]
+    second = _rotate[t[3]]
+    shown = for h in hands[]
+        '{"class": `encode[h.name]`, "length": `h.length`, "width": `h.width`, "color": `encode[h.color]`}'
+    hs = join[shown, ', ']
+    box = '0 0 200 200'
+    face = '{"dial": 99, "view": `encode[box]`, "minor": `_marks_seen[minor[]]`, "major": `_marks_seen[major[]]`, "hands": [`hs`]}'
+    '{"t": `encode[at]`, "hands": {"subsecond": `encode[least]`, "hour": `encode[hour]`, "minute": `encode[minute]`, "second": `encode[second]`}, "face": `face`}'
+
+--- a page 1000 by 900 at `t` ms with no input, as the page hands a frame
+fn _page[t]
+    json['{"t": `t`, "width": 1000, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 900, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+test tenths_are_rounded_half_up_from_the_exact_value[]
+    fixed[1.15, 1] eq '1.1'
+    fixed[90.25, 1] eq '90.3'
+    fixed[0.05, 1] eq '0.1'
+    fixed[2.5, 0] eq '3'
+    fixed[0.0, 1] eq '0.0'
+    fixed[359.99583, 1] eq '360.0'
+
+test a_remainder_is_exact[]
+    remainder[54030.016, 1.0] eq 54030.016 - 54030.0
+    remainder[119.99999999999999, 60.0] lt 60.0
+    remainder[180.0, 60.0] eq 0.0
+
+test the_hands_turn_with_the_time[]
+    s = based[fresh[0.0], 54030000.0]
+    t = turns_at[s, 0.0]
+    _rotate[t[3]] eq 'rotate(180.0)'
+    _rotate[t[1]] eq 'rotate(90.2)'
+    _rotate[turns_at[s, 16.0][0]] eq 'rotate(5.8)'
+
+test its_face_is_drawn[]
+    shown = gui.show[lory.begin[_page[0.0]], tree[fresh[0.0], 0.0, false]]
+    len[shown.events] eq 0

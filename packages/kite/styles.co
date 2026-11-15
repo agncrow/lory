@@ -1,8 +1,8 @@
---- Kite's styles: every look a chart has, named by its path as klinecharts
---- names it (`candle.bar.upColor`, `crosshair.horizontal.line.style`),
+--- Kite's styles: every look a chart has, named by its path
+--- (`candle.bar.upColor`, `crosshair.horizontal.line.style`),
 --- each held as text in one map: a colour as CSS writes it, a number as
 --- its digits, a list (`dashedValue`) as numbers between commas. A chart
---- starts from `defaults[]` (klinecharts' light theme), and setting a
+--- starts from `defaults[]` (the light theme), and setting a
 --- style is setting its key (`kite.style[k, 'candle.bar.upColor', '#26a69a']`),
 --- or merging a map of them (`kite.styles[k, styles.dark[]]`).
 ---
@@ -80,7 +80,7 @@ fn _tooltip_text[m, at, size]
     m['`at`.marginBottom'] = '4'
     m
 
---- every style, as klinecharts' defaults have it (its light theme), and
+--- every style, as the defaults have it (the light theme), and
 --- Kite's own: the page behind the chart
 fn defaults[]
     m = map[background = '#FFFFFF']
@@ -268,7 +268,7 @@ fn light[]
         m['crosshair.`d`.text.backgroundColor'] = '#686D76'
     m
 
---- the dark theme's colours, as klinecharts' `dark`
+--- the dark theme's colours
 fn dark[]
     m = map[background = '#151517']
     m['grid.horizontal.color'] = '#292929'

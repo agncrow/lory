@@ -1,0 +1,160 @@
+--- Managing data, drawn by Lory: a task that looks up a package's facts
+--- (after a second, from sample data built into the example), context
+--- handed down without being passed through every component, and a count
+--- kept in a signal and shown by every instance.
+---
+--- A task is the example's state: its status (initial, pending, complete
+--- or error), the run it is on and what it answered; a run's lookup
+--- answers a second after it began, and the answer of a run since
+--- replaced is never shown. Context is a value handed to the functions
+--- below the one that holds it. A signal is one value of the example's
+--- state that every instance reads.
+
+use lory
+use lory.gui
+use shared
+
+--- ---- Async Tasks ----
+
+--- the sample packages' facts by name, as a package index would answer
+--- them (JSON); '' for a name it has no package of
+fn package_facts[name]
+    if name eq 'paper-boat'
+        return '{"description": "Small boats folded from one sheet.", "dist-tags": {"latest": "2.4.1", "next": "3.0.0-pre.2"}}'
+    if name eq 'tin-whistle'
+        return '{"description": "Six holes and a tune.", "dist-tags": {"latest": "0.9.0"}}'
+    ''
+
+--- the package the task looks up as it opens
+fn _first_name[]
+    'paper-boat'
+
+--- the name typed in, the name the task ran for, and what its status
+--- shows: initial (no name), pending (a second's wait for the lookup),
+--- complete (the package's description and its tags) or an error
+fn async_task_view[s, t]
+    name = shared.words_of[s, 'name', _first_name[]]
+    typed = shared.words_of[s, 'typed', name]
+    status = task_status[s]
+    shown = [gui.text['Enter a package name to display its facts']]
+    if status eq 'pending'
+        shown = [gui.text['Loading the facts of `name`']]
+    if status eq 'error'
+        shown = [shared.inked['', 'Error: no package is called `name`.', 'name=task-error;color=#ff0000']]
+    if status eq 'complete'
+        shown = _package_shown[shared.words_of[s, 'answer', '{}']]
+    rows = [gui.row[[gui.text['Enter a package name:'], gui.sized[gui.field['task-name', typed], 200.0]]], shared.titled[1, name, '', 'block=0;wide=360']]
+    for n in shown
+        rows = push[rows, n]
+    gui.panel[rows]
+
+--- what the task is doing: `initial` with no name, else `pending` until
+--- its answer is in, then `complete` or `error`
+fn task_status[s]
+    shared.words_of[s, 'status', 'pending']
+
+--- the package's facts: its description, and a line
+--- for each of its tags with the version it names
+fn _package_shown[body]
+    j = json[body]
+    if not j.ok
+        return [gui.text['']]
+    rows = [shared.titled[3, '`j.description`', '', ''], shared.titled[4, 'dist-tags:', '', '']]
+    tags = j['dist-tags']
+    if not tags.ok
+        return rows
+    for tag in keys[tags]
+        version = tags[tag]
+        rows = push[rows, shared.entry[[gui.text['`tag`: `version`']]]]
+    rows
+
+--- the task moved on to `t`: a pending run's lookup answered a second
+--- after it began, completing it with the package's facts, or failing it
+--- where there is no such package
+fn task_ticked[s, t]
+    if task_status[s] ne 'pending'
+        return s
+    if t lt shared.number_of[s, 'since'] + 1000.0
+        return s
+    body = package_facts[shared.words_of[s, 'name', _first_name[]]]
+    if body eq ''
+        return shared.set_words[s, 'status', 'error']
+    s = shared.set_words[s, 'answer', body]
+    shared.set_words[s, 'status', 'complete']
+
+fn async_task_answered[s, e, t]
+    name = shared.words_of[s, 'name', _first_name[]]
+    if e.id eq 'task-name' and e.act eq 'edit'
+        return shared.set_words[s, 'typed', e.words]
+    if e.id eq 'task-name' and e.act eq 'submit'
+        typed = shared.words_of[s, 'typed', name]
+        if typed eq name
+            return s
+        s = shared.set_words[s, 'name', typed]
+        s = shared.set_number[s, 'run', shared.number_of[s, 'run'] + 1.0]
+        if typed eq ''
+            return shared.set_words[s, 'status', 'initial']
+        s = shared.set_number[s, 'since', t]
+        return shared.set_words[s, 'status', 'pending']
+    s
+
+--- ---- Context Basics ----
+
+--- two providers, each handing its data to the consumer inside it
+fn context_basics_view[s, t]
+    gui.column[[shared.titled[3, 'Basic Context Example', '', ''], gui.text['The consumer receives its data from the provider above it without its being passed down through each level.'], shared.rule[], _provider['Initial'], shared.rule[], _provider['specified from attribute']]]
+
+--- a provider: its data shown, and handed to what is slotted in it
+fn _provider[data]
+    gui.panel[[shared.titled[3, 'Provider\'s data: `data`', '', ''], gui.panel[[_consumer[data]]]]]
+
+--- a consumer: the data of the provider nearest above it
+fn _consumer[data]
+    shared.titled[3, 'Consumer data: `data`', '', '']
+
+--- ---- Context Consume and Provide ----
+
+--- sections that each provide one more than the level they were given: a
+--- heading takes its tag (h1 to h5) and colour from the level of the
+--- section it stands in
+fn context_provide_view[s, t]
+    rows = slice[[gui.space[0.0]], 0, 0]
+    levels = [0, 1, 1, 2, 2, 3, 1, 2, 3, 3, 0, 1, 2, 3, 4, 1, 2, 3]
+    colours = ['#0000ff', '#ffa500', '#008000', '#800080']
+    i = 0
+    while i lt len[levels]
+        level = levels[i]
+        rows = push[rows, shared.titled[level + 1, 'Heading level `level + 1`', 'ctx-`i`', 'color=`colours[level % 4]`;align=center']]
+        i = i + 1
+    gui.column[rows]
+
+--- ---- Signals ----
+
+--- two instances of a counter whose count is one signal: either's
+--- Increment shows in both
+fn signals_view[s, t]
+    count = int[shared.number_of[s, 'count']]
+    gui.column[[_counter['Instance 1', 'sig-inc-1', count], _counter['Instance 2', 'sig-inc-2', count]]]
+
+fn _counter[title, id, count]
+    gui.panel[[shared.titled[2, title, '', ''], gui.text['count = `count`'], gui.button[id, 'Increment']]]
+
+fn signals_answered[s, e, t]
+    if e.act eq 'press' and (e.id eq 'sig-inc-1' or e.id eq 'sig-inc-2')
+        return shared.set_number[s, 'count', shared.number_of[s, 'count'] + 1.0]
+    s
+
+--- the part's trees shown on a canvas
+fn shown_on[c, s, t]
+    gui.show[c, signals_view[s, t]]
+
+test a_task_waits_a_second_then_shows_the_facts_or_an_error[]
+    s = shared.fresh['async-task', shared.no_numbers[], '2026-11-14']
+    task_status[task_ticked[s, 999.0]] eq 'pending'
+    done = task_ticked[s, 1000.0]
+    task_status[done] eq 'complete'
+    len[split[shared.words_of[done, 'answer', ''], 'Small boats']] eq 2
+    typed = async_task_answered[s, gui.Event['task-name', 'edit', 'no-such-thing', 0.0], 0.0]
+    again = async_task_answered[typed, gui.Event['task-name', 'submit', 'no-such-thing', 0.0], 2000.0]
+    task_status[task_ticked[again, 2500.0]] eq 'pending'
+    task_status[task_ticked[again, 3000.0]] eq 'error'

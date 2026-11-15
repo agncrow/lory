@@ -1,4 +1,4 @@
---- Sound's controls, drawn with Lory as Tone's demos draw theirs: a
+--- Sound's controls, drawn with Lory: a
 --- keyboard of notes, a grid of steps for a sequencer, a knob, a level
 --- meter, a spectrum and a waveform, and a player's row (a play button, a
 --- seek slider, the time and the pace). Each is a `gui.drawn` control (or

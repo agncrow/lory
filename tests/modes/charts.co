@@ -2,10 +2,9 @@
 --- interpreter's run against the compiled program's: each chart's area,
 --- its axes' ranges, boxes, tick labels and tick pixels, its legend's
 --- items, every mark's geometry, what each interaction mode finds and
---- what the tooltip shows at the middle of its area; Chart.js's easings,
+--- what the tooltip shows at the middle of its area; the charts' easings,
 --- a long line thinned both ways, and frames of a chart drawn (the
 --- canvas's vertices counted and summed), on the canvas and in gui's tree.
---- The charts are some of those tests/charts/reference.co holds to Chart.js.
 use math
 use lory
 use lory.gui

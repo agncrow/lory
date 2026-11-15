@@ -1,0 +1,180 @@
+--- Basics and properties, drawn by Lory: a greeting, a component with
+--- state, style and an event, properties set from markup and from code, a
+--- property that changes only when its day does, and an attribute read
+--- into a date by a converter.
+---
+--- A component's properties are an example's state here, and drawing it
+--- is a function of that state: a property set again draws again by being
+--- read again in the next frame. Scoped styles and a colour handed in
+--- from outside are a look handed to the words that wear it
+--- (`shared.inked`).
+
+use lory
+use lory.gui
+use shared
+
+--- ---- Hello World ----
+
+--- a greeting given its name, "World": a paragraph in blue
+fn hello_world_view[s, t]
+    gui.column[[shared.inked['', 'Hello, World!', 'name=hello;color=#0000ff']]]
+
+--- ---- Full component ----
+
+--- one component twice, the second given its colour (red) from outside
+--- and its planet by an attribute: a press on either
+--- greeting turns its planet between World and Mars
+fn full_component_view[s, t]
+    one = _greeting['fc-1', shared.words_of[s, 'planet-1', 'World'], '#0000ff']
+    two = _greeting['fc-2', shared.words_of[s, 'planet-2', 'Mars'], '#ff0000']
+    gui.column[[one, shared.rule[], two]]
+
+--- a greeting on a light gray ground, the planet in the colour the theme
+--- gives it (the component's own blue where the page gives none)
+fn _greeting[id, planet, color]
+    hello = shared.inked['`id`-hello', 'Hello', 'bg=#d3d3d3;pad=10;color=#000000']
+    named = shared.inked[id, planet, 'bg=#d3d3d3;pad=10;color=`color`']
+    gui.row[[hello, named], gap = 0.0]
+
+fn full_component_answered[s, e, t]
+    if e.act ne 'press'
+        return s
+    which = ''
+    if e.id eq 'fc-1' or e.id eq 'fc-1-hello'
+        which = 'planet-1'
+    if e.id eq 'fc-2' or e.id eq 'fc-2-hello'
+        which = 'planet-2'
+    if which eq ''
+        return s
+    otherwise = 'World'
+    if which eq 'planet-2'
+        otherwise = 'Mars'
+    planet = shared.words_of[s, which, otherwise]
+    turned = 'World'
+    if planet eq 'World'
+        turned = 'Mars'
+    shared.set_words[s, which, turned]
+
+--- ---- Basic properties ----
+
+--- two name tags: one whose name the markup sets, one made by code with
+--- its name set before it was added to the page
+fn properties_basic_view[s, t]
+    gui.column[[gui.text['Hello I\'m statically initialized.'], shared.rule[], gui.text['Hello I\'m dynamically created.']]]
+
+--- ---- Change detection ----
+
+--- a date chosen by typing it or by Choose Today, shown flashing blue as
+--- it changes: a date of the same day is no change (the property's
+--- change check compares days), so it neither draws again nor flashes
+fn properties_has_changed_view[s, t]
+    chosen = shared.words_of[s, 'date', '']
+    shown = shared.inked['date-shown', chosen, 'bg=`flash_ground[s, t]`;pad=0']
+    gui.column[[gui.row[[gui.text['Choose a date:'], gui.sized[gui.field['date-input', shared.words_of[s, 'typed', ''], hint = 'YYYY-MM-DD'], 160.0]]], gui.button['date-today', 'Choose Today'], gui.row[[gui.text['Date chosen:'], shown]]]]
+
+--- the ground of the date as it flashes: white, to #324fff half way, and
+--- back to white over a second (the element's own animation, eased
+--- linearly), and none once it is over
+fn flash_ground[s, t]
+    if not shared.flag_of[s, 'flashing']
+        return 'none'
+    q = (t - shared.number_of[s, 'flash-at']) / 1000.0
+    if q lt 0.0 or q gte 1.0
+        return 'none'
+    p = q * 2.0
+    if q gte 0.5
+        p = 2.0 - q * 2.0
+    mixed_hex[255.0 + (50.0 - 255.0) * p, 255.0 + (79.0 - 255.0) * p, 255.0]
+
+--- a colour's CSS hex code from its channels (0 to 255, rounded)
+fn mixed_hex[r, g, b]
+    '#`_hex_byte[r]``_hex_byte[g]``_hex_byte[b]`'
+
+fn _hex_byte[v]
+    n = floor[v + 0.5]
+    if n lt 0
+        n = 0
+    if n gt 255
+        n = 255
+    digits = split['0123456789abcdef', '']
+    '`digits[n / 16]``digits[n % 16]`'
+
+fn properties_has_changed_answered[s, e, t]
+    if e.id eq 'date-today' and e.act eq 'press'
+        return _date_chosen[s, local_date[s.today], t]
+    if e.id eq 'date-input' and e.act eq 'edit'
+        s = shared.set_words[s, 'typed', e.words]
+        if is_iso_date[e.words]
+            return _date_chosen[s, local_date[e.words], t]
+    s
+
+--- the date chosen: shown and flashing when its day differs from the one
+--- before, else nothing at all
+fn _date_chosen[s, day, t]
+    if day eq shared.words_of[s, 'date', '']
+        return s
+    s = shared.set_words[s, 'date', day]
+    s = shared.set_flag[s, 'flashing', true]
+    shared.set_number[s, 'flash-at', t]
+
+--- whether text is a day written `YYYY-MM-DD`, as a date input holds one
+fn is_iso_date[words]
+    if len[words] ne 10
+        return false
+    parts = split[words, '-']
+    if len[parts] ne 3
+        return false
+    y = int[parts[0]]
+    m = int[parts[1]]
+    d = int[parts[2]]
+    if not y.ok or not m.ok or not d.ok
+        return false
+    m gte 1 and m lte 12 and d gte 1 and d lte 31
+
+--- a day written `YYYY-MM-DD` shown month/day/year, as a reader in the
+--- United States reads a date
+fn local_date[iso]
+    parts = split[iso, '-']
+    if len[parts] ne 3
+        return ''
+    m = int[parts[1]]
+    if not m.ok
+        return ''
+    d = int[parts[2]]
+    if not d.ok
+        return ''
+    '`m`/`d`/`parts[0]`'
+
+--- ---- Custom attribute converter ----
+
+--- an element whose `date` attribute is read by a converter of its own:
+--- unset, it says so; `date="Oct 20 2021"` is a date, shown
+--- month/day/year
+fn properties_custom_converter_view[s, t]
+    day = date_from_attribute['Oct 20 2021']
+    gui.column[[gui.text['No date set'], shared.rule[], gui.row[[gui.text['Date is'], shared.inked['', day, 'name=conv-date']]]]]
+
+--- the converter: an attribute like `Oct 20 2021` (a month's name, a day,
+--- a year) read into the day it names, shown month/day/year
+fn date_from_attribute[words]
+    parts = split[trim[words], ' ']
+    if len[parts] ne 3
+        return ''
+    months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+    head = lower[slice[parts[0], 0, 3]]
+    m = 0
+    i = 0
+    while i lt 12
+        if months[i] eq head
+            m = i + 1
+        i = i + 1
+    d = int[parts[1]]
+    if not d.ok
+        return ''
+    if m eq 0
+        return ''
+    '`m`/`d`/`parts[2]`'
+
+--- the part's trees shown on a canvas
+fn shown_on[c, s, t]
+    gui.show[c, hello_world_view[s, t]]

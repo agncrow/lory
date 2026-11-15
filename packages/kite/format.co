@@ -67,7 +67,7 @@ fn fixed[v, decimals]
     fmt[x, decimals = d]
 
 --- the number with a separator between each three whole digits, as
---- klinecharts' formatThousands puts it: only inside the run of digits
+--- written: only inside the run of digits
 --- that ends the whole part (`120K` stays as it is, `-1234` is `-1,234`)
 fn thousands[text, mark]
     if mark eq ''
@@ -145,7 +145,7 @@ fn fold[text, threshold]
 --- a colour as CSS writes it: #rgb, #rrggbb, #rrggbbaa, rgb(r, g, b),
 --- rgba(r, g, b, a) or transparent
 --- the number text writes, or `fallback` where it writes none (a style
---- klinecharts would read as NaN, then its default)
+--- that is not a number, then its default)
 fn number[text, fallback]
     v = float[trim[text]]
     if not v.ok
@@ -204,7 +204,7 @@ test a_time_is_written_by_its_template[]
     date['', ms, 'HH:mm'] eq '14:30'
     date['America/New_York', ms, 'MM-DD HH:mm'] eq '11-06 09:30'
 
-test numbers_are_written_as_klinecharts_writes_them[]
+test numbers_are_written_fixed_grouped_and_short[]
     fixed[3.14159, 2] eq '3.14'
     fixed[2.0, 2] eq '2.00'
     fixed[-0.0, 4] eq '0.0000'

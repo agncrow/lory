@@ -10,15 +10,11 @@ What is welcome, in Issues:
 - **A bug**, with the program that shows it and what each mode said:
   `crow run -i file.co` and `crow run file.co`. Lory's answers are held
   to be the same in both, so a difference between them is a bug by itself.
-- **A component that behaves differently from its reference.** Name the
-  reference (a Radix primitive, a Vuetify component, a Chart.js chart) and
-  say what it does that Lory's does not. docs/components/ says what each
-  is held to.
-- **A question** that the README, the component pages or the design does not
-  answer.
+- **A component that does not behave as you expect**, with what you did
+  and what it did.
+- **A question** that the README or the site's guide does not answer.
 - **What you built with it.**
 
 Working from a checkout: `./test.sh` runs the whole suite, which is every
-package's tests in both modes, the parity checks against the reference
-libraries, every example built for the web, and a walk in a made-up headset
-when Chrome is there.
+package's tests in both modes, every example built for the web and driven
+in headless Chrome, and walks in a made-up headset when Chrome is there.

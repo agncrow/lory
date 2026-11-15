@@ -1,0 +1,64 @@
+--- The small apps driven by their scripts (tests/apps/steps.json),
+--- everything each shows at each step written out, with the
+--- Spreadsheet's formulas and the Markdown Editor's pages worked out on
+--- their own: to diff the interpreter's run against the compiled
+--- program's. Run from the repository's root:
+--- `tests/modes.sh crow tests/modes/apps.co`.
+use lory
+use lory.gui
+use tests.apps.driver
+use examples.apps.gallery
+use examples.apps.editor
+use examples.apps.formulas
+
+fn _one_line[words]
+    join[split[words, '\n'], '\\n']
+
+fn _markdown_sources[]
+    ['# hello', '## Second\n\nSome *emphasis* and **strong** text.', 'Inline \`code\` and a [link](#intro).', '- one\n- two\n- three', '1. first\n2. second\n3. third', '3. three\n4. four', '> quoted *words*\n> and more', '\`\`\`crow\na = 1\nlog[a]\n\`\`\`', 'above\n\n---\n\nbelow', '***both*** and _under_ and __strong__', 'line one\nline two', '# A\n\nB\n\n## C\n\nD', '- a\n  - nested\n- b', '\\*not emphasis\\*', 'Hard  \nbreak', '    indented code', 'Setext\n===', '* star\n* list', '**a**', '[link *em*](#x.y "the title")', '~~gone~~ and \`two\` and **bold \`code\`**', '###### six', '- loose\n\n- items', 'a *b **c** d* e']
+
+fn _keys_of[seen]
+    out = slice[[''], 0, 0]
+    for k in keys[seen]
+        out = push[out, '`k`']
+    out
+
+--- every field the example shows at every step of its script
+fn _written[slug]
+    script = driver.steps[]['examples'][slug]
+    last = driver.started[slug]
+    i = 0
+    while i lt len[script]
+        step = script[i]
+        what = step['do']
+        act = '`what`'
+        if act ne 'start'
+            driver.performed[slug, step, last]
+            last = driver.idle[0.0 + step['at']]
+        seen = gallery.seen_now[last.canvas]
+        for key in sort[_keys_of[seen]]
+            if key ne ''
+                log['`slug` `i` `key` `_one_line[seen[key]]`']
+        i = i + 1
+    slug
+
+for slug in gallery.order[]
+    _written[slug]
+
+--- Markdown read on its own: each source's page
+for source in _markdown_sources[]
+    log['markdown `_one_line[source]` `editor.structure[source]`']
+
+sheet = slice[[['']], 0, 0]
+for c in range[formulas.columns[]]
+    col = slice[[''], 0, 0]
+    for r in range[formulas.rows[]]
+        col = push[col, '']
+    sheet = push[sheet, col]
+first = sheet[0]
+first[0] = '7'
+first[1] = '=A0*A0'
+first[2] = '=D2'
+sheet[0] = first
+for formula in ['=A0+A1', '=Math.sqrt(A1)/3', '=A0 ** 0.5', '=(A0 > 5) + "x"', '=~A0 | 0x0f', '=A2', '=Math.hypot(3, 4)', '=Math.cbrt(-27)', '=1e21', '=0.1+0.2', '=-0', '=foo(', '=A0 ?? 1', '=typeof Math', '=Math', '=isNaN("a")']
+    log['cell `formula` `formulas.cell_shown[sheet, formula]`']

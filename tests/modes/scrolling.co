@@ -18,17 +18,18 @@ fn _is[xs]
         out = push[out, '`x`']
     join[out, ' ']
 
---- easings as the browser runs them (AOS's names, CSS's words, Lenis's)
-for name in scrolling.aos_easings[]
+--- easings as the browser runs them (the reveals' names, CSS's words, the
+--- smooth scroll's)
+for name in scrolling.reveal_easings[]
     vals = slice[[0.0], 0, 0]
     for k in range[11]
         vals = push[vals, scrolling.css_eased[name, (0.0 + k) / 10.0]]
     log['ease `name` `_ds[vals]`']
 for words in ['ease-in-out', 'cubic-bezier(0.1, 0.7, 1.0, 0.1)', 'steps(4, jump-start)', 'linear']
     log['css `words` `_d[scrolling.css_eased[words, 0.3]]` `_d[scrolling.css_eased[words, 0.71]]`']
-log['lenis `_d[scrolling.lenis_eased[0.25]]` `_d[scrolling.lenis_eased[0.5]]` in_out_cubic `_d[scrolling.in_out_cubic[300.0, 0.0, 700.0, 700.0]]`']
+log['smooth `_d[scrolling.smooth_eased[0.25]]` `_d[scrolling.smooth_eased[0.5]]` in_out_cubic `_d[scrolling.in_out_cubic[300.0, 0.0, 700.0, 700.0]]`']
 
---- reveals, both AOS versions, along a scroll
+--- reveals, by both rules, along a scroll
 for version in [2, 3]
     o = scrolling.reveals[version = version, mirror = true]
     r = scrolling.reveal['a', 'fade-up', 900.0, 200.0, wide = 300.0]
@@ -40,23 +41,23 @@ for version in [2, 3]
         log['reveal v`version` `y` `held.shown` `_ds[[pose.opacity, pose.x, pose.y, pose.scale]]`']
         t = t + 1000.0
 
---- scroll-linked progress (Motion's offsets)
+--- scroll-linked progress
 for y in [0.0, 400.0, 900.0, 1500.0]
     a = scrolling.linked_progress[y, 800.0, 300.0, 1000.0, ['start end', 'end start']]
     b = scrolling.linked_progress[y, 800.0, 300.0, 1000.0, ['center center', 'end end']]
     log['linked `y` `_d[a]` `_d[b]` `_d[scrolling.page_progress[y, 3000.0, 800.0]]`']
 
---- Lenis: a wheel's turns, frame by frame
+--- smooth scrolling: a wheel's turns, frame by frame
 s = scrolling.smooth[5000.0]
 s = scrolling.smooth_frame[s, 0.0]
 s = scrolling.smooth_wheel[s, 300.0, 0]
 for k in range[12]
     s = scrolling.smooth_frame[s, 16.0 * (1.0 + k)]
-    log['lenis frame `k` `_d[s.at]` `_d[s.velocity]` `s.moving`']
+    log['smooth frame `k` `_d[s.at]` `_d[s.velocity]` `s.moving`']
 s = scrolling.smooth_to[s, 1200.0, duration = 0.5, curve = 'ease-in']
 for k in range[6]
     s = scrolling.smooth_frame[s, 400.0 + 100.0 * k]
-    log['lenis to `k` `_d[s.at]`']
+    log['smooth to `k` `_d[s.at]`']
 
 --- full-page sections: moves by key, wheel, dot, slide, loop
 secs = [scrolling.section[name = 'one'], scrolling.section[name = 'two', slides = 3], scrolling.section[name = 'three'], scrolling.section[name = 'four', hidden = true]]
@@ -120,4 +121,4 @@ for y in [0.0, 150.0, 500.0, 800.0, 900.0, 700.0, 50.0]
     stold = join[st.told, '+']
     seen = join[sn.told, '+']
     log['sticky `y` `st.state` `_d[sy]` `stold` seen `seen` `_d[sn.share]`']
-    log['parallax `y` `_ds[scrolling.vuetify_parallax[y, 400.0, 500.0, 300.0, scale = 0.3]]` spy `scrolling.spy_at[[0.0, 300.0, 600.0], y, 400.0, 1300.0]`']
+    log['parallax `y` `_ds[scrolling.parallax_offset[y, 400.0, 500.0, 300.0, scale = 0.3]]` spy `scrolling.spy_at[[0.0, 300.0, 600.0], y, 400.0, 1300.0]`']

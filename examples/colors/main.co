@@ -1,6 +1,6 @@
 --- Lory's colours (`use lory.colors`): every scale it makes, in light and
 --- in dark, each row with the contrast its two text steps have on its step
---- 2 (APCA's Lc, which Radix promises at 60 for step 11 and 90 for step
+--- 2 (the lightness contrast Lc, kept at 60 for step 11 and 90 for step
 --- 12), and a theme made of an accent and a gray picked here, shown as a
 --- few controls drawn in a look made from the theme's tokens. The pointer
 --- over a swatch says what it is; a press on a scale's name makes it the
@@ -12,7 +12,7 @@ use lory.gui
 use lory.colors
 
 --- what the reader has picked and done: the family of accents the second
---- select offers, the accent, the gray ('auto': the one Radix Themes pairs
+--- select offers, the accent, the gray ('auto': the one that pairs
 --- with the accent), the appearance, the controls' values, whether alpha
 --- steps are shown over a checkerboard, and how many times the button was
 --- pressed
@@ -24,13 +24,13 @@ fn fresh[]
 
 --- ---- the theme ----
 
---- Radix's families of accents, as its page of scales groups them (the
---- gray family's one accent is gray itself, which Radix Themes takes as an
+--- the families of accents (the
+--- gray family's one accent is gray itself, taken as an
 --- accent too)
 fn families[]
     ['gray', 'warm', 'reds', 'blues', 'greens']
 
---- the accents of a family, in Radix's order
+--- the accents of a family, in order
 fn family_accents[family]
     if family eq 'warm'
         return ['gold', 'bronze', 'brown', 'yellow', 'amber', 'orange']
@@ -152,7 +152,7 @@ fn status_chips[d]
 
 --- every swatch, made once and kept: the scales' names, each scale's
 --- twelve steps in light and in dark (solid, and translucent over the
---- page), the contrast of steps 11 and 12 on step 2 in each (APCA's Lc,
+--- page), the contrast of steps 11 and 12 on step 2 in each (Lc,
 --- unsigned), and the black and white overlays
 struct Swatches [made, names, light, dark, light_alpha, dark_alpha, light_lc, dark_lc, blacks, whites]
 
@@ -165,7 +165,7 @@ fn _unmade[]
 
 --- the contrast of a scale's step 11 and step 12 as text on its step 2
 fn text_contrast[steps]
-    [abs[colors.apca[steps[10], steps[1]]], abs[colors.apca[steps[11], steps[1]]]]
+    [abs[colors.contrast_lc[steps[10], steps[1]]], abs[colors.contrast_lc[steps[11], steps[1]]]]
 
 --- every swatch made: each scale's steps, solid and translucent, in
 --- both appearances, and its text steps' contrast
@@ -202,7 +202,7 @@ fn swatches[]
 
 --- where the two cards of swatches stand: their top left in the
 --- drawing's pixels, and `u`, the drawing's pixels in one of their units
---- (a CSS pixel, or less where the window is too small for the cards)
+--- (a page pixel, or less where the window is too small for the cards)
 struct Grid [x, y, u]
 
 --- the cards' measures, in units: where they start (after the theme's
@@ -304,7 +304,7 @@ fn spot_at[g, x, y]
         return Spot[side, row, -1]
     nowhere
 
---- the role Radix gives a step (its place, 0 to 11), in a few words
+--- the role of a step (its place, 0 to 11), in a few words
 fn role_of[place]
     roles = ['the app background', 'a subtle background', 'a control background', 'a control hovered', 'a control pressed or chosen', 'a subtle border', 'a control border', 'a strong border and focus ring', 'a solid fill', 'a solid fill hovered', 'quiet text', 'text']
     roles[place]
@@ -337,7 +337,7 @@ fn said_of[sw, spot]
         return ['`name` in `look`, an accent.', 'Press to make it the theme\'s accent.', '']
     k = spot.place
     steps = rows[spot.row]
-    lc = colors.apca[steps[k], steps[1]]
+    lc = colors.contrast_lc[steps[k], steps[1]]
     ratio = colors.contrast_ratio[steps[k], steps[1]]
     ['`name` `k + 1` in `look`: `role_of[k]`', '`colors.hex_of[steps[k]]`, as alpha `colors.hex_alpha_of[alphas[spot.row][k]]`', 'On its step 2: Lc `fmt[lc, decimals = 1]`, `fmt[ratio, decimals = 2]`:1']
 
@@ -356,7 +356,7 @@ fn checkers[c, x, y, w, h, look]
     lory.rect[c, x + hw, y + hh, w - hw, h - hh, one]
 
 --- the colour a contrast number is written in: the card's text where it
---- keeps Radix's promise, its red where it falls short
+--- keeps its promised contrast, its red where it falls short
 fn kept_color[value, promise, ink, look]
     if value gte promise
         return ink
@@ -391,7 +391,7 @@ fn card[c, g, sw, which, a, spot]
     c = lory.round_outline[c, x0, g.y, _card_w[] * u, _card_h[] * u, 10.0 * u, 1.0 * u, colors.step['gray', look, 6]]
     c = lory.text[c, x0 + _inset[] * u, g.y + (_inset[] + 2.0) * u, heading_words, 15.0 * u, ink]
     lc_x = x0 + (_inset[] + _name_w[] + 12.0 * _cell[] + 8.0) * u
-    c = lory.text_right[c, lc_x + 2.0 * _lc_w[] * u, g.y + (_inset[] + 5.0) * u, 'APCA Lc on step 2', 11.0 * u, muted]
+    c = lory.text_right[c, lc_x + 2.0 * _lc_w[] * u, g.y + (_inset[] + 5.0) * u, 'Lc on step 2', 11.0 * u, muted]
     head_y = g.y + (_inset[] + _title_h[]) * u
     j = 0
     while j lt 12
@@ -536,7 +536,7 @@ test the_first_frame_shows_the_theme_and_every_swatch[]
     _drawn_at[p.canvas, swatch_x[g, 1, 11], row_y[g, 31], colors.white_overlay[][11]]
     _drawn_at[p.canvas, swatch_x[g, 0, 4], row_y[g, 31], colors.black_overlay[][4]]
 
-test every_row_keeps_the_contrast_radix_promises[]
+test every_row_keeps_its_promised_contrast[]
     sw = swatches[]
     len[sw.names] eq 31
     short = 0

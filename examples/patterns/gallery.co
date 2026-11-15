@@ -1,0 +1,276 @@
+--- The gallery of component patterns, drawn by Lory: every example in
+--- its group. An example is opened (its state as it starts), viewed at
+--- its time (the milliseconds since it was opened), answered (an event of
+--- its reader's), ticked (what its animations and timers do by a time)
+--- and read (what it shows, as the tests read it). Its parts are this
+--- folder's other files: `basics`, `templates`, `directives`, `managing`,
+--- `handles`, `guides` and `transitions`.
+
+use lory
+use lory.gui
+use shared
+use basics
+use templates
+use directives
+use managing
+use handles
+use guides
+use transitions
+
+--- an example in the menu: its group, its name (its id) and its title
+struct Entry [group, name, title]
+
+--- every example, in the menu's order and groups
+fn catalog[]
+    [Entry['Basics', 'hello-world', 'Hello World'], Entry['Basics', 'full-component', 'Full Component'], Entry['Properties', 'properties-basic', 'Basic Properties'], Entry['Properties', 'properties-has-changed', 'Change Detection'], Entry['Properties', 'properties-custom-converter', 'Custom Attribute Converter'], Entry['Templates', 'expressions', 'Expression Types'], Entry['Templates', 'templates-conditional', 'Conditional Templates'], Entry['Templates', 'repeating-and-conditional', 'Repeating and Conditional'], Entry['Templates', 'slotting-children', 'Slotting Children'], Entry['Templates', 'element-composition', 'Element Composition'], Entry['Templates', 'template-composition', 'Template Composition'], Entry['Directives', 'directive-async-append', 'Appended as They Come'], Entry['Directives', 'directive-async-replace', 'Replaced as They Come'], Entry['Directives', 'directive-cache', 'Cached Views'], Entry['Directives', 'directive-class-map', 'Class Map'], Entry['Directives', 'directive-guard', 'Guarded Work'], Entry['Directives', 'directive-if-defined', 'Only If Defined'], Entry['Directives', 'directive-live', 'Live Value'], Entry['Directives', 'directive-ref', 'Element Ref'], Entry['Directives', 'directive-repeat', 'Keyed Repeat'], Entry['Directives', 'directive-style-map', 'Style Map'], Entry['Directives', 'directive-template-content', 'Template Content'], Entry['Directives', 'directive-unsafe-html', 'Raw Markup'], Entry['Directives', 'directive-unsafe-svg', 'Raw Drawing'], Entry['Directives', 'directive-until', 'Until Ready'], Entry['Managing Data', 'async-task', 'Async Tasks'], Entry['Managing Data', 'context-basics', 'Context Basics'], Entry['Managing Data', 'context-consume-provide', 'Context Consume and Provide'], Entry['Managing Data', 'signals', 'Signals'], Entry['Slots, Events and Refs', 'roulette', 'Events Up: Click Roulette'], Entry['Slots, Events and Refs', 'named-slots', 'Named Slots'], Entry['Slots, Events and Refs', 'ref-player', 'Driven by a Ref'], Entry['Motion', 'motion-circle', 'Sliding Circle'], Entry['Motion', 'motion-letters', 'Letters Animation'], Entry['Motion', 'motion-list', 'List Item Animation'], Entry['Motion', 'motion-grid', 'Grid Layout Transitions'], Entry['Motion', 'motion-carousel', 'Carousel Transitions'], Entry['Motion', 'motion-hero', 'List/Detail Hero Transition'], Entry['Motion', 'motion-todos', 'Todos List Transitions'], Entry['More Patterns', 'docs-events', 'Events up, properties down'], Entry['More Patterns', 'docs-clock', 'A reactive controller'], Entry['More Patterns', 'docs-batching', 'Batched updates'], Entry['More Patterns', 'docs-slots', 'A slot\'s fallback'], Entry['More Patterns', 'docs-localize', 'Runtime localization']]
+
+--- the names of every example, in the menu's order
+fn names[]
+    out = shared.no_words[]
+    for entry in catalog[]
+        out = push[out, entry.name]
+    out
+
+--- the title of an example by its name ('' for none)
+fn title_of[name]
+    found = ''
+    for entry in catalog[]
+        if entry.name eq name
+            found = entry.title
+    found
+
+--- whether an example of that name is in the menu
+fn known[name]
+    title_of[name] ne ''
+
+--- whether the example is one of the motion group's
+fn moving[name]
+    starts[name, 'motion-']
+
+--- an example as it opens: its chances drawn from `draws` (each 0 to 1,
+--- one a time the example asks), today's date (`YYYY-MM-DD`) and the
+--- seconds of the day it is opened at, its first render's animations
+--- begun
+fn opened[name, draws, today, seconds]
+    s = shared.fresh[name, draws, today]
+    if name eq 'roulette'
+        return handles.roulette_opened[s]
+    if name eq 'docs-clock'
+        return shared.set_number[s, 'clock-base', seconds]
+    if moving[name]
+        return transitions.opened[s]
+    s
+
+--- the example drawn at `t`
+fn tree_of[s, t]
+    n = s.name
+    if starts[n, 'motion-']
+        return _motion_view[s, t]
+    if starts[n, 'directive-']
+        return _directive_view[s, t]
+    if n eq 'roulette' or n eq 'named-slots' or n eq 'ref-player'
+        return _handles_view[s, t]
+    if starts[n, 'docs-']
+        return _docs_view[s, t]
+    if n eq 'hello-world'
+        return basics.hello_world_view[s, t]
+    if n eq 'full-component'
+        return basics.full_component_view[s, t]
+    if n eq 'properties-basic'
+        return basics.properties_basic_view[s, t]
+    if n eq 'properties-has-changed'
+        return basics.properties_has_changed_view[s, t]
+    if n eq 'properties-custom-converter'
+        return basics.properties_custom_converter_view[s, t]
+    if n eq 'expressions'
+        return templates.expressions_view[s, t]
+    if n eq 'templates-conditional'
+        return templates.templates_conditional_view[s, t]
+    if n eq 'repeating-and-conditional'
+        return templates.repeating_view[s, t]
+    if n eq 'slotting-children'
+        return templates.slotting_view[s, t]
+    if n eq 'element-composition'
+        return templates.element_composition_view[s, t]
+    if n eq 'template-composition'
+        return templates.template_composition_view[s, t]
+    if n eq 'async-task'
+        return managing.async_task_view[s, t]
+    if n eq 'context-basics'
+        return managing.context_basics_view[s, t]
+    if n eq 'context-consume-provide'
+        return managing.context_provide_view[s, t]
+    if n eq 'signals'
+        return managing.signals_view[s, t]
+    gui.text['No example is called `n`.']
+
+fn _directive_view[s, t]
+    n = s.name
+    if n eq 'directive-async-append'
+        return directives.async_append_view[s, t]
+    if n eq 'directive-async-replace'
+        return directives.async_replace_view[s, t]
+    if n eq 'directive-cache'
+        return directives.cache_view[s, t]
+    if n eq 'directive-class-map'
+        return directives.class_map_view[s, t]
+    if n eq 'directive-guard'
+        return directives.guard_view[s, t]
+    if n eq 'directive-if-defined'
+        return directives.if_defined_view[s, t]
+    if n eq 'directive-live'
+        return directives.live_view[s, t]
+    if n eq 'directive-ref'
+        return directives.ref_view[s, t]
+    if n eq 'directive-repeat'
+        return directives.repeat_view[s, t]
+    if n eq 'directive-style-map'
+        return directives.style_map_view[s, t]
+    if n eq 'directive-template-content'
+        return directives.template_content_view[s, t]
+    if n eq 'directive-unsafe-html'
+        return directives.unsafe_html_view[s, t]
+    if n eq 'directive-unsafe-svg'
+        return directives.unsafe_svg_view[s, t]
+    directives.until_view[s, t]
+
+fn _handles_view[s, t]
+    n = s.name
+    if n eq 'roulette'
+        return handles.roulette_view[s, t]
+    if n eq 'named-slots'
+        return handles.named_slots_view[s, t]
+    handles.player_view[s, t]
+
+fn _docs_view[s, t]
+    n = s.name
+    if n eq 'docs-events'
+        return guides.docs_events_view[s, t]
+    if n eq 'docs-clock'
+        return guides.docs_clock_view[s, t]
+    if n eq 'docs-batching'
+        return guides.docs_batching_view[s, t]
+    if n eq 'docs-slots'
+        return guides.docs_slots_view[s, t]
+    guides.docs_localize_view[s, t]
+
+fn _motion_view[s, t]
+    n = s.name
+    if n eq 'motion-circle'
+        return transitions.motion_circle_view[s, t]
+    if n eq 'motion-letters'
+        return transitions.motion_letters_view[s, t]
+    if n eq 'motion-list'
+        return transitions.motion_list_view[s, t]
+    if n eq 'motion-grid'
+        return transitions.motion_grid_view[s, t]
+    if n eq 'motion-carousel'
+        return transitions.motion_carousel_view[s, t]
+    if n eq 'motion-hero'
+        return transitions.motion_hero_view[s, t]
+    transitions.motion_todos_view[s, t]
+
+--- the example after an event of its reader's at `t` (its animations and
+--- timers run to `t` first)
+fn answered[s, ev, t]
+    n = s.name
+    if starts[n, 'motion-']
+        return transitions.motion_answered[transitions.ticked[s, t], ev, t]
+    if n eq 'full-component'
+        return basics.full_component_answered[s, ev, t]
+    if n eq 'properties-has-changed'
+        return basics.properties_has_changed_answered[s, ev, t]
+    if n eq 'expressions'
+        return templates.expressions_answered[s, ev, t]
+    if n eq 'templates-conditional'
+        return templates.templates_conditional_answered[s, ev, t]
+    if n eq 'directive-cache'
+        return directives.cache_answered[s, ev, t]
+    if n eq 'directive-class-map' or n eq 'directive-style-map'
+        return directives.class_map_answered[s, ev, t]
+    if n eq 'directive-guard'
+        return directives.guard_answered[s, ev, t]
+    if n eq 'directive-if-defined'
+        return directives.if_defined_answered[s, ev, t]
+    if n eq 'directive-live'
+        return directives.live_answered[s, ev, t]
+    if n eq 'directive-ref'
+        return directives.ref_answered[s, ev, t]
+    if n eq 'directive-repeat'
+        return directives.repeat_answered[s, ev, t]
+    if n eq 'async-task'
+        return managing.async_task_answered[s, ev, t]
+    if n eq 'signals'
+        return managing.signals_answered[s, ev, t]
+    if n eq 'roulette'
+        return handles.roulette_answered[s, ev, t]
+    if n eq 'ref-player'
+        return handles.player_answered[s, ev, t]
+    if starts[n, 'docs-']
+        return _docs_answered[s, ev, t]
+    s
+
+fn _docs_answered[s, ev, t]
+    n = s.name
+    if n eq 'docs-events'
+        return guides.docs_events_answered[s, ev, t]
+    if n eq 'docs-clock'
+        return guides.docs_clock_answered[s, ev, t]
+    if n eq 'docs-batching'
+        return guides.docs_batching_answered[s, ev, t]
+    if n eq 'docs-slots'
+        return guides.docs_slots_answered[s, ev, t]
+    guides.docs_localize_answered[s, ev, t]
+
+--- the example with what its animations and timers did by `t`
+fn ticked[s, t]
+    if moving[s.name]
+        return transitions.ticked[s, t]
+    if s.name eq 'async-task'
+        return managing.task_ticked[s, t]
+    s
+
+--- what the example shows at `t`, as the tests read it
+fn facts[s, t]
+    shared.facts_of[tree_of[ticked[s, t], t]]
+
+--- the controls of an example that a program hands the focus to as it
+--- opens ('' none): ref's input
+fn focused_on_open[name]
+    if name eq 'directive-ref'
+        return 'ref-input'
+    ''
+
+--- the scroll area an example scrolls a frame after it opens, and the
+--- mark inside it to bring to its top ('' none): ref's paragraph
+fn scrolled_on_open[name]
+    if name eq 'directive-ref'
+        return ['ref-scroll', 'ref-mark']
+    ['', '']
+
+--- ---- the menu ----
+
+--- the menu: each group's title, then its examples, the chosen one marked;
+--- an example's entry is `menu-<name>`
+fn menu[chosen, tall]
+    entries = catalog[]
+    rows = [gui.text[entries[0].group, size = 13.0, tone = 'muted']]
+    i = 0
+    while i lt len[entries]
+        entry = entries[i]
+        if i gt 0 and entry.group ne entries[i - 1].group
+            rows = push[rows, gui.text[entry.group, size = 13.0, tone = 'muted']]
+        rows = push[rows, gui.item['menu-`entry.name`', [gui.text[entry.title]], chosen = entry.name eq chosen, words = entry.name]]
+        i = i + 1
+    gui.scroll['menu', tall, rows]
+
+--- the page, `wide` by `tall` CSS pixels: the menu beside the chosen
+--- example, under its title
+fn page[s, t, tall, wide]
+    rows = [gui.heading[title_of[s.name]]]
+    rows = push[rows, tree_of[s, t]]
+    gui.row[[gui.sized[menu[s.name, tall], 240.0], gui.sized[gui.column[rows], max[200.0, wide - 264.0]]], gap = 24.0, align = 'start']
+
+--- the part's trees shown on a canvas
+fn shown_on[c, s, t]
+    gui.show[c, page[s, t, 600.0, 900.0]]

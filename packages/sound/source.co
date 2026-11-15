@@ -1,19 +1,19 @@
 --- Sources: the sounds every patch starts from, rendered as the page's
 --- own audio thread renders them. An oscillator is band-limited as the
---- page's OscillatorNode limits it: a wave is a sum of partials (a
+--- page's oscillator limits it: a wave is a sum of partials (a
 --- square's odd ones at 4/(nπ), a sawtooth's every one at 2/(nπ), …),
 --- the partials kept at a pitch are those its wavetable keeps there — a
 --- third of an octave's tables, the next table's partials faded in as the
 --- pitch falls toward it — and the whole is scaled so the full wave's peak
---- is 1. So an oscillator here is Tone's, sample for sample, for every
---- type Tone names: `sine`, `square`, `sawtooth`, `triangle`, a partial
+--- is 1. Every type of oscillator is here: `sine`, `square`, `sawtooth`, `triangle`, a partial
 --- count (`square8`), custom partials, a starting phase, `pulse` (its
---- width), `pwm`, `am…`, `fm…` and `fat…` (Tone's OmniOscillator's names).
+--- width), `pwm`, `am…`, `fm…` and `fat…`.
 ---
 ---     o = source.oscillator['sawtooth']
 ---     xs = source.steady[o, 220.0, 0.5, 22050.0]
 ---
---- Noise is white, pink (Paul Kellet's filter of white noise) or brown (a
+--- Noise is white, pink (white noise through a weighted sum of
+--- one-pole filters) or brown (a
 --- leaky sum of it), from a seeded generator, so a render is the same each
 --- run; a player reads a buffer at a rate, looped or reversed, faded in
 --- and out; a grain player plays a buffer as overlapping grains, its pace
@@ -53,7 +53,7 @@ fn _table_size[rate]
 
 --- the partials of one of the four named waves, `count` of them (all a
 --- table of `size` holds where count is 0), turned to start `turn`
---- radians on: Tone's and the page's coefficients
+--- radians on
 fn _named_wave[name, count, turn, size]
     top = size / 2
     if count gt 0
@@ -192,10 +192,10 @@ fn _band_limited_from[w, freqs, rate, cycles]
 
 --- ---- oscillators ----
 
---- an oscillator of Tone's type names: `sine`, `square`, `sawtooth`,
+--- an oscillator of a type's name: `sine`, `square`, `sawtooth`,
 --- `triangle`, each with a partial count (`sine4`) or a variant before it
 --- (`amsine`, `fmsquare`, `fatsawtooth`); `pulse`, `pwm`; `custom`
---- (partials set by `with_partials`). Each variant has Tone's defaults
+--- (partials set by `with_partials`). Each variant has its own defaults
 fn oscillator[name]
     o = Oscillator['sine', '', 0, [1.0], 0.0, 0.0, 0.2, 0.4, 1.0, 2.0, 'square', 3, 20.0]
     w = lower[trim[name]]
@@ -309,8 +309,7 @@ fn steady[o, hz, seconds, rate]
     rendered[o, zeros[sound.frames_in[rate, seconds]] + hz, rate]
 
 --- a low-frequency oscillator's samples: a sine of `hz` laid between
---- `low` and `high` (starting halfway, rising), `degrees` on, as
---- Tone's LFO lays it
+--- `low` and `high` (starting halfway, rising), `degrees` on
 fn lfo[hz, low, high, degrees, seconds, rate]
     o = with_phase[oscillator['sine'], degrees]
     wave = steady[o, hz, seconds, rate]
@@ -331,11 +330,10 @@ fn uniforms[n, start]
     out
 
 --- `n` samples of noise: `white` (each sample from -1 to 1), `pink`
---- (Paul Kellet's filter of white noise: a falling third of an octave's
---- power, -3 dB an octave) or `brown` (a leaky sum of white noise: -6 dB
---- an octave), scaled as Tone scales each. Tone reads its noise from a
---- random place in a long buffer, where the filters have long settled, so
---- the filters here run first over white noise that is then let go (4096
+--- (white noise through a weighted sum of six one-pole lowpasses and a
+--- direct share: -3 dB an octave) or `brown` (a leaky sum of white noise: -6 dB
+--- an octave), each scaled to a like loudness. Noise is read from where
+--- the filters have long settled, so they run first over white noise that is then let go (4096
 --- samples for pink, whose slowest part falls by 1/e in 877, 256 for
 --- brown)
 fn noise[kind, n, start]
@@ -379,8 +377,7 @@ fn _filtered_noise[kind, n, start]
         i = i + 1
     out
 
---- noise as one channel hears Tone's Noise: Tone's noise is of two
---- channels, each its own, so a channel of one hears the two averaged
+--- noise as one channel hears it: noise is of two channels, each its own, so a channel of one hears the two averaged
 --- (their power halved: white noise's RMS 0.41, not 0.58)
 fn noise_heard[kind, n, start]
     (noise[kind, n, start] + noise[kind, n, start + 1000003]) * 0.5
@@ -418,13 +415,12 @@ fn with_fades[p, fade_in, fade_out]
 
 --- the samples a player sounds at `rate`, started `offset` seconds into its
 --- buffer and playing `duration` seconds of it (so for `duration` over its
---- pace), its fade out ending where it stops, as Tone's Player plays
+--- pace), its fade out ending where it stops
 fn played[p, offset, duration, rate]
     _sounded[p, offset, duration / p.playback_rate - p.fade_out, rate]
 
 --- the samples a player sounds started `offset` seconds into its buffer and
---- stopped `seconds` later, its fade out after that (as Tone's buffer
---- source sounds), read between samples along a straight line as the
+--- stopped `seconds` later, its fade out after that, read between samples along a straight line as the
 --- page's buffer source reads them, and past the last sample along the
 --- line of the last two
 fn _sounded[p, offset, seconds, rate]
@@ -477,7 +473,7 @@ fn _faded_player[p, xs, duration, rate]
         gain = gain .* where[t lt duration, 0.0 * t + 1.0, 0.0 * t]
     xs .* gain
 
---- the samples a grain player sounds (Tone's GrainPlayer): grains of
+--- the samples a grain player sounds: grains of
 --- `grain` seconds read from ever later in the buffer, one each
 --- `grain / pace` seconds (so `pace` stretches time and keeps the pitch),
 --- each played at `detune` cents and overlapping the next by `overlap`
@@ -524,7 +520,7 @@ test a_square_keeps_the_partials_its_table_keeps[]
     low = steady[oscillator['square4'], 500.0, 0.02, 16000.0]
     abs[low[4] - (4.0 / pi * (sin[pi / 4.0] + sin[3.0 * pi / 4.0] / 3.0)) / _peak[wave_of[oscillator['square4'], 16000.0], 2048]] lt 0.000001
 
-test the_variants_have_tones_names[]
+test the_variants_are_named_before_the_wave[]
     o = oscillator['fmsquare']
     o.variant eq 'fm'
     o.wave eq 'square'

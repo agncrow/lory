@@ -1,0 +1,2 @@
+name = 'lory_reactive'
+deps = map[lory = '../../packages/lory']

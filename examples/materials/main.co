@@ -9,7 +9,7 @@ use math
 use lory
 use lory.space
 
---- the light: Babylon's hemisphere and a sun from the upper left
+--- the light: a sky and a ground, and a sun from the upper left
 fn _light[]
     l = space.light[lory.Color[0.55, 0.6, 0.7, 1.0], lory.Color[0.2, 0.18, 0.15, 1.0], lory.Color[1.0, 0.95, 0.85, 1.0], [0.5, -1.0, 0.35]]
     l

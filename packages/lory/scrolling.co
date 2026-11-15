@@ -1,35 +1,30 @@
---- Lory's scrolling (docs/components/scrolling.md): what a page does as it
---- is scrolled, and the scrolling itself.
+--- Lory's scrolling: what a page does as it is scrolled, and the
+--- scrolling itself.
 ---
---- - Reveal on scroll (AOS 2.3.4 and 3.0.0-beta.6): where an element's
----   animation starts and ends by its offset, anchor and placement, `once`
----   and `mirror`, the duration, delay and easing AOS's stylesheet gives
----   it, the transition the browser runs (turned back halfway as CSS turns
+--- - Reveal on scroll: where an element's animation starts and ends by its
+---   offset, anchor and placement, `once` and `mirror`, the duration, delay
+---   and easing its stylesheet gives it, the transition the browser runs (turned back halfway as CSS turns
 ---   one back), and each animation's look on its way: `reveals`, `reveal`,
 ---   `reveal_shown`, `reveal_step`, `reveal_pose`.
---- - Scroll-linked progress (Motion 14.7.1's `scroll`): a target's
+--- - Scroll-linked progress: a target's
 ---   progress through its offsets, with `vh` and `vw`, and a page's:
 ---   `linked_progress`, `page_progress`.
---- - Smooth scrolling (Lenis 1.3.27): a wheel's scroll eased frame by
+--- - Smooth scrolling: a wheel's scroll eased frame by
 ---   frame, a scroll to a place over a time: `smooth`, `smooth_wheel`,
 ---   `smooth_to`, `smooth_frame`.
---- - A scroll area (Radix's): a viewport the program holds, scrolled by the
+--- - A scroll area: a viewport the program holds, scrolled by the
 ---   wheel, the keys, a thumbstick and its own bar (shown over it, on hover
 ---   by default, hidden 600 ms after), a thumb to drag and a track to
 ---   press: `area`, `scrolled`, `viewport`, `measured`.
---- - Full-page sections (fullPage.js 4.0.41's behaviour: it is GPLv3 or
----   commercial, so only its behaviour is re-implemented, from running it,
----   never its code): sections moved one at a time at a speed and an
+--- - Full-page sections: sections moved one at a time at a speed and an
 ---   easing, the keyboard, the wheel's rule, navigation dots and anchors,
 ---   loops and continuous scrolling, slides with arrows, fitting to a
 ---   section, the responsive fallback, lazy loading, sections taller than
 ---   the page, callbacks as events: `pages`, `paged`, `pages_view`,
 ---   `pages_heard`.
---- - Virtual lists and grids (TanStack Virtual's and Vuetify's windows),
----   an infinite feed (Vuetify's `v-infinite-scroll`), pull to refresh,
----   sticky elements (Semantic UI's), parallax, visibility events
----   (Semantic UI's `visibility`, Vuetify's `v-lazy`), scroll spy and
----   progress.
+--- - Virtual lists and grids, an infinite feed, pull to refresh, sticky
+---   elements, parallax, visibility events (and loading once seen), scroll
+---   spy and progress.
 ---
 --- Each is arithmetic on numbers the program holds (scroll positions, box
 --- tops and heights in CSS pixels, times in milliseconds), and the parts
@@ -42,18 +37,14 @@
 ---     s = scrolling.measured[s, shown]         --- where its rows stood
 ---
 --- lory.motion owns what this module computes with and does not write
---- again: easings and their names (AOS's, CSS's), AOS 2's line and rule
---- (`motion.reveal_line`, `motion.revealed`), Motion's scroll offsets and
---- progress (`motion.scroll_progress`), anime.js's scroll window, and
---- tweens and springs. This module owns the page around them: AOS 3's
---- rules (`mirror`, the way out, the page's placement), AOS's stylesheet
+--- again: easings and their names, the first reveal rule's line
+--- (`motion.reveal_line`, `motion.revealed`), scroll offsets and progress
+--- (`motion.scroll_progress`), a scroll window, and tweens and springs.
+--- This module owns the page around them: the newer reveal rules
+--- (`mirror`, the way out, the page's placement), the reveal stylesheet
 --- (its durations, delays and looks) and the transition the browser runs
---- (Chrome's solving of a bézier, its turning back), Motion's `vh` and
---- `vw`, Lenis's frames, and everything that scrolls.
----
---- tests/scrolling/reference.co holds this module to what the libraries
---- answered in a browser (reference.json, written by reference.py), number
---- for number.
+--- (its solving of a bézier, its turning back), `vh` and `vw` edges, the
+--- smooth scroll's frames, and everything that scrolls.
 
 use memory
 use lory
@@ -109,15 +100,15 @@ fn _number_or[words, otherwise]
         return otherwise
     0.0 + n
 
---- a whole number as JavaScript writes one into words ('400', not '400.0')
-fn _js_number[x]
+--- a whole number written into words ('400', not '400.0')
+fn _number_words[x]
     if x eq floor[x]
         whole = int[x]
         return '`whole`'
     '`x`'
 
---- JavaScript's Math.round: half a step rounds up
-fn _js_round[x]
+--- rounded, half a step up
+fn _round_half_up[x]
     floor[x + 0.5]
 
 fn _clamped[lo, hi, x]
@@ -125,17 +116,17 @@ fn _clamped[lo, hi, x]
 
 --- ---- easings ----
 ---
---- An easing's curve is lory.motion's (`aos_curve` reads its four numbers
---- from `motion.ease`). What is solved here is what the browser solves: a
---- CSS transition runs as Chrome solves its bézier (`bezier`), which stops
---- nearer than 1e-7 where Motion's solver (`motion.eased`) goes on, so the
---- two land up to 1e-8 apart; and AOS's `linear` is a bézier the browser
---- solves (0.25 0.25 0.75 0.75), which Motion takes for a straight line.
---- fullPage's scroll by script eases with jQuery's easeInOutCubic and Lenis
---- with its own exponential, both written as those libraries write them.
+--- An easing's curve is lory.motion's (`reveal_curve` reads its four
+--- numbers from `motion.ease`). What is solved here is what the browser
+--- solves: a CSS transition runs as the browser solves its bézier
+--- (`bezier`), which stops nearer than 1e-7 where lory.motion's solver
+--- (`motion.eased`) goes on, so the two land up to 1e-8 apart; and the
+--- reveals' `linear` is a bézier the browser solves (0.25 0.25 0.75 0.75),
+--- not a straight line. Full-page sections moved by script ease in and out
+--- on a cubic, and the smooth scroll on its own exponential.
 
 --- a cubic bézier easing's value at `x` (its time, 0 to 1), the curve's
---- control points `x1, y1` and `x2, y2`, solved as Chrome solves the curve
+--- control points `x1, y1` and `x2, y2`, solved as the browser solves the curve
 --- a stylesheet names: a first guess between eleven samples of the curve,
 --- up to four of Newton's steps, and halving where they fail
 fn bezier[x1, y1, x2, y2, x]
@@ -227,26 +218,26 @@ fn css_eased[words, x]
     p = css_curve[words]
     bezier[p[0], p[1], p[2], p[3], x]
 
---- the easings AOS's stylesheet names (`data-aos-easing`), and the curve
---- each is (lory.motion's: AOS's cubic and quart curves are its quad
---- ones), but for its `linear`, a bézier the browser solves
-fn aos_easings[]
+--- the easings a reveal's stylesheet names, and the curve each is
+--- (lory.motion's: the cubic and quart curves are its quad ones), but for
+--- its `linear`, a bézier the browser solves
+fn reveal_easings[]
     ['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out', 'ease-in-back', 'ease-out-back', 'ease-in-out-back', 'ease-in-sine', 'ease-out-sine', 'ease-in-out-sine', 'ease-in-quad', 'ease-out-quad', 'ease-in-out-quad', 'ease-in-cubic', 'ease-out-cubic', 'ease-in-out-cubic', 'ease-in-quart', 'ease-out-quart', 'ease-in-out-quart']
 
-fn aos_known[name]
-    name in aos_easings[]
+fn reveal_known[name]
+    name in reveal_easings[]
 
-fn aos_curve[name]
+fn reveal_curve[name]
     if name eq 'linear'
         return _four[0.25, 0.25, 0.75, 0.75]
-    if aos_known[name]
+    if reveal_known[name]
         e = motion.ease[name]
         if e.curve eq 'bezier' and len[e.p] eq 4
             return e.p
     css_curve[name]
 
---- fullPage's easing where it scrolls by script, jQuery's easeInOutCubic
---- as jQuery writes it: `elapsed` milliseconds of `d`, from `b` by `change`
+--- the easing full-page sections move by where they scroll by script, in
+--- and out on a cubic: `elapsed` milliseconds of `d`, from `b` by `change`
 fn in_out_cubic[elapsed, b, change, d]
     t = elapsed / (d / 2.0)
     if t lt 1.0
@@ -254,28 +245,30 @@ fn in_out_cubic[elapsed, b, change, d]
     t = t - 2.0
     change / 2.0 * (t * t * t + 2.0) + b
 
---- Lenis's easing for a scroll given a duration and no easing of its own
-fn lenis_eased[t]
+--- the smooth scroll's easing for a scroll given a duration and no easing
+--- of its own
+fn smooth_eased[t]
     min[1.0, 1.001 - 2.0 ^ (-10.0 * t)]
 
---- ---- reveal on scroll (AOS) ----
+--- ---- reveal on scroll ----
 ---
---- AOS's settings, as `AOS.init` takes them: the offset (CSS pixels) and
+--- the reveals' settings: the offset (CSS pixels) and
 --- anchor placement an element takes where it names none, the delay,
 --- duration and easing written on the page's body (which an element's own
 --- attributes override, where its stylesheet knows them), whether an
 --- element shows `once` and stays, whether it hides again past its end
---- (`mirror`, AOS 3), and which AOS it is (`version` 2 or 3)
+--- (`mirror`, the newer rule's), and which rule it follows (`version` 2,
+--- the line rule, or 3, the scroll rule)
 struct Reveals [offset, delay, duration, easing, once, mirror, placement, version]
 
 fn reveals[offset = 120.0, delay = 0.0, duration = 400.0, easing = 'ease', once = false, mirror = false, placement = 'top-bottom', version = 3]
     Reveals[offset, delay, duration, easing, once, mirror, placement, version]
 
---- one element AOS reveals: its id, its animation (`look`: `fade-up`,
+--- one element revealed: its id, its animation (`look`: `fade-up`,
 --- `zoom-in`, `flip-left`, `slide-right` …), its box down the page (`top`
 --- and `tall`, CSS pixels from the page's top; `wide`, which a slide across
 --- moves by), and its attributes as they
---- are written (AOS reads words: '' where one is not given; a duration or
+--- are written (words: '' where one is not given; a duration or
 --- delay is one its stylesheet knows only at 50, 100 … 3000): `offset`,
 --- `delay`, `duration`, `easing`, `placement` (where on it and on the
 --- window the trigger is: `top-bottom`, `center-bottom`, `bottom-bottom`,
@@ -303,12 +296,12 @@ fn _anchor_tall[r]
         return r.anchor_tall
     r.tall
 
---- where the element is shown: in AOS 2, the line down the page the
---- window's bottom must pass (lory.motion's `reveal_line`); in AOS 3, the
+--- where the element is shown: by rule 2, the line down the page the
+--- window's bottom must pass (lory.motion's `reveal_line`); by rule 3, the
 --- scroll from which it is shown (the window `view_tall` tall): the same
 --- line drawn from the anchor's top less the window, with the page's
 --- placement and offset where the element names none. An element's own
---- placement with no offset of its own takes none, as AOS does.
+--- placement with no offset of its own takes none.
 fn reveal_in[o, r, view_tall]
     top = _anchor_top[r]
     tall = _anchor_tall[r]
@@ -328,7 +321,7 @@ fn reveal_in[o, r, view_tall]
         extra = _number_or[r.offset, 0.0]
     motion.reveal_line[top - view_tall, tall, view_tall, placement, extra]
 
---- where an element mirrored is hidden again, scrolled past (AOS 3): its
+--- where an element mirrored is hidden again, scrolled past (rule 3): its
 --- bottom less its offset
 fn reveal_out[o, r]
     extra = o.offset
@@ -349,9 +342,9 @@ fn reveal_once[o, r]
 fn reveal_mirror[o, r]
     _said[r.mirror, o.mirror]
 
---- whether AOS shows the element with the page scrolled to `scroll` (the
+--- whether the element is shown with the page scrolled to `scroll` (the
 --- window `view` tall), as it was shown or not before (`was`): shown from
---- its trigger on, hidden again above it unless `once`, and in AOS 3
+--- its trigger on, hidden again above it unless `once`, and by rule 3
 --- `mirror`ed: hidden again past its end
 fn reveal_shown[o, r, scroll, view_tall, was]
     if o.version eq 2
@@ -369,9 +362,9 @@ fn reveal_shown[o, r, scroll, view_tall, was]
         return false
     was
 
---- the number AOS's stylesheet knows a duration or delay by (50, 100 …
+--- the number the stylesheet knows a duration or delay by (50, 100 …
 --- 3000, written so), or -1 where it knows none
-fn _aos_step[words]
+fn _stylesheet_step[words]
     k = 1
     while k lte 60
         n = k * 50
@@ -380,15 +373,15 @@ fn _aos_step[words]
         k = k + 1
     -1.0
 
---- an element's transition, as AOS's stylesheet gives it: its duration
+--- an element's transition, as its stylesheet gives it: its duration
 --- (its own, else the page's, else none), its delay (only on the way in:
 --- the way out starts at once), its easing (its own, else the page's,
 --- else CSS's `ease`), in milliseconds
 fn reveal_duration[o, r]
-    own = _aos_step[r.duration]
+    own = _stylesheet_step[r.duration]
     if own gte 0.0
         return own
-    page = _aos_step[_js_number[o.duration]]
+    page = _stylesheet_step[_number_words[o.duration]]
     if page gte 0.0
         return page
     0.0
@@ -396,18 +389,18 @@ fn reveal_duration[o, r]
 fn reveal_delay[o, r, shown]
     if not shown
         return 0.0
-    own = _aos_step[r.delay]
+    own = _stylesheet_step[r.delay]
     if own gte 0.0
         return own
-    page = _aos_step[_js_number[o.delay]]
+    page = _stylesheet_step[_number_words[o.delay]]
     if page gte 0.0
         return page
     0.0
 
 fn reveal_easing[o, r]
-    if aos_known[r.easing]
+    if reveal_known[r.easing]
         return r.easing
-    if aos_known[o.easing]
+    if reveal_known[o.easing]
         return o.easing
     'ease'
 
@@ -424,7 +417,7 @@ fn going_still[shown]
     v = 0.0
     if shown
         v = 1.0
-    Going[v, v, 0.0, 0.0, 0.0, aos_curve['ease'], 1.0, v]
+    Going[v, v, 0.0, 0.0, 0.0, reveal_curve['ease'], 1.0, v]
 
 --- how far along its curve the transition is at `t` (its output progress)
 fn _going_eased[g, t]
@@ -468,7 +461,7 @@ fn going_to[g, t, to, delay, lasting, curve]
 --- how an element looks on its way: its opacity, where it is moved (CSS
 --- pixels), how it is scaled, its turn about the page's x or y axis in
 --- degrees (seen through a perspective 2500 px away), and whether it is
---- drawn at all (AOS 3 hides a slide until it moves)
+--- drawn at all (rule 3 hides a slide until it moves)
 struct Pose [opacity, x, y, scale, turn_x, turn_y, visible]
 
 fn _pose_hidden[look, wide, tall, version]
@@ -571,17 +564,17 @@ fn posed[n, look, p]
 
 --- ---- an element revealed, frame by frame ----
 
---- what is held for one element between frames: whether AOS shows it, and
+--- what is held for one element between frames: whether it is shown, and
 --- its look's transition
 struct Revealing [shown, going]
 
 fn revealing[]
     Revealing[false, going_still[false]]
 
---- the element with the page at `scroll` at `t`: shown or hidden by AOS's
+--- the element with the page at `scroll` at `t`: shown or hidden by its
 --- rule, its transition sent the new way with the duration, delay and
---- easing its stylesheet gives (AOS's `aos:in` and `aos:out` are its
---- `shown` turning: `reveal_told`)
+--- easing its stylesheet gives (its `shown` turning in and out:
+--- `reveal_told`)
 fn reveal_step[o, r, held, scroll, view_tall, t]
     now_shown = reveal_shown[o, r, scroll, view_tall, held.shown]
     if now_shown eq held.shown
@@ -589,7 +582,7 @@ fn reveal_step[o, r, held, scroll, view_tall, t]
     to = 0.0
     if now_shown
         to = 1.0
-    held.going = going_to[held.going, t, to, reveal_delay[o, r, now_shown], reveal_duration[o, r], aos_curve[reveal_easing[o, r]]]
+    held.going = going_to[held.going, t, to, reveal_delay[o, r, now_shown], reveal_duration[o, r], reveal_curve[reveal_easing[o, r]]]
     held.shown = now_shown
     held
 
@@ -606,22 +599,20 @@ fn reveal_told[before, after]
 fn reveal_look[o, r, held, t]
     reveal_pose[r.look, going_value[held.going, t], r.wide, r.tall, o.version]
 
---- ---- scroll-linked progress (Motion's `scroll`) ----
+--- ---- scroll-linked progress ----
 ---
---- lory.motion owns Motion's offsets and the progress through them
---- (`motion.scroll_progress`), anime.js's window of scroll
---- (`motion.scroll_window`) and the values moved by a progress
---- (`motion.map_range`, `motion.blend`). What is added here is what a
---- page needs around them: Motion's `vh` and `vw` edges (a percentage of
+--- lory.motion owns the offsets and the progress through them
+--- (`motion.scroll_progress`), a window of scroll (`motion.scroll_window`)
+--- and the values moved by a progress (`motion.map_range`,
+--- `motion.blend`). What is added here is what a page needs around them:
+--- `vh` and `vw` edges (a percentage of
 --- the page, which motion does not read: they are written as pixels for
 --- it), and the progress of a page's own scroll.
 ---
---- An offset is where a target meets its scroll container, as Motion
---- writes one: two edges, the target's then the container's ('start end':
+--- An offset is where a target meets its scroll container: two edges, the target's then the container's ('start end':
 --- the target's top at the container's bottom), each `start`, `center`,
 --- `end`, a fraction ('0.25'), pixels ('100px'), a percentage of its
---- length ('25%') or of the page's ('50vh', '10vw'); Motion's plain
---- numbers (`[0, 1]`) are written twice ('0 0', '1 1').
+--- length ('25%') or of the page's ('50vh', '10vw'); plain numbers (`[0, 1]`) are written twice ('0 0', '1 1').
 
 --- an edge in `vh` or `vw` written as the pixels it is on a page `page_w`
 --- by `page_h` CSS pixels; any other edge as it is
@@ -659,7 +650,7 @@ fn linked_progress[scroll, container, target, inset, offsets, page_w = 0.0, page
 --- content `content` tall in a view `view_tall`
 fn page_progress[scroll, content, view_tall]
     motion.scroll_progress[scroll, view_tall, content, 0.0, _texts[]]
---- ---- smooth scrolling (Lenis) ----
+--- ---- smooth scrolling ----
 ---
 --- A scroll eased toward where it is aimed, frame by frame: each wheel's
 --- turn moves the aim, and the scroll shown follows it by a damped step
@@ -669,9 +660,9 @@ fn page_progress[scroll, content, view_tall]
 --- during it takes over from where it is.
 
 --- the scroll shown (`at`) and aimed at (`aim`), how far the last frame
---- moved it (`velocity`) and which way (`direction`, -1, 0, 1); Lenis's
+--- moved it (`velocity`) and which way (`direction`, -1, 0, 1); the
 --- options: its damping (`lerp`), the wheel's multiplier, a `duration`
---- and easing (`curve`: '' none, `lenis` its own, or a CSS easing's
+--- and easing (`curve`: '' none, `smooth` its own, or a CSS easing's
 --- words) a wheel's scroll takes instead, and the most it scrolls
 --- (`limit`); the run under way (from, to, time gone, its own damping,
 --- duration and easing, whether a scroll to a place asked it); whether it
@@ -705,7 +696,8 @@ fn smooth_wheel[s, dy, mode]
     _smooth_go[s, s.aim + d, 0.0, false, false, s.lerp, s.duration, s.curve]
 
 --- a scroll to `target` (and `offset` past it), over `duration` seconds
---- along `curve` (a duration with no easing takes Lenis's own; an easing
+--- along `curve` (a duration with no easing takes the smooth scroll's own;
+--- an easing
 --- with no duration takes a second), or damped by `lerp` (-1: the
 --- options'), or at once (`immediate`); a turn of the wheel takes over
 fn smooth_to[s, target, offset = 0.0, duration = -1.0, curve = '', lerp = -1.0, immediate = false]
@@ -732,7 +724,7 @@ fn _smooth_go[s, target, offset, asked, immediate, k, d, e]
     if not asked
         s.aim = goal
     if d gt 0.0 and e eq ''
-        e = 'lenis'
+        e = 'smooth'
     else if e ne '' and d lte 0.0
         d = 1.0
     s.origin = s.at
@@ -747,11 +739,11 @@ fn _smooth_go[s, target, offset, asked, immediate, k, d, e]
     s
 
 fn _smooth_ease[curve, t]
-    if curve eq 'lenis'
-        return lenis_eased[t]
+    if curve eq 'smooth'
+        return smooth_eased[t]
     css_eased[curve, t]
 
---- a step of Lenis's damping: `x` toward `y`, `rate` a second, over `dt`
+--- a step of the damping: `x` toward `y`, `rate` a second, over `dt`
 --- seconds
 fn _damp[x, y, rate, dt]
     t = 1.0 - exp[0.0 - rate * dt]
@@ -781,7 +773,7 @@ fn _smooth_advanced[s, dt]
         v = s.origin + (s.to - s.origin) * e
     else if s.run_lerp gt 0.0
         v = _damp[s.at, s.to, s.run_lerp * 60.0, dt]
-        if _js_round[v] eq _js_round[s.to]
+        if _round_half_up[v] eq _round_half_up[s.to]
             v = s.to
             done = true
     else
@@ -797,9 +789,9 @@ fn _smooth_advanced[s, dt]
     if s.asked
         s.aim = v
     if done
-        --- (come to rest, Lenis reads the scroll back from the page, which
-        --- keeps it in whole pixels)
-        s.at = _js_round[v]
+        --- (come to rest, the scroll is read back from the page, which keeps
+        --- it in whole pixels)
+        s.at = _round_half_up[v]
         return _smooth_rest[s]
     s
 
@@ -831,19 +823,17 @@ fn smooth_limit[s, limit]
     s
 
 
---- ---- full-page sections (fullPage.js 4.0.41's behaviour) ----
+--- ---- full-page sections ----
 ---
---- A page cut into sections the reader moves through one at a time, as
---- fullPage moves them: the keys (the arrows, Page Up and Page Down, Home
---- and End, Space), the wheel by fullPage's rule (it moves on a turn that
+--- A page cut into sections the reader moves through one at a time: the
+--- keys (the arrows, Page Up and Page Down, Home and End, Space), the wheel
+--- by its rule (it moves on a turn that
 --- grows or holds, not on one dying away), navigation dots, a menu and
 --- anchors in the address, loops top and bottom and continuous scrolling,
 --- slides across with arrows and dots, sections taller than the page
 --- scrolled inside first, the page scrolled freely and fitted to the
 --- nearest section after a pause, the responsive fallback, lazy loading,
---- and fullPage's callbacks, told as events at the times fullPage calls
---- them. fullPage.js is GPLv3 or commercial: what is here was learnt by
---- running it (tests/scrolling/pages/fullpage.html), never from its code.
+--- and callbacks, told as events at the times they happen.
 ---
 ---     p = scrolling.pages[[scrolling.section[name = 'one'], …], 1000.0, 713.0, scrolling.page_options[]]
 ---     p = scrolling.paged[c, p]               --- keys, the wheel, the time
@@ -856,44 +846,41 @@ fn smooth_limit[s, limit]
 --- fits the page to its section.
 
 --- one of the sections a page is cut into: its anchor (`name`, '' for
---- none), its height (`tall`, 0: the page's; fullPage's `fp-auto-height`
---- is a section of its own height), its slides (how many, 0 for none) and
+--- none), its height (`tall`, 0: the page's), its slides (how many, 0 for none) and
 --- their anchors (`slide_names`, words apart), whether it is hidden (not
---- moved to, not dotted), whether it keeps its content still (`noscroll`,
---- fullPage's `fp-noscroll`), how tall its content is where that is taller
+--- moved to, not dotted), whether it keeps its content still
+--- (`noscroll`), how tall its content is where that is taller
 --- than the section (`content`; 0: it fits), its dot's tooltip, its colour
---- ('#rrggbb', fullPage's `sectionsColor`) and whether its media plays
+--- ('#rrggbb') and whether its media plays
 --- while it is shown (`autoplay`)
 struct Section [name, tall, slides, slide_names, hidden, noscroll, content, tooltip, color, autoplay]
 
 fn section[name = '', tall = 0.0, slides = 0, slide_names = '', hidden = false, noscroll = false, content = 0.0, tooltip = '', color = '', autoplay = false]
     Section[name, tall, slides, slide_names, hidden, noscroll, content, tooltip, color, autoplay]
 
---- fullPage's options, by its names where Lory's are shorter: the time a
---- move takes (`speed`, scrollingSpeed) and the CSS easing it moves with
---- (`easing`, easingcss3); loopTop, loopBottom, continuousVertical and
---- loopHorizontal (`loop_slides`); keyboardScrolling; lockAnchors,
---- recordHistory, animateAnchor; autoScrolling (`auto`: false scrolls the
---- page freely), fitToSection and its delay; responsiveWidth and
---- responsiveHeight (below them the page scrolls freely); lazyLoadThreshold
---- (`lazy_ahead`); scrollBar; css3 false (`by_script`: moved by script, not
---- by the stylesheet); the dots (`nav`, `nav_side`, showActiveTooltip and
---- the tooltips, `slides_nav`), the slides' arrows and their colour; and
---- scrollOverflowReset
+--- the full-page options: the time a move takes (`speed`) and the CSS
+--- easing it moves with (`easing`); `loop_top`, `loop_bottom`,
+--- `continuous` and `loop_slides`; `keyboard`; `lock_anchors`,
+--- `record_history`, `animate_anchor`; `auto` (false scrolls the page
+--- freely), `fit` to a section and its delay; `responsive_w` and
+--- `responsive_h` (below them the page scrolls freely); `lazy_ahead`;
+--- `scroll_bar`; `by_script` (moved by script, not by the stylesheet); the
+--- dots (`nav`, `nav_side`, `show_tooltip` and the tooltips,
+--- `slides_nav`), the slides' arrows and their colour; and
+--- `overflow_reset`
 struct PageOptions [speed, easing, loop_top, loop_bottom, continuous, loop_slides, keyboard, lock_anchors, record_history, animate_anchor, auto, fit, fit_delay, responsive_w, responsive_h, lazy_ahead, scroll_bar, by_script, nav, nav_side, show_tooltip, tooltips, slides_nav, arrows, arrow_color, overflow_reset]
 
 fn page_options[speed = 700.0, easing = 'ease', loop_top = false, loop_bottom = false, continuous = false, loop_slides = true, keyboard = true, lock_anchors = false, record_history = true, animate_anchor = true, auto = true, fit = true, fit_delay = 600.0, responsive_w = 0.0, responsive_h = 0.0, lazy_ahead = 0, scroll_bar = false, by_script = false, nav = false, nav_side = 'right', show_tooltip = false, tooltips = '', slides_nav = false, arrows = true, arrow_color = '#ffffff', overflow_reset = false]
     PageOptions[speed, easing, loop_top, loop_bottom, continuous, loop_slides, keyboard, lock_anchors, record_history, animate_anchor, auto, fit, fit_delay, responsive_w, responsive_h, lazy_ahead, scroll_bar, by_script, nav, nav_side, show_tooltip, tooltips, slides_nav, arrows, arrow_color, overflow_reset]
 
---- one of fullPage's callbacks, told: its name (`before_leave`,
+--- one of the callbacks, told: its name (`before_leave`,
 --- `on_leave`, `after_load`, `on_slide_leave`, `after_slide_load`,
---- `after_render`, `after_responsive`, `on_scroll_overflow`, and Lory's
---- `media_play` and `media_pause`), when (ms), the section (its place
+--- `after_render`, `after_responsive`, `on_scroll_overflow`, `media_play`
+--- and `media_pause`), when (ms), the section (its place
 --- among the sections shown) and where to, the slide and where to (-1:
 --- none), the direction ('down', 'up', 'left', 'right', 'none', '' at the
---- start), what moved it (`trigger`: 'keydown', 'wheel', 'verticalNav',
---- 'horizontalNav', 'slideArrow', 'menu'; '' for none; fullPage keeps the
---- last one for a move the program or the address asks for) and a number
+--- start), what moved it (`trigger`: 'key', 'wheel', 'dots',
+--- 'slide_dots', 'arrow', 'menu'; '' for none; the last one is kept for a move the program or the address asks for) and a number
 --- (a section's inner scroll, `after_responsive`'s 1 or 0)
 struct Told [name, t, section, to, slide, to_slide, direction, trigger, num]
 
@@ -901,7 +888,7 @@ struct Told [name, t, section, to, slide, to_slide, direction, trigger, num]
 --- the section whose slides move, from and to (sections by their own
 --- index, slides by theirs), its direction and trigger, when it began and
 --- how long it lasts, the wrapper's (or the page's) offsets from and to,
---- the slides' offsets from and to, when fullPage tells its end (-1: told)
+--- the slides' offsets from and to, when its end is told (-1: told)
 --- and a slide to move to once it ends (-1: none)
 struct Move [what, section, origin, to, slide_origin, slide_to, direction, trigger, begun, lasting, from_y, to_y, from_x, to_x, ends_at, then_slide]
 
@@ -921,7 +908,7 @@ struct Undo [at, slides_at, move, busy, order, top, hash, history, history_at, t
 --- fit), where the wrapper stands now (`y`, CSS pixels down; the page's
 --- scroll where it scrolls freely) and is going (`top`), whether the page
 --- is narrower or lower than its responsive bounds, the wrapper's CSS
---- transition as fullPage writes it, what a refusal puts back, the time
+--- transition as it is written, what a refusal puts back, the time
 --- it was last brought to, and its box on the page when last shown (CSS
 --- pixels; none before it is shown)
 struct Pages [o, sections, view_w, view_h, at, slides_at, move, trigger, sizes, wheel_t, busy, hash, history, history_at, told, inner, loaded, order, scrolled_t, y, top, responsive, transition, undo, now, box]
@@ -941,8 +928,8 @@ fn _tell[p, name, t, sec, to, slide, to_slide, direction, trigger, num]
     p
 
 --- the sections a page is cut into, `view_w` by `view_h` CSS pixels, with
---- fullPage's options, opened at `t` with `address` its hash ('' or
---- '#three'): fullPage tells `after_load` and `after_render` (and
+--- the full-page options, opened at `t` with `address` its hash ('' or
+--- '#three'): it tells `after_load` and `after_render` (and
 --- `after_responsive` where the page is under its bounds), or moves to
 --- the anchor the address names
 fn pages[sections, view_w, view_h, o, t = 0.0, address = '']
@@ -975,12 +962,12 @@ fn pages[sections, view_w, view_h, o, t = 0.0, address = '']
         p = _go[p, named, _hashed_slide[p, named, address], t, p.trigger, how]
     p
 
---- whether a page `w` by `h` is under the responsive bounds (fullPage's
---- `responsiveWidth`, `responsiveHeight`: strictly under)
+--- whether a page `w` by `h` is under the responsive bounds
+--- (`responsive_w`, `responsive_h`: strictly under)
 fn _under_bounds[o, w, h]
     (o.responsive_w gt 0.0 and w lt o.responsive_w) or (o.responsive_h gt 0.0 and h lt o.responsive_h)
 
---- whether the page scrolls freely: autoScrolling off, or under its
+--- whether the page scrolls freely: `auto` off, or under its
 --- responsive bounds
 fn page_free[p]
     p.responsive or not p.o.auto
@@ -1111,8 +1098,8 @@ fn _section_word[p, i]
         return p.sections[i].name
     '`i`'
 
---- what fullPage writes on the body for the section and slide shown
---- (`fp-viewing-` and this): the section's anchor or number, and its
+--- what is written on the body for the section and slide shown: the
+--- section's anchor or number, and its
 --- slide's where it has slides ('two-s2', '1-0')
 fn page_viewing[p]
     i = p.at
@@ -1131,7 +1118,7 @@ fn _anchored[p]
             return true
     false
 
---- the hash fullPage writes for a section and slide: '#two', '#two/s2'
+--- the hash written for a section and slide: '#two', '#two/s2'
 --- ('#two/2' where the slides have no anchors); a first slide is not
 --- written
 fn _hash_of[p, i, k]
@@ -1178,8 +1165,8 @@ fn _hashed_slide[p, i, address]
             return whole
     -1
 
---- the address's hash written by fullPage: a new entry in its history,
---- or (recordHistory off) the one it is on rewritten; nothing where it is
+--- the address's hash written: a new entry in its history, or
+--- (`record_history` off) the one it is on rewritten; nothing where it is
 --- already so
 fn _hash_set[p, words]
     if words eq '' or words eq p.hash
@@ -1200,25 +1187,25 @@ fn _keep_undo[p]
     p.undo = Undo[p.at, p.slides_at, p.move, p.busy, p.order, p.top, p.hash, p.history, p.history_at, p.transition, len[p.told]]
     p
 
---- the wrapper's transition as fullPage writes it ('transform 700ms', with
+--- the wrapper's transition as it is written ('transform 700ms', with
 --- its easing where it is not `ease`; 'transform' for a move at once)
 fn _transition_of[p, silent]
     if silent
         return 'transform'
-    ms = _js_number[p.o.speed]
+    ms = _number_words[p.o.speed]
     e = trim[p.o.easing]
     if e eq 'ease'
         return 'transform `ms`ms'
     if starts[e, 'cubic-bezier(']
         q = css_curve[e]
-        a = _js_number[q[0]]
-        b = _js_number[q[1]]
-        c2 = _js_number[q[2]]
-        d = _js_number[q[3]]
+        a = _number_words[q[0]]
+        b = _number_words[q[1]]
+        c2 = _number_words[q[2]]
+        d = _number_words[q[3]]
         e = 'cubic-bezier(`a`, `b`, `c2`, `d`)'
     'transform `ms`ms `e`'
 
---- how long after a move begins fullPage tells its end: the move's time,
+--- how long after a move begins its end is told: the move's time,
 --- 20 ms more where it scrolls by script, 50 where it scrolls the page's
 --- bar
 fn _end_after[p]
@@ -1229,7 +1216,7 @@ fn _end_after[p]
         return p.o.speed + 20.0
     p.o.speed
 
---- media loaded for a section arrived at (fullPage's lazy loading): its
+--- media loaded for a section arrived at (lazy loading): its
 --- own, or its slide's where it has slides, and as many sections on as
 --- `lazy_ahead` says
 fn _lazy_one[p, i]
@@ -1268,7 +1255,7 @@ fn _lazy_slide[p, i, j]
     p
 
 --- where the wrapper stands at `t`: on its way along the move's curve
---- (the stylesheet's easing, or jQuery's easeInOutCubic by script; the
+--- (the stylesheet's easing, or in and out on a cubic by script; the
 --- page's scroll, by script, rounded to whole pixels), or at rest
 fn _y_at[p, t]
     m = p.move
@@ -1285,7 +1272,7 @@ fn _y_at[p, t]
     v = in_out_cubic[t - m.begun, m.from_y, m.to_y - m.from_y, m.lasting]
     if mode eq 'script'
         return v
-    _js_round[v]
+    _round_half_up[v]
 
 --- where the slides of section `i` stand at `t` (CSS pixels across)
 fn _x_at[p, i, t]
@@ -1302,8 +1289,8 @@ fn _x_at[p, i, t]
 
 --- the move to section `to` (and then slide `slide`, -1 for none) begun at
 --- `t`: told `before_leave` and `on_leave`, the hash written, the media
---- loaded; `how` is `move` (over the options' speed) or `silent` (at once,
---- fullPage's silentMoveTo). A move asked while one runs replaces it:
+--- loaded; `how` is `move` (over the options' speed) or `silent` (at
+--- once). A move asked while one runs replaces it:
 --- the one replaced tells no end.
 fn _go[p, to, slide, t, trigger, how]
     if to lt 0
@@ -1362,7 +1349,7 @@ fn _go_from[p, origin, to, slide, t, trigger, how, direction, around]
     p
 
 --- the slides of section `i` moved to slide `to` at `t` (`none` where it
---- is already there: fullPage then tells only its end)
+--- is already there: only its end is told)
 fn _slide_go[p, i, to, t, trigger, how]
     if i lt 0 or to lt 0 or to gte p.sections[i].slides
         return p
@@ -1522,7 +1509,7 @@ fn _inner_most[p, i]
     max[0.0, s.content - _tall_of[p, i]]
 
 --- the section shown scrolled inside to `y` (as the reader scrolls it):
---- fullPage tells `on_scroll_overflow` with where it is and its direction,
+--- it tells `on_scroll_overflow` with where it is and its direction,
 --- and moves on at once where the scroll comes to its end that way
 fn page_inner[p, y, t]
     p = pages_at[p, t]
@@ -1579,23 +1566,23 @@ fn page_key[p, key, t, shift = false]
     stride = 40.0
     if key ne 'ArrowDown' and key ne 'ArrowUp'
         stride = p.view_h * 0.875
-    p.trigger = 'keydown'
+    p.trigger = 'key'
     if going_down
         if not _inner_at_edge[p, 1.0]
             return page_inner[p, p.inner[p.at] + stride, t]
-        return _down[p, t, 'keydown']
+        return _down[p, t, 'key']
     if going_up
         if not _inner_at_edge[p, -1.0]
             return page_inner[p, p.inner[p.at] - stride, t]
-        return _up[p, t, 'keydown']
+        return _up[p, t, 'key']
     if key eq 'Home'
-        return _go[p, _first_shown[p], -1, t, 'keydown', 'move']
+        return _go[p, _first_shown[p], -1, t, 'key', 'move']
     if key eq 'End'
-        return _go[p, _last_shown[p], -1, t, 'keydown', 'move']
+        return _go[p, _last_shown[p], -1, t, 'key', 'move']
     if key eq 'ArrowRight'
-        return _slide_step[p, t, 'keydown', 1]
+        return _slide_step[p, t, 'key', 1]
     if key eq 'ArrowLeft'
-        return _slide_step[p, t, 'keydown', -1]
+        return _slide_step[p, t, 'key', -1]
     p
 
 --- (a key on a page that scrolls freely under its bounds: the browser's
@@ -1618,7 +1605,7 @@ fn _free_key[p, key, t, shift]
         return p
     page_scrolled[p, p.y + delta, t]
 
---- the wheel turned by `dy` CSS pixels at `t`, as fullPage reads a turn: a
+--- the wheel turned by `dy` CSS pixels at `t`, read as a turn: a
 --- moment's sizes (a wheel's delta as the browser reports it, 1.2 times
 --- the pixels) are kept, a pause of 200 ms forgets them, and a section is
 --- moved when the last ten average no less than the last seventy (the
@@ -1631,7 +1618,7 @@ fn page_wheel[p, dy, t]
     if page_free[p]
         return page_scrolled[p, p.y + dy, t]
     p.trigger = 'wheel'
-    v = abs[_js_round[1.2 * dy]]
+    v = abs[_round_half_up[1.2 * dy]]
     sizes = p.sizes
     if t - p.wheel_t gt 200.0
         sizes = _nums[]
@@ -1669,10 +1656,10 @@ fn _sum_from[xs, from]
         k = k + 1
     total
 
---- the page scrolled freely to `y` (the reader's scroll, where autoScrolling
---- is off or the page is under its responsive bounds): the section whose
---- part of the page holds the page's middle is shown, fullPage telling its
---- callbacks at once, and the page is fitted to it after the pause
+--- the page scrolled freely to `y` (the reader's scroll, where `auto` is
+--- off or the page is under its responsive bounds): the section whose
+--- part of the page holds the page's middle is shown, its callbacks told
+--- at once, and the page is fitted to it after the pause
 fn page_scrolled[p, y, t]
     p = pages_at[p, t]
     most = max[0.0, pages_tall[p] - p.view_h]
@@ -1706,7 +1693,7 @@ fn page_scrolled[p, y, t]
 
 --- ---- what the program and the address ask ----
 
---- fullPage's moveSectionDown and moveSectionUp (taken while a move runs:
+--- a section down or up (taken while a move runs:
 --- the program's moves are not refused)
 fn page_down[p, t]
     _down[pages_at[p, t], t, p.trigger]
@@ -1714,13 +1701,13 @@ fn page_down[p, t]
 fn page_up[p, t]
     _up[pages_at[p, t], t, p.trigger]
 
---- fullPage's moveTo: section `i` (its own index), and slide `slide`
+--- a move to section `i` (its own index), and slide `slide`
 --- (-1: as it is) once there
 fn page_move_to[p, i, t, slide = -1]
     p = pages_at[p, t]
     _go[p, i, slide, t, p.trigger, 'move']
 
---- fullPage's silentMoveTo: the same, at once
+--- the same, at once
 fn page_silent_to[p, i, t, slide = -1]
     p = pages_at[p, t]
     _go[p, i, slide, t, p.trigger, 'silent']
@@ -1729,7 +1716,7 @@ fn page_silent_to[p, i, t, slide = -1]
 fn page_named[p, name]
     _hashed_section[p, '#`name`']
 
---- fullPage's moveSlideRight, moveSlideLeft, and a slide by number
+--- a slide right, a slide left, and a slide by number
 fn page_slide_right[p, t]
     p = pages_at[p, t]
     _slide_step[p, t, p.trigger, 1]
@@ -1743,7 +1730,7 @@ fn page_slide_to[p, k, t]
     _slide_go[p, p.at, k, t, p.trigger, 'move']
 
 --- the address's hash changed (the reader's link, the program's): a new
---- entry in its history, and fullPage moves to what it names unless its
+--- entry in its history, and a move to what it names unless its
 --- anchors are locked (a hash it does not know moves nothing)
 fn page_hash[p, words, t]
     p = pages_at[p, t]
@@ -1762,7 +1749,7 @@ fn _hash_moved[p, t]
     _go[p, i, _hashed_slide[p, i, p.hash], t, p.trigger, 'move']
 
 --- the history moved back one entry (the browser's back): its hash, and
---- fullPage moving to it
+--- a move to it
 fn page_back[p, t]
     p = pages_at[p, t]
     if p.history_at lte 0
@@ -1779,25 +1766,25 @@ fn page_dot[p, k, t]
     shown = _shown_list[p]
     if k lt 0 or k gte len[shown] or t lt p.busy
         return p
-    p.trigger = 'verticalNav'
-    _go[p, shown[k], -1, t, 'verticalNav', 'move']
+    p.trigger = 'dots'
+    _go[p, shown[k], -1, t, 'dots', 'move']
 
 fn page_slide_dot[p, k, t]
     p = pages_at[p, t]
     if t lt p.busy
         return p
-    p.trigger = 'horizontalNav'
-    _slide_go[p, p.at, k, t, 'horizontalNav', 'move']
+    p.trigger = 'slide_dots'
+    _slide_go[p, p.at, k, t, 'slide_dots', 'move']
 
 fn page_arrow[p, side, t]
     p = pages_at[p, t]
     if t lt p.busy
         return p
-    p.trigger = 'slideArrow'
+    p.trigger = 'arrow'
     delta = 1
     if side eq 'prev'
         delta = -1
-    _slide_step[p, t, 'slideArrow', delta]
+    _slide_step[p, t, 'arrow', delta]
 
 fn page_menu[p, name, t]
     p = pages_at[p, t]
@@ -1836,8 +1823,8 @@ fn pages_refuse[p, at = 'before_leave']
     p.transition = u.transition
     p
 
---- fullPage's setScrollingSpeed, setLockAnchors, setRecordHistory,
---- setResponsive, and a page resized (`after_responsive` told where it
+--- the speed, the anchors' lock, the history's recording and the
+--- responsive bounds set, and a page resized (`after_responsive` told where it
 --- crosses its bounds)
 fn page_speed[p, ms]
     o = p.o
@@ -1878,9 +1865,9 @@ fn page_resized[p, w, h, t]
     p.y = p.top
     p
 
---- ---- what fullPage shows ----
+--- ---- what the sections show ----
 
---- the wrapper's offset fullPage has written (CSS pixels up: its
+--- the wrapper's offset as written (CSS pixels up: its
 --- `translate3d(0, -y, 0)`), and the slides' in section `i` (pixels left)
 fn page_offset[p]
     p.top
@@ -1888,7 +1875,7 @@ fn page_offset[p]
 fn page_slides_offset[p, i]
     (0.0 + p.slides_at[i]) * p.view_w
 
---- the section shown, as fullPage numbers it (its place among those shown)
+--- the section shown, numbered by its place among those shown
 fn page_index[p]
     _position[p, p.at]
 
@@ -2011,7 +1998,7 @@ fn _over_box[box, x, y]
 --- the page are room only. Over them, as the options ask: the navigation
 --- dots (`id`:dots, its tooltips beside them), the slides' arrows
 --- (`id`:prev, `id`:next) and their dots (`id`:slide_dots). With
---- `fading` (fullPage's fading effect), a section moved to does not slide
+--- `fading`, a section moved to does not slide
 --- in: it is drawn over the one left, fading in as the move goes.
 fn pages_view[p, faces, id = 'pages', fading = false]
     firsts = _ints[]
@@ -2110,7 +2097,7 @@ fn _ground_painted[d]
     d.c = lory.rect[d.c, d.x, d.y, d.w, d.h, lory.hex[d.words]]
     d
 
---- the navigation dots, as fullPage draws them: 4 across, the active one
+--- the navigation dots: 4 across, the active one
 --- 12; a tooltip beside the active one (where asked) and the one under
 --- the pointer; pressing a dot tells `dot` and its place
 fn _dots_painted[d]
@@ -2203,16 +2190,16 @@ fn pages_heard[p, shown, id = 'pages']
             p = page_slide_dot[p, int[e.num], p.now]
     p
 
---- ---- a scroll area (Radix's): its own bar over the content ----
+--- ---- a scroll area: its own bar over the content ----
 
 --- what a scroll area holds between frames: how far it is scrolled
 --- (`top`, CSS pixels), its content's height and its own as last shown,
---- when its bar shows (`bar`, Radix's `type`: 'hover', as Radix's default, while the
---- pointer is over it; 'scroll' while it scrolls; 'auto' while its content
---- overflows; 'always'), how long the bar stays after (`delay`, 600 ms as
---- Radix's), whether the pointer is over it, when it last left or last
+--- when its bar shows (`bar`: 'hover', the default, while the pointer is
+--- over it; 'scroll' while it scrolls; 'auto' while its content
+--- overflows; 'always'), how long the bar stays after (`delay`, 600 ms),
+--- whether the pointer is over it, when it last left or last
 --- scrolled, the frame's time, its box on the page, and the smooth scroll
---- it runs where asked (`glide`: Lenis's; none: false)
+--- it runs where asked (`glide`: a smooth scroll; none: false)
 struct Area [top, content, tall, bar, delay, over, left_t, scrolled_t, now, box, smooth, gliding]
 
 fn area_of[bar = 'hover', delay = 600.0, glide = false]
@@ -2233,7 +2220,7 @@ fn area_bar_shown[a]
     a.over or a.now - a.left_t lt a.delay
 
 --- the thumb's top and height on a track `track` high: its share of the
---- track as the view's of the content, never under 18 (as Radix's)
+--- track as the view's of the content, never under 18
 fn area_thumb[a, track]
     if a.content lte 0.0
         return [0.0, track]
@@ -2405,13 +2392,13 @@ fn area_heard[a, shown, id]
     a.top = _clamped[0.0, area_most[a], a.top]
     a
 
---- ---- virtual lists (TanStack Virtual's, Vuetify's v-virtual-scroll) ----
+--- ---- virtual lists ----
 ---
 --- Only the rows near the view are drawn: each row stands where the rows
 --- before it end (its own size measured once drawn, the estimate until
 --- then), the view's rows are found by a binary search for the first row
 --- that starts at or before the scroll, and `overscan` more rows each way
---- are drawn too (TanStack's default 1). Room stands for the rest above
+--- are drawn too (1 by default). Room stands for the rest above
 --- and below. A row measured anew above the scroll moves the scroll by
 --- its change, so that what is in view stays put.
 
@@ -2450,8 +2437,7 @@ fn virtual_total[v]
     last = v.count - 1
     virtual_start[v, last] + virtual_size[v, last] + v.pad_end
 
---- (TanStack's search: the row starting at `value`, else the last one
---- starting before it)
+--- (the row starting at `value`, else the last one starting before it)
 fn _nearest[v, value]
     low = 0
     high = v.count - 1
@@ -2665,7 +2651,7 @@ fn grid_heard[g, shown, id]
         g.wide = shown.boxes[id][2]
     g
 
---- ---- endless feeds (Vuetify's v-infinite-scroll) ----
+--- ---- endless feeds ----
 ---
 --- A side ('start', 'end' or 'both') asks for more when its edge comes
 --- within `margin` of the view (`intersect` mode) or its button is pressed
@@ -2780,7 +2766,7 @@ fn feed_heard[f, shown, id]
                 f = feed_load[_feed_set[f, side, 'ok'], side]
     f
 
---- ---- pull to refresh (Vuetify's v-pull-to-refresh) ----
+--- ---- pull to refresh ----
 ---
 --- Pulled down from the top (only while its scroll is at the top), the
 --- content follows the pointer up to `threshold` pixels (64); let go past
@@ -2859,15 +2845,15 @@ fn pull_view[p, kids]
     panel = gui.moved[gui.text[sign, tone = 'muted'], 0.0, off - p.threshold]
     gui.overlay[gui.moved[gui.column[kids], 0.0, off], panel, anchor = 'top']
 
---- ---- sticky (Semantic UI's) ----
+--- ---- sticky ----
 ---
 --- A block that stays in view while its context scrolls past: where it
 --- stood (`free`), fixed to the view's top `offset` below it (`top`),
 --- bound to its context's bottom (`bound`), or (pushing, scrolled back up
 --- from the bottom) fixed to the view's bottom `bottom_offset` above it
 --- (`bottom`). A block taller than the view scrolls within itself while
---- fixed. It tells `stick`, `unstick` and `bottom` as Semantic's
---- callbacks are called (`onStick`, `onUnstick`, `onBottom`).
+--- fixed. It tells `stick`, `unstick` and `bottom` as it sticks, comes
+--- free and meets its context's bottom.
 
 struct Stuck [state, last, inner, told]
 
@@ -2960,13 +2946,13 @@ fn sticky_y[s, scroll, view_tall, top, tall, to, offset = 0.0, bottom_offset = 0
         return to - tall
     top
 
---- ---- visibility (Semantic UI's, Vuetify's v-lazy) ----
+--- ---- visibility ----
 ---
 --- A block's place against the view: its top or bottom visible or passed,
 --- passing (its top passed, its bottom not), on or off the screen, how far
---- it has passed; each told once (`once`, Semantic's default) or once
+--- it has passed; each told once (`once`, the default) or once
 --- each time it comes true again, and each reverse told when it stops
---- being true after it was. As Semantic's, being on screen reads whether
+--- being true after it was. Being on screen reads whether
 --- it was passing at the last check.
 
 struct Seen [occurred, passing, told, passed, share]
@@ -3046,7 +3032,7 @@ fn seen_at[s, scroll, view_tall, top, tall, offset = 0.0, once = true, continuou
     s.passing = passing
     s
 
---- Vuetify's v-lazy: whether the block has come into the view (at least
+--- whether the block has come into the view (at least
 --- `threshold` of it shown, 0: any of it), once and for good
 fn lazy_shown[was, scroll, view_tall, top, tall, threshold = 0.0]
     if was
@@ -3060,10 +3046,10 @@ fn lazy_shown[was, scroll, view_tall, top, tall, threshold = 0.0]
 
 --- ---- parallax ----
 
---- Vuetify's v-parallax: the picture moved down and grown as its block
---- (`top`, `tall`) passes the view: [translate, scale] for `scale` (0.5,
---- Vuetify's default: how far the picture keeps up with the page)
-fn vuetify_parallax[scroll, view_tall, top, tall, scale = 0.5]
+--- a parallax band: the picture moved down and grown as its block (`top`,
+--- `tall`) passes the view: [translate, scale] for `scale` (0.5 by
+--- default: how far the picture keeps up with the page)
+fn parallax_offset[scroll, view_tall, top, tall, scale = 0.5]
     k = 1.0 - _clamped[0.0, 1.0, scale]
     centre = top + (tall - view_tall) / 2.0
     moved = (scroll - centre) * k
@@ -3075,12 +3061,12 @@ fn vuetify_parallax[scroll, view_tall, top, tall, scale = 0.5]
     grown = max[1.0, (k * (view_tall - tall) + tall) / tall]
     [shift_by, grown]
 
---- Motion's way: a layer moved by the scroll times its factor (a factor
+--- a layer moved by the scroll times its factor (a factor
 --- under 1 lags behind the page, over 1 runs ahead, negative goes against)
 fn parallax_y[scroll, factor]
     scroll * factor
 
---- fullPage's parallax: a section's ground moved by `percentage` (62 by
+--- a section's parallax: its ground moved by `percentage` (62 by
 --- default) of how far its section stands from the view, against the
 --- scroll (`reveal`, the ground uncovered by the section going) or with
 --- it (`cover`, the ground covered by the section coming)
@@ -3122,11 +3108,10 @@ fn scrolled_share[scroll, view_tall, content]
 fn back_to_top_shown[scroll, after = 400.0]
     scroll gt after
 
---- ---- offset sections (fullPage's) ----
+--- ---- offset sections ----
 
---- a section of `percentage` of the view's height (fullPage's
---- `data-percentage`), and the scroll that shows it: at its top, or
---- centred (`data-centered`) in the view
+--- a section of `percentage` of the view's height, and the scroll that
+--- shows it: at its top, or centred in the view
 fn offset_tall[view_tall, percentage]
     view_tall * percentage / 100.0
 
@@ -3136,7 +3121,7 @@ fn offset_scroll[top, tall, view_tall, whole, centered = false]
         to = top - (view_tall - tall) / 2.0
     _clamped[0.0, max[0.0, whole - view_tall], to]
 
---- ---- media in sections (fullPage's lazy loading and autoplay) ----
+--- ---- media in sections (lazy loading and autoplay) ----
 
 --- what a section's media does on a move: a section left pauses its
 --- media; one arrived plays what is marked to play (`autoplay`), loading
@@ -3263,7 +3248,7 @@ test a_scroll_area_measures_its_content_and_the_wheel_scrolls_it[]
     a = _area_framed[a, _frame_of[200.0, [_wheel_of[100.0, 100.0, 100000.0]]]]
     a.top eq area_most[a]
 
---- Radix's hover type: shown while the pointer is over it, hidden 600 ms
+--- the bar's hover type: shown while the pointer is over it, hidden 600 ms
 --- after it leaves
 test a_scroll_areas_bar_hides_600_ms_after_the_pointer_leaves[]
     a = _area_framed[area_of[], _frame_of[0.0, []]]
@@ -3321,7 +3306,7 @@ test in_a_headset_the_stick_scrolls_a_scroll_area[]
     a = _area_framed[a, _headset_at[2100.0, 100.0, 100.0, [], forward = 0.5]]
     a.top eq 60.0
 
---- (TanStack's example: 50,000 rows of 35, 5 rows drawn past each way)
+--- (50,000 rows of 35, 5 rows drawn past each way)
 fn _big[]
     v = virtual_of[50000, 35.0, overscan = 5]
     a = v.area
@@ -3483,7 +3468,7 @@ fn _stick_along[ys, offset, pushing]
 
 --- (a block 200 high at 100 in a context to 1000, the view 400 high;
 --- pushing, fixed to the view's bottom, it lets go only once the view's
---- bottom less its height is back at its place, as Semantic's)
+--- bottom less its height is back at its place)
 test a_sticky_block_fixes_to_the_top_binds_to_its_context_and_lets_go[]
     _stick_along[[0.0, 150.0, 500.0, 800.0, 900.0, 700.0, 50.0], 0.0, false] eq ['free:', 'top:stick', 'top:', 'bound:bottom+unstick', 'bound:', 'top:stick', 'free:unstick']
     _stick_along[[0.0, 150.0, 800.0, 500.0, 50.0], 0.0, true] eq ['free:', 'top:stick', 'bound:bottom+unstick', 'bottom:stick', 'bottom:']
@@ -3515,10 +3500,10 @@ test a_lazy_block_shows_once_it_comes_into_view[]
     lazy_shown[false, 200.0, 400.0, 500.0, 200.0, threshold = 0.5]
     lazy_shown[true, 0.0, 400.0, 5000.0, 200.0]
 
-test parallax_moves_a_picture_as_vuetify_motion_and_fullpage_do[]
-    vuetify_parallax[1000.0, 800.0, 1000.0, 500.0] eq [75.0, 1.3]
-    vuetify_parallax[0.0, 800.0, 1000.0, 500.0] eq [-425.0, 1.3]
-    vuetify_parallax[1000.0, 800.0, 1000.0, 500.0, scale = 1.0] eq [0.0, 1.0]
+test parallax_moves_a_picture_a_layer_and_a_section_s_ground[]
+    parallax_offset[1000.0, 800.0, 1000.0, 500.0] eq [75.0, 1.3]
+    parallax_offset[0.0, 800.0, 1000.0, 500.0] eq [-425.0, 1.3]
+    parallax_offset[1000.0, 800.0, 1000.0, 500.0, scale = 1.0] eq [0.0, 1.0]
     parallax_y[300.0, 0.5] eq 150.0 and parallax_y[300.0, -0.2] eq -60.0
     p = pages[_three[], 900.0, 700.0, page_options[], t = 0.0]
     p = pages_at[page_silent_to[p, 1, 0.0], 0.0]
@@ -3548,7 +3533,7 @@ test a_sections_media_pauses_as_it_is_left_and_plays_as_it_is_reached[]
     page_media[p, 1, 0] eq ['pause:1']
     page_media[p, -1, 1] eq ['play:1']
 
---- fullPage's fading effect: the section come to fades in over the one
+--- the fading effect: the section come to fades in over the one
 --- left as the move goes, eased as the move is
 test with_the_fading_effect_a_section_fades_in_over_the_one_left[]
     p = pages[_three[], 900.0, 700.0, page_options[], t = 0.0]

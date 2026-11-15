@@ -1,7 +1,7 @@
---- Kite's views: a chart drawn on a Lory canvas as klinecharts draws it
+--- Kite's views: a chart drawn on a Lory canvas
 --- — each pane's grid, its candles or its indicators' figures, the price
 --- marks, the axes and their labels, the separators, the crosshair and
---- the tooltips, in klinecharts' order and by its styles.
+--- the tooltips, in that order and by the chart's styles.
 ---
 --- `everything` draws it all; each part is its own function too, so a
 --- program draws its own things between them (an indicator of its own
@@ -52,7 +52,7 @@ fn rounded_edge[c, k, x, y, w, h, r, size, color]
         return c
     lory.round_outline[c, _sx[k, x], _sy[k, y], w * k.s, h * k.s, r * k.s, size * k.s, color]
 
---- a straight line as klinecharts strokes one: a level or upright line
+--- a straight line stroked: a level or upright line
 --- of an odd width lies on the pixel below or right of its place, a
 --- dashed one in `on`, `off` pieces from its start
 fn seg[c, k, x0, y0, x1, y1, size, color, dashed, on, off]
@@ -93,7 +93,7 @@ fn seg[c, k, x0, y0, x1, y1, size, color, dashed, on, off]
         return lory.dashed[c, _sx[k, x0 + shift], _sy[k, y0 + shift], _sx[k, x1 + shift], _sy[k, y1 + shift], size * k.s, color, on * k.s, off * k.s, 0.0]
     lory.line[c, _sx[k, x0 + shift], _sy[k, y0 + shift], _sx[k, x1 + shift], _sy[k, y1 + shift], size * k.s, color]
 
---- a line through points, as klinecharts strokes a path (moved half a
+--- a line through points, stroked as a path (moved half a
 --- pixel where its width is odd)
 fn polyline[c, k, xs, ys, size, color, dashed, on, off]
     if len[xs] lt 2 or color.a lte 0.0
@@ -125,8 +125,8 @@ fn words_at[c, k, x, y, words, size, color]
     lory.text[c, _sx[k, x], _sy[k, y], words, size * k.s, color]
 
 --- where words of `w` by `h` start, aligned (`left`, `center`, `right`)
---- and on their baseline (`top`, `middle`, `bottom`) as klinecharts
---- places a text's box
+--- and on their baseline (`top`, `middle`, `bottom`), as a text's box
+--- is placed
 fn _start_x[x, w, align]
     if align eq 'right' or align eq 'end'
         return x - w
@@ -142,7 +142,7 @@ fn _start_y[y, h, baseline]
     y
 
 --- a text box in the style at `at` (its size, colour, paddings,
---- background, border): klinecharts' text figure; `bg` other than ``
+--- background, border): a text figure; `bg` other than ``
 --- overrides the style's background, `width` other than 0 its width. It
 --- answers the box's width.
 fn label[c, k, x, y, words, at, align, baseline, bg, width]
@@ -287,7 +287,7 @@ fn bars_of[c, k, p, kind_of, colors, rule]
         i = i + 1
     c
 
---- a box's edge of one pixel, as klinecharts strokes it: the box filled
+--- a box's edge of one pixel: the box filled
 --- where it is too small for an edge
 fn _stroked[c, k, x, y, w, h, color]
     if w gt 2.0 and h gt 2.0
@@ -363,8 +363,8 @@ fn figures[c, k]
         c = lory.unclip[c, box_was]
     c
 
---- what is drawn next clipped to a pane's plot, as each of klinecharts'
---- panes is a canvas of its own (a line past the pane's range had run into
+--- what is drawn next clipped to a pane's plot, as if each
+--- pane were a canvas of its own (a line past the pane's range had run into
 --- the pane below)
 fn in_pane[c, k, p]
     lory.clip[c, _sx[k, 0.0], _sy[k, p.top], k.main_w * k.s, p.h * k.s]
@@ -435,7 +435,7 @@ fn _ind_color[k, ind, key]
     format.color[_ind_style[k, ind, key]]
 
 --- the colour (as CSS writes it) and the fill (`fill`, `stroke`) of a
---- bar or circle figure at bar i, by its rule (klinecharts' figure styles)
+--- bar or circle figure at bar i, by its rule (the figure styles)
 fn figure_look[k, ind, f, vals, i, _bar_i, _circle_i]
     group = 'bars'
     if f.shape eq 'circle'
@@ -493,8 +493,8 @@ fn _figure_line[c, k, p, ind, _f, vals, line_i]
         if v eq v
             xs = push[xs, store.x_of[k, 0.0 + i]]
             ys = push[ys, p.top + store.y_in_pane[k, p, v]]
-            --- (the line goes on to the next bar, drawn or not, as
-            --- klinecharts joins a bar to the next)
+            --- (the line goes on to the next bar, drawn or not, joining
+            --- a bar to the next)
             if i + 1 eq stop and i + 1 lt len[vals] and vals[i + 1] eq vals[i + 1]
                 xs = push[xs, store.x_of[k, 0.0 + i + 1]]
                 ys = push[ys, p.top + store.y_in_pane[k, p, vals[i + 1]]]
@@ -534,8 +534,8 @@ fn marks[c, k]
 fn _price_words[v, precision]
     format.fold[format.thousands[format.fixed[v, precision], ','], 3]
 
---- the last price's place, kept inside the pane (klinecharts'
---- convertToNicePixel)
+--- the last price's place, kept inside the pane, on a
+--- whole pixel
 fn last_y[k, p]
     n = store.count[k]
     y = store.y_in_pane[k, p, k.bars.c[n - 1]]
@@ -728,7 +728,7 @@ fn cross_value_words[k, p]
 struct Legend [title, value, title_color, value_color]
 
 --- the candle pane's tooltip (its title and the bar's legend) and every
---- pane's indicators' tooltips, as klinecharts' standard tooltip
+--- pane's indicators' tooltips, as the standard tooltip
 fn tooltips[c, k]
     if store.count[k] eq 0
         return c
@@ -757,7 +757,6 @@ fn _shows_tooltip[k, at]
 struct Row [c, x, y, h]
 
 --- items laid out left to right, a new row where one would pass max_w
---- (klinecharts' drawStandardTooltipLegends)
 fn legends[r, k, p, items, left, max_w, at]
     c = r.c
     x = r.x
@@ -911,7 +910,7 @@ fn indicator_legends[k, ind, i]
 
 --- ---- all of it ----
 
---- the buttons TradingView keeps over a chart: a pane's `A` while its
+--- the buttons kept over a chart: a pane's `A` while its
 --- prices do not fit the bars, and `»` while the newest bar is out of view
 fn nav_buttons[c, k]
     ink = store.col[k, 'yAxis.tickText.color']
@@ -935,7 +934,7 @@ fn nav_buttons[c, k]
         c = words_at[c, k, b[0] - w / 2.0, b[1] - 9.5, '»', 15.0, ink]
     c
 
---- the chart drawn whole, in klinecharts' order: behind, the grid; then
+--- the chart drawn whole, in order: behind, the grid; then
 --- each pane's candles and figures, the price marks; the axes, the
 --- separators; over all, the crosshair and the tooltips
 fn everything[c, k]

@@ -1,2 +1,0 @@
-name = 'lory_solid'
-deps = map[lory = '../../packages/lory']

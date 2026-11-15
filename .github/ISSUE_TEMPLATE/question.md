@@ -14,5 +14,5 @@ showed:
 
 ```
 
-**Where you looked** (the README or docs/lory-design.md), so the
+**Where you looked** (the README or the site's guide), so the
 answer can go there.

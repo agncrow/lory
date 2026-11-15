@@ -1,14 +1,11 @@
---- One of a chart's axes laid in the room it is given, as Chart.js
---- updates a scale: its ticks chosen and labelled, how much room it takes
+--- One of a chart's axes laid in the room it is given, as a scale is
+--- updated: its ticks chosen and labelled, how much room it takes
 --- beside the chart's area (its labels turned where they would meet, some
 --- left out where they still would, its ends padded for the labels past
 --- them); and a radial axis laid in the chart's area, its centre and
 --- radius, its point labels round it, and where a value and a label's
 --- place stand on it. charts_scales holds the axes themselves, their
 --- ranges, ticks and pixels.
----
---- These are Chart.js 4.5.1's rules, read from its scales and written
---- anew (see charts_model.co).
 use math
 use lory
 use charts_model
@@ -16,7 +13,7 @@ use charts_time
 use charts_scales
 --- ---- one axis laid in the room it is given ----
 
---- the axis laid as Chart.js updates a scale: given the most room it may
+--- the axis laid as a scale is updated: given the most room it may
 --- take (`max_width`, `max_height`) and the margins about it, its ticks
 --- chosen and labelled, its labels turned and thinned, and its own size
 --- fitted (`chart_w`, `chart_h`: the whole chart's)
@@ -295,7 +292,7 @@ fn _tick_size[sc, a, pen]
         return h / c
     w / s
 
---- the axis's ticks thinned as Chart.js skips them: as many as their
+--- the axis's ticks thinned: as many as their
 --- labels leave room for (major ticks kept first where the axis has them)
 fn _skipped[sc0, a, pen]
     sc = sc0

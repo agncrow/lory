@@ -1,2 +1,0 @@
-name = 'lory_vue'
-deps = map[lory = '../../packages/lory']

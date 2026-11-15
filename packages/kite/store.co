@@ -1,6 +1,5 @@
 --- Kite's store: what a chart holds between frames, and how a frame's
---- input moves it — klinecharts' store, layout and event handling, in
---- the same arithmetic.
+--- input moves it: its layout and its event handling.
 ---
 --- Bars stand at positions, not times: bar i's centre is `space` pixels
 --- right of bar i - 1's, and the last bar stands `right_bars` bars left of
@@ -71,7 +70,7 @@ fn pane_of[id, height]
 fn _empty_bars[]
     indicators.Bars[[], [], [], [], [], [], []]
 
---- a chart of no bars, named `id`, in klinecharts' light styles
+--- a chart of no bars, named `id`, in the light styles
 fn new[id]
     candle = pane_of['candle_pane', 0.0]
     Chart[id, _empty_bars[], Symbol['', 2, 0], Period['minute', 1], styles.defaults[], '', 'en-US', 10.0, 7.0, 80.0, 8.0, true, true, 'cursor', 'cursor', [candle], [], [], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Cross[-1.0, -1.0, ''], _no_drag[], [], 0, 0, 0, 0, false, false, '', 1.0, true, [], 0.0, 0.0, 0.0, 0.0, map[], '', -1.0, false, 0.0, [], 0.0, 0.0, 0.0]
@@ -113,7 +112,7 @@ fn count[k]
     len[k.bars.c]
 
 --- the bars a chart holds, from the start: the view goes to the newest bar
---- with the initial right offset (klinecharts' `init`)
+--- with the initial right offset
 fn set_bars[k, b, more_older, more_newer]
     k.bars = b
     k.more_older = more_older
@@ -147,7 +146,7 @@ fn _joined[a, b]
 
 --- a bar as it is now: a newer time adds a bar (the view follows it where
 --- the last bar was in view), the last bar's time changes the last bar
---- (klinecharts' `update`), an older time is ignored
+--- an older time is ignored
 fn update_bar[k, t, o, h, l, c, v]
     n = count[k]
     b = k.bars
@@ -184,7 +183,7 @@ fn set_extra[k, name, vals]
 
 --- ---- the view ----
 
---- the bar's width and the gap between bars, as klinecharts sizes them
+--- the bar's width and the gap between bars
 fn _gap_of[space]
     special = 4.0
     ratio = 1.0 - 0.2 * atan[max[special, space] - special] / (pi * 0.5)
@@ -232,8 +231,7 @@ fn scroll_to_index[k, i]
     k.right_bars = k.offset_right / k.space - (n - 1 - i)
     adjust[k]
 
---- the position of a bar from the plot's left, in pixels (klinecharts'
---- dataIndexToCoordinate)
+--- the position of a bar from the plot's left, in pixels
 fn x_of[k, i]
     n = 0.0 + count[k]
     delta = n + k.right_bars - i
@@ -322,7 +320,7 @@ fn index_at_time[k, t]
         return n - 1 + int[floor[(t - last) / step]]
     if t lt first and step gt 0.0
         return int[floor[(t - first) / step]]
-    --- (the nearest by a binary search, as klinecharts')
+    --- (the nearest by a binary search)
     lo = 0
     hi = n - 1
     while lo lt hi
@@ -335,14 +333,14 @@ fn index_at_time[k, t]
         return lo - 1
     lo
 
---- the visible bars worked out again (klinecharts' _adjustVisibleRange):
+--- the visible bars worked out again:
 --- the view kept from scrolling the bars out of sight, the range of bars
 --- drawn, and the highest high and lowest low in view
 fn adjust[k]
     n = 0.0 + count[k]
     visible = k.main_w / k.space
-    --- (at least two bars stay in view at each side, as klinecharts'
-    --- default minimum visible bars)
+    --- (at least two bars stay in view at each side, the default
+    --- minimum visible bars)
     left_min = min[2.0, n]
     right_min = min[2.0, n]
     most_right = visible - left_min
@@ -392,8 +390,7 @@ fn adjust[k]
             k.wants = 'newer'
     k
 
---- the view zoomed by `scale` (positive: nearer) about x (klinecharts'
---- zoom: a step of a tenth of the bar's space per unit)
+--- the view zoomed by `scale` (positive: nearer) about x (a step of a tenth of the bar's space per unit)
 fn zoom[k, scale, x]
     if not k.zoom_on
         return k
@@ -563,7 +560,7 @@ fn _signed_pow[v]
         return 0.0 - 10.0 ^ abs[v]
     10.0 ^ v
 
---- a value's place on the pane's axis (klinecharts' valueToRealValue)
+--- a value's place on the pane's axis
 fn real_of[_k, p, v]
     if p.axis eq 'logarithm'
         return _signed_log[v]
@@ -594,8 +591,7 @@ fn _real_of_display[p, v]
         return _signed_log[v]
     v
 
---- a value's place in the pane, in pixels from the pane's top (klinecharts'
---- convertToPixel)
+--- a value's place in the pane, in pixels from the pane's top
 fn y_in_pane[k, p, v]
     r = p.rng
     if r.real_span eq 0.0
@@ -646,8 +642,7 @@ fn _range_of[k, p, lo, hi]
             r = Range[lo, hi, hi - lo, rf, rt, rt - rf, rf, rt, rt - rf]
     r
 
---- the pane's range from what it shows in view (klinecharts'
---- createRangeImp): the bars' highs and lows in the candle pane, every
+--- the pane's range from what it shows in view: the bars' highs and lows in the candle pane, every
 --- figure's values of its indicators, the least and most they ask for,
 --- then the gaps above and below
 fn auto_range[k, p]
@@ -759,7 +754,7 @@ fn _area_value[k, i]
         return k.bars.l[i]
     k.bars.c[i]
 
---- klinecharts' nice number: a value rounded to 1, 2, 3, 4, 5, 6 or 8
+--- a nice number: a value rounded to 1, 2, 3, 4, 5, 6 or 8
 --- times a power of ten
 fn nice[v]
     exponent = floor[_log10[v]]
@@ -801,7 +796,7 @@ fn decimals_of[v]
     len[halves[1]]
 
 --- a pane's ticks: round values about eight to the pane, each label kept
---- at least two text heights from the last (klinecharts' createTicksImp)
+--- at least two text heights from the last
 fn y_ticks[k, p]
     r = p.rng
     out = []
@@ -823,7 +818,7 @@ fn y_ticks[k, p]
     f = first
     n = 0
     while f lte last and n lt 200
-        --- (the value as klinecharts holds it: the tick's text read back,
+        --- (the value as it is held: the tick's text read back,
         --- so a sum a hair below zero is a zero, written `0.0000`)
         label = format.fixed[f, dp]
         value = format.number[label, 0.0]
@@ -880,7 +875,7 @@ fn text_w[c, k, words, size]
 --- ---- the x axis ----
 
 --- the time axis's ticks: a tick each so many bars that a full date fits
---- between (klinecharts' createTicksImp), each written by the period's
+--- between, each written by the period's
 --- template
 fn x_ticks[c, k]
     out = []
@@ -973,7 +968,7 @@ fn prepare[c, k, x, y, w, h]
     adjust[k]
 
 --- a drag let go while it moved goes on moving, slower each frame, till
---- it stops or meets an end (TradingView's kinetic scroll); a press, the
+--- it stops or meets an end (a kinetic scroll); a press, the
 --- wheel or a swipe stops it
 fn _glide[k, dt]
     if k.fling eq 0.0 or k.drag.what ne ''
@@ -1048,7 +1043,7 @@ fn _on_x_axis[k, x, y]
     x gte 0.0 and x lte k.main_w and y gt k.h - k.xaxis_h and y lte k.h
 
 --- the separator a point is on: the pane below it, `` where none (seven
---- pixels tall, as klinecharts' REAL_SEPARATOR_HEIGHT)
+--- pixels tall)
 fn separator_at[k, x, y]
     if x lt 0.0 or x gt k.w
         return ''
@@ -1105,7 +1100,7 @@ fn take[k, ev]
         return k
     --- (a double click of the price axis fits its prices to the bars again,
     --- of the time axis gives the bars their first space and shows the
-    --- newest, as TradingView's resets)
+    --- newest)
     if ev.on eq 'dblclick' or ev.on eq 'double'
         if _on_y_axis[k, ex, ey]
             k = unfix[k, pane_at[k, ey]]
@@ -1116,7 +1111,7 @@ fn take[k, ev]
         return _key[k, ev]
     k
 
---- ---- the buttons TradingView keeps over a chart ----
+--- ---- the buttons kept over a chart ----
 
 --- where a pane's `A` sits, at the bottom of its price axis — shown while
 --- its prices do not fit the bars, a press fits them again: its centre and
@@ -1163,8 +1158,8 @@ fn reset_view[k]
         k = unfix[k, p.id]
     k
 
---- the keys TradingView moves a chart by: left and right a bar (with
---- Shift three, as klinecharts'), up and down zoom, Shift with = and -
+--- the keys that move a chart: left and right a bar (with
+--- Shift three), up and down zoom, Shift with = and -
 --- zoom, Alt with R resets
 fn _key[k, ev]
     step = 1.0
@@ -1186,7 +1181,7 @@ fn _key[k, ev]
         return zoom[k, -0.5, _cross_or_middle[k]]
     k
 
---- the wheel and a trackpad's swipes, as TradingView takes them: a pinch,
+--- the wheel and a trackpad's swipes: a pinch,
 --- or the wheel with Ctrl, zooms the bars about the pointer; two fingers
 --- move the view — across in time, up and down the prices of the pane
 --- under them (which then stop fitting themselves to the bars) — whichever
@@ -1254,7 +1249,7 @@ fn _move_y[k, id, dist]
     k
 
 --- a pane's prices stretched by the wheel or a swipe over its axis: up
---- draws them larger (TradingView's), at most a fifth a step
+--- draws them larger, at most a fifth a step
 fn _stretch_y[k, id, dy]
     i = pane_index[k, id]
     if i lt 0 or dy eq 0.0
@@ -1309,7 +1304,7 @@ fn _moved[k, ex, ey]
         p = k.panes[i]
         if not p.scroll_zoom
             return k
-        --- (TradingView's: by the distances from the pane's bottom at the
+        --- (by the distances from the pane's bottom at the
         --- press and now, each with a fifth of the pane's height added, so
         --- a drag near the bottom does not run away)
         damp = max[1.0, p.h - 1.0] * 0.2
@@ -1322,7 +1317,7 @@ fn _moved[k, ex, ey]
         k.panes[i] = p
         return k
     if d.what eq 'xaxis'
-        --- (TradingView's: the bars' space by the distances from the plot's
+        --- (the bars' space by the distances from the plot's
         --- right edge at the press and now, the bars at that edge kept)
         k = set_space[k, d.scale * max[1.0, k.main_w - d.x0] / max[1.0, k.main_w - ex]]
         k.right_bars = d.start_right
@@ -1334,7 +1329,7 @@ fn _moved[k, ex, ey]
         k.cross = Cross[-1.0, -1.0, '']
     k
 
---- a scroll's drag up or down moves the pane's prices (TradingView's):
+--- a scroll's drag up or down moves the pane's prices:
 --- one fitted to its bars stops fitting once the drag has gone four
 --- pixels up or down, and moves from there, so a drag across leaves it
 fn _drag_y[k, d, ey]
@@ -1430,8 +1425,8 @@ fn _apart[a, b]
     dy = a.y - b.y
     sqrt[dx * dx + dy * dy]
 
---- the bar under the crosshair, -1 where there is none (klinecharts'
---- crosshair dataIndex: past the bars, the nearest end)
+--- the bar under the crosshair, -1 where there is none (past the
+--- bars, the nearest end)
 fn cross_index[k]
     if k.cross.pane eq ''
         return count[k] - 1

@@ -4,7 +4,7 @@
 # (`crow run`). A test block runs in the interpreter even under
 # `crow test --compiled`, which compiles only the apps a block opens, so
 # what a module computes is held to both modes by a program that writes it
-# out (tests/modes/<area>.co), as Crow's own parity programs are.
+# out (tests/modes/<area>.co), and the two answers compared.
 # Usage: tests/modes.sh CROW FILE.co
 set -u
 crow=$1

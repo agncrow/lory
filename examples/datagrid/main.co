@@ -4,12 +4,11 @@
 --- checked, a role offered by the team (a relation), the edits kept as
 --- drafts until saved, the hours summed in its footer, grouped by team
 --- as a tree that opens, in three looks. Cells: cells chosen by a press,
---- a drag, Shift and Ctrl as TanStack Table's cell selection has it, the
+--- a drag, Shift and Ctrl, the
 --- teams merged down their column. Live: stations' readings changed by a
 --- feed twice a second, each changed cell flashing the way it went.
---- Sheet: the 7GUIs Cells spreadsheet, its formulas worked out again as
---- their cells change, with undo and redo. The keys are TOAST UI Grid's
---- (arrows, Tab, Home and End, Page Up and Down, Shift to choose, Ctrl+A,
+--- Sheet: a spreadsheet, its formulas worked out again as their cells
+--- change, with undo and redo. The keys are a spreadsheet's (arrows, Tab, Home and End, Page Up and Down, Shift to choose, Ctrl+A,
 --- Ctrl+C and Ctrl+V, Delete). In a headset the ray presses its cells and
 --- the thumbstick scrolls them; an edit is typed on gui's keyboard into
 --- the edit bar.

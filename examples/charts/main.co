@@ -1,11 +1,11 @@
 --- Kite's charts (`use kite.charts`): a gallery of every kind of chart
---- Chart.js draws, drawn by Kite over the data the select at the top
+--- Kite draws, drawn over the data the select at the top
 --- picks. A press on a legend item hides its dataset (in a pie, a
 --- doughnut or a polar area, its value) and a second press shows it
 --- again; the pointer over a mark shows its tooltip; data picked anew
---- moves the marks to their new places as Chart.js animates them. The
+--- moves the marks to their new places, animated. The
 --- line beside the select is a sparkline, a chart in gui's tree
---- (`charts.drawn`); the gallery's charts are each read from a Chart.js
+--- (`charts.drawn`); the gallery's charts are each read from a JSON
 --- configuration (`charts.of`) and drawn straight onto the canvas
 --- (`charts.shown_at`).
 use sys
@@ -38,7 +38,7 @@ fn rows_of[name]
         return Rows['Visits', ['Home', 'Docs', 'Blog', 'Shop', 'Help', 'News', 'About'], [320.0, 210.0, 150.0, 95.0, 60.0, 140.0, 35.0], [180.0, 260.0, 90.0, 130.0, 75.0, 40.0, 55.0]]
     Rows['Sales', ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'], [65.0, 59.0, 80.0, 81.0, 56.0, 55.0, 40.0], [28.0, 48.0, 40.0, 19.0, 86.0, 27.0, 90.0]]
 
---- ---- the gallery's charts, as Chart.js configurations ----
+--- ---- the gallery's charts, as JSON configurations ----
 
 --- numbers as a JSON list (null where there is none)
 fn _numbers[xs]
@@ -198,7 +198,7 @@ fn _first_words[ws, n]
 
 --- the room round the page and between the cards, the header's height,
 --- a card's least height, its caption's height and the room inside it
---- (CSS pixels: tests/charts/browser.py lays the cards out as these do)
+--- (CSS pixels)
 fn _margin[]
     24.0
 

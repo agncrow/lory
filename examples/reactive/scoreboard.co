@@ -1,0 +1,299 @@
+--- Scoreboard: players and their
+--- scores, shown twice. The board sorts them, the highest score first and
+--- a tie by name, and when the order changes each row that moved jumps
+--- back to where it stood and glides to its new place (18 px a row, over
+--- 250 ms from the next frame). Under it each player's score can be typed
+--- over and the player taken away, and a new player added by name and
+--- score (an empty score is 0; no name, no player).
+---
+--- The board changes only when its order does; a row's jump is the rows between where it was last seen and
+--- where it last moved to (a player just added has none and comes in
+--- still); each score field keeps the words typed in it, as a field the
+--- page made once does; and the names are compared by their letters
+--- before their case.
+use lory
+use lory.gui
+use lory.motion
+
+--- a player: who it is (one of its own, whatever its name), its name,
+--- its score, and the words its score field holds
+struct Player [key, name, score, words]
+
+--- a row of the board gliding: the player's key, how far it jumped (CSS
+--- pixels down), when its order changed, and when its glide began (-1:
+--- not yet, it begins at the next frame)
+struct Glide [key, offset, asked, since]
+
+--- the players in the order they were added; the board's order (keys);
+--- where each key was on the board before the last change and where it
+--- last moved to (-1: never); the rows gliding; the new player's name and
+--- score as typed; and the next key
+struct State [players, board, last_at, moved_to, glides, name, score, next_key]
+
+fn _no_glides[]
+    slice[[Glide[0, 0.0, 0.0, 0.0]], 0, 0]
+
+fn fresh[at]
+    players = [Player[1, 'Mark', 3.0, '3'], Player[2, 'Troy', 2.0, '2'], Player[3, 'Jenny', 1.0, '1'], Player[4, 'David', 8.0, '8']]
+    --- (the board's keys a list as the sorting makes it)
+    none = for p in slice[players, 0, 0]
+        p.key
+    s = State[players, none, map['' = -1], map['' = -1], _no_glides[], '', '', 5]
+    _resorted[s, at, true]
+
+fn before[s, at]
+    started = for g in s.glides
+        h = g
+        if g.since lt 0.0 and at gt g.asked
+            h = Glide[g.key, g.offset, g.asked, at]
+        h
+    s.glides = started
+    s
+
+--- ---- the order ----
+
+--- two names compared as plain words: by their letters whatever their case, then a small letter
+--- before its capital (below 0: `a` first)
+fn name_order[a, b]
+    la = lower[a]
+    lb = lower[b]
+    if la lt lb
+        return -1
+    if la gt lb
+        return 1
+    if a eq b
+        return 0
+    ca = split[a, '']
+    cb = split[b, '']
+    i = 0
+    while i lt min[len[ca], len[cb]]
+        if ca[i] ne cb[i]
+            if ca[i] eq lower[ca[i]]
+                return -1
+            return 1
+        i = i + 1
+    0
+
+--- whether player `a` stands above player `b` on the board
+fn _above[a, b]
+    if a.score eq b.score
+        return name_order[a.name, b.name] lt 0
+    a.score gt b.score
+
+--- the players sorted for the board (a stable sort: equal players keep
+--- the order they were added in)
+fn sorted_of[players]
+    out = slice[players, 0, 0]
+    for p in players
+        i = len[out]
+        while i gt 0 and _above[p, out[i - 1]]
+            i = i - 1
+        out = concat[slice[out, 0, i], [p], slice[out, i, len[out]]]
+    out
+
+fn _key_text[k]
+    '`k`'
+
+--- the board sorted again after a change: where it is another order, each
+--- row whose place changed is marked where it moved to, and every row
+--- jumps by the rows between where it was and where it last moved to
+fn _resorted[s, at, first]
+    order = for p in sorted_of[s.players]
+        p.key
+    updated = len[order] ne len[s.board]
+    last = map['' = -1]
+    i = 0
+    while i lt len[s.board]
+        last[_key_text[s.board[i]]] = i
+        i = i + 1
+    i = 0
+    while i lt len[order]
+        k = _key_text[order[i]]
+        was = -1
+        if k in last
+            was = last[k]
+        if was ne i
+            updated = true
+            s.moved_to[k] = i
+        i = i + 1
+    if not updated
+        return s
+    glides = _no_glides[]
+    for key in order
+        k = _key_text[key]
+        if k in last and k in s.moved_to and s.moved_to[k] gte 0 and not first
+            glides = push[glides, Glide[key, 18.0 * (last[k] - s.moved_to[k]), at, -1.0]]
+    s.board = order
+    s.last_at = last
+    s.glides = glides
+    s
+
+--- how far below its place a row is seen: its jump, less what its glide
+--- (eased in and out, 250 ms) has taken back
+fn offset_of[s, key, at]
+    out = for g in s.glides
+        if g.key eq key
+            if g.since lt 0.0
+                g.offset
+            else if at - g.since lt 250.0
+                g.offset * (1.0 - motion.ease_at['ease', (at - g.since) / 250.0])
+            else
+                0.0
+    if len[out] eq 0
+        return 0.0
+    out[0]
+
+--- ---- what the reader does ----
+
+--- a number field's words read as its value: a number,
+--- or 0 where the field holds none (its value is then empty)
+fn number_of[words]
+    t = trim[words]
+    if t eq '' or not _numeric[t]
+        return 0.0
+    v = float[t]
+    if not v.ok
+        return 0.0
+    0.0 + v
+
+--- whether words are a number as a number field takes one
+fn _numeric[t]
+    body = t
+    if starts[body, '-']
+        body = slice[body, 1, len[body]]
+    if body eq ''
+        return false
+    odd = for ch in split[body, '']
+        if not (ch in '0123456789.eE+-')
+            ch
+    if len[odd] gt 0
+        return false
+    if starts[body, '.'] eq false and not (slice[body, 0, 1] in '0123456789')
+        return false
+    not ends[body, '.'] and not ends[lower[body], 'e'] and occurs[body, '.'] lte 1
+
+--- a number written in the fewest digits that read back as it
+fn written[v]
+    if v eq floor[v]
+        return '`int[v]`'
+    '`v`'
+
+--- the field id a player's controls go by: its name, and a count after it
+--- where an earlier player has that name too
+fn tag_of[s, i]
+    name = s.players[i].name
+    before = for j in range[i]
+        if s.players[j].name eq name
+            j
+    if len[before] eq 0
+        return name
+    '`name`~`len[before] + 1`'
+
+fn _scored[s, i, words, at]
+    s.players[i].words = words
+    if not _numeric[trim[words]]
+        s.players[i].words = ''
+    s.players[i].score = number_of[words]
+    _resorted[s, at, false]
+
+fn _removed[s, i, at]
+    s.players = concat[slice[s.players, 0, i], slice[s.players, i + 1, len[s.players]]]
+    _resorted[s, at, false]
+
+fn _added[s, at]
+    if s.name eq ''
+        return s
+    score = number_of[s.score]
+    s.players = push[s.players, Player[s.next_key, s.name, score, written[score]]]
+    s.next_key = s.next_key + 1
+    s.name = ''
+    s.score = ''
+    _resorted[s, at, false]
+
+fn after[s, shown, at]
+    for e in shown.events
+        if e.id eq 'scoreboard.name' and e.act eq 'edit'
+            s.name = e.words
+        if e.id eq 'scoreboard.score' and e.act eq 'edit'
+            s.score = e.words
+            if not _numeric[trim[e.words]]
+                s.score = ''
+        if e.id eq 'scoreboard.add' and e.act eq 'press'
+            s = _added[s, at]
+        i = 0
+        gone = -1
+        while i lt len[s.players]
+            tag = tag_of[s, i]
+            if e.id eq 'scoreboard.`tag`.score' and e.act eq 'edit'
+                s = _scored[s, i, e.words, at]
+            if e.id eq 'scoreboard.`tag`.remove' and e.act eq 'press'
+                gone = i
+            i = i + 1
+        if gone gte 0
+            s = _removed[s, gone, at]
+    s
+
+--- ---- drawn ----
+
+fn _player_of[s, key]
+    out = for p in s.players
+        if p.key eq key
+            p
+    out[0]
+
+fn tree[s, at, dark]
+    rows = for key in s.board
+        p = _player_of[s, key]
+        row = gui.row[[gui.sized[gui.text[p.name], 120.0], gui.text[written[p.score]]]]
+        gui.moved[row, 0.0, offset_of[s, key, at]]
+    admin = for i in range[len[s.players]]
+        tag = tag_of[s, i]
+        p = s.players[i]
+        gui.row[[gui.sized[gui.text[p.name], 90.0], gui.sized[gui.field['scoreboard.`tag`.score', p.words, kind = 'number'], 90.0], gui.button['scoreboard.`tag`.remove', 'x']], gap = 6.0]
+    adding = gui.row[[gui.sized[gui.field['scoreboard.name', s.name, hint = 'New player'], 140.0], gui.sized[gui.field['scoreboard.score', s.score, kind = 'number'], 90.0], gui.button['scoreboard.add', 'Add']], gap = 6.0]
+    board = gui.column[rows, gap = 0.0]
+    gui.column[[board, gui.divider[], gui.column[push[admin, adding], gap = 6.0]], gap = 14.0]
+
+--- ---- what the example shows, as the tests read it ----
+
+fn seen[s, at]
+    board = for key in s.board
+        p = _player_of[s, key]
+        '{"name": `encode[p.name]`, "score": `encode[written[p.score]]`, "ty": `encode[offset_of[s, key, at]]`}'
+    admin = for p in s.players
+        '{"name": `encode[p.name]`, "score": `encode[p.words]`}'
+    b = join[board, ', ']
+    a = join[admin, ', ']
+    '{"t": `encode[at]`, "board": [`b`], "admin": [`a`], "name": `encode[s.name]`, "score": `encode[s.score]`}'
+
+--- a page 1000 by 900 at `t` ms with no input, as the page hands a frame
+fn _page[t]
+    json['{"t": `t`, "width": 1000, "height": 900, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 1000, "height": 900, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+
+test the_board_puts_the_highest_first_and_a_tie_by_name[]
+    s = fresh[0.0]
+    s.board eq [4, 1, 2, 3]
+    name_order['Amy', 'David'] lt 0
+    name_order['amy', 'Amy'] lt 0
+    name_order['b', 'A'] gt 0
+
+test a_row_that_moved_jumps_and_glides_from_the_next_frame[]
+    s = fresh[0.0]
+    s = _scored[s, 2, '9', 16.0]
+    s.board eq [3, 4, 1, 2]
+    offset_of[s, 3, 16.0] eq 54.0
+    offset_of[s, 4, 16.0] eq -18.0
+    s = before[s, 32.0]
+    offset_of[s, 3, 32.0] eq 54.0
+    offset_of[s, 3, 282.0] eq 0.0
+
+test an_empty_score_is_none_and_no_name_no_player[]
+    number_of[''] eq 0.0
+    number_of['2.5'] eq 2.5
+    number_of['-'] eq 0.0
+    len[_added[fresh[0.0], 0.0].players] eq 4
+
+test its_rows_are_drawn[]
+    shown = gui.show[lory.begin[_page[0.0]], tree[fresh[0.0], 0.0, false]]
+    'scoreboard.Jenny.score' in shown.boxes
+    'scoreboard.add' in shown.boxes

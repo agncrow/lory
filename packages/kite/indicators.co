@@ -1,11 +1,9 @@
 --- Kite's indicators: what an indicator is (its figures, its values per
---- bar, where it is drawn), and klinecharts' twenty-seven built in, each
---- computed as klinecharts computes it — the same sums in the same order,
---- so the same floats — and held to klinecharts' own answers by
---- tests/kite/reference (klinecharts run in a browser on the same bars).
+--- bar, where it is drawn), and the twenty-seven built in, each summed
+--- in a fixed order, so the interpreter and the compiled program give the
+--- same floats.
 ---
---- A value an indicator has none of at a bar (its warm-up) is NaN, as
---- klinecharts leaves the key out.
+--- A value an indicator has none of at a bar (its warm-up) is NaN.
 ---
 ---     ind = indicators.made['MACD', [12.0, 26.0, 9.0]]
 ---     vals = indicators.calc[ind.name, ind.params, bars]
@@ -62,7 +60,7 @@ fn _bar[key, title, base, rule]
 
 --- ---- the built-in indicators' shapes ----
 
---- every indicator klinecharts has built in
+--- every indicator built in
 fn supported[]
     ['AVP', 'AO', 'BIAS', 'BOLL', 'BRAR', 'BBI', 'CCI', 'CR', 'DMA', 'DMI', 'EMV', 'EMA', 'MTM', 'MA', 'MACD', 'OBV', 'PVT', 'PSY', 'ROC', 'RSI', 'SMA', 'KDJ', 'SAR', 'TRIX', 'VOL', 'VR', 'WR']
 
@@ -124,7 +122,7 @@ fn _n[p]
     '`int[p]`'
 
 --- an indicator's figures for its parameters (the ones whose figures are
---- one per parameter make them anew, as klinecharts' regenerateFigures)
+--- one per parameter make them anew)
 fn figures_of[name, params]
     if name eq 'AVP'
         return [_line['avp', 'AVP: ']]
@@ -200,7 +198,7 @@ fn figures_of[name, params]
         return out
     []
 
---- an indicator made as klinecharts makes it, with its parameters (`[]`
+--- an indicator made with its parameters (`[]`
 --- for its defaults), in no pane yet
 fn made[name, params]
     p = params
@@ -297,7 +295,7 @@ fn calc[name, params, b]
         return _wr[b, params]
     map[]
 
---- a value read, 0 where it is NaN (klinecharts' `?? 0` of a key left out)
+--- a value read, 0 where it is NaN (a value left out)
 fn _or0[v]
     if v ne v
         return 0.0
@@ -499,7 +497,7 @@ fn _cr[b, params]
                     held = lists[j]
                     held = push[held, sums[j] / params[j + 1]]
                     lists[j] = held
-                    --- (klinecharts reads its list at `length - 1 - forward`,
+                    --- (the list is read at `length - 1 - forward`,
                     --- which is -1 at the first such bar: undefined there)
                     at = len[held] - 1 - forward[j]
                     if i gte p0 + pj + forward[j] - 3 and at gte 0
@@ -814,7 +812,7 @@ fn _roc[b, params]
                 total = total - _or0[roc[i - (p1 - 1)]]
     map[roc = roc, maRoc = ma]
 
---- (klinecharts' rises and falls start unset: a rise's total read before
+--- (rises and falls start unset: a rise's total read before
 --- any rise was added is undefined, and so is the RSI made from it)
 fn _rsi[b, params]
     n = len[b.c]

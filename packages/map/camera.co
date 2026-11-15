@@ -3,13 +3,9 @@
 --- a double click, a pinch), the throw a drag lets go with, a view held
 --- inside a box of places, and the easings a move is drawn with.
 ---
---- Each is Leaflet's (1.9.4) behaviour, written anew and held to what
---- Leaflet answers (tests/map/reference.json): its flyTo (van Wijk and
---- Nuij's smooth path, ρ = 1.42), its wheel's zoom for so many pixels
---- turned, its double click, its drag's inertia, its maxBounds. Its
---- easings are Lory's (`lory.motion`): a power eased out, as Leaflet
---- eases a pan, a throw and a flight's path, and CSS's cubic-bezier(), as
---- a browser draws Leaflet's zoom.
+--- A flight follows van Wijk and Nuij's smooth path (ρ = 1.42). The
+--- easings are Lory's (`lory.motion`): a power eased out for a pan, a
+--- throw and a flight's path, and CSS's cubic-bezier() for a zoom.
 use math
 use lory.motion
 use geo
@@ -18,7 +14,7 @@ use geo
 --- whether the move is over
 struct Spot [lat, lng, zoom, done]
 
---- a flight (Leaflet's flyTo): the view it starts from and the one it
+--- a flight: the view it starts from and the one it
 --- ends at, where both middles fall on the world's picture at the
 --- starting zoom, the view's longer side (`w0`) and that side at the end
 --- in the starting zoom's pixels (`w1`), the distance flown in those
@@ -100,8 +96,7 @@ fn flight_at[f, elapsed]
 --- ---- zooming about a point ----
 
 --- the middle a view takes when it zooms to `zoom` keeping the place
---- under the point (x, y) of the view where it is (Leaflet's
---- setZoomAround)
+--- under the point (x, y) of the view where it is
 fn zoom_around[v, x, y, zoom]
     scale = geo.zoom_scale[zoom, v.zoom]
     hx = v.w / 2.0
@@ -118,7 +113,7 @@ fn wheel_step[delta, zoom, snap, lowest, highest, per_level]
     d3 = 4.0 * ln[2.0 / (1.0 + exp[0.0 - abs[d2]])] / 0.6931471805599453
     d4 = d3
     if snap gt 0.0
-        d4 = geo.js_ceil[d3 / snap] * snap
+        d4 = geo.ceil_whole[d3 / snap] * snap
     step = 0.0 - d4
     if delta gt 0.0
         step = d4
@@ -134,7 +129,7 @@ fn pinch_zoom[apart, apart_at_start, zoom_at_start]
 --- the throw a drag lets go with at `let_go` (milliseconds), from the
 --- pointer's places and times while it moved: those of the last 50
 --- milliseconds give its speed, which slows by `deceleration` pixels a
---- second each second (Leaflet's inertia, its easeLinearity `ease`)
+--- second each second (`ease` damps the speed the throw starts with)
 fn throw_of[xs, ys, times, let_go, ease = 0.2, deceleration = 3400.0, fastest = -1.0]
     n = len[times]
     if n lt 2
@@ -154,8 +149,8 @@ fn throw_of[xs, ys, times, let_go, ease = 0.2, deceleration = 3400.0, fastest = 
     lx = sx * (limited / speed)
     ly = sy * (limited / speed)
     slowing = limited / (deceleration * ease)
-    ox = geo.js_round[lx * ((0.0 - slowing) / 2.0)]
-    oy = geo.js_round[ly * ((0.0 - slowing) / 2.0)]
+    ox = geo.round_half_up[lx * ((0.0 - slowing) / 2.0)]
+    oy = geo.round_half_up[ly * ((0.0 - slowing) / 2.0)]
     if ox ne ox or oy ne oy or (ox eq 0.0 and oy eq 0.0)
         return Throw[0.0, 0.0, 0.0]
     Throw[ox, oy, slowing]
@@ -163,16 +158,15 @@ fn throw_of[xs, ys, times, let_go, ease = 0.2, deceleration = 3400.0, fastest = 
 --- ---- a view held inside a box ----
 
 --- how far a range must move to sit inside another: by half their
---- difference where it is larger, else by what it overhangs (Leaflet's
---- _rebound)
+--- difference where it is larger, else by what it overhangs
 fn _rebound[left, right]
     if left + right gt 0.0
-        return geo.js_round[left - right] / 2.0
-    max[0.0, geo.js_ceil[left]] - max[0.0, geo.js_floor[right]]
+        return geo.round_half_up[left - right] / 2.0
+    max[0.0, geo.ceil_whole[left]] - max[0.0, geo.floor_whole[right]]
 
 --- the middle a view of `w` by `h` CSS pixels at a zoom takes so that
 --- it shows nothing outside the box of places (where the box is smaller
---- than the view, the box's middle; Leaflet's maxBounds)
+--- than the view, the box's middle)
 fn held_inside[lat, lng, zoom, w, h, b]
     p = geo.project[lat, lng, zoom]
     hx = w / 2.0
@@ -193,8 +187,7 @@ fn held_inside[lat, lng, zoom, w, h, b]
 
 --- how far a move eased out is at `t` of its time (0 to 1): fast at the
 --- start, slow at the end, the harder the larger `power` (a pan's: 2; a
---- throw's: 5; a flight's way along its path: 1.5), as Leaflet eases
---- them: `out(power)` of Lory's motion, 1 - (1 - t) ^ power
+--- throw's: 5; a flight's way along its path: 1.5): `out(power)` of Lory's motion, 1 - (1 - t) ^ power
 fn ease_out[t, power]
     if t gte 1.0
         return 1.0
@@ -213,7 +206,7 @@ fn bezier[t, x1, y1, x2, y2]
 --- where a zoom animation's view stands at `t` (0 to 1, eased already)
 --- of its way from one view to another: the picture scaled evenly from
 --- the one to the other about the point both keep where it is, as a
---- browser moves a CSS transform (Leaflet's zoom animation)
+--- browser moves a CSS transform
 fn zoom_between[lat0, lng0, zoom0, lat1, lng1, zoom1, t]
     if t gte 1.0
         return Spot[lat1, lng1, zoom1, true]

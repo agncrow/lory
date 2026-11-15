@@ -1,4 +1,4 @@
---- Lory's calendar (docs/components/pickers.md): days and the arithmetic
+--- Lory's calendar: days and the arithmetic
 --- of days, weeks, months, quarters and years; dates written in a
 --- locale's words and read back from words; which days may be chosen;
 --- a month's days drawn, pointed at and keyed through, with its header,
@@ -8,9 +8,8 @@
 ---
 --- A day is a moment at midnight in UTC, as `moment[2024, 3, 5]` makes it:
 --- a date with no time and no zone, which Crow's moments compare, subtract
---- and read the fields of. The arithmetic is date-fns's (4.1.0, the date
---- library react-datepicker stands on), and tests/pickers/reference.co
---- holds it to what date-fns answered, number for number:
+--- and read the fields of. Months added keep the day where the month
+--- has it, else take the month's last day:
 ---
 ---     due = calendar.day[2024, 1, 31]
 ---     calendar.add_months[due, 1]                    --- 2024-02-29
@@ -19,8 +18,7 @@
 ---     calendar.parse['31.01.2024', 'dd.MM.yyyy', calendar.locale['de'], due, 'UTC']
 ---
 --- Lory's own lists of names (of months and weekdays, in English, French,
---- German and Spanish) are written here, and held to the words date-fns
---- writes for the same days.
+--- German and Spanish) are written here.
 use memory
 use lory
 use gui
@@ -58,7 +56,7 @@ fn days_in_month[y, m]
 fn day_of[t]
     day[t.year, t.month, t.day]
 
---- the day it is now in a zone (`UTC`, an offset as `+05:30`, or an IANA
+--- the day it is now in a zone (`UTC`, an offset as `+05:30`, or a zone's
 --- name as `Europe/Paris`; a zone Crow does not know is UTC)
 fn today[zone]
     day_of[in_zone[now[], zone]]
@@ -71,8 +69,8 @@ fn in_zone[t, zone]
         return t
     there
 
---- the day of the week: 0 is Sunday, 1 Monday, 6 Saturday (date-fns's
---- getDay; a moment's own `weekday` is 1 for Monday to 7 for Sunday)
+--- the day of the week: 0 is Sunday, 1 Monday, 6 Saturday (a
+--- moment's own `weekday` is 1 for Monday to 7 for Sunday)
 fn weekday[t]
     t.weekday % 7
 
@@ -91,7 +89,7 @@ fn _floor_div[a, b]
 fn _floor_mod[a, b]
     a - _floor_div[a, b] * b
 
---- ---- arithmetic: what date-fns's add functions answer ----
+--- ---- arithmetic: adding days, weeks, months, quarters and years ----
 
 --- `n` days on (back, where `n` is below 0)
 fn add_days[t, n]
@@ -140,7 +138,7 @@ fn start_of_week[t, week_start]
         back = back + 7
     add_days[day_of[t], 0 - back]
 
---- the week's last day (date-fns's endOfWeek is the last moment of it)
+--- the week's last day (its midnight, not its last moment)
 fn end_of_week[t, week_start]
     add_days[start_of_week[t, week_start], 6]
 
@@ -207,7 +205,7 @@ fn plain_days[chosen]
 
 --- the year whose weeks a day is counted in, where weeks begin on
 --- `week_start` and a year's first week is the one that holds its January
---- `first_holds` (date-fns's getWeekYear: 1 counts the week of January 1,
+--- `first_holds` (1 counts the week of January 1,
 --- 4 the first week mostly in January)
 fn week_year[t, week_start, first_holds]
     y = t.year
@@ -218,7 +216,7 @@ fn week_year[t, week_start, first_holds]
         return y
     y - 1
 
---- the week of its week-year a day is in, 1 to 53 (date-fns's getWeek)
+--- the week of its week-year a day is in, 1 to 53
 fn week[t, week_start, first_holds]
     week_one = start_of_week[day[week_year[t, week_start, first_holds], 1, first_holds], week_start]
     days_between[start_of_week[t, week_start], week_one] / 7 + 1
@@ -235,7 +233,7 @@ fn iso_week_year[t]
 
 --- from the start of the week the month's first day is in to the end of
 --- the week its last day is in (four to six weeks), or six weeks whatever
---- the month (`six`), as react-datepicker's fixed height shows it
+--- the month (`six`), so a calendar keeps one height
 fn month_days[y, m, week_start, six]
     first = start_of_week[day[y, m, 1], week_start]
     last = end_of_week[day[y, m, 31], week_start]
@@ -307,7 +305,7 @@ struct Piece [token, words]
 fn _letter[ch]
     lower[ch] ne upper[ch]
 
---- a pattern cut into its pieces, as date-fns reads one: a run of one
+--- a pattern cut into its pieces: a run of one
 --- letter is a token (a letter of a day, month, quarter, week or hour
 --- followed by `o` is its ordinal, `do`), words between quotes are written
 --- as they are (two quotes are one), and any other character stands for
@@ -466,7 +464,7 @@ fn _written[t, token, loc]
     --- (a letter that is no token of Lory's is written as it stands)
     token
 
---- the moment written by a pattern of date-fns's tokens, in the locale's
+--- the moment written by a pattern of tokens, in the locale's
 --- words (its own zone's day and clock): `yyyy` `yy` `y` the year; `MM`
 --- `M` the month's number, `MMM` its short name, `MMMM` its name (`LLLL`
 --- as it stands alone); `dd` `d` `do` the day; `EEE` `EEEE` `EEEEEE`
@@ -512,7 +510,7 @@ fn _digits[chars, i, most]
         return _none_got[]
     Got[v, j]
 
---- a number of two digits at most, read as date-fns's patterns read a
+--- a number of two digits at most, read as a pattern reads a
 --- month, a day of the month or an hour: two digits where the two are
 --- no more than `top` (12 for a month, 31 for a day), else one
 fn _bounded[chars, i, top]
@@ -700,7 +698,7 @@ fn _kept_as[token]
     ''
 
 --- the year a two-digit year stands for, near `now_year`: within the
---- hundred years that end fifty years after it (date-fns's rule)
+--- hundred years that end fifty years after it
 fn _century[two, now_year]
     if now_year lte 50
         if two eq 0
@@ -713,8 +711,8 @@ fn _century[two, now_year]
     two + hundreds
 
 --- the moment the words write by the pattern, in the locale's words, read
---- as date-fns's parse reads them: what the pattern does not say is the
---- `reference` moment's (its day and clock as its own zone reads them),
+--- so: what the pattern does not say is the
+--- `fallback` moment's (its day and clock as its own zone reads them),
 --- a year read sets the date to its first day (a year of ISO weeks to the
 --- Monday of its first week), a quarter and a month to their first, an
 --- ISO week to its Monday (the week moved to in the year the date is
@@ -723,7 +721,7 @@ fn _century[two, now_year]
 --- after them but spaces. Words that do not, a day the month does not
 --- have, a token Lory does not read or one given twice are an error
 --- value of kind `parse`.
-fn parse[words, pattern, loc, reference, zone]
+fn parse[words, pattern, loc, fallback, zone]
     chars = split[words, '']
     got = map['' = 0]
     j = 0
@@ -752,7 +750,7 @@ fn parse[words, pattern, loc, reference, zone]
         if trim[chars[j]] ne ''
             return error['`words` goes on past `pattern`', 'parse']
         j = j + 1
-    base = in_zone[reference, zone]
+    base = in_zone[fallback, zone]
     y = base.year
     mo = base.month
     d = base.day
@@ -854,8 +852,7 @@ fn parse[words, pattern, loc, reference, zone]
             return error['a second is 0 to 59', 'parse']
     at_clock[day[y, mo, d], hh * 3600 + mi * 60 + se, zone]
 
---- whether a part of a date read already rules this one out, as date-fns
---- rules it out: a part read twice, a year of two digits and of four, a
+--- whether a part of a date read already rules this one out: a part read twice, a year of two digits and of four, a
 --- year and a year of ISO weeks or an ISO week, a quarter with a month, a
 --- day, an ISO week or a year of ISO weeks, a month or a day with an ISO
 --- week, an hour of twelve and of twenty-four, or an hour of twenty-four
@@ -904,7 +901,7 @@ fn hours_in_day[d, zone]
 
 --- the moment a zone's clock shows `seconds` past the day's midnight; a
 --- time the clocks skip is the instant that many seconds after the day
---- began, as JavaScript's dates move it on
+--- began, the clock moved on past the gap
 fn at_clock[d, seconds, zone]
     t = moment[d.year, d.month, d.day, hour = seconds / 3600, minute = seconds / 60 % 60, second = seconds % 60, tz = zone]
     if not t.ok
@@ -981,7 +978,7 @@ fn including_spans[r, spans]
     r
 
 --- the rules keeping only the days `keep` keeps: `fn keep[t]`, handed a
---- day, answering whether it may be chosen (react-datepicker's filterDate)
+--- day, answering whether it may be chosen
 fn filtered[r, keep]
     _ruled[r.earliest, r.latest, r.excluded, r.excluded_spans, r.included, r.only_listed, r.included_spans, r.only_spans, keep, r.marked, r.holidays]
 
@@ -1011,7 +1008,7 @@ fn _spanned[d, spans]
         i = i + 1
     false
 
---- whether a day may not be chosen, as react-datepicker decides it: out
+--- whether a day may not be chosen: out
 --- of bounds, excluded, not among the days or spans included where some
 --- are, or not kept by the rules' function
 fn day_off[r, t]
@@ -1056,7 +1053,7 @@ fn tone_on[r, t]
     ''
 
 --- the day itself where it may be chosen, else the first of its month
---- that may, else the day (react-datepicker's choice for a month moved to)
+--- that may, else the day (the day a month moved to opens on)
 fn open_day_in_month[r, t]
     if not day_off[r, t]
         return day_of[t]
@@ -1101,17 +1098,15 @@ fn _stepped[t, key, shift, week_start, by_weeks]
         return end_of_week[t, week_start]
     t
 
---- the day the focus moves to from `t` by a key, as react-datepicker's
---- month moves it: the left and right arrows a day (a week where the
+--- the day the focus moves to from `t` by a key in a month: the left and right arrows a day (a week where the
 --- weeks are chosen, `by_weeks`), up and down a week, Page Up and Page
 --- Down a month (with Shift a year), Home and End to the week's first and
 --- last day. A day that may not be chosen is stepped past in the key's
 --- way (Page Up and Home on to later days, Page Down and End back to
 --- earlier ones), a step before the first day allowed taken to it (or on
 --- from it) and after the last back to it, at most 40 steps; after them
---- the focus stays where it was. (react-datepicker's End goes to the
---- Saturday of the week whatever day the weeks begin on; Lory's to the
---- week's last day, as its documents say.)
+--- the focus stays where it was. End goes to the week's last day,
+--- whatever day the weeks begin on.
 fn key_moved[t, key, shift, r, week_start, by_weeks]
     if not moving_key[key]
         return day_of[t]
@@ -1146,8 +1141,7 @@ fn key_moved[t, key, shift, r, week_start, by_weeks]
 --- the days chosen once `t` is pressed, by the way a calendar chooses
 --- (`mode`): 'day' that day; 'days' that day added, or taken away where
 --- it was chosen; 'week' the week it is in (its first day that may be
---- chosen); 'range' a range begun, ended or begun again, as
---- react-datepicker's: the first press begins it, a second on or after
+--- chosen); 'range' a range begun, ended or begun again: the first press begins it, a second on or after
 --- its first day ends it, a second before begins it again there (or,
 --- `swap`, ends it with the two days swapped), and a press once it is
 --- whole begins a new one
@@ -1180,8 +1174,8 @@ fn chosen_by[chosen, t, mode, swap, r, week_start]
     [d]
 
 --- whether choosing `t` ends a choice, so a picker's calendar closes: a
---- day or a week chosen, or a range ended (react-datepicker keeps it open
---- while a range has only its first day, and for many days)
+--- day or a week chosen, or a range ended (it stays open while a range
+--- has only its first day, and for many days)
 fn choice_ends[chosen, t, mode, swap]
     if mode eq 'days'
         return false
@@ -1194,8 +1188,7 @@ fn choice_ends[chosen, t, mode, swap]
 --- a month's calendar as it is drawn: its id; the first day of the first
 --- month it shows, how many months, and how many to a row (`columns`, 0:
 --- all in one row); its locale; whether it shows the weeks' numbers
---- (ISO's number of each row's first day, as react-datepicker numbers
---- them) and always six weeks; which days may be chosen; the days chosen
+--- (the ISO number of each row's first day) and always six weeks; which days may be chosen; the days chosen
 --- and how they are read (`mode`, as `chosen_by` reads it; `swap`); the
 --- day the keys move from (`focus`); whether a range's second day is shown
 --- as the pointer or the focus moves (`previews`); and today
@@ -1226,8 +1219,8 @@ fn focused_on[sh, t]
         sh.shown = add_months[start_of_month[d], 1 - sh.months]
     sh
 
---- the sheet showing months `n` on (back, below 0), its focus moved as
---- react-datepicker's is: the same day of the month, else the first that
+--- the sheet showing months `n` on (back, below 0), its focus moved to
+--- the same day of the month, else the first that
 --- may be chosen
 fn turned[sh, n]
     sh.shown = add_months[start_of_month[sh.shown], n]
@@ -1403,7 +1396,7 @@ fn _painting[sh]
                 else
                     picked = _listed[d, sh.chosen]
                 --- (months side by side leave out the days the next or the
-                --- last one shows, where they meet, as react-datepicker does:
+                --- last one shows, where they meet:
                 --- after each month but the last, before each but the first)
                 hidden = outside and ((d gt first and i lt sh.months - 1) or (d lt first and i gt 0))
                 cells = push[cells, Cell[d, str[d.day], ox + nw + k * cw, row_y, outside, hidden, picked, start, finish, between, day_off[sh.rules, d], same_day[d, sh.today], same_day[d, sh.focus], tone_on[sh.rules, d], holiday_on[sh.rules, d]]]
@@ -1649,7 +1642,7 @@ fn _no_laid[]
     slice[[Laid[Entry['', '', moment[0], moment[0], false, ''], 0.0, 0.0, 0, 0]], 0, 0]
 
 --- the timed entries of a day in a zone laid side by side where they
---- overlap, as TOAST UI lays them: in the order they begin (the longer
+--- overlap: in the order they begin (the longer
 --- first), each in the first column free when it begins, and the entries
 --- that overlap one another, directly or through others, sharing their
 --- number of columns. An entry ending as another begins does not overlap
@@ -2233,7 +2226,7 @@ test rules_close_days_out_of_bounds_left_out_or_not_kept[]
     span_off[r, day[2024, 3, 1], day[2024, 3, 3]]
     not span_off[r, day[2024, 3, 1], day[2024, 3, 31]]
     --- (only the days of these spans, both ends held; with days listed
-    --- too, as react-datepicker has it, only a day in both)
+    --- too, only a day in both)
     spans = including_spans[rules[], [Span[day[2024, 3, 10], day[2024, 3, 12]]]]
     not day_off[spans, day[2024, 3, 10]] and not day_off[spans, day[2024, 3, 12]]
     day_off[spans, day[2024, 3, 9]] and day_off[spans, day[2024, 3, 13]]
@@ -2241,7 +2234,7 @@ test rules_close_days_out_of_bounds_left_out_or_not_kept[]
     not day_off[both, day[2024, 3, 11]]
     day_off[both, day[2024, 3, 20]] and day_off[both, day[2024, 3, 10]]
 
-test keys_move_the_focus_as_react_datepicker_moves_it[]
+test keys_move_the_focus_by_days_weeks_months_and_years[]
     r = rules[]
     t = day[2024, 3, 13]
     key_moved[t, 'ArrowRight', false, r, 0, false] eq day[2024, 3, 14]

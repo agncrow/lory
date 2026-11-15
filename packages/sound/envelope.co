@@ -1,10 +1,9 @@
 --- Envelopes: a level that rises when a note starts, falls to where it is
---- held, and dies away when it ends, as Tone's Envelope schedules it. A
+--- held, and dies away when it ends. A
 --- note's attack, decay, sustain and release are changes to a parameter
 --- (`sound.signal`): straight or exponential ramps, or a curve of 128
---- points (`sine`, `cosine`, `bounce`, `ripple`, `step`), each laid as
---- Tone lays it, so the level at any time is Tone's own, number for number
---- — a note pressed again while the last one still sounds, and released
+--- points (`sine`, `cosine`, `bounce`, `ripple`, `step`), each laid point by
+--- point, so the level at any time is exact — a note pressed again while the last one still sounds, and released
 --- before its attack is over, included.
 ---
 ---     shape = envelope.adsr[0.01, 0.1, 0.5, 1.0]
@@ -18,14 +17,15 @@ use signal
 --- how a level moves: its attack, decay and release in seconds, the share
 --- of the peak it is held at (0 to 1), and the shapes of its rise, fall
 --- and release (`linear`, `exponential`, or a curve's name; a decay is
---- straight or exponential only, as Tone's is)
+--- straight or exponential only)
 struct Envelope [attack, decay, sustain, release, attack_curve, decay_curve, release_curve]
 
---- Tone's envelope: 10 ms up, 100 ms down to half, a second to die away
+--- the plain envelope: 10 ms up, 100 ms down to half, a second to die away
 fn envelope[]
     Envelope[0.01, 0.1, 0.5, 1.0, 'linear', 'exponential', 'exponential']
 
---- an envelope of these times and sustain, Tone's shapes
+--- an envelope of these times and sustain, its shapes the plain
+--- envelope's
 fn adsr[attack, decay, sustain, release]
     Envelope[0.0 + attack, 0.0 + decay, 0.0 + sustain, 0.0 + release, 'linear', 'exponential', 'exponential']
 
@@ -80,7 +80,7 @@ fn is_curve[name]
     name in ['cosine', 'sine', 'step', 'ripple', 'bounce']
 
 --- an attack's curve from where the level already is: the points before
---- it cut away and the first made the level itself, as Tone cuts them
+--- it cut away and the first made the level itself
 fn _from_level[curve, level]
     i = 1
     while i lt len[curve]

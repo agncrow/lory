@@ -81,7 +81,7 @@ out += struct.pack('>B3I', 3, 6, 2, 1)
 put('cube_be.ply', bytes(out))
 
 # every byte's value as a colour, normals of signed bytes, and a corner past
-# the vertices (three keeps the triangles' corners in 32 bits for it)
+# the vertices (the triangles' corners are then kept in 32 bits)
 count = 86
 out = bytearray(ply_head('binary_little_endian',
                          'property float x\nproperty float y\nproperty float z\n'
@@ -166,7 +166,7 @@ out = bytearray(pcd_head(['x', 'y', 'z', 'rgb', 'normal_x', 'normal_y', 'normal_
                          ['F', 'F', 'F', 'U', 'F', 'F', 'F'], len(many), 'binary_compressed'))
 out += struct.pack('<II', len(squeezed), len(columns)) + squeezed
 put('cloud_compressed.pcd', bytes(out))
-# files three cannot read, cut short or misordered: Lory must say why
+# files that cannot be read, cut short or misordered: Lory must say why
 def cut(name, source, length):
     with open(os.path.join(here, source), 'rb') as f:
         whole = f.read()

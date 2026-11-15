@@ -1,0 +1,351 @@
+--- What the component-pattern examples share when Lory draws them: an
+--- example's state, words drawn in a look of their own (a colour, a
+--- ground, an edge), and the reading of what a tree shows that the tests
+--- use.
+---
+--- An example is a function of its state answering a gui tree, and a
+--- function answering its state after each event. A component's
+--- properties are the example's state here. What a page keeps by itself
+--- (what a reader typed into an input no property is bound to, whether a
+--- checkbox nobody binds is ticked) is kept in the state too, by name,
+--- since a Lory tree holds nothing between frames but what gui keeps for
+--- its controls.
+
+use lory
+use lory.gui
+
+--- a box an element is laid in, in its stage's CSS pixels
+struct Box [x, y, w, h]
+
+--- an animation of one element: its element, its `role` (`flip` from
+--- where it was laid, `in` as it comes, `out` as it goes), when it was
+--- started (ms of
+--- the example's clock), its delay and duration, its easing, its fill
+--- (`none`, `backwards`, `forwards` or `both`), its keyframes (their
+--- offsets, the opacity at each, -1 for the element's own, and how much of
+--- the transform it starts from is left at each, 1 all of it and 0 none:
+--- no list where it moves nothing), whether its transform is a fly (moved
+--- by its own height and scaled about its middle) rather than a move from
+--- another box, the time it ran before it was last paused or played
+--- (`ran`), when it was last played (`since`), whether it is paused,
+--- whether its end has been seen to, the box it moves from (a move from
+--- another box), and whether its end calls the example back
+struct Anim [id, role, start, delay, duration, ease, fill, offsets, opacities, moves, fly, ran, since, paused, ended, origin, calls]
+
+--- something the example waits to do at a later time (ms of its clock):
+--- what, and the words it needs
+struct Timer [at, what, words]
+
+--- an example as it stands: its name, its numbers, words and lists of
+--- words by name, the chances it draws from in order (the program draws
+--- them at random; a test hands it fixed ones), today's
+--- date (`YYYY-MM-DD`), and its motion: the animations started, the boxes
+--- its elements were last laid in, and what waits for a later time
+struct Ex [name, nums, texts, lists, draws, today, anims, boxes, timers]
+
+--- what a tree shows, as the tests read it:
+--- the words of every text in order (`tokens`), what each field holds,
+--- whether each box is ticked, the controls shown but off, the look of
+--- each drawn control a test names, and the ids of the controls on
+struct Facts [words, fields, checks, off, looks, ids]
+
+--- a chance drawn: the example after the draw, and the number (0 to 1)
+struct Chance [s, value]
+
+--- ---- an example's state ----
+
+fn no_words[]
+    slice[[''], 0, 0]
+
+fn no_numbers[]
+    out = []
+    for i in range[0]
+        out = push[out, 0.0]
+    out
+
+fn no_anims[]
+    slice[[Anim['', '', 0.0, 0.0, 0.0, '', '', no_numbers[], no_numbers[], no_numbers[], false, 0.0, 0.0, false, false, Box[0.0, 0.0, 0.0, 0.0], false]], 0, 0]
+
+fn no_timers[]
+    slice[[Timer[0.0, '', '']], 0, 0]
+
+--- a fresh example of this name, drawing its chances from `draws`, on the
+--- day `today` (`YYYY-MM-DD`)
+fn fresh[name, draws, today]
+    Ex[name, map['' = 0.0], map['' = ''], map['' = no_words[]], draws, today, no_anims[], map['' = Box[0.0, 0.0, 0.0, 0.0]], no_timers[]]
+
+--- the number kept under `key` (0 where none is)
+fn number_of[s, key]
+    if key in s.nums
+        return s.nums[key]
+    0.0
+
+fn set_number[s, key, v]
+    s.nums[key] = v
+    s
+
+--- whether the number under `key` is on (not 0)
+fn flag_of[s, key]
+    number_of[s, key] ne 0.0
+
+fn set_flag[s, key, on]
+    if on
+        return set_number[s, key, 1.0]
+    set_number[s, key, 0.0]
+
+--- the words kept under `key`, or `otherwise` where none are
+fn words_of[s, key, otherwise]
+    if key in s.texts
+        return s.texts[key]
+    otherwise
+
+fn set_words[s, key, w]
+    s.texts[key] = w
+    s
+
+--- the list of words kept under `key` (none where none is)
+fn list_of[s, key]
+    if key in s.lists
+        return s.lists[key]
+    no_words[]
+
+fn set_list[s, key, l]
+    s.lists[key] = l
+    s
+
+--- the next chance the example draws (one half once its draws run out)
+fn chance[s]
+    i = int[number_of[s, 'chance']]
+    v = 0.5
+    if i lt len[s.draws]
+        v = s.draws[i]
+    s.nums['chance'] = i + 1.0
+    Chance[s, v]
+
+--- the example waiting to do `what` at `at`
+fn wait_for[s, at, what, words]
+    s.timers = push[s.timers, Timer[at, what, words]]
+    s
+
+--- ---- words in a look of their own ----
+
+--- a look read: `key=value` pairs parted by `;`
+fn looks_of[look]
+    l = map['' = '']
+    pairs = split[look, ';']
+    i = 0
+    while i lt len[pairs]
+        if '=' in pairs[i]
+            parts = split[pairs[i], '=']
+            l[trim[parts[0]]] = trim[parts[1]]
+        i = i + 1
+    l
+
+--- the number a look holds under `key`, or `otherwise`
+fn look_number[l, key, otherwise]
+    if not (key in l)
+        return otherwise
+    n = float[l[key]]
+    if not n.ok
+        return otherwise
+    0.0 + n
+
+--- words drawn in a look of their own, as one control: `look` is
+--- `key=value` pairs parted by `;` — `color` (the words), `bg` (a ground),
+--- `border` and `line` (an edge's colour and width), `pad`, `size`,
+--- `weight`, `align` (`center`), `opacity`, `block` (1: as wide as its
+--- column), `wide` and `tall` (a size of its own; a later pair of a key
+--- wins) — and any other a test
+--- reads (`tag`, `src`, or `name`, its name in the tests where it has no
+--- id). Its words are runs parted by `|`. With an id it is pressed as one
+--- (`press`).
+fn inked[id, words, look]
+    l = looks_of[look]
+    size = look_number[l, 'size', 15.0]
+    pad = look_number[l, 'pad', 0.0]
+    line = look_number[l, 'line', 0.0]
+    runs = replace[words, '|', '']
+    wide = look_number[l, 'wide', len[runs] * size * 0.55 + 2.0 * (pad + line)]
+    if look_number[l, 'block', 0.0] gt 0.0
+        wide = 0.0
+    tall = look_number[l, 'tall', size * 1.25 + 2.0 * (pad + line)]
+    gui.drawn[id, 0.0, wide, tall, _inked_painted, 0.0, 1.0, '`look`|`words`']
+
+--- a colour by its CSS hex code at `alpha`
+fn tinted[code, alpha]
+    k = lory.hex[code]
+    lory.Color[k.r, k.g, k.b, k.a * alpha]
+
+--- the painter of words in a look: the ground, the edge, then the runs
+fn _inked_painted[d]
+    parts = split[d.words, '|']
+    l = looks_of[parts[0]]
+    s = d.s
+    alpha = look_number[l, 'opacity', 1.0]
+    c = d.c
+    if 'bg' in l and l['bg'] ne 'none'
+        c = lory.round_rect[c, d.x, d.y, d.w, d.h, look_number[l, 'radius', 0.0] * s, tinted[l['bg'], alpha]]
+    line = look_number[l, 'line', 0.0] * s
+    if line gt 0.0 and 'border' in l and l['border'] ne 'none'
+        edge = tinted[l['border'], alpha]
+        c = lory.rect[c, d.x, d.y, d.w, line, edge]
+        c = lory.rect[c, d.x, d.y + d.h - line, d.w, line, edge]
+        c = lory.rect[c, d.x, d.y, line, d.h, edge]
+        c = lory.rect[c, d.x + d.w - line, d.y, line, d.h, edge]
+    ink = lory.Color[d.look.ink.r, d.look.ink.g, d.look.ink.b, d.look.ink.a * alpha]
+    if 'color' in l
+        ink = tinted[l['color'], alpha]
+    size = look_number[l, 'size', 15.0] * s
+    pad = look_number[l, 'pad', 0.0] * s + line
+    runs = slice[parts, 1, len[parts]]
+    words = join[runs, '']
+    x = d.x + pad
+    if 'align' in l and l['align'] eq 'center'
+        x = d.x + (d.w - lory.measure[c, words, size]) / 2.0
+    c = lory.text[c, x, d.y + pad, words, size, ink]
+    if look_number[l, 'weight', 400.0] gte 600.0
+        c = lory.text[c, x + 0.6 * s, d.y + pad, words, size, ink]
+    d.c = c
+    if d.pressed and d.id ne ''
+        return gui.tell[d, 'press', '', 0.0]
+    d
+
+--- a mark that starts a list's entry (a bullet, which shows no words)
+fn bullet[]
+    gui.drawn['', 0.0, 14.0, 18.0, _bullet_painted]
+
+fn _bullet_painted[d]
+    s = d.s
+    c = d.c
+    c = lory.circle[c, d.x + 5.0 * s, d.y + d.h / 2.0, 2.5 * s, d.look.ink]
+    d.c = c
+    d
+
+--- an entry of a list: a bullet before its controls
+fn entry[kids]
+    gui.row[push_front[kids, bullet[]], gap = 6.0]
+
+fn push_front[kids, first]
+    out = [first]
+    for k in kids
+        out = push[out, k]
+    out
+
+--- a heading of a level (1 to 6), sized as page headings are (2em, 1.5em,
+--- 1.17em, 1em, 0.83em, 0.67em of 16 pixels), bold, named `name` in the
+--- tests where it has one, in the look `more` besides
+fn titled[level, words, name, more]
+    sizes = ['32', '24', '18.72', '16', '13.28', '10.72']
+    size = sizes[max[0, min[5, level - 1]]]
+    look = 'tag=h`level`;size=`size`;weight=700;block=1'
+    if name ne ''
+        look = 'name=`name`;`look`'
+    if more ne ''
+        look = '`look`;`more`'
+    inked['', words, look]
+
+--- a rule across the example, as `<hr>` draws one
+fn rule[]
+    gui.divider[]
+
+--- a tree shown by itself on a canvas, in the dark look (Crow checks each
+--- module alone, and a module that makes trees is checked showing one)
+fn shown_alone[c, tree]
+    gui.show[c, tree]
+
+--- a canvas of nothing, as a frame of ten pixels square begins one
+fn blank_canvas[]
+    frame = json['{"t": 0, "width": 10, "height": 10, "ratio": 1, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 10, "height": 10, "projection": [], "camera": []}], "input": [], "pointers": [], "controllers": [], "said": []}']
+    if not frame.ok
+        return blank_canvas[]
+    lory.begin[frame]
+
+--- a drawn control as gui hands one to its painter, on a canvas of
+--- nothing. Each painter of a module is called once by name with it, so
+--- that Crow knows a painter's kind where the module only hands it on (a
+--- function written into another module's record is refused otherwise).
+fn blank_drawn[]
+    gui.Drawn[blank_canvas[], '', 0.0, 0.0, 1.0, '', 0.0, 0.0, 1.0, 1.0, 1.0, gui.dark[], false, false, false, false, 0.0, 0.0, no_words[], slice[[gui.Event['', '', '', 0.0]], 0, 0]]
+
+fn _painters_known[]
+    d = _inked_painted[blank_drawn[]]
+    _bullet_painted[d]
+
+--- ---- what a tree shows ----
+
+fn _marks[]
+    split['!"#$%&()*+,-./:;<=>?@[]^_{|}~\'\\\`', '']
+
+--- the words a text shows, parted as the tests compare them: each run of
+--- characters that are neither spaces nor ASCII punctuation, and each mark
+--- of ASCII punctuation alone (so words split across elements, or a mark
+--- set apart from its word, read the same)
+fn tokens[words]
+    _tokens_into[no_words[], words]
+
+fn _tokens_into[out, words]
+    marks = _marks[]
+    letters = split[words, '']
+    run = ''
+    i = 0
+    while i lt len[letters]
+        ch = letters[i]
+        if ch eq ' ' or ch eq '\n' or ch eq '\t' or ch eq '\r'
+            if run ne ''
+                out = push[out, run]
+                run = ''
+        else if ch in marks
+            if run ne ''
+                out = push[out, run]
+                run = ''
+            out = push[out, ch]
+        else
+            run = '`run``ch`'
+        i = i + 1
+    if run ne ''
+        out = push[out, run]
+    out
+
+fn _no_facts[]
+    Facts[no_words[], map['' = ''], map['' = false], no_words[], map['' = ''], no_words[]]
+
+--- what a tree shows, read in the order it is drawn
+fn facts_of[tree]
+    found = _no_facts[]
+    waiting = [tree]
+    while len[waiting] gt 0
+        n = waiting[len[waiting] - 1]
+        waiting = slice[waiting, 0, len[waiting] - 1]
+        found = _fact_of[found, n]
+        kids = n.kids
+        i = len[kids] - 1
+        while i gte 0
+            waiting = push[waiting, kids[i]]
+            i = i - 1
+    found
+
+--- (a control shown but off is one `gui.disabled` was asked of)
+fn _fact_of[found, n]
+    tag = n.tag
+    off = 'off' in n.nums and n.nums['off'] gt 0.5
+    if n.id ne ''
+        if off
+            found.off = push[found.off, n.id]
+        else
+            found.ids = push[found.ids, n.id]
+    if tag eq 'text' or tag eq 'heading' or tag eq 'label' or tag eq 'note' or tag eq 'button' or tag eq 'checkbox' or tag eq 'toggle'
+        found.words = _tokens_into[found.words, n.words]
+    if tag eq 'checkbox' or tag eq 'toggle'
+        found.checks[n.id] = n.num gt 0.5
+    if tag eq 'field'
+        found.fields[n.id] = n.words
+    if tag eq 'drawn' and '|' in n.words
+        parts = split[n.words, '|']
+        l = looks_of[parts[0]]
+        name = n.id
+        if name eq '' and 'name' in l
+            name = l['name']
+        if name ne ''
+            found.looks[name] = parts[0]
+        found.words = _tokens_into[found.words, join[slice[parts, 1, len[parts]], ' ']]
+    found

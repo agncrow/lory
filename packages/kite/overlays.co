@@ -1,7 +1,6 @@
 --- Kite's overlays: lines and marks drawn over a chart through points a
---- program gives or a reader clicks, as klinecharts' overlays are — its
---- fifteen drawing tools, each drawn from its points' places as
---- klinecharts draws it.
+--- program gives or a reader clicks — its
+--- fifteen drawing tools, each drawn from its points' places.
 ---
 ---     k = overlays.create[k, 'horizontalStraightLine', [p], 'candle_pane', '']
 ---     k = overlays.start[k, 'segment']      --- the reader clicks two points
@@ -22,11 +21,11 @@ use views
 
 --- ---- the tools ----
 
---- every tool klinecharts has built in
+--- every tool built in
 fn tools[]
     ['horizontalRayLine', 'horizontalSegment', 'horizontalStraightLine', 'verticalRayLine', 'verticalSegment', 'verticalStraightLine', 'rayLine', 'segment', 'straightLine', 'priceLine', 'priceChannelLine', 'parallelStraightLine', 'fibonacciLine', 'simpleAnnotation', 'simpleTag']
 
---- the points a tool is drawn through (klinecharts' totalStep less one)
+--- the points a tool is drawn through (its steps less one)
 fn needed_of[name]
     if name eq 'horizontalStraightLine' or name eq 'verticalStraightLine' or name eq 'priceLine' or name eq 'simpleAnnotation' or name eq 'simpleTag'
         return 1
@@ -250,7 +249,7 @@ fn _slope_y[x0, y0, x1, y1, x]
     x * m + (y0 - m * x0)
 
 --- the figures of an overlay whose points stand at (xs, ys) in a pane
---- `w` wide and `h` tall (klinecharts' createPointFigures)
+--- `w` wide and `h` tall
 fn figures_of[k, p, o, xs, ys, w, h]
     n = len[xs]
     out = []
@@ -320,7 +319,7 @@ fn figures_of[k, p, o, xs, ys, w, h]
         return _parallel[xs, ys, w, h, extra]
     out
 
---- klinecharts' parallel lines: the line through the first two points
+--- parallel lines: the line through the first two points
 --- across the pane, one through the third parallel to it, and so many
 --- more at the same distance
 fn _parallel[xs, ys, w, h, extra]
@@ -495,7 +494,7 @@ fn hit_of[k, p, o, x, y]
             return 'line'
     ''
 
---- klinecharts' checkCoordinateOnLine: within two pixels of a piece
+--- whether a point is on a line: within two pixels of a piece
 fn _on_line[xs, ys, x, y]
     dev = 2.0
     for i in range[len[xs] - 1]
@@ -622,7 +621,7 @@ fn _moved[k, ex, ey]
     k
 
 --- a horizontal tool's points share their value, an upright one's their
---- bar (klinecharts' performEventPressedMove)
+--- bar, as a point is moved
 fn _kept_level[name, pts, pt]
     out = []
     for q in pts
@@ -678,7 +677,7 @@ fn _drawing[k, ev, ex, ey]
 
 --- the points of a tool being drawn with its next point at the pointer:
 --- a level tool's first point follows the pointer's value, an upright
---- one's its bar (klinecharts' performEventMoveForDrawing)
+--- one's its bar, while the tool is drawn
 fn _for_drawing[name, pts, pt]
     out = pts
     out[len[out] - 1] = pt

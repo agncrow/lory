@@ -1,0 +1,1172 @@
+--- Markdown Editor: Markdown typed on the left, drawn on the right a
+--- tenth of a second after the typing stops (each change waits 100 ms,
+--- and a change within it waits again).
+---
+--- The Markdown is read here, by rules of this file's own:
+--- headings (`#` to `######`, and a line under a paragraph of `=` or
+--- `-`), paragraphs, rules, block quotes, lists (bullets `-`, `*`, `+`,
+--- and numbers ending `.` or `)`, tight or loose, nested), code fenced
+--- by three backticks or tildes (its first word its language) or
+--- indented four spaces; and in a line: emphasis and strong emphasis by
+--- `*` and `_` (the usual rules for which runs open and close),
+--- strikethrough by `~` or `~~`, code spans, links (with a title),
+--- images, `<…>` links and bare `http://`, `https://` and `www.` links,
+--- backslash escapes and hard breaks (two spaces or a backslash before a
+--- new line). Not read: tables, HTML written in the Markdown (shown as
+--- words), link references, footnotes, task lists.
+use lory
+use lory.gui
+use common
+
+--- ---- the Markdown read: a tree of what it says ----
+
+--- a part of the page: its tag ('' for words), its attributes as the
+--- tests write them, its words, the parts inside it (by their places in
+--- the tree's list) and a link's address
+struct Md [tag, attrs, words, kids, href]
+
+struct Doc [nodes]
+
+--- a tree grown and the parts made at one level of it
+struct Built [doc, kids]
+
+fn _no_kids[]
+    slice[[0], 0, 0]
+
+fn _added[doc, tag, attrs, words, kids, href]
+    doc.nodes = push[doc.nodes, Md[tag, attrs, words, kids, href]]
+    doc
+
+fn _last[doc]
+    len[doc.nodes] - 1
+
+fn _blank[line]
+    trim[line] eq ''
+
+--- how many spaces a line starts with
+fn _lead[line]
+    k = 0
+    for ch in split[line, '']
+        if ch ne ' '
+            return k
+        k = k + 1
+    k
+
+--- the line without up to `n` of its leading spaces
+fn _unled[line, n]
+    k = min[n, _lead[line]]
+    slice[line, k, len[line]]
+
+fn _trailing_trimmed[t]
+    chars = split[t, '']
+    k = len[chars]
+    while k gt 0 and (chars[k - 1] eq ' ' or chars[k - 1] eq '\t')
+        k = k - 1
+    join[slice[chars, 0, k], '']
+
+--- lines, each ended by a new line
+fn _lines_ended[lines]
+    out = ''
+    for l in lines
+        out = '`out``l`\n'
+    out
+
+fn _joined[chars]
+    join[chars, '']
+
+fn _digit[ch]
+    ch in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+--- how many of `ch` the words start with
+fn _run_of[words, ch]
+    k = 0
+    for c in split[words, '']
+        if c ne ch
+            return k
+        k = k + 1
+    k
+
+--- a heading's level from `#`s (0: not a heading)
+fn _atx_level[body]
+    k = _run_of[body, '#']
+    if k lt 1 or k gt 6
+        return 0
+    if len[body] eq k or slice[body, k, k + 1] eq ' ' or slice[body, k, k + 1] eq '\t'
+        return k
+    0
+
+--- a heading's words, its closing `#`s taken off
+fn _atx_words[body, level]
+    w = trim[slice[body, level, len[body]]]
+    if w ne '' and _run_of[w, '#'] eq len[w]
+        return ''
+    chars = split[w, '']
+    k = len[chars]
+    while k gt 0 and chars[k - 1] eq '#'
+        k = k - 1
+    if k lt len[chars] and (k eq 0 or chars[k - 1] eq ' ')
+        return trim[join[slice[chars, 0, k], '']]
+    w
+
+--- whether the line is a rule: three or more of `-`, `*` or `_`, spaces
+--- between
+fn _is_rule[line]
+    if _lead[line] gte 4
+        return false
+    body = join[split[trim[line], ' '], '']
+    if len[body] lt 3
+        return false
+    first = slice[body, 0, 1]
+    if not (first in ['-', '*', '_'])
+        return false
+    _run_of[body, first] eq len[body]
+
+--- a line under a paragraph making it a heading: 1 for `=`, 2 for `-`
+fn _setext[line]
+    if _lead[line] gte 4
+        return 0
+    body = trim[line]
+    if body eq ''
+        return 0
+    if _run_of[body, '='] eq len[body]
+        return 1
+    if _run_of[body, '-'] eq len[body]
+        return 2
+    0
+
+--- a fence's character and length, and its words (none: length 0)
+struct Fence [ch, size, info]
+
+fn _fence_of[line]
+    none = Fence['', 0, '']
+    if _lead[line] gte 4
+        return none
+    body = _unled[line, 3]
+    for ch in ['\`', '~']
+        k = _run_of[body, ch]
+        if k gte 3
+            info = trim[slice[body, k, len[body]]]
+            if ch eq '\`' and len[split[info, '\`']] gt 1
+                return none
+            return Fence[ch, k, info]
+    none
+
+--- a list item's marker: bullet or number, its character (the bullet,
+--- or the number's `.` or `)`), the number, how far its content stands
+--- in, and the first line's content (none: form '')
+struct Marker [form, ch, number, width, rest]
+
+fn _no_marker[]
+    Marker['', '', 0, 0, '']
+
+fn _marker_of[line]
+    ind = _lead[line]
+    if ind gte 4
+        return _no_marker[]
+    body = slice[line, ind, len[line]]
+    chars = split[body, '']
+    k = len[chars]
+    if k eq 0
+        return _no_marker[]
+    form = ''
+    ch = ''
+    number = 0
+    size = 0
+    if chars[0] in ['-', '*', '+']
+        form = 'bullet'
+        ch = chars[0]
+        size = 1
+    else
+        d = 0
+        while d lt k and d lt 9 and _digit[chars[d]]
+            number = number * 10 + code[chars[d]] - 48
+            d = d + 1
+        if d gt 0 and d lt k and (chars[d] eq '.' or chars[d] eq ')')
+            form = 'ordered'
+            ch = chars[d]
+            size = d + 1
+    if form eq ''
+        return _no_marker[]
+    if size lt k and chars[size] ne ' ' and chars[size] ne '\t'
+        return _no_marker[]
+    after = slice[body, size, len[body]]
+    if _blank[after]
+        return Marker[form, ch, number, ind + size + 1, '']
+    gap = _lead[after]
+    if gap gt 4
+        return Marker[form, ch, number, ind + size + 1, slice[after, 1, len[after]]]
+    Marker[form, ch, number, ind + size + gap, slice[after, gap, len[after]]]
+
+--- whether the line ends a paragraph where it stands
+fn _interrupts[line]
+    if _lead[line] gte 4
+        return false
+    body = trim[line]
+    if _atx_level[body] gt 0 or _fence_of[line].size gt 0 or starts[body, '>'] or _is_rule[line]
+        return true
+    m = _marker_of[line]
+    if m.form eq 'bullet' and m.rest ne ''
+        return true
+    m.form eq 'ordered' and m.number eq 1 and m.rest ne ''
+
+--- the blocks the lines make
+fn blocks_of[doc, lines]
+    kids = _no_kids[]
+    n = len[lines]
+    i = 0
+    while i lt n
+        line = lines[i]
+        ind = _lead[line]
+        body = trim[line]
+        fence = _fence_of[line]
+        level = _atx_level[_unled[line, 3]]
+        marker = _marker_of[line]
+        if _blank[line]
+            i = i + 1
+        else if ind gte 4
+            j = i
+            while j lt n and (_blank[lines[j]] or _lead[lines[j]] gte 4)
+                j = j + 1
+            k = j
+            while k gt i and _blank[lines[k - 1]]
+                k = k - 1
+            held = slice[[''], 0, 0]
+            for l in slice[lines, i, k]
+                held = push[held, _unled[l, 4]]
+            doc = _added[doc, '', '', _lines_ended[held], _no_kids[], '']
+            doc = _added[doc, 'code', '', '', [_last[doc]], '']
+            doc = _added[doc, 'pre', '', '', [_last[doc]], '']
+            kids = push[kids, _last[doc]]
+            i = j
+        else if fence.size gt 0
+            j = i + 1
+            held = slice[[''], 0, 0]
+            closed = false
+            while j lt n and not closed
+                l = lines[j]
+                inner = _unled[l, 3]
+                if _lead[l] lt 4 and _run_of[inner, fence.ch] gte fence.size and _blank[slice[inner, _run_of[inner, fence.ch], len[inner]]]
+                    closed = true
+                else
+                    held = push[held, _unled[l, ind]]
+                j = j + 1
+            words = ''
+            if len[held] gt 0
+                words = _lines_ended[held]
+            doc = _added[doc, '', '', words, _no_kids[], '']
+            attrs = ''
+            if fence.info ne ''
+                language = split[fence.info, ' '][0]
+                attrs = 'class=language-`language`'
+            doc = _added[doc, 'code', attrs, '', [_last[doc]], '']
+            doc = _added[doc, 'pre', '', '', [_last[doc]], '']
+            kids = push[kids, _last[doc]]
+            i = j
+        else if level gt 0
+            got = inlines_of[doc, _atx_words[_unled[line, 3], level]]
+            doc = _added[got.doc, 'h`level`', '', '', got.kids, '']
+            kids = push[kids, _last[doc]]
+            i = i + 1
+        else if _is_rule[line]
+            doc = _added[doc, 'hr', '', '', _no_kids[], '']
+            kids = push[kids, _last[doc]]
+            i = i + 1
+        else if starts[body, '>']
+            held = slice[[''], 0, 0]
+            j = i
+            going = true
+            lazy = false
+            while j lt n and going
+                l = lines[j]
+                b = trim[l]
+                if _lead[l] lt 4 and starts[b, '>']
+                    inner = slice[b, 1, len[b]]
+                    if starts[inner, ' ']
+                        inner = slice[inner, 1, len[inner]]
+                    held = push[held, inner]
+                    lazy = not _blank[inner] and not _interrupts[inner] and _fence_of[inner].size eq 0
+                    j = j + 1
+                else if lazy and not _blank[l] and not _interrupts[l]
+                    held = push[held, l]
+                    j = j + 1
+                else
+                    going = false
+            got = blocks_of[doc, held]
+            doc = _added[got.doc, 'blockquote', '', '', got.kids, '']
+            kids = push[kids, _last[doc]]
+            i = j
+        else if marker.form ne ''
+            got = _list_of[doc, lines, i]
+            doc = got.doc
+            kids = push[kids, got.kids[0]]
+            i = got.kids[1]
+        else
+            held = [slice[line, ind, len[line]]]
+            j = i + 1
+            heading = 0
+            going = true
+            while j lt n and going
+                l = lines[j]
+                if _blank[l]
+                    going = false
+                else if _setext[l] gt 0
+                    heading = _setext[l]
+                    j = j + 1
+                    going = false
+                else if _interrupts[l]
+                    going = false
+                else
+                    held = push[held, _unled[l, len[l]]]
+                    j = j + 1
+            got = inlines_of[doc, _trailing_trimmed[join[held, '\n']]]
+            tag = 'p'
+            if heading gt 0
+                tag = 'h`heading`'
+            doc = _added[got.doc, tag, '', '', got.kids, '']
+            kids = push[kids, _last[doc]]
+            i = j
+    Built[doc, kids]
+
+--- a list from line `i`: its part, and the line after it (as the two
+--- `kids`)
+fn _list_of[doc, lines, i]
+    n = len[lines]
+    m = _marker_of[lines[i]]
+    first = m
+    items = slice[[['']], 0, 0]
+    loose = false
+    j = i
+    going = true
+    while going
+        held = [m.rest]
+        j = j + 1
+        width = m.width
+        ended = false
+        next = _no_marker[]
+        while j lt n and not ended
+            l = lines[j]
+            if _blank[l]
+                held = push[held, '']
+                j = j + 1
+            else if _lead[l] gte width
+                held = push[held, _unled[l, width]]
+                j = j + 1
+            else
+                nm = _marker_of[l]
+                if nm.form eq m.form and nm.ch eq m.ch and not _is_rule[l]
+                    next = nm
+                    ended = true
+                else if held[len[held] - 1] ne '' and not _interrupts[l] and nm.form eq ''
+                    held = push[held, trim[l]]
+                    j = j + 1
+                else
+                    ended = true
+        trailing = 0
+        while len[held] gt 1 and held[len[held] - 1] eq ''
+            held = slice[held, 0, len[held] - 1]
+            trailing = trailing + 1
+        items = push[items, held]
+        if next.form ne ''
+            if trailing gt 0
+                loose = true
+            m = next
+        else
+            going = false
+    --- (an item is loose where a blank line parts two of its blocks)
+    --- (each item's blocks held in a part of its own; a list of lists of
+    --- places would be a table of numbers)
+    made = _no_kids[]
+    for held in items
+        got = blocks_of[doc, held]
+        doc = _added[got.doc, 'li', '', '', got.kids, '']
+        made = push[made, _last[doc]]
+        if len[got.kids] gt 1 and '' in held
+            loose = true
+    lis = _no_kids[]
+    for item in made
+        inside = _no_kids[]
+        for k in doc.nodes[item].kids
+            if not loose and doc.nodes[k].tag eq 'p'
+                for q in doc.nodes[k].kids
+                    inside = push[inside, q]
+            else
+                inside = push[inside, k]
+        doc = _added[doc, 'li', '', '', inside, '']
+        lis = push[lis, _last[doc]]
+    tag = 'ul'
+    attrs = ''
+    if first.form eq 'ordered'
+        tag = 'ol'
+        if first.number ne 1
+            attrs = 'start=`first.number`'
+    doc = _added[doc, tag, attrs, '', lis, '']
+    Built[doc, [_last[doc], j]]
+
+--- ---- a line's words read ----
+
+--- a piece of a line: words, a run of `*`, `_` or `~` that may open or
+--- close emphasis (how many are left and were at first), or a part made
+struct Piece [form, words, ch, count, orig, opens, closes, node]
+
+fn _words_piece[words]
+    Piece['text', words, '', 0, 0, false, false, 0]
+
+fn _node_piece[k]
+    Piece['node', '', '', 0, 0, false, false, k]
+
+fn _punct[ch]
+    ch ne '' and len[split['!"#$%&\'()*+,-./:;<=>?@[\\]^_\`{|}~', ch]] gt 1
+
+fn _gap_char[ch]
+    ch eq '' or ch eq ' ' or ch eq '\t' or ch eq '\n'
+
+--- reading a line: the tree, the pieces so far, and the words not yet
+--- made a piece
+struct Line [doc, pieces, held]
+
+fn _flushed[r]
+    if r.held ne ''
+        r.pieces = push[r.pieces, _words_piece[r.held]]
+        r.held = ''
+    r
+
+fn _with_node[r, k]
+    r = _flushed[r]
+    r.pieces = push[r.pieces, _node_piece[k]]
+    r
+
+--- a link or an image found at `[`: whether it is one, its address,
+--- title, words, and where it ends
+struct Linked [found, href, title, titled, label, after]
+
+fn _no_link[]
+    Linked[false, '', '', false, '', 0]
+
+--- the place of the `]` closing the `[` at `i`, or -1
+fn _closing_bracket[chars, i]
+    depth = 0
+    k = i
+    n = len[chars]
+    while k lt n
+        c = chars[k]
+        if c eq '\\'
+            k = k + 2
+        else
+            if c eq '['
+                depth = depth + 1
+            if c eq ']'
+                depth = depth - 1
+                if depth eq 0
+                    return k
+            k = k + 1
+    -1
+
+fn _unescaped[words]
+    chars = split[words, '']
+    out = ''
+    i = 0
+    while i lt len[chars]
+        if chars[i] eq '\\' and i + 1 lt len[chars] and _punct[chars[i + 1]]
+            out = '`out``chars[i + 1]`'
+            i = i + 2
+        else
+            out = '`out``chars[i]`'
+            i = i + 1
+    out
+
+fn _link_at[chars, i]
+    n = len[chars]
+    k = _closing_bracket[chars, i]
+    if k lt 0 or k + 1 gte n or chars[k + 1] ne '('
+        return _no_link[]
+    label = join[slice[chars, i + 1, k], '']
+    p = k + 2
+    while p lt n and _gap_char[chars[p]]
+        p = p + 1
+    href = ''
+    if p lt n and chars[p] eq '<'
+        q = p + 1
+        while q lt n and chars[q] ne '>' and chars[q] ne '\n'
+            q = q + 1
+        if q gte n or chars[q] ne '>'
+            return _no_link[]
+        href = join[slice[chars, p + 1, q], '']
+        p = q + 1
+    else
+        q = p
+        depth = 0
+        going = true
+        while q lt n and going
+            c = chars[q]
+            if _gap_char[c]
+                going = false
+            else if c eq '\\' and q + 1 lt n
+                q = q + 2
+            else if c eq '('
+                depth = depth + 1
+                q = q + 1
+            else if c eq ')'
+                if depth eq 0
+                    going = false
+                else
+                    depth = depth - 1
+                    q = q + 1
+            else
+                q = q + 1
+        href = join[slice[chars, p, q], '']
+        p = q
+    spaced = false
+    while p lt n and _gap_char[chars[p]]
+        spaced = true
+        p = p + 1
+    title = ''
+    titled = false
+    if spaced and p lt n and (chars[p] eq '"' or chars[p] eq '\'' or chars[p] eq '(')
+        shut = chars[p]
+        if shut eq '('
+            shut = ')'
+        q = p + 1
+        while q lt n and chars[q] ne shut
+            if chars[q] eq '\\'
+                q = q + 1
+            q = q + 1
+        if q gte n
+            return _no_link[]
+        title = _unescaped[join[slice[chars, p + 1, q], '']]
+        titled = true
+        p = q + 1
+        while p lt n and _gap_char[chars[p]]
+            p = p + 1
+    if p gte n or chars[p] ne ')'
+        return _no_link[]
+    Linked[true, _unescaped[href], title, titled, label, p + 1]
+
+--- a bare link's length from `i` (0: none there)
+fn _bare_link_at[chars, i]
+    n = len[chars]
+    head = join[slice[chars, i, min[n, i + 8]], '']
+    www = starts[head, 'www.']
+    if not (starts[head, 'http://'] or starts[head, 'https://'] or www)
+        return 0
+    if i gt 0 and not (_gap_char[chars[i - 1]] or chars[i - 1] in ['*', '_', '~', '('])
+        return 0
+    k = i
+    while k lt n and not _gap_char[chars[k]] and chars[k] ne '<'
+        k = k + 1
+    --- (punctuation at its end is not the link's, nor a `)` left unopened)
+    going = true
+    while going and k gt i
+        last = chars[k - 1]
+        if last in ['?', '!', '.', ',', ':', '*', '_', '~', '\'', '"']
+            k = k - 1
+        else if last eq ')'
+            opened = 0
+            shut = 0
+            for c in slice[chars, i, k]
+                if c eq '('
+                    opened = opened + 1
+                if c eq ')'
+                    shut = shut + 1
+            if shut gt opened
+                k = k - 1
+            else
+                going = false
+        else
+            going = false
+    url = join[slice[chars, i, k], '']
+    rest = url
+    if www
+        rest = slice[url, 4, len[url]]
+    else
+        rest = split[url, '://'][1]
+    if rest eq '' or not (len[split[rest, '.']] gt 1 or not www)
+        return 0
+    k - i
+
+--- a code span's words: new lines as spaces, one space taken off each
+--- end where both have one and it is not all spaces
+fn _code_words[words]
+    w = join[split[words, '\n'], ' ']
+    if len[w] gte 2 and starts[w, ' '] and slice[w, len[w] - 1, len[w]] eq ' ' and trim[w] ne ''
+        return slice[w, 1, len[w] - 1]
+    w
+
+--- the words of a line read into the parts it makes
+fn inlines_of[doc, words]
+    chars = split[words, '']
+    n = len[chars]
+    r = Line[doc, slice[[_words_piece['']], 0, 0], '']
+    i = 0
+    while i lt n
+        ch = chars[i]
+        if ch eq '\\' and i + 1 lt n and chars[i + 1] eq '\n'
+            r = _flushed[r]
+            r.doc = _added[r.doc, 'br', '', '', _no_kids[], '']
+            r = _with_node[r, _last[r.doc]]
+            i = i + 2
+            while i lt n and chars[i] eq ' '
+                i = i + 1
+        else if ch eq '\\' and i + 1 lt n and _punct[chars[i + 1]]
+            r.held = '`r.held``chars[i + 1]`'
+            i = i + 2
+        else if ch eq '\`'
+            run = _run_of[join[slice[chars, i, n], ''], '\`']
+            j = i + run
+            found = -1
+            while j lt n and found lt 0
+                if chars[j] eq '\`'
+                    r2 = _run_of[join[slice[chars, j, n], ''], '\`']
+                    if r2 eq run
+                        found = j
+                    j = j + r2
+                else
+                    j = j + 1
+            if found lt 0
+                r.held = '`r.held``_joined[slice[chars, i, i + run]]`'
+                i = i + run
+            else
+                r.doc = _added[r.doc, '', '', _code_words[join[slice[chars, i + run, found], '']], _no_kids[], '']
+                r.doc = _added[r.doc, 'code', '', '', [_last[r.doc]], '']
+                r = _with_node[r, _last[r.doc]]
+                i = found + run
+        else if (ch eq '[') or (ch eq '!' and i + 1 lt n and chars[i + 1] eq '[')
+            image = ch eq '!'
+            at = i
+            if image
+                at = i + 1
+            got = _link_at[chars, at]
+            if not got.found
+                r.held = '`r.held``ch`'
+                i = i + 1
+            else
+                inner = inlines_of[r.doc, got.label]
+                r.doc = inner.doc
+                if image
+                    alt = _plain[r.doc, inner.kids]
+                    r.doc = _added[r.doc, 'img', 'src=`got.href`,alt=`alt`', alt, _no_kids[], got.href]
+                else
+                    attrs = 'href=`got.href`'
+                    if got.titled
+                        attrs = '`attrs`,title=`got.title`'
+                    r.doc = _added[r.doc, 'a', attrs, '', inner.kids, got.href]
+                r = _with_node[r, _last[r.doc]]
+                i = got.after
+        else if ch eq '<'
+            k = i + 1
+            while k lt n and chars[k] ne '>' and chars[k] ne '<' and not _gap_char[chars[k]]
+                k = k + 1
+            inside = join[slice[chars, i + 1, min[k, n]], '']
+            schemed = len[split[inside, ':']] gt 1 and _letter_start[inside]
+            if k lt n and chars[k] eq '>' and schemed
+                r.doc = _added[r.doc, '', '', inside, _no_kids[], '']
+                r.doc = _added[r.doc, 'a', 'href=`inside`', '', [_last[r.doc]], inside]
+                r = _with_node[r, _last[r.doc]]
+                i = k + 1
+            else
+                r.held = '`r.held`<'
+                i = i + 1
+        else if ch eq '*' or ch eq '_' or ch eq '~'
+            run = _run_of[join[slice[chars, i, n], ''], ch]
+            before = ''
+            if i gt 0
+                before = chars[i - 1]
+            after = ''
+            if i + run lt n
+                after = chars[i + run]
+            left = not _gap_char[after] and (not _punct[after] or _gap_char[before] or _punct[before])
+            right = not _gap_char[before] and (not _punct[before] or _gap_char[after] or _punct[after])
+            opens = left
+            closes = right
+            if ch eq '_'
+                opens = left and (not right or _punct[before])
+                closes = right and (not left or _punct[after])
+            if ch eq '~' and run gt 2
+                r.held = '`r.held``_joined[slice[chars, i, i + run]]`'
+            else
+                r = _flushed[r]
+                r.pieces = push[r.pieces, Piece['delim', '', ch, run, run, opens, closes, 0]]
+            i = i + run
+        else if ch eq '\n'
+            hard = len[r.held] gte 2 and slice[r.held, len[r.held] - 2, len[r.held]] eq '  '
+            r.held = _trailing_trimmed[r.held]
+            if hard
+                r = _flushed[r]
+                r.doc = _added[r.doc, 'br', '', '', _no_kids[], '']
+                r = _with_node[r, _last[r.doc]]
+            else
+                r.held = '`r.held`\n'
+            i = i + 1
+            while i lt n and chars[i] eq ' '
+                i = i + 1
+        else
+            bare = _bare_link_at[chars, i]
+            if bare gt 0
+                url = join[slice[chars, i, i + bare], '']
+                href = url
+                if starts[url, 'www.']
+                    href = 'http://`url`'
+                r.doc = _added[r.doc, '', '', url, _no_kids[], '']
+                r.doc = _added[r.doc, 'a', 'href=`href`', '', [_last[r.doc]], href]
+                r = _with_node[r, _last[r.doc]]
+                i = i + bare
+            else
+                r.held = '`r.held``ch`'
+                i = i + 1
+    r = _flushed[r]
+    got = _emphasized[r.doc, r.pieces]
+    doc = got.doc
+    kids = _no_kids[]
+    for p in got.pieces
+        doc = _piece_made[doc, p]
+        kids = push[kids, _last[doc]]
+    Built[doc, kids]
+
+fn _letter_start[words]
+    if words eq ''
+        return false
+    c = code[slice[words, 0, 1]]
+    (c gte 65 and c lte 90) or (c gte 97 and c lte 122)
+
+--- a piece made a part of the tree (a run of `*` left over is words)
+fn _piece_made[doc, p]
+    if p.form eq 'node'
+        --- (the part already made, put again at the end so that its place
+        --- is the last)
+        return _added[doc, doc.nodes[p.node].tag, doc.nodes[p.node].attrs, doc.nodes[p.node].words, doc.nodes[p.node].kids, doc.nodes[p.node].href]
+    if p.form eq 'delim'
+        w = ''
+        k = 0
+        while k lt p.count
+            w = '`w``p.ch`'
+            k = k + 1
+        return _added[doc, '', '', w, _no_kids[], '']
+    _added[doc, '', '', p.words, _no_kids[], '']
+
+--- the pieces and the tree after emphasis is matched
+struct Matched [doc, pieces]
+
+--- emphasis: each run that may close matched with the
+--- nearest run before it that may open (of the same character, and not
+--- against the rule of three), the pieces between made the inside of an
+--- `em` (one of each), a `strong` (two) or a `del` (tildes, as many on
+--- each side)
+fn _emphasized[doc, pieces]
+    c = 0
+    while c lt len[pieces]
+        p = pieces[c]
+        if p.form ne 'delim' or not p.closes or p.count eq 0
+            c = c + 1
+        else
+            found = -1
+            o = c - 1
+            while o gte 0 and found lt 0
+                q = pieces[o]
+                if q.form eq 'delim' and q.opens and q.ch eq p.ch and q.count gt 0
+                    if p.ch eq '~'
+                        if q.count eq p.count
+                            found = o
+                    else
+                        odd = (q.closes or p.opens) and (q.orig + p.orig) % 3 eq 0 and not (q.orig % 3 eq 0 and p.orig % 3 eq 0)
+                        if not odd
+                            found = o
+                o = o - 1
+            if found lt 0
+                c = c + 1
+            else
+                q = pieces[found]
+                taken = 1
+                tag = 'em'
+                if p.ch eq '~'
+                    taken = p.count
+                    tag = 'del'
+                else if q.count gte 2 and p.count gte 2
+                    taken = 2
+                    tag = 'strong'
+                inside = _no_kids[]
+                for between in slice[pieces, found + 1, c]
+                    doc = _piece_made[doc, between]
+                    inside = push[inside, _last[doc]]
+                doc = _added[doc, tag, '', '', inside, '']
+                made = _node_piece[_last[doc]]
+                q.count = q.count - taken
+                p.count = p.count - taken
+                out = slice[pieces, 0, found]
+                if q.count gt 0
+                    out = push[out, q]
+                out = push[out, made]
+                placed = len[out]
+                if p.count gt 0
+                    out = push[out, p]
+                for rest in slice[pieces, c + 1, len[pieces]]
+                    out = push[out, rest]
+                pieces = out
+                c = placed
+    Matched[doc, pieces]
+
+--- the words of parts, without their marks (an image's `alt`)
+fn _plain[doc, kids]
+    out = ''
+    for k in kids
+        n = doc.nodes[k]
+        if n.tag eq ''
+            out = '`out``n.words`'
+        else if n.tag eq 'img'
+            out = '`out``n.words`'
+        else
+            out = '`out``_plain[doc, n.kids]`'
+    out
+
+--- the Markdown read
+fn parsed[source]
+    lines = split[join[split[source, '\r\n'], '\n'], '\n']
+    spaced = slice[[''], 0, 0]
+    for l in lines
+        spaced = push[spaced, join[split[l, '\t'], '    ']]
+    blocks_of[Doc[slice[[Md['', '', '', _no_kids[], '']], 0, 0]], spaced]
+
+--- ---- the tree written as the tests read a page ----
+
+fn _blocky[tag]
+    tag in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'pre', 'blockquote', 'hr', 'table', 'div']
+
+fn _escaped[t]
+    a = join[split[t, '\\'], '\\\\']
+    b = join[split[a, '{'], '\\{']
+    c = join[split[b, '}'], '\\}']
+    join[split[c, '\n'], '\\n']
+
+fn _collapsed[t]
+    out = ''
+    gap = false
+    for ch in split[t, '']
+        if ch eq ' ' or ch eq '\t' or ch eq '\n' or ch eq '\r'
+            gap = true
+        else
+            if gap
+                out = '`out` '
+                gap = false
+            out = '`out``ch`'
+    if gap
+        out = '`out` '
+    out
+
+--- the parts as the tests write a page: words (those side by side made
+--- one, as a page's are), and each element its tag, attributes and what
+--- is inside it in braces
+fn structure_of[doc, kids, in_pre]
+    --- (words side by side made one: -1 marks words, held in `texts`)
+    merged = _no_kids[]
+    texts = slice[[''], 0, 0]
+    for k in kids
+        n = doc.nodes[k]
+        if n.tag eq ''
+            if len[merged] gt 0 and merged[len[merged] - 1] lt 0
+                texts[len[texts] - 1] = '`texts[len[texts] - 1]``n.words`'
+            else
+                merged = push[merged, -1]
+                texts = push[texts, n.words]
+        else
+            merged = push[merged, k]
+    out = ''
+    w = 0
+    i = 0
+    while i lt len[merged]
+        k = merged[i]
+        if k lt 0
+            t = texts[w]
+            w = w + 1
+            if not in_pre
+                prev = i eq 0 or (merged[i - 1] gte 0 and _blocky[doc.nodes[merged[i - 1]].tag])
+                next = i eq len[merged] - 1 or (merged[i + 1] gte 0 and _blocky[doc.nodes[merged[i + 1]].tag])
+                if trim[_collapsed[t]] eq '' and (prev or next)
+                    t = ''
+                else
+                    t = _collapsed[t]
+                    if prev and starts[t, ' ']
+                        t = slice[t, 1, len[t]]
+                    if next and len[t] gt 0 and slice[t, len[t] - 1, len[t]] eq ' '
+                        t = slice[t, 0, len[t] - 1]
+            out = '`out``_escaped[t]`'
+        else
+            n = doc.nodes[k]
+            attrs = ''
+            if n.attrs ne ''
+                attrs = '[`n.attrs`]'
+            inner = structure_of[doc, n.kids, in_pre or n.tag eq 'pre']
+            out = '`out``n.tag``attrs`{`inner`}'
+        i = i + 1
+    out
+
+--- the Markdown's page, as the tests write it
+fn structure[source]
+    got = parsed[source]
+    structure_of[got.doc, got.kids, false]
+
+--- ---- the page drawn ----
+
+--- words in one style: bold 1, italic 2, struck 8, code 16, a link 32
+struct Run [words, style, href]
+
+--- a block drawn: words, code or a rule; its words' size, how far in it
+--- stands, its list marker, its runs, and how deep in quotes it is
+struct Block [form, size, indent, marker, runs, quoted]
+
+fn _code_style[]
+    16
+
+fn _link_style[]
+    32
+
+fn _with_style[style, flag]
+    if (style / flag) % 2 eq 1
+        return style
+    style + flag
+
+fn _runs_of[doc, kids, style, href]
+    out = slice[[Run['', 0, '']], 0, 0]
+    for k in kids
+        n = doc.nodes[k]
+        if n.tag eq ''
+            out = push[out, Run[_collapsed[n.words], style, href]]
+        else if n.tag eq 'br'
+            out = push[out, Run['\n', style, href]]
+        else if n.tag eq 'img'
+            out = push[out, Run[n.words, _with_style[style, common.italic[]], href]]
+        else
+            s = style
+            h = href
+            if n.tag eq 'em'
+                s = _with_style[s, common.italic[]]
+            if n.tag eq 'strong'
+                s = _with_style[s, common.bold[]]
+            if n.tag eq 'del'
+                s = _with_style[s, common.struck[]]
+            if n.tag eq 'code'
+                s = _with_style[s, _code_style[]]
+            if n.tag eq 'a'
+                s = _with_style[s, _link_style[]]
+                h = n.href
+            for r in _runs_of[doc, n.kids, s, h]
+                out = push[out, r]
+    out
+
+--- an ordered list's first number, from its `start=`
+fn _start_of[attrs]
+    n = int[slice[attrs, 6, len[attrs]]]
+    if not n.ok
+        return 1
+    n
+
+fn _heading_size[tag]
+    if tag eq 'h1'
+        return 32.0
+    if tag eq 'h2'
+        return 24.0
+    if tag eq 'h3'
+        return 18.7
+    if tag eq 'h5'
+        return 13.3
+    if tag eq 'h6'
+        return 10.7
+    16.0
+
+--- the blocks drawn for parts, in order
+fn blocks_drawn[doc, kids, indent, quoted]
+    out = slice[[Block['', 0.0, 0.0, '', slice[[Run['', 0, '']], 0, 0], 0]], 0, 0]
+    for k in kids
+        n = doc.nodes[k]
+        t = n.tag
+        if t eq 'p'
+            out = push[out, Block['words', 16.0, indent, '', _runs_of[doc, n.kids, 0, ''], quoted]]
+        else if starts[t, 'h'] and len[t] eq 2
+            out = push[out, Block['words', _heading_size[t], indent, '', _runs_of[doc, n.kids, common.bold[], ''], quoted]]
+        else if t eq 'pre'
+            words = _plain[doc, n.kids]
+            out = push[out, Block['code', 14.0, indent, '', [Run[words, _code_style[], '']], quoted]]
+        else if t eq 'hr'
+            out = push[out, Block['rule', 16.0, indent, '', slice[[Run['', 0, '']], 0, 0], quoted]]
+        else if t eq 'blockquote'
+            for b in blocks_drawn[doc, n.kids, indent + 16.0, quoted + 1]
+                out = push[out, b]
+        else if t eq 'ul' or t eq 'ol'
+            number = 1
+            if starts[n.attrs, 'start=']
+                number = _start_of[n.attrs]
+            for li in n.kids
+                mark = '•'
+                if t eq 'ol'
+                    mark = '`number`.'
+                number = number + 1
+                inline = _no_kids[]
+                parts = slice[[Block['', 0.0, 0.0, '', slice[[Run['', 0, '']], 0, 0], 0]], 0, 0]
+                for q in doc.nodes[li].kids
+                    if _blocky[doc.nodes[q].tag]
+                        if len[inline] gt 0
+                            parts = push[parts, Block['words', 16.0, indent + 24.0, '', _runs_of[doc, inline, 0, ''], quoted]]
+                            inline = _no_kids[]
+                        for b in blocks_drawn[doc, [q], indent + 24.0, quoted]
+                            parts = push[parts, b]
+                    else
+                        inline = push[inline, q]
+                if len[inline] gt 0
+                    parts = push[parts, Block['words', 16.0, indent + 24.0, '', _runs_of[doc, inline, 0, ''], quoted]]
+                i = 0
+                for b in parts
+                    if i eq 0
+                        b.marker = mark
+                    out = push[out, b]
+                    i = i + 1
+    out
+
+--- a word laid out: its words, style, and where it stands (its left in
+--- the block, its line)
+struct Laid [words, style, x, row]
+
+--- the runs laid out in lines `wide` across, at `size`
+fn laid_out[c, runs, wide, size]
+    out = slice[[Laid['', 0, 0.0, 0]], 0, 0]
+    x = 0.0
+    row = 0
+    gap = common.words_wide[c, ' ', size]
+    for r in runs
+        if r.words eq '\n'
+            x = 0.0
+            row = row + 1
+        else
+            pieces = split[r.words, ' ']
+            i = 0
+            for w in pieces
+                if i gt 0
+                    x = x + gap
+                if w ne ''
+                    ww = common.words_wide[c, w, size]
+                    if x gt 0.0 and x + ww gt wide
+                        x = 0.0
+                        row = row + 1
+                    out = push[out, Laid[w, r.style, x, row]]
+                    x = x + ww
+                i = i + 1
+    out
+
+--- how many lines a block takes
+fn rows_of[c, b, wide]
+    if b.form eq 'rule'
+        return 1
+    if b.form eq 'code'
+        return len[split[_trailing_trimmed[b.runs[0].words], '\n']]
+    laid = laid_out[c, b.runs, wide - b.indent, b.size]
+    if len[laid] eq 0
+        return 1
+    laid[len[laid] - 1].row + 1
+
+fn _line_tall[b]
+    b.size * 1.5
+
+fn _block_painter[d]
+    s = recall['apps.markdown', fresh[]]
+    i = int[d.num]
+    if i lt 0 or i gte len[s.drawn]
+        return d
+    b = s.drawn[i]
+    k = d.s
+    left = d.x + b.indent * k
+    ink = d.look.ink
+    q = 0
+    while q lt b.quoted
+        d.c = lory.rect[d.c, d.x + (16.0 * float[q] + 2.0) * k, d.y, 3.0 * k, d.h, lory.hex['#dddddd']]
+        q = q + 1
+    if b.marker ne ''
+        d.c = lory.text[d.c, left - 20.0 * k, d.y + 0.2 * b.size * k, b.marker, b.size * k, ink]
+    if b.form eq 'rule'
+        d.c = lory.rect[d.c, left, d.y + d.h / 2.0, d.w - b.indent * k, 1.0 * k, lory.hex['#cccccc']]
+        return d
+    if b.form eq 'code'
+        d.c = lory.rect[d.c, left, d.y, d.w - b.indent * k, d.h, lory.hex['#f6f6f6']]
+        row = 0
+        for l in split[_trailing_trimmed[b.runs[0].words], '\n']
+            d.c = lory.text[d.c, left + 8.0 * k, d.y + (4.0 + 0.2 * b.size + _line_tall[b] * float[row]) * k, l, b.size * k, lory.hex['#ff6666']]
+            row = row + 1
+        return d
+    for w in laid_out[d.c, b.runs, (d.w / k - b.indent) * k, b.size * k]
+        color = ink
+        style = w.style % 16
+        if (w.style / _code_style[]) % 2 eq 1
+            color = lory.hex['#ff6666']
+        if (w.style / _link_style[]) % 2 eq 1
+            color = lory.hex['#42b983']
+            style = _with_style[style, common.underlined[]]
+        d.c = common.drawn_words[d.c, left + w.x, d.y + _line_tall[b] * float[w.row] * k, w.words, b.size * k, color, style, k]
+    d
+
+--- ---- the example ----
+
+--- what the field holds, what is drawn from, when it was last typed
+--- in, whether a change waits, the tree read and the blocks drawn
+struct Editor [source, shown_from, edited, waiting, page, drawn]
+
+fn shown_as[s, typed]
+    s.shown_from = typed
+    got = parsed[typed]
+    s.page = structure_of[got.doc, got.kids, false]
+    s.drawn = blocks_drawn[got.doc, got.kids, 0.0, 0]
+    s
+
+fn fresh[]
+    s = Editor['# hello', '', 0.0, false, '', slice[[Block['', 0.0, 0.0, '', slice[[Run['', 0, '']], 0, 0], 0]], 0, 0]]
+    shown_as[s, '# hello']
+
+fn _wait[]
+    100.0
+
+--- the input drawn once the typing has stopped for a tenth of a second
+fn ticked[s, c]
+    if s.waiting and lory.time[c] - s.edited gte _wait[]
+        s.waiting = false
+        return shown_as[s, s.source]
+    s
+
+fn controls[s, c, room]
+    half = max[160.0, (room.wide - 16.0) / 2.0]
+    lines = max[4, floor[(room.tall - 16.0) / 21.0]]
+    source = gui.sized[gui.field['markdown:source', s.source, lines = lines], half]
+    blocks = slice[[gui.space[0.0]], 0, 0]
+    i = 0
+    for b in s.drawn
+        tall = _line_tall[b] * float[rows_of[c, b, half - 8.0]]
+        if b.form eq 'code'
+            tall = tall + 8.0
+        blocks = push[blocks, gui.drawn['markdown:block:`i`', float[i], half - 8.0, tall, _block_painter]]
+        i = i + 1
+    page = common.named[gui.scroll['markdown:preview', room.tall, [gui.column[blocks, gap = 12.0]]], 'markdown:page']
+    page.opts['structure'] = s.page
+    gui.row[[source, gui.sized[page, half]], gap = 16.0, align = 'start']
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if ev.id eq 'markdown:source' and ev.act eq 'edit'
+            s.source = ev.words
+            s.edited = lory.time[c]
+            s.waiting = true
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['source'] = common.words_by[tree, 'markdown:source']
+    page = common.node_by[tree, 'markdown:page']
+    out['preview'] = ''
+    if 'structure' in page.opts
+        out['preview'] = page.opts['structure']
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]
+
+test markdown_is_read_into_headings_paragraphs_lists_and_emphasis[]
+    structure['# hello'] eq 'h1{hello}'
+    structure['a *b **c** d* e'] eq 'p{a em{b strong{c} d} e}'
+    structure['***both*** and _under_ and __strong__'] eq 'p{em{strong{both}} and em{under} and strong{strong}}'
+    structure['- a\n  - nested\n- b'] eq 'ul{li{aul{li{nested}}}li{b}}'

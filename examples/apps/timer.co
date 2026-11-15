@@ -1,0 +1,68 @@
+--- Timer: the time gone since it was started or reset, shown in tenths
+--- of a second and as a bar of the duration, stopping at the duration a
+--- slider sets (moved past it, the timer does not start again: Reset does).
+use lory
+use lory.gui
+use common
+
+--- the duration and the time gone (milliseconds), when it was started,
+--- whether it is going, and the frame's time it was last moved on at (-1
+--- before its first frame)
+struct Timer [duration, elapsed, began, going, at]
+
+fn fresh[]
+    Timer[15000.0, 0.0, 0.0, true, -1.0]
+
+--- the time gone moved on, once a frame's time (as a browser's animation
+--- frame moves it on), and the timer stopped at the duration; its first
+--- frame starts it
+fn ticked[s, c]
+    t = lory.time[c]
+    if s.at lt 0.0
+        s.at = t
+        s.began = t
+        s.elapsed = 0.0
+        s.going = true
+        return s
+    if t gt s.at
+        s.at = t
+        if s.going
+            s.elapsed = t - s.began
+            if s.elapsed gte s.duration
+                s.going = false
+    s
+
+fn rate[s]
+    min[s.elapsed / s.duration, 1.0]
+
+fn controls[s, c, room]
+    bar = gui.row[[gui.text['Elapsed Time:'], common.named[gui.progress[rate[s], wide = 300.0], 'timer:progress']], gap = 10.0]
+    gone = common.with_id[gui.text['`common.fixed[s.elapsed / 1000.0, 1]`s'], 'timer:elapsed']
+    duration = gui.row[[gui.text['Duration:'], gui.slider['timer:duration', s.duration, 1.0, 30000.0, step = 1.0], common.with_id[gui.text['`common.fixed[s.duration / 1000.0, 1]`s'], 'timer:duration_words']], gap = 10.0]
+    gui.column[[bar, gone, duration, gui.button['timer:reset', 'Reset']], gap = 12.0]
+
+fn handled[s, shown, c]
+    for ev in shown.events
+        if ev.id eq 'timer:duration' and ev.act eq 'change'
+            s.duration = ev.num
+        if ev.id eq 'timer:reset' and ev.act eq 'press'
+            --- (started again, and moved on at once: nothing has gone)
+            s.elapsed = 0.0
+            s.began = lory.time[c]
+            s.at = lory.time[c]
+            s.going = s.duration gt 0.0
+    s
+
+fn seen[s, tree]
+    out = map['' = '']
+    out['elapsed'] = common.words_by[tree, 'timer:elapsed']
+    out['progress'] = common.number_text[common.node_by[tree, 'timer:progress'].num]
+    out['duration'] = common.words_by[tree, 'timer:duration_words']
+    out
+
+--- (a tree shown here, though nothing calls this, lets Crow type the
+--- painters this module hands to gui: a function held in a node is typed
+--- where a call reaches it, and in a module imported by the one that
+--- shows the page no call does)
+fn _painters_typed[frame]
+    gui.show_at[lory.begin[frame], gui.space[0.0], 0.0, 0.0, 10.0, gui.light[]]

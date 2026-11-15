@@ -1,8 +1,8 @@
 --- A sign-up form drawn by Lory, from Crow (`lory.forms`, `lory.editors`):
 --- a name, an email address and a password, a country found in a
 --- combobox, a code of six digits a box to each, and the terms agreed to,
---- checked by their rules as Semantic UI checks a form when it is sent (a
---- field that shows an error is checked again as it changes); beside them
+--- checked by their rules when the form is sent (a field that shows an
+--- error is checked again as it changes); beside them
 --- a price range set by two thumbs, a rating, and a few words about the
 --- reader written in Markdown and read into a preview as they are typed.
 --- The program's state is a record kept in process memory between frames;

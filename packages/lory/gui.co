@@ -1,12 +1,11 @@
---- Lory's controls (docs/lory-design.md, decision 7): a view is a tree of
+--- Lory's controls: a view is a tree of
 --- the same vocabulary as Crow's `ui` — a column, a row, a panel, a grid,
 --- words, a heading, a label, a button, a field, a slider, a toggle, a
 --- checkbox, a radio group, tabs, a select, a table, a disclosure, a bar
 --- of progress, an area the program draws into — and of what is drawn
 --- over the rest (`layer`: a menu, a popover, a dialog, a drawer, a tip, a
 --- notice), laid out with layout.co's spacing and type scale, drawn by
---- Lory, and answered from the frame's input (docs/components/gui.md says
---- what each is and what it holds to):
+--- Lory, and answered from the frame's input:
 ---
 ---     fn view[s]
 ---         gui.panel[[gui.heading['Settings'], gui.slider['vol', s.vol, 0.0, 1.0], gui.button['save', 'Save']]]
@@ -1070,7 +1069,7 @@ fn _drawn_at[p, n, x, y, w]
 
 --- a tone of the look by name
 --- words in a colour, made readable on what is behind them: a colour
---- whose contrast with it is under 4.5 to 1 (WCAG 2's least for words) is
+--- whose contrast with it is under 4.5 to 1 (the least for words) is
 --- moved toward black on a light ground, toward white on a dark one, until
 --- it reaches it. An accent chosen to fill (a scale's step 9: amber, lime,
 --- sky, mint) had been written as it was, unreadable on a light panel
@@ -1094,11 +1093,11 @@ fn _channel_light[x]
         return x / 12.92
     ((x + 0.055) / 1.055) ^ 2.4
 
---- how light a colour is to the eye (WCAG 2's relative luminance)
+--- how light a colour is to the eye (its relative luminance)
 fn _luminance[k]
     0.2126 * _channel_light[k.r] + 0.7152 * _channel_light[k.g] + 0.0722 * _channel_light[k.b]
 
---- the contrast of two colours, 1 to 21 (WCAG 2's ratio)
+--- the contrast of two colours, 1 to 21
 fn _contrast[a, b]
     la = _luminance[a]
     lb = _luminance[b]
@@ -1691,9 +1690,7 @@ struct Placed [x, y, side, align]
 --- with the other alignment and on the other side, in that order, the
 --- first that fits taken — or, where none does, the one that fits on its
 --- side and leaves the least along it, or else the one that leaves the
---- least in all. As Floating UI places it (Radix's popovers and menus:
---- offset, shift with its limit, flip), number for number
---- (tests/gui/placement.json).
+--- least in all: offset, shift with its limit, flip.
 fn anchored[ax, ay, aw, ah, fw, fh, side, align, gap, page_w, page_h, margin]
     sides = [side, _opposite[side]]
     aligns = [align, align]
@@ -2574,7 +2571,7 @@ fn _slider[p, n, x, y, w, h]
     p
 
 --- the value kept within `lo` and `hi`, on the nearest of its steps from
---- `lo` where it has a `step` (as Radix's slider rounds it)
+--- `lo` where it has a `step`
 fn _stepped[value, lo, hi, step]
     v = max[lo, min[hi, value]]
     if step lte 0.0
@@ -3409,8 +3406,7 @@ test a_table_held_short_chooses_only_a_row_that_is_seen[]
     hidden = show[_frame_of[_press_at[300.0, foot + 26.0], '[]'], tree]
     len[hidden.events] eq 0
 
---- Floating UI's numbers are held in tests/gui/placement.co; these are
---- the rule's plain cases
+--- the placing rule's plain cases
 test a_layer_is_placed_against_its_control_and_flipped_where_the_page_ends[]
     under = anchored[100.0, 100.0, 80.0, 34.0, 160.0, 120.0, 'bottom', 'center', 6.0, 900.0, 700.0, 8.0]
     under.x eq 60.0

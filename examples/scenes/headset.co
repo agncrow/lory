@@ -1,0 +1,418 @@
+--- The gallery's headset scenes: things dragged by a controller's ray, balls shot about a room,
+--- painting in the air, teleporting about a floor, and things chosen by
+--- looking at them or by pointing and pulling the trigger. Each works on
+--- a screen too: the pointer is the controller there, its button the
+--- trigger, and the reader walks with the left stick and turns with the
+--- right in a headset (`space.walk`).
+use math
+use memory
+use lory
+use lory.space
+use lory.geometry
+use lory.xr
+use kit
+
+--- the trigger's state this frame: whether it is down, and whether it
+--- went down or came up since the last
+struct Press [down, began, ended]
+
+--- whether the reader is pulling: the right controller's trigger in a
+--- headset, the pointer's button on a screen
+fn pulling[c]
+    if xr.in_headset[c]
+        return xr.hand[c, 'right'].trigger gt 0.5
+    lory.pressed[c]
+
+--- (the trigger as it was last frame, kept under a key)
+struct Pulled [down]
+
+fn _press[c, key]
+    was = recall[key, Pulled[false]].down
+    pulled_now = pulling[c]
+    remember[key, Pulled[pulled_now]]
+    Press[pulled_now, pulled_now and not was, was and not pulled_now]
+
+--- the room the scenes stand in: a floor six metres a side with a grid
+--- on it (none where the room is seen through the drawing), seen on a
+--- screen from where a standing reader's eyes are
+fn _room[c, id]
+    c = space.walk[c, id]
+    if not space.made['xr.floor']
+        c = space.mesh_form[c, 'xr.floor', geometry.space_form[geometry.plane[6.0, 6.0]]]
+        c = space.mesh_form[c, 'xr.grid', space.grid_form[6.0, 12, lory.hex['#bcbcbc'], lory.hex['#bcbcbc']]]
+    cam = _screen_camera[c, id]
+    c = space.through[c, cam, space.daylight[]]
+    c = space.lamps[c, [space.hemisphere[lory.hex['#bcbcbc'], lory.hex['#a5a5a5'], 3.0], space.directional[lory.white[], 3.0, [0.0, 6.0, 0.0], [0.0, 0.0, 0.0]]]]
+    --- (where the room is seen through the drawing, it is the floor)
+    if lory.seen_through[c]
+        return c
+    c = space.draw[c, 'xr.floor', kit.placed[[0.0, 0.0, 0.0], [0.0 - pi / 2.0, 0.0, 0.0], [1.0, 1.0, 1.0]], space.standard[lory.hex['#eeeeee'], 0.0, 1.0]]
+    space.draw[c, 'xr.grid', kit.at[0.0, 0.001, 0.0], space.basic[lory.white[]]]
+
+--- the camera a screen sees the room through: a standing reader's eyes
+--- where `id`'s reader stands (`space.stand_at`), looking ahead and down
+fn _screen_camera[c, id]
+    st = space.standing[id]
+    kit.camera[c, 50.0, 0.1, 50.0, [st[0], 1.6, st[1] + 3.0], [st[0], 1.0, st[1] - 1.0]]
+
+--- the reader's ray: the right controller's in a headset, the pointer's
+--- through the screen's camera
+fn aim[c, id]
+    space.pointer_ray[c, _screen_camera[c, id]]
+
+--- where along a ray `d` metres is
+fn along[r, d]
+    [r.from[0] + r.way[0] * d, r.from[1] + r.way[1] * d, r.from[2] + r.way[2] * d]
+
+--- ---- dragging ----
+
+--- the things to drag, where each stands, which is held (-1: none) and
+--- how far along the ray it was taken
+struct Drag [places, held, reach]
+
+fn drag_start[]
+    places = push[push[push[push[push[[], [-0.6, 1.0, -1.2]], [-0.2, 1.1, -1.4]], [0.2, 1.0, -1.2]], [0.6, 1.1, -1.4]], [0.0, 1.4, -1.6]]
+    Drag[places, -1, 0.0]
+
+fn _cube_form[]
+    geometry.space_form[geometry.box[0.25, 0.25, 0.25]]
+
+--- of the things, the one the ray meets first, and how far along: [index,
+--- distance], the index -1 where it meets none
+fn nearest_of[r, places]
+    best = -1
+    near = 0.0
+    if not r.there
+        return [best, near]
+    f = _cube_form[]
+    i = 0
+    while i lt len[places]
+        p = places[i]
+        met = space.hits[r, f, kit.at[p[0], p[1], p[2]]]
+        if len[met] gt 0 and (best lt 0 or met[0].distance lt near)
+            best = i
+            near = met[0].distance
+        i = i + 1
+    [0.0 + best, near]
+
+--- the drag after this frame: taken where the trigger is pulled on a
+--- thing, carried along the ray as far as it was taken, let go where the
+--- trigger is let go
+fn dragged[d, r, p]
+    if p.began
+        found = nearest_of[r, d.places]
+        d.held = int[found[0]]
+        d.reach = found[1]
+    if p.ended or not p.down
+        d.held = -1
+    if d.held gte 0 and r.there
+        out = []
+        i = 0
+        while i lt len[d.places]
+            if i eq d.held
+                out = push[out, along[r, d.reach]]
+            else
+                out = push[out, d.places[i]]
+            i = i + 1
+        d.places = out
+    d
+
+fn dragging[c, t]
+    c = _room[c, 'dragging']
+    if not space.made['dragging.cube']
+        c = space.mesh_form[c, 'dragging.cube', _cube_form[]]
+    d = dragged[recall['scenes.drag', drag_start[]], aim[c, 'dragging'], _press[c, 'scenes.drag.trigger']]
+    remember['scenes.drag', d]
+    i = 0
+    while i lt len[d.places]
+        p = d.places[i]
+        look = space.standard[kit.hsl[(0.0 + i) / 5.0, 0.7, 0.5], 0.0, 0.7]
+        if i eq d.held
+            look = space.glowing[look, lory.hex['#555555']]
+        c = space.draw[c, 'dragging.cube', kit.at[p[0], p[1], p[2]], look]
+        i = i + 1
+    c
+
+--- ---- the ball shooter ----
+
+--- the balls flying about the room: six numbers each (where, and how
+--- fast each way), and when the last was shot
+struct Shots [balls, last]
+
+--- the room's half width and its height, and a ball's radius
+fn _walls[]
+    [3.0, 3.0, 0.08]
+
+--- the shots a moment `dt` seconds later: each ball moved on and turned
+--- back by the walls, floor and ceiling it meets, losing a little speed
+fn flown[s, dt]
+    w = _walls[]
+    out = []
+    n = len[s.balls] / 6
+    i = 0
+    while i lt n
+        k = i * 6
+        b = [s.balls[k], s.balls[k + 1], s.balls[k + 2], s.balls[k + 3], s.balls[k + 4], s.balls[k + 5]]
+        j = 0
+        while j lt 3
+            b[j] = b[j] + b[j + 3] * dt
+            lo = 0.0 - w[0] + w[2]
+            hi = w[0] - w[2]
+            if j eq 1
+                lo = w[2]
+                hi = w[1] - w[2]
+            if b[j] lt lo
+                b[j] = lo + (lo - b[j])
+                b[j + 3] = abs[b[j + 3]] * 0.8
+            if b[j] gt hi
+                b[j] = hi - (b[j] - hi)
+                b[j + 3] = 0.0 - abs[b[j + 3]] * 0.8
+            j = j + 1
+        for x in b
+            out = push[out, x]
+        i = i + 1
+    s.balls = out
+    s
+
+--- a ball shot along the ray, four metres a second, at most a hundred
+--- flying (the oldest goes)
+fn shot[s, r, t]
+    from = along[r, 0.1]
+    ball = [from[0], from[1], from[2], r.way[0] * 4.0, r.way[1] * 4.0, r.way[2] * 4.0]
+    balls = s.balls
+    if len[balls] gte 600
+        balls = slice[balls, 6, len[balls]]
+    for x in ball
+        balls = push[balls, x]
+    s.balls = balls
+    s.last = t
+    s
+
+fn ball_shooter[c, t]
+    c = _room[c, 'shooter']
+    if not space.made['shooter.room']
+        c = space.mesh_form[c, 'shooter.room', geometry.space_form[geometry.box[6.0, 3.0, 6.0]]]
+        c = space.mesh_copies[c, 'shooter.ball', geometry.space_form[geometry.icosahedron[0.08, 3]], [], [1.0, 1.0, 1.0]]
+    if not lory.seen_through[c]
+        c = space.draw[c, 'shooter.room', kit.at[0.0, 1.5, 0.0], space.back_sided[space.matte[lory.hex['#808080']]]]
+    s = recall['scenes.shots', Shots[[], -1000.0]]
+    s = flown[s, min[0.05, lory.dt[c]]]
+    r = aim[c, 'shooter']
+    if pulling[c] and r.there and t - s.last gt 100.0
+        s = shot[s, r, t]
+    remember['scenes.shots', s]
+    n = len[s.balls] / 6
+    if n eq 0
+        return c
+    matrices = []
+    colors = []
+    i = 0
+    while i lt n
+        m = kit.at[s.balls[i * 6], s.balls[i * 6 + 1], s.balls[i * 6 + 2]]
+        for v in m
+            matrices = push[matrices, v]
+        k = space.linear_of[kit.hsl[(0.0 + i % 10) / 10.0, 0.8, 0.5]]
+        colors = push[push[push[colors, k[0]], k[1]], k[2]]
+        i = i + 1
+    c = space.move_copies[c, 'shooter.ball', matrices, colors]
+    space.draw[c, 'shooter.ball', kit.at[0.0, 0.0, 0.0], space.matte[lory.white[]]]
+
+--- ---- painting ----
+
+--- dabs of paint left in the air: where each is, three numbers each
+struct Dabs [at]
+
+--- the brush's tip: at the controller (a little before it), on a screen
+--- two and a half metres along the pointer's ray
+fn _brush_tip[c, r]
+    if xr.in_headset[c]
+        return along[r, 0.05]
+    along[r, 2.5]
+
+--- the strokes with the brush's tip added where the trigger is held and
+--- the tip has moved a centimetre since the last dab: at
+--- most four thousand dabs, the oldest going first
+fn painted[dabs, tip, down]
+    if not down
+        return dabs
+    n = len[dabs]
+    if n gte 3
+        dx = tip[0] - dabs[n - 3]
+        dy = tip[1] - dabs[n - 2]
+        dz = tip[2] - dabs[n - 1]
+        if dx * dx + dy * dy + dz * dz lt 0.0001
+            return dabs
+    out = dabs
+    if n gte 12000
+        out = slice[dabs, 3, n]
+    push[push[push[out, tip[0]], tip[1]], tip[2]]
+
+fn paint[c, t]
+    c = _room[c, 'paint']
+    if not space.made['paint.dab']
+        c = space.mesh_copies[c, 'paint.dab', geometry.space_form[geometry.sphere[0.02, 8, 6]], [], []]
+    r = aim[c, 'paint']
+    dabs = recall['scenes.paint', Dabs[[]]].at
+    if r.there
+        dabs = painted[dabs, _brush_tip[c, r], pulling[c]]
+    remember['scenes.paint', Dabs[dabs]]
+    n = len[dabs] / 3
+    if n eq 0
+        return c
+    matrices = []
+    i = 0
+    while i lt n
+        for v in kit.at[dabs[i * 3], dabs[i * 3 + 1], dabs[i * 3 + 2]]
+            matrices = push[matrices, v]
+        i = i + 1
+    c = space.move_copies[c, 'paint.dab', matrices, []]
+    space.draw[c, 'paint.dab', kit.at[0.0, 0.0, 0.0], space.standard[lory.hex['#3366ff'], 0.0, 0.4]]
+
+--- ---- teleporting ----
+
+--- where the ray meets the floor (y = 0) within the room, or none
+struct Spot [there, x, z]
+
+fn floor_spot[r]
+    if not r.there or r.way[1] gt -0.01
+        return Spot[false, 0.0, 0.0]
+    d = (0.0 - r.from[1]) / r.way[1]
+    x = r.from[0] + r.way[0] * d
+    z = r.from[2] + r.way[2] * d
+    Spot[abs[x] lte 3.0 and abs[z] lte 3.0, x, z]
+
+--- a ring marks where the ray meets the floor; letting go of the trigger
+--- there moves the reader to stand on it
+fn teleport[c, t]
+    c = _room[c, 'teleport']
+    if not space.made['teleport.ring']
+        c = space.mesh_form[c, 'teleport.ring', geometry.space_form[geometry.ring[0.15, 0.2, 32]]]
+        c = space.mesh_form[c, 'teleport.post', geometry.space_form[geometry.cylinder[0.1, 0.1, 1.0, 16]]]
+    i = 0
+    while i lt 4
+        a = (0.0 + i) * pi / 2.0 + 0.4
+        c = space.draw[c, 'teleport.post', kit.at[2.2 * cos[a], 0.5, 2.2 * sin[a]], space.standard[kit.hsl[(0.0 + i) / 4.0, 0.6, 0.5], 0.0, 0.6]]
+        i = i + 1
+    p = _press[c, 'scenes.teleport.trigger']
+    spot = floor_spot[aim[c, 'teleport']]
+    if spot.there
+        c = space.draw[c, 'teleport.ring', kit.placed[[spot.x, 0.01, spot.z], [0.0 - pi / 2.0, 0.0, 0.0], [1.0, 1.0, 1.0]], space.two_sided[space.basic[lory.hex['#22cc88']]]]
+        if p.ended
+            c = space.stand_at[c, 'teleport', spot.x, spot.z]
+    c
+
+--- ---- choosing ----
+
+--- eight balls in a ring at eye height, which are chosen, and which the
+--- reader has looked at since when
+struct Choice [chosen, gazed, since]
+
+fn _ball_place[i]
+    a = (0.0 + i) * pi / 4.0
+    [1.6 * sin[a], 1.4, 0.0 - 1.6 * cos[a]]
+
+fn ball_places[]
+    out = []
+    for i in range[8]
+        out = push[out, _ball_place[i]]
+    out
+
+--- of the balls, the one the ray meets first (-1: none)
+fn ball_hit[r]
+    if not r.there
+        return -1
+    f = geometry.space_form[geometry.sphere[0.18, 16, 12]]
+    best = -1
+    near = 0.0
+    i = 0
+    while i lt 8
+        p = _ball_place[i]
+        met = space.hits[r, f, kit.at[p[0], p[1], p[2]]]
+        if len[met] gt 0 and (best lt 0 or met[0].distance lt near)
+            best = i
+            near = met[0].distance
+        i = i + 1
+    best
+
+fn _toggled[chosen, k]
+    out = []
+    i = 0
+    while i lt len[chosen]
+        if i eq k
+            out = push[out, not chosen[i]]
+        else
+            out = push[out, chosen[i]]
+        i = i + 1
+    out
+
+fn choice_start[]
+    Choice[[false, false, false, false, false, false, false, false], -1, 0.0]
+
+--- the ray the reader looks along: from between the eyes the way the
+--- head faces (in a headset), the pointer's on a screen
+fn gaze[c, id]
+    if not xr.in_headset[c]
+        return aim[c, id]
+    h = xr.head[c]
+    way = [sin[h[3]] * cos[h[4]], sin[h[4]], 0.0 - cos[h[3]] * cos[h[4]]]
+    st = space.standing[id]
+    co = cos[st[2]]
+    si = sin[st[2]]
+    from = [co * h[0] + si * h[2] + st[0], h[1], 0.0 - si * h[0] + co * h[2] + st[1]]
+    space.Ray[from, [co * way[0] + si * way[2], way[1], 0.0 - si * way[0] + co * way[2]], true]
+
+--- the choice after a frame of looking: a ball looked at a whole second
+--- running is chosen (or let go), looked away from and back to, timed
+--- anew (look to select)
+fn looked[ch, k, t]
+    if k ne ch.gazed
+        ch.gazed = k
+        ch.since = t
+        return ch
+    if k gte 0 and t - ch.since gte 1000.0
+        ch.chosen = _toggled[ch.chosen, k]
+        ch.since = t
+    ch
+
+--- the choice after a frame of pointing: the ball the ray meets when the
+--- trigger is pulled is chosen (or let go) (point to select)
+fn pointed_at[ch, k, p]
+    ch.gazed = k
+    if p.began and k gte 0
+        ch.chosen = _toggled[ch.chosen, k]
+    ch
+
+fn _balls_drawn[c, ch, t]
+    if not space.made['choose.ball']
+        c = space.mesh_form[c, 'choose.ball', geometry.space_form[geometry.sphere[0.18, 16, 12]]]
+        c = space.mesh_form[c, 'choose.dwell', geometry.space_form[geometry.ring[0.2, 0.24, 32]]]
+    i = 0
+    while i lt 8
+        p = _ball_place[i]
+        k = lory.hex['#8899aa']
+        if ch.chosen[i]
+            k = lory.hex['#ffaa22']
+        look = space.standard[k, 0.0, 0.5]
+        if i eq ch.gazed
+            look = space.glowing[look, lory.hex['#333333']]
+        c = space.draw[c, 'choose.ball', kit.at[p[0], p[1], p[2]], look]
+        i = i + 1
+    c
+
+fn look_to_select[c, t]
+    c = _room[c, 'look']
+    ch = looked[recall['scenes.look', choice_start[]], ball_hit[gaze[c, 'look']], t]
+    remember['scenes.look', ch]
+    c = _balls_drawn[c, ch, t]
+    if ch.gazed lt 0
+        return c
+    --- (a ring before the ball looked at, growing as the second runs)
+    p = _ball_place[ch.gazed]
+    grown = max[0.05, min[1.0, (t - ch.since) / 1000.0]]
+    space.draw[c, 'choose.dwell', space.times[space.camera_at[space.lens[50.0, 1.0, 0.1, 10.0], p, [0.0, 1.4, 0.0], [0.0, 1.0, 0.0]].world, kit.placed[[0.0, 0.0, -0.2], [0.0, 0.0, 0.0], [grown, grown, 1.0]]], space.two_sided[space.basic[lory.white[]]]]
+
+fn point_to_select[c, t]
+    c = _room[c, 'point']
+    ch = pointed_at[recall['scenes.point', choice_start[]], ball_hit[aim[c, 'point']], _press[c, 'scenes.point.trigger']]
+    remember['scenes.point', ch]
+    _balls_drawn[c, ch, t]

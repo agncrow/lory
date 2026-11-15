@@ -1,6 +1,6 @@
 --- What lory.datagrid makes of fixed rows, written out, to diff the
 --- interpreter's run against the compiled program's: merges and chosen
---- cells, TOAST UI Grid's keymap with copying and pasting, edits checked
+--- cells, the keymap with copying and pasting, edits checked
 --- and saved, a feed's changes and their flashes, a sheet's formulas with
 --- undo, and the boxes a grid paints.
 use lory.datatable as dt

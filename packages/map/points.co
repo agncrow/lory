@@ -141,7 +141,7 @@ fn _gathered[above, z, radius]
 fn groups_at[t, zoom]
     if t.count lt 0 or len[t.level_from] eq 0
         return _no_groups[]
-    z = max[t.lowest, min[t.highest, geo.js_floor[zoom]]]
+    z = max[t.lowest, min[t.highest, geo.floor_whole[zoom]]]
     k = int[t.highest - z]
     k = min[k, len[t.level_from] - 1]
     from = t.level_from[k]
@@ -217,8 +217,8 @@ fn heat_color[t]
 --- `cell` pixels apart (row by row): each point's bell, 0.4 at its
 --- middle, fading to nothing `radius` pixels away
 fn heat_grid[pts, k, ox, oy, w, h, radius, cell]
-    cols = int[geo.js_ceil[w / cell]] + 1
-    rows = int[geo.js_ceil[h / cell]] + 1
+    cols = int[geo.ceil_whole[w / cell]] + 1
+    rows = int[geo.ceil_whole[h / cell]] + 1
     heat = for i in range[cols * rows]
         0.0
     sigma = radius / 3.0
@@ -228,10 +228,10 @@ fn heat_grid[pts, k, ox, oy, w, h, radius, cell]
         px = pts.xs[p] * k - ox
         py = pts.ys[p] * k - oy
         if px gt 0.0 - radius and px lt w + radius and py gt 0.0 - radius and py lt h + radius
-            i0 = int[max[0.0, geo.js_floor[(px - radius) / cell]]]
-            i1 = int[min[0.0 + cols - 1, geo.js_ceil[(px + radius) / cell]]]
-            j0 = int[max[0.0, geo.js_floor[(py - radius) / cell]]]
-            j1 = int[min[0.0 + rows - 1, geo.js_ceil[(py + radius) / cell]]]
+            i0 = int[max[0.0, geo.floor_whole[(px - radius) / cell]]]
+            i1 = int[min[0.0 + cols - 1, geo.ceil_whole[(px + radius) / cell]]]
+            j0 = int[max[0.0, geo.floor_whole[(py - radius) / cell]]]
+            j1 = int[min[0.0 + rows - 1, geo.ceil_whole[(py + radius) / cell]]]
             j = j0
             while j lte j1
                 i = i0
@@ -251,8 +251,8 @@ fn draw_heat[c, pts, k, ox, oy, bx, by, w, h, s, radius]
     if len[pts.xs] eq 0
         return c
     cell = max[4.0, min[12.0, radius / 4.0]]
-    cols = int[geo.js_ceil[w / cell]] + 1
-    rows = int[geo.js_ceil[h / cell]] + 1
+    cols = int[geo.ceil_whole[w / cell]] + 1
+    rows = int[geo.ceil_whole[h / cell]] + 1
     heat = heat_grid[pts, k, ox, oy, w, h, radius, cell]
     j = 0
     while j lt rows - 1

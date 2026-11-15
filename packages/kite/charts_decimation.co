@@ -1,11 +1,8 @@
---- A long line thinned to what its chart can show, as Chart.js thins it:
+--- A long line thinned to what its chart can show:
 --- by largest triangles (LTTB: each bucket of points keeps the one that
 --- makes the largest triangle with the point kept before it and the mean
 --- of the next bucket), or by least and most (each pixel's width of
 --- points keeps its first and last and its lowest and highest).
----
---- These are Chart.js 4.5.1's decimation rules, read from it and written
---- anew (see charts_model.co).
 use math
 use charts_model
 
@@ -43,7 +40,7 @@ fn decimated[ch0, width]
         d = d + 1
     ch
 
---- whether a dataset is one Chart.js thins: a line of points standing
+--- whether a dataset is one that is thinned: a line of points standing
 --- on an x axis of numbers or times
 fn _thinned_here[ch, s]
     if charts_model.form_of[ch, s] ne 'line' or len[s.xs] eq 0

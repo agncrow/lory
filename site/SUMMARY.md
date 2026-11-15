@@ -2,40 +2,48 @@
 
 [Lory](README.md)
 
+# Start here
+
+- [How Lory works](site/guide/how.md)
+- [In a headset: VR and AR](site/guide/headset.md)
+
+# Controls and style
+
+- [Controls](site/guide/controls.md)
+- [Colours and themes](site/guide/colors.md)
+- [Icons](site/guide/icons.md)
+- [Motion](site/guide/motion.md)
+
 # Components
 
-- [The catalog](docs/components/README.md)
-  - [Controls: lory.gui](docs/components/gui.md)
-  - [Colours and themes: lory.colors](docs/components/colors.md)
-  - [Icons: lory.icons](docs/components/icons.md)
-  - [Motion: lory.motion](docs/components/motion.md)
-  - [3D shapes: lory.geometry](docs/components/3d.md)
-  - [3D scenes: lory.space, lory.controls and lory.flip](docs/components/space.md)
-  - [Navigation and display: lory.navigation and lory.display](docs/components/display.md)
-  - [Menus, overlays and disclosure](docs/components/menus.md)
-  - [Forms and editors: lory.forms and lory.editors](docs/components/forms.md)
-  - [Tables: lory.datatable](docs/components/datatable.md)
-  - [Grids: lory.datagrid](docs/components/datagrid.md)
-  - [Maps: the map package](docs/components/maps.md)
-  - [Dates and times: lory.calendar and lory.pickers](docs/components/pickers.md)
-  - [Carousels: lory.carousel](docs/components/carousel.md)
-  - [Charts: kite.charts](docs/components/charts.md)
-  - [Scrolling: lory.scrolling](docs/components/scrolling.md)
-  - [Drag and drop: lory.drag](docs/components/drag.md)
-  - [Model files: lory.models](docs/components/models.md)
-  - [Sound: the sound package](docs/components/sound.md)
-  - [In a headset: VR and AR](docs/components/xr.md)
+- [Forms, validation and editors](site/guide/forms.md)
+- [Menus, dialogs and notifications](site/guide/menus.md)
+- [Navigation and display](site/guide/display.md)
+- [Dates, times and calendars](site/guide/pickers.md)
+- [Carousels and sliders](site/guide/carousel.md)
+- [Scrolling and parallax](site/guide/scrolling.md)
+- [Drag and drop](site/guide/drag.md)
+
+# Data
+
+- [Data table](site/guide/tables.md)
+- [Data grid and spreadsheet](site/guide/datagrid.md)
+- [Charts](site/guide/charts.md)
+- [Maps](site/guide/maps.md)
+
+# 3D and sound
+
+- [3D shapes and scenes](site/guide/3d.md)
+- [3D model files](site/guide/models.md)
+- [Sound](site/guide/sound.md)
 
 # Examples
 
-- [Examples, running live](examples/README.md)
-  - [three.js's examples](docs/examples/threejs.md)
-  - [Vue's examples](docs/examples/vue.md)
-  - [Solid's examples](docs/examples/solid.md)
-  - [Lit's examples](docs/examples/lit.md)
+- [Every example, running](examples/README.md)
+- [Small apps](site/guide/apps.md)
+- [Reactive state](site/guide/reactive.md)
+- [Component patterns](site/guide/patterns.md)
 
-# Design
+# About
 
-- [The design](docs/lory-design.md)
-- [Progress](docs/progress.md)
-- [Licensing](LICENSING.md)
+- [License](LICENSING.md)

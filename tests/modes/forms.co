@@ -1,7 +1,7 @@
 --- What lory.forms and lory.editors compute on fixed inputs, written out
 --- to diff the interpreter's run against the compiled program's
 --- (tests/modes.sh): masks, an autocomplete's filter, a number input's
---- words, files' sizes, JavaScript's numbers, a form's rules and its
+--- words, files' sizes, numbers read and written, a form's rules and its
 --- words, a rating's and a slider's steps, a code's typing, a colour
 --- picker's codes, Markdown's trees, an image editor's points, and a
 --- sign-up form's controls laid out and answering a frame.
@@ -46,13 +46,13 @@ for one in [['5', '12', '2'], ['a', '12', '2'], ['.', '12', '2'], ['-', '12', '0
     t = forms.number_typed[one[0], one[1], at, at, places = 2]
     log['typed “`one[0]`” into “`one[1]`”: `t.how` “`t.words`” `t.caret`']
 
---- files' sizes, and JavaScript's numbers
+--- files' sizes, and numbers read and written
 for bytes in [0, 999, 1000, 1024, 1536, 1048576, 1500000, 123456789, 9999999999]
     kibi = forms.file_size[bytes, base = 1024]
     log['size `bytes`: `forms.file_size[bytes]` / `kibi`']
 for words in ['0', ' 12 ', '1e3', '0x1f', '0b101', '0o17', 'Infinity', '-Infinity', 'abc', '', '.5', '5.']
     v = forms.js_number[words]
-    log['Number(“`words`”) = `forms.js_text[v]`']
+    log['number of “`words`”: `forms.js_text[v]`']
 for words in ['0', '100', '-40', '37.5', 'x', '1e2', '']
     log['°C `words` → °F `forms.fahrenheit_of[words]`; °F `words` → °C `forms.celsius_of[words]`']
 
@@ -81,7 +81,7 @@ for key in ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End', 'P
 for v in [-5.0, 0.0, 12.4, 12.5, 99.9, 120.0]
     log['snapped `v`: `_digits[forms.snapped[v, 0.0, 100.0, 5.0]]` `_digits[forms.snapped[v, 0.0, 100.0, 0.1]]`']
 
---- a code's typing, as Radix types it
+--- a code's typing: characters, Backspace, Delete and the arrows
 code = forms.code_of['']
 for step in ['1', '2', 'x', 'Backspace', 'Backspace', '987', 'Home', 'Delete', 'End', 'ArrowLeft', '5']
     if len[step] gt 1 and not matches[step, '^[0-9]+$']
@@ -107,11 +107,11 @@ for state in ['idle', 'busy', 'done', 'failed']
     log['badge `state` → `forms.badge_next[state]`']
 more = forms.ticked_after[['a', 'b'], 'c', true]
 fewer = forms.ticked_after[['a', 'b', 'c'], 'b', false]
-turned_round = forms.reversed['Hello, Vue']
+turned_round = forms.reversed['Hello, Lory']
 log['ticked `more` `fewer`; reversed `turned_round`']
 
 --- Markdown's trees
-for text in ['# Title', 'Title\n=====\n\nSub\n---', 'one line\nand another\n\nnew paragraph', 'hard  \nbreak and\\\nbackslash', '***both*** and **_mixed_**', 'snake_case_words and *a*b and 2*3*4', '\`code\` and \`\` co\`de \`\`', '\`\`\`js\nlet a = 1;\n\`\`\`\nafter', '    indented\n    code', '- a\n  - nested\n- b', '1. one\n\n   para in item\n2. two', '> outer\n>> inner', '---\n***', '[link](http://x.co) and [titled](/a "Title")', '\\*escaped\\*', '**bold [link](u) bold**', '']
+for text in ['# Title', 'Title\n=====\n\nSub\n---', 'one line\nand another\n\nnew paragraph', 'hard  \nbreak and\\\nbackslash', '***both*** and **_mixed_**', 'snake_case_words and *a*b and 2*3*4', '\`code\` and \`\` co\`de \`\`', '\`\`\`js\nlet a = 1;\n\`\`\`\nafter', '    indented\n    code', '- a\n  - nested\n- b', '1. one\n\n   para in item\n2. two', '> outer\n>> inner', '---\n***', '[link](/x) and [titled](/a "Title")', '\\*escaped\\*', '**bold [link](u) bold**', '']
     shown = replace[text, '\n', '⏎']
     log['markdown “`shown`” → `editors.tree_text[editors.markdown_blocks[text]]`']
 

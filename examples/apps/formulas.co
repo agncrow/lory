@@ -1,0 +1,1154 @@
+--- The Spreadsheet's formulas, read and worked out: a cell that starts
+--- with `=` holds an expression, its cell names (`A1`, a capital and one
+--- or two digits standing alone) written as calls `get(column, row)`,
+--- and the expression read as the body of a function that returns it.
+--- Its value is a number, words, a truth, undefined or null; what goes
+--- wrong is shown as `#ERROR` followed by the error: a SyntaxError for
+--- what does not read (the function's closing brace being what an
+--- unfinished formula meets), a ReferenceError for a name nothing
+--- defines, a TypeError for a column or row past the sheet's, and a
+--- RangeError for a cell that reaches itself.
+---
+--- Read: numbers (decimal, `0x`, `0o`, `0b` and old octal), words in
+--- either quotes, `true`, `false`, `null`, `undefined`, `NaN`, `Infinity`;
+--- `get`, `Math`'s functions and constants, `Number`, `String`,
+--- `Boolean`, `isNaN` and `isFinite`; the operators `+ - * / % **`,
+--- comparisons, `== != === !==`, `&& || ??`, `! ~ typeof void`, the
+--- bitwise ones, `? :` and the comma; members (`Math.PI`, words'
+--- `.length`) and calls. Not read: any other name (it is "not defined"
+--- here), methods of words and numbers, objects and
+--- arrays written out, assignment, functions written in a formula.
+use math
+use bits
+use common
+
+--- a formula's value: `form` is 'number', 'string', 'boolean',
+--- 'undefined', 'null', 'function' (named in `words`) or 'math' (the
+--- `Math` object)
+struct Value [form, number, words]
+
+fn number_of[x]
+    Value['number', x, '']
+
+fn words_of[t]
+    Value['string', 0.0, t]
+
+fn truth_of[b]
+    if b
+        return Value['boolean', 1.0, '']
+    Value['boolean', 0.0, '']
+
+fn undefined_value[]
+    Value['undefined', 0.0, '']
+
+fn null_value[]
+    Value['null', 0.0, '']
+
+--- a value worked out, or the error thrown (`error` not '')
+struct Outcome [value, error]
+
+fn _ok[v]
+    Outcome[v, '']
+
+fn _thrown[problem]
+    Outcome[undefined_value[], problem]
+
+--- ---- a value as a number, words or a truth ----
+
+fn to_number[v]
+    if v.form eq 'number'
+        return v.number
+    if v.form eq 'string'
+        return common.number_read[v.words]
+    if v.form eq 'boolean'
+        return v.number
+    if v.form eq 'null'
+        return 0.0
+    nan
+
+fn to_text[v]
+    if v.form eq 'number'
+        return common.number_text[v.number]
+    if v.form eq 'string'
+        return v.words
+    if v.form eq 'boolean'
+        if v.number gt 0.5
+            return 'true'
+        return 'false'
+    if v.form eq 'null'
+        return 'null'
+    if v.form eq 'math'
+        return '[object Math]'
+    if v.form eq 'function'
+        return 'function `v.words`() { [native code] }'
+    'undefined'
+
+fn truthy[v]
+    if v.form eq 'number'
+        return v.number ne 0.0 and v.number eq v.number
+    if v.form eq 'string'
+        return v.words ne ''
+    if v.form eq 'boolean'
+        return v.number gt 0.5
+    if v.form eq 'function' or v.form eq 'math'
+        return true
+    false
+
+--- what a cell shows of a value: nothing for undefined and null, `{}`
+--- for `Math` (it has nothing of its own to write)
+fn shown[v]
+    if v.form eq 'undefined' or v.form eq 'null'
+        return ''
+    if v.form eq 'math'
+        return '{}'
+    to_text[v]
+
+fn _type_name[v]
+    if v.form eq 'null' or v.form eq 'math'
+        return 'object'
+    v.form
+
+--- ---- the formula's words ----
+
+--- a word of the formula: `form` is 'num', 'str', 'name', 'punct', 'end'
+--- (the function's closing brace) or 'bad' (what cannot be read)
+struct Tok [form, words, number]
+
+fn _digit[ch]
+    ch in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+fn _letter[ch]
+    c = code[ch]
+    (c gte 65 and c lte 90) or (c gte 97 and c lte 122) or ch eq '_' or ch eq '$'
+
+fn _wordy[ch]
+    _letter[ch] or _digit[ch]
+
+fn _punctuators[]
+    ['>>>=', '>>>', '===', '!==', '**=', '<<=', '>>=', '...', '**', '==', '!=', '<=', '>=', '&&', '||', '??', '<<', '>>', '=>', '++', '--', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '+', '-', '*', '/', '%', '<', '>', '!', '~', '&', '|', '^', '(', ')', '[', ']', '{', '}', ',', '?', ':', '.', ';', '=']
+
+--- the punctuator starting at `i`, the longest that does, or ''
+fn _punctuator_at[chars, i]
+    for p in _punctuators[]
+        k = len[p]
+        if i + k lte len[chars] and join[slice[chars, i, i + k], ''] eq p
+            return p
+    ''
+
+--- a number's digits in a base, read
+fn _value_in_base[digits, base]
+    total = 0.0
+    for ch in digits
+        total = total * float[base] + float[_hex_digit[ch]]
+    total
+
+fn _hex_digit[ch]
+    low = lower[ch]
+    if _digit[low]
+        return code[low] - 48
+    if low in ['a', 'b', 'c', 'd', 'e', 'f']
+        return code[low] - 87
+    99
+
+--- the formula's words, ending with the closing brace of the function
+--- it is read as
+fn tokens[text]
+    chars = split[text, '']
+    k = len[chars]
+    out = slice[[Tok['end', '}', 0.0]], 0, 0]
+    i = 0
+    while i lt k
+        ch = chars[i]
+        if ch eq ' ' or ch eq '\t' or ch eq '\n' or ch eq '\r'
+            i = i + 1
+        else if _digit[ch] or (ch eq '.' and i + 1 lt k and _digit[chars[i + 1]])
+            start = i
+            base = 10
+            if ch eq '0' and i + 1 lt k and lower[chars[i + 1]] in ['x', 'o', 'b']
+                mark = lower[chars[i + 1]]
+                base = 16
+                if mark eq 'o'
+                    base = 8
+                if mark eq 'b'
+                    base = 2
+                i = i + 2
+                digits = slice[chars, 0, 0]
+                while i lt k and _hex_digit[chars[i]] lt base
+                    digits = push[digits, chars[i]]
+                    i = i + 1
+                if len[digits] eq 0 or (i lt k and _wordy[chars[i]])
+                    return push[out, Tok['bad', '', 0.0]]
+                out = push[out, Tok['num', join[slice[chars, start, i], ''], _value_in_base[digits, base]]]
+            else
+                while i lt k and _digit[chars[i]]
+                    i = i + 1
+                whole = join[slice[chars, start, i], '']
+                --- (an old octal number: a 0 and digits under 8)
+                old = len[whole] gt 1 and starts[whole, '0']
+                if old
+                    for d in split[whole, '']
+                        if not (d in ['0', '1', '2', '3', '4', '5', '6', '7'])
+                            old = false
+                if old
+                    if i lt k and (_wordy[chars[i]] or chars[i] eq '.')
+                        return push[out, Tok['bad', '', 0.0]]
+                    out = push[out, Tok['num', whole, _value_in_base[split[whole, ''], 8]]]
+                else
+                    if i lt k and chars[i] eq '.'
+                        i = i + 1
+                        while i lt k and _digit[chars[i]]
+                            i = i + 1
+                    if i lt k and lower[chars[i]] eq 'e'
+                        j = i + 1
+                        if j lt k and (chars[j] eq '+' or chars[j] eq '-')
+                            j = j + 1
+                        if j lt k and _digit[chars[j]]
+                            i = j
+                            while i lt k and _digit[chars[i]]
+                                i = i + 1
+                        else
+                            return push[out, Tok['bad', '', 0.0]]
+                    if i lt k and _wordy[chars[i]]
+                        return push[out, Tok['bad', '', 0.0]]
+                    literal = join[slice[chars, start, i], '']
+                    out = push[out, Tok['num', literal, common.number_read[literal]]]
+        else if _letter[ch]
+            start = i
+            while i lt k and _wordy[chars[i]]
+                i = i + 1
+            out = push[out, Tok['name', join[slice[chars, start, i], ''], 0.0]]
+        else if ch eq '\'' or ch eq '"'
+            quote = ch
+            i = i + 1
+            got = ''
+            closed = false
+            while i lt k and not closed
+                c = chars[i]
+                if c eq quote
+                    closed = true
+                    i = i + 1
+                else if c eq '\\' and i + 1 lt k
+                    esc = chars[i + 1]
+                    i = i + 2
+                    if esc eq 'n'
+                        got = '`got`\n'
+                    else if esc eq 't'
+                        got = '`got`\t'
+                    else if esc eq 'r'
+                        got = '`got`\r'
+                    else if esc eq '0'
+                        got = '`got``char[0]`'
+                    else if esc eq 'x' and i + 1 lt k
+                        got = '`got``char[_hex_digit[chars[i]] * 16 + _hex_digit[chars[i + 1]]]`'
+                        i = i + 2
+                    else if esc eq 'u' and i + 3 lt k
+                        n = 0
+                        for d in slice[chars, i, i + 4]
+                            n = n * 16 + _hex_digit[d]
+                        got = '`got``char[n]`'
+                        i = i + 4
+                    else
+                        got = '`got``esc`'
+                else
+                    got = '`got``c`'
+                    i = i + 1
+            if not closed
+                return push[out, Tok['bad', '', 0.0]]
+            out = push[out, Tok['str', got, 0.0]]
+        else
+            p = _punctuator_at[chars, i]
+            if p eq ''
+                return push[out, Tok['bad', '', 0.0]]
+            out = push[out, Tok['punct', p, 0.0]]
+            i = i + len[p]
+    push[out, Tok['end', '}', 0.0]]
+
+--- ---- the formula read: a tree of what it says ----
+
+--- a part of the formula: what it is (`op`: 'num', 'str', 'name',
+--- 'true', 'false', 'null', 'unary', 'binary', 'and', 'or', 'nullish',
+--- 'cond', 'comma', 'call', 'member', 'index'), its words or number, and
+--- the parts inside it, by their places in the tree's list
+struct Ex [op, words, number, kids]
+
+--- reading: the words, where it has read to, the parts so far, the error
+--- found ('' for none), and the part just read
+struct Reading [toks, at, parts, error, top]
+
+fn _tok[r]
+    r.toks[r.at]
+
+fn _is[r, words]
+    t = _tok[r]
+    (t.form eq 'punct' or t.form eq 'name') and t.words eq words
+
+--- the keywords, which name nothing
+fn _keyword[words]
+    words in ['break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'export', 'extends', 'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'new', 'return', 'super', 'switch', 'this', 'throw', 'try', 'var', 'while', 'with', 'let', 'yield', 'enum', 'static', 'await']
+
+--- the error for meeting this word where it does not fit
+fn _unexpected[t]
+    if t.form eq 'bad'
+        return 'Invalid or unexpected token'
+    if t.form eq 'num'
+        return 'Unexpected number'
+    if t.form eq 'str'
+        return 'Unexpected string'
+    if t.form eq 'name' and not _keyword[t.words] and not (t.words in ['true', 'false', 'null', 'typeof', 'void'])
+        return 'Unexpected identifier \'`t.words`\''
+    'Unexpected token \'`t.words`\''
+
+fn _failed[r]
+    if r.error eq ''
+        r.error = _unexpected[_tok[r]]
+    r
+
+fn _part[r, op, words, number, kids]
+    r.parts = push[r.parts, Ex[op, words, number, kids]]
+    r.top = len[r.parts] - 1
+    r
+
+fn _no_kids[]
+    slice[[0], 0, 0]
+
+fn _binary_rank[t]
+    if t.form ne 'punct'
+        if t.form eq 'name' and (t.words eq 'in' or t.words eq 'instanceof')
+            return 7
+        return 0
+    w = t.words
+    if w eq '??' or w eq '||'
+        return 1
+    if w eq '&&'
+        return 2
+    if w eq '|'
+        return 3
+    if w eq '^'
+        return 4
+    if w eq '&'
+        return 5
+    if w in ['==', '!=', '===', '!==']
+        return 6
+    if w in ['<', '>', '<=', '>=']
+        return 7
+    if w in ['<<', '>>', '>>>']
+        return 8
+    if w eq '+' or w eq '-'
+        return 9
+    if w in ['*', '/', '%']
+        return 10
+    if w eq '**'
+        return 11
+    0
+
+fn _primary[r]
+    t = _tok[r]
+    if t.form eq 'num'
+        r.at = r.at + 1
+        return _part[r, 'num', t.words, t.number, _no_kids[]]
+    if t.form eq 'str'
+        r.at = r.at + 1
+        return _part[r, 'str', t.words, 0.0, _no_kids[]]
+    if t.form eq 'name'
+        if t.words in ['true', 'false', 'null']
+            r.at = r.at + 1
+            return _part[r, t.words, t.words, 0.0, _no_kids[]]
+        if _keyword[t.words]
+            return _failed[r]
+        r.at = r.at + 1
+        return _part[r, 'name', t.words, 0.0, _no_kids[]]
+    if _is[r, '(']
+        r.at = r.at + 1
+        r = _expression[r]
+        if r.error ne ''
+            return r
+        if not _is[r, ')']
+            return _failed[r]
+        r.at = r.at + 1
+        return r
+    _failed[r]
+
+--- a primary with its calls, members and indexes after it
+fn _postfix[r]
+    r = _primary[r]
+    going = true
+    while going and r.error eq ''
+        if _is[r, '(']
+            callee = r.top
+            r.at = r.at + 1
+            given = [callee]
+            if _is[r, ')']
+                r.at = r.at + 1
+            else
+                reading = true
+                while reading and r.error eq ''
+                    r = _assignment[r]
+                    if r.error eq ''
+                        given = push[given, r.top]
+                        if _is[r, ',']
+                            r.at = r.at + 1
+                        else if _is[r, ')']
+                            r.at = r.at + 1
+                            reading = false
+                        else
+                            r = _failed[r]
+            if r.error eq ''
+                r = _part[r, 'call', '', 0.0, given]
+        else if _is[r, '.']
+            whole = r.top
+            r.at = r.at + 1
+            t = _tok[r]
+            if t.form ne 'name'
+                return _failed[r]
+            r.at = r.at + 1
+            r = _part[r, 'member', t.words, 0.0, [whole]]
+        else if _is[r, '[']
+            whole = r.top
+            r.at = r.at + 1
+            r = _expression[r]
+            if r.error eq ''
+                if not _is[r, ']']
+                    return _failed[r]
+                r.at = r.at + 1
+                r = _part[r, 'index', '', 0.0, [whole, r.top]]
+        else
+            going = false
+    r
+
+fn _unary[r]
+    t = _tok[r]
+    if (t.form eq 'punct' and t.words in ['-', '+', '!', '~']) or (t.form eq 'name' and t.words in ['typeof', 'void'])
+        r.at = r.at + 1
+        r = _unary[r]
+        if r.error ne ''
+            return r
+        r = _part[r, 'unary', t.words, 0.0, [r.top]]
+        if _is[r, '**']
+            r.error = 'Unary operator used immediately before exponentiation expression. Parenthesis must be used to disambiguate operator precedence'
+        return r
+    if t.form eq 'punct' and (t.words eq '++' or t.words eq '--')
+        r.error = 'Invalid left-hand side expression in prefix operation'
+        return r
+    r = _postfix[r]
+    if r.error eq '' and (_is[r, '++'] or _is[r, '--'])
+        r.error = 'Invalid left-hand side expression in postfix operation'
+    r
+
+--- operators from the level `least` up, each binding its own level's
+--- tighter than the one before it (`**` binds to its right)
+fn _binary[r, least]
+    r = _unary[r]
+    going = true
+    while going and r.error eq ''
+        t = _tok[r]
+        level = _binary_rank[t]
+        if level eq 0 or level lt least
+            going = false
+        else
+            left = r.top
+            r.at = r.at + 1
+            next = level + 1
+            if level eq 11
+                next = 11
+            r = _binary[r, next]
+            if r.error eq ''
+                op = 'binary'
+                if t.words eq '&&'
+                    op = 'and'
+                if t.words eq '||'
+                    op = 'or'
+                if t.words eq '??'
+                    op = 'nullish'
+                r = _part[r, op, t.words, 0.0, [left, r.top]]
+    r
+
+fn _conditional[r]
+    r = _binary[r, 1]
+    if r.error ne '' or not _is[r, '?']
+        return r
+    test_part = r.top
+    r.at = r.at + 1
+    r = _assignment[r]
+    if r.error ne ''
+        return r
+    yes_part = r.top
+    if not _is[r, ':']
+        return _failed[r]
+    r.at = r.at + 1
+    r = _assignment[r]
+    if r.error ne ''
+        return r
+    _part[r, 'cond', '', 0.0, [test_part, yes_part, r.top]]
+
+fn _assignment[r]
+    r = _conditional[r]
+    if r.error eq ''
+        t = _tok[r]
+        if t.form eq 'punct' and t.words in ['=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=', '|=', '^=']
+            r.error = 'Invalid left-hand side in assignment'
+            if r.parts[r.top].op eq 'name' or r.parts[r.top].op eq 'member' or r.parts[r.top].op eq 'index'
+                r.error = 'assignment is not read in a formula here'
+    r
+
+fn _expression[r]
+    r = _assignment[r]
+    while r.error eq '' and _is[r, ',']
+        left = r.top
+        r.at = r.at + 1
+        r = _assignment[r]
+        if r.error eq ''
+            r = _part[r, 'comma', ',', 0.0, [left, r.top]]
+    r
+
+--- the formula read as the body `return <formula>` of a function: the
+--- part returned (-1 for nothing: `return` alone), or the SyntaxError
+fn read_formula[text]
+    r = Reading[tokens[text], 0, slice[[Ex['', '', 0.0, _no_kids[]]], 0, 0], '', -1]
+    if _tok[r].form eq 'end' or _is[r, ';']
+        r.top = -1
+        return r
+    r = _expression[r]
+    if r.error ne ''
+        return r
+    returned = r.top
+    --- (what follows a `;` is statements the return never reaches; they
+    --- are read all the same)
+    while r.error eq '' and _is[r, ';']
+        r.at = r.at + 1
+        if _tok[r].form ne 'end' and not _is[r, ';']
+            r = _expression[r]
+    if r.error eq '' and _tok[r].form ne 'end'
+        r = _failed[r]
+    r.top = returned
+    r
+
+--- ---- a sheet's cells worked out ----
+
+fn columns[]
+    5
+
+fn rows[]
+    20
+
+--- how deep cells may reach through one another before the sheet gives
+--- up (a cell that reaches itself gets there either way)
+fn _deepest[]
+    120
+
+--- the cell names in the formula written as calls to `get` (a capital
+--- and one or two digits, standing alone)
+fn with_calls[text]
+    chars = split[text, '']
+    k = len[chars]
+    out = ''
+    i = 0
+    while i lt k
+        ch = chars[i]
+        c = code[ch]
+        matched = 0
+        if c gte 65 and c lte 90 and (i eq 0 or not _wordy[chars[i - 1]])
+            for size in [2, 1]
+                if matched eq 0 and i + size lt k + 1
+                    digits = true
+                    j = 1
+                    while j lte size
+                        if i + j gte k or not _digit[chars[i + j]]
+                            digits = false
+                        j = j + 1
+                    if digits and (i + size + 1 gte k or not _wordy[chars[i + size + 1]])
+                        matched = size
+        if matched gt 0
+            row = join[slice[chars, i + 1, i + 1 + matched], '']
+            out = '`out`get(`c - 65`,`row`)'
+            i = i + 1 + matched
+        else
+            out = '`out``ch`'
+            i = i + 1
+    out
+
+--- the cell's words, or what its formula comes to (an error
+--- in it shown as `#ERROR …`); a RangeError past the deepest is thrown
+fn worked_out[cells, words, depth]
+    if depth gt _deepest[]
+        return _thrown['RangeError: Maximum call stack size exceeded']
+    if not starts[words, '=']
+        return _ok[words_of[words]]
+    r = read_formula[with_calls[slice[words, 1, len[words]]]]
+    if r.error ne ''
+        return _ok[words_of['#ERROR SyntaxError: `r.error`']]
+    if r.top lt 0
+        return _ok[undefined_value[]]
+    got = _evaluated[cells, r.parts, r.top, depth]
+    if got.error ne ''
+        return _ok[words_of['#ERROR `got.error`']]
+    got
+
+--- the name a value used as a key makes
+fn _key_of[v]
+    to_text[v]
+
+--- the place a key names in a list of `count`, or -1 (only a whole
+--- number's own words name a place)
+fn _place_of[key, count]
+    i = 0
+    while i lt count
+        if key eq '`i`'
+            return i
+        i = i + 1
+    -1
+
+--- the cell's value, a number where it reads as a
+--- finite one
+fn cell_value[cells, c, r, depth]
+    col = _place_of[_key_of[c], columns[]]
+    if col lt 0
+        return _thrown['TypeError: Cannot read properties of undefined (reading \'`_key_of[r]`\')']
+    row = _place_of[_key_of[r], rows[]]
+    if row lt 0
+        return _thrown['TypeError: Cannot read properties of undefined (reading \'startsWith\')']
+    got = worked_out[cells, cells[col][row], depth + 1]
+    if got.error ne ''
+        return got
+    n = to_number[got.value]
+    if n eq n and abs[n] lt inf
+        return _ok[number_of[n]]
+    got
+
+--- ---- the operators ----
+
+--- a whole number of 32 bits, as the bitwise operators read one
+fn _int32[x]
+    if x ne x or abs[x] eq inf
+        return 0
+    t = x
+    if abs[t] lt 4503599627370496.0
+        if t lt 0.0
+            t = float[ceil[t]]
+        else
+            t = float[floor[t]]
+    m = t - float[floor[t / 4294967296.0]] * 4294967296.0
+    if m gte 2147483648.0
+        m = m - 4294967296.0
+    floor[m]
+
+fn _uint32[x]
+    n = _int32[x]
+    if n lt 0
+        return n + 4294967296
+    n
+
+--- each of the 32 bits of two numbers put together by `rule` ('&', '|' or
+--- '^')
+fn _bitwise[a, b, rule]
+    x = _uint32[a]
+    y = _uint32[b]
+    out = 0
+    unit = 1
+    i = 0
+    while i lt 32
+        p = (x / unit) % 2
+        q = (y / unit) % 2
+        bit = 0
+        if rule eq '&' and p eq 1 and q eq 1
+            bit = 1
+        if rule eq '|' and (p eq 1 or q eq 1)
+            bit = 1
+        if rule eq '^' and p ne q
+            bit = 1
+        out = out + bit * unit
+        unit = unit * 2
+        i = i + 1
+    if out gte 2147483648
+        out = out - 4294967296
+    float[out]
+
+fn _shifted[a, b, how]
+    by = _uint32[b] % 32
+    if how eq '<<'
+        n = _uint32[a]
+        i = 0
+        while i lt by
+            n = (n * 2) % 4294967296
+            i = i + 1
+        if n gte 2147483648
+            n = n - 4294967296
+        return float[n]
+    if how eq '>>>'
+        n = _uint32[a]
+        i = 0
+        while i lt by
+            n = n / 2
+            i = i + 1
+        return float[n]
+    n = _int32[a]
+    i = 0
+    while i lt by
+        n = floor[float[n] / 2.0]
+        i = i + 1
+    float[n]
+
+--- `a ** b`
+fn _power[a, b]
+    if b ne b
+        return nan
+    if b eq 0.0
+        return 1.0
+    if a ne a
+        return nan
+    if abs[a] eq 1.0 and abs[b] eq inf
+        return nan
+    a ^ b
+
+--- whether two values are the same as `===` holds them
+fn _strictly[a, b]
+    if a.form ne b.form
+        return false
+    if a.form eq 'number' or a.form eq 'boolean'
+        return a.number eq b.number
+    if a.form eq 'string' or a.form eq 'function'
+        return a.words eq b.words
+    true
+
+--- whether two values are the same as `==` holds them
+fn _loosely[a, b]
+    if a.form eq b.form
+        return _strictly[a, b]
+    nothing = ['undefined', 'null']
+    if a.form in nothing or b.form in nothing
+        return a.form in nothing and b.form in nothing
+    if a.form eq 'boolean'
+        return _loosely[number_of[a.number], b]
+    if b.form eq 'boolean'
+        return _loosely[a, number_of[b.number]]
+    if (a.form eq 'number' and b.form eq 'string') or (a.form eq 'string' and b.form eq 'number')
+        return to_number[a] eq to_number[b]
+    if a.form eq 'math' or a.form eq 'function'
+        return _loosely[words_of[to_text[a]], b]
+    if b.form eq 'math' or b.form eq 'function'
+        return _loosely[a, words_of[to_text[b]]]
+    false
+
+--- `<`: words to words by their characters, else
+--- as numbers (where either is NaN, neither is less)
+fn _less[a, b]
+    p = a
+    q = b
+    if p.form eq 'math' or p.form eq 'function'
+        p = words_of[to_text[p]]
+    if q.form eq 'math' or q.form eq 'function'
+        q = words_of[to_text[q]]
+    if p.form eq 'string' and q.form eq 'string'
+        return p.words lt q.words
+    x = to_number[p]
+    y = to_number[q]
+    x lt y
+
+fn _less_or_same[a, b]
+    p = a
+    q = b
+    if p.form eq 'string' and q.form eq 'string'
+        return p.words lte q.words
+    x = to_number[p]
+    y = to_number[q]
+    x lte y
+
+fn _operated[op, a, b]
+    if op eq '+'
+        if a.form eq 'string' or b.form eq 'string' or a.form eq 'math' or a.form eq 'function' or b.form eq 'math' or b.form eq 'function'
+            return words_of['`to_text[a]``to_text[b]`']
+        return number_of[to_number[a] + to_number[b]]
+    if op eq '-'
+        return number_of[to_number[a] - to_number[b]]
+    if op eq '*'
+        return number_of[to_number[a] * to_number[b]]
+    if op eq '/'
+        return number_of[_divided[to_number[a], to_number[b]]]
+    if op eq '%'
+        return number_of[common.remainder_of[to_number[a], to_number[b]]]
+    if op eq '**'
+        return number_of[_power[to_number[a], to_number[b]]]
+    if op eq '<'
+        return truth_of[_less[a, b]]
+    if op eq '>'
+        return truth_of[_less[b, a]]
+    if op eq '<='
+        return truth_of[_less_or_same[a, b]]
+    if op eq '>='
+        return truth_of[_less_or_same[b, a]]
+    if op eq '=='
+        return truth_of[_loosely[a, b]]
+    if op eq '!='
+        return truth_of[not _loosely[a, b]]
+    if op eq '==='
+        return truth_of[_strictly[a, b]]
+    if op eq '!=='
+        return truth_of[not _strictly[a, b]]
+    if op eq '&' or op eq '|' or op eq '^'
+        return number_of[_bitwise[to_number[a], to_number[b], op]]
+    if op eq '<<' or op eq '>>' or op eq '>>>'
+        return number_of[_shifted[to_number[a], to_number[b], op]]
+    undefined_value[]
+
+--- a number divided as a float divides (0 / 0 is NaN, x / 0 infinite)
+fn _divided[x, y]
+    if y eq 0.0
+        if x ne x or x eq 0.0
+            return nan
+        if (x gt 0.0) eq (1.0 / y gt 0.0)
+            return inf
+        return 0.0 - inf
+    x / y
+
+--- ---- Math, and the other functions a formula may call ----
+
+fn _math_constant[name]
+    if name eq 'PI'
+        return pi
+    if name eq 'E'
+        return e
+    if name eq 'LN2'
+        return ln[2.0]
+    if name eq 'LN10'
+        return ln[10.0]
+    if name eq 'LOG2E'
+        return 1.0 / ln[2.0]
+    if name eq 'LOG10E'
+        return 1.0 / ln[10.0]
+    if name eq 'SQRT2'
+        return sqrt[2.0]
+    if name eq 'SQRT1_2'
+        return sqrt[0.5]
+    nan
+
+fn _math_functions[]
+    ['abs', 'ceil', 'floor', 'round', 'trunc', 'sign', 'sqrt', 'cbrt', 'exp', 'log', 'log2', 'log10', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'pow', 'min', 'max', 'hypot']
+
+fn _member[v, name]
+    if v.form eq 'math'
+        if name in _math_functions[]
+            return _ok[Value['function', 0.0, 'Math.`name`']]
+        if name in ['PI', 'E', 'LN2', 'LN10', 'LOG2E', 'LOG10E', 'SQRT2', 'SQRT1_2']
+            return _ok[number_of[_math_constant[name]]]
+        return _ok[undefined_value[]]
+    if v.form eq 'undefined' or v.form eq 'null'
+        return _thrown['TypeError: Cannot read properties of `v.form` (reading \'`name`\')']
+    if v.form eq 'string'
+        if name eq 'length'
+            return _ok[number_of[float[len[v.words]]]]
+        chars = split[v.words, '']
+        i = _place_of[name, len[chars]]
+        if i gte 0
+            return _ok[words_of[chars[i]]]
+    _ok[undefined_value[]]
+
+--- a whole number (floor, ceil, trunc) of a float, kept a float (a number
+--- past 2^52 is whole already)
+fn _whole[x, how]
+    if x ne x or abs[x] gte 4503599627370496.0
+        return x
+    if how eq 'floor'
+        return float[floor[x]]
+    if how eq 'ceil'
+        return float[ceil[x]]
+    if x lt 0.0
+        return float[ceil[x]]
+    float[floor[x]]
+
+fn _math[name, given]
+    xs = slice[[0.0], 0, 0]
+    for a in given
+        xs = push[xs, to_number[a]]
+    x = nan
+    if len[xs] gt 0
+        x = xs[0]
+    y = nan
+    if len[xs] gt 1
+        y = xs[1]
+    if name eq 'abs'
+        return abs[x]
+    if name eq 'floor' or name eq 'ceil' or name eq 'trunc'
+        return _whole[x, name]
+    if name eq 'round'
+        if x ne x or abs[x] gte 4503599627370496.0
+            return x
+        return common.rounded[x]
+    if name eq 'sign'
+        if x ne x or x eq 0.0
+            return x
+        if x gt 0.0
+            return 1.0
+        return -1.0
+    if name eq 'sqrt'
+        if x lt 0.0
+            return nan
+        return sqrt[x]
+    if name eq 'cbrt'
+        if x ne x or x eq 0.0 or abs[x] eq inf
+            return x
+        if x lt 0.0
+            return 0.0 - (0.0 - x) ^ (1.0 / 3.0)
+        return x ^ (1.0 / 3.0)
+    if name eq 'exp'
+        return exp[x]
+    if name eq 'log' or name eq 'log2' or name eq 'log10'
+        if x lt 0.0 or x ne x
+            return nan
+        if x eq 0.0
+            return 0.0 - inf
+        if name eq 'log2'
+            return log2[x]
+        if name eq 'log10'
+            return log10[x]
+        return ln[x]
+    if name eq 'sin'
+        return sin[x]
+    if name eq 'cos'
+        return cos[x]
+    if name eq 'tan'
+        return tan[x]
+    if name eq 'asin'
+        return asin[x]
+    if name eq 'acos'
+        return acos[x]
+    if name eq 'atan'
+        return atan[x]
+    if name eq 'atan2'
+        return atan2[x, y]
+    if name eq 'pow'
+        return _power[x, y]
+    if name eq 'hypot'
+        total = 0.0
+        for v in xs
+            if abs[v] eq inf
+                return inf
+            total = total + v * v
+        return sqrt[total]
+    if name eq 'max' or name eq 'min'
+        best = 0.0 - inf
+        if name eq 'min'
+            best = inf
+        for v in xs
+            if v ne v
+                return nan
+            if name eq 'max' and v gt best
+                best = v
+            if name eq 'min' and v lt best
+                best = v
+        return best
+    nan
+
+--- the names a formula may use that nothing in it defines
+fn _global[name]
+    if name eq 'get' or name eq 'Number' or name eq 'String' or name eq 'Boolean' or name eq 'isNaN' or name eq 'isFinite'
+        return _ok[Value['function', 0.0, name]]
+    if name eq 'Math'
+        return _ok[Value['math', 0.0, 'Math']]
+    if name eq 'NaN'
+        return _ok[number_of[nan]]
+    if name eq 'Infinity'
+        return _ok[number_of[inf]]
+    if name eq 'undefined'
+        return _ok[undefined_value[]]
+    _thrown['ReferenceError: `name` is not defined']
+
+--- the callee's words as the error names it in "… is not a function"
+fn _callee_words[parts, i]
+    p = parts[i]
+    if p.op eq 'name'
+        return p.words
+    if p.op eq 'member'
+        return '`_callee_words[parts, p.kids[0]]`.`p.words`'
+    '(intermediate value)'
+
+fn _called[cells, f, given, depth]
+    name = f.words
+    first = undefined_value[]
+    if len[given] gt 0
+        first = given[0]
+    if name eq 'get'
+        second = undefined_value[]
+        if len[given] gt 1
+            second = given[1]
+        return cell_value[cells, first, second, depth]
+    if name eq 'Number'
+        if len[given] eq 0
+            return _ok[number_of[0.0]]
+        return _ok[number_of[to_number[first]]]
+    if name eq 'String'
+        if len[given] eq 0
+            return _ok[words_of['']]
+        return _ok[words_of[to_text[first]]]
+    if name eq 'Boolean'
+        return _ok[truth_of[truthy[first]]]
+    if name eq 'isNaN'
+        n = to_number[first]
+        return _ok[truth_of[n ne n]]
+    if name eq 'isFinite'
+        n = to_number[first]
+        return _ok[truth_of[n eq n and abs[n] lt inf]]
+    if starts[name, 'Math.']
+        return _ok[number_of[_math[slice[name, 5, len[name]], given]]]
+    _ok[undefined_value[]]
+
+--- ---- the tree worked out ----
+
+fn _evaluated[cells, parts, i, depth]
+    p = parts[i]
+    op = p.op
+    if op eq 'num'
+        return _ok[number_of[p.number]]
+    if op eq 'str'
+        return _ok[words_of[p.words]]
+    if op eq 'true'
+        return _ok[truth_of[true]]
+    if op eq 'false'
+        return _ok[truth_of[false]]
+    if op eq 'null'
+        return _ok[null_value[]]
+    if op eq 'name'
+        return _global[p.words]
+    if op eq 'unary'
+        got = _evaluated[cells, parts, p.kids[0], depth]
+        if got.error ne ''
+            return got
+        v = got.value
+        if p.words eq '-'
+            return _ok[number_of[0.0 - to_number[v]]]
+        if p.words eq '+'
+            return _ok[number_of[to_number[v]]]
+        if p.words eq '!'
+            return _ok[truth_of[not truthy[v]]]
+        if p.words eq '~'
+            return _ok[number_of[float[0 - _int32[to_number[v]] - 1]]]
+        if p.words eq 'typeof'
+            return _ok[words_of[_type_name[v]]]
+        return _ok[undefined_value[]]
+    if op eq 'and' or op eq 'or' or op eq 'nullish'
+        left = _evaluated[cells, parts, p.kids[0], depth]
+        if left.error ne ''
+            return left
+        v = left.value
+        if op eq 'and' and not truthy[v]
+            return left
+        if op eq 'or' and truthy[v]
+            return left
+        if op eq 'nullish' and not (v.form eq 'undefined' or v.form eq 'null')
+            return left
+        return _evaluated[cells, parts, p.kids[1], depth]
+    if op eq 'cond'
+        test_got = _evaluated[cells, parts, p.kids[0], depth]
+        if test_got.error ne ''
+            return test_got
+        if truthy[test_got.value]
+            return _evaluated[cells, parts, p.kids[1], depth]
+        return _evaluated[cells, parts, p.kids[2], depth]
+    if op eq 'comma'
+        left = _evaluated[cells, parts, p.kids[0], depth]
+        if left.error ne ''
+            return left
+        return _evaluated[cells, parts, p.kids[1], depth]
+    if op eq 'binary'
+        left = _evaluated[cells, parts, p.kids[0], depth]
+        if left.error ne ''
+            return left
+        right = _evaluated[cells, parts, p.kids[1], depth]
+        if right.error ne ''
+            return right
+        if p.words eq 'in' or p.words eq 'instanceof'
+            return _thrown['TypeError: Right-hand side of \'`p.words`\' is not an object']
+        return _ok[_operated[p.words, left.value, right.value]]
+    if op eq 'member'
+        whole = _evaluated[cells, parts, p.kids[0], depth]
+        if whole.error ne ''
+            return whole
+        return _member[whole.value, p.words]
+    if op eq 'index'
+        whole = _evaluated[cells, parts, p.kids[0], depth]
+        if whole.error ne ''
+            return whole
+        key = _evaluated[cells, parts, p.kids[1], depth]
+        if key.error ne ''
+            return key
+        return _member[whole.value, _key_of[key.value]]
+    if op eq 'call'
+        callee = _evaluated[cells, parts, p.kids[0], depth]
+        if callee.error ne ''
+            return callee
+        given = slice[[undefined_value[]], 0, 0]
+        k = 1
+        while k lt len[p.kids]
+            got = _evaluated[cells, parts, p.kids[k], depth]
+            if got.error ne ''
+                return got
+            given = push[given, got.value]
+            k = k + 1
+        if callee.value.form ne 'function'
+            return _thrown['TypeError: `_callee_words[parts, p.kids[0]]` is not a function']
+        return _called[cells, callee.value, given, depth]
+    _ok[undefined_value[]]
+
+--- what a cell shows: its words, or what its formula comes to
+fn cell_shown[cells, words]
+    got = worked_out[cells, words, 0]
+    if got.error ne ''
+        return '#ERROR `got.error`'
+    shown[got.value]
+
+--- ---- tests ----
+
+fn _sheet[]
+    out = slice[[['']], 0, 0]
+    c = 0
+    while c lt columns[]
+        col = slice[[''], 0, 0]
+        r = 0
+        while r lt rows[]
+            col = push[col, '']
+            r = r + 1
+        out = push[out, col]
+        c = c + 1
+    out
+
+fn _with[cells, c, r, words]
+    col = cells[c]
+    col[r] = words
+    cells[c] = col
+    cells
+
+test formulas_come_to_their_values[]
+    cells = _with[_with[_sheet[], 0, 0, '5'], 1, 0, '=A0*3']
+    cell_shown[cells, '=A0+B0'] eq '20'
+    cell_shown[cells, '=A0/0'] eq 'Infinity'
+    cell_shown[cells, '=1/3'] eq '0.3333333333333333'
+    cell_shown[cells, '=-A0+0.5'] eq '-4.5'
+    cell_shown[cells, '=A0%3'] eq '2'
+    cell_shown[cells, '=(A0+1)*2-B0/5'] eq '9'
+    cell_shown[cells, '=2**10'] eq '1024'
+    cell_shown[cells, '="a"+1'] eq 'a1'
+    cell_shown[cells, '=A0>3 ? "big" : "small"'] eq 'big'
+    cell_shown[cells, '=Math.max(A0, B0, 7)'] eq '15'
+    cell_shown[cells, '=0x10 + 010'] eq '24'
+    cell_shown[cells, '=A19'] eq '0'
+    cell_shown[cells, '=null'] eq ''
+    cell_shown[cells, '='] eq ''
+    cell_shown[cells, '=5 & 3 | 8'] eq '9'
+    cell_shown[cells, '=-1 >>> 28'] eq '15'
+    cell_shown[cells, '=typeof A0'] eq 'number'
+
+test what_goes_wrong_is_written_as_an_error[]
+    cells = _sheet[]
+    cell_shown[cells, '=('] eq '#ERROR SyntaxError: Unexpected token \'}\''
+    cell_shown[cells, '=1+'] eq '#ERROR SyntaxError: Unexpected token \'}\''
+    cell_shown[cells, '=1 2'] eq '#ERROR SyntaxError: Unexpected number'
+    cell_shown[cells, '=1 x'] eq '#ERROR SyntaxError: Unexpected identifier \'x\''
+    cell_shown[cells, '=@'] eq '#ERROR SyntaxError: Invalid or unexpected token'
+    cell_shown[cells, '=foo'] eq '#ERROR ReferenceError: foo is not defined'
+    cell_shown[cells, '=F0'] eq '#ERROR TypeError: Cannot read properties of undefined (reading \'0\')'
+    cell_shown[cells, '=get(0, 20)'] eq '#ERROR TypeError: Cannot read properties of undefined (reading \'startsWith\')'
+    cell_shown[cells, '=Math.foo(1)'] eq '#ERROR TypeError: Math.foo is not a function'
+    looped = _with[cells, 3, 3, '=D3']
+    cell_shown[looped, '=D3'] eq '#ERROR RangeError: Maximum call stack size exceeded'
+
+test cell_names_become_calls_as_the_example_writes_them[]
+    with_calls['A1+B12*C123+AB1+a1'] eq 'get(0,1)+get(1,12)*C123+AB1+a1'
+    with_calls['E3*E3'] eq 'get(4,3)*get(4,3)'

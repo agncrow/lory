@@ -1,9 +1,9 @@
 --- Kite at work outside a browser, with the same output in both modes
 --- (`crow test --packages` runs this interpreted and compiled and compares
---- the two): a chart of made-up bars and klinecharts' indicators, laid out
+--- the two): a chart of made-up bars and its indicators, laid out
 --- in a frame and drawn; the words its tooltip and its axes show; a drag,
 --- a swipe, the wheel, a pinch, the keys, a double click and a glide moving
---- it as TradingView's chart moves; a drawing tool put down by two clicks;
+--- it; a drawing tool put down by two clicks;
 --- and a VWAP scanner's card. Nothing here needs a page: what a frame would
 --- paint is counted, as a test counts it.
 use math
@@ -117,7 +117,7 @@ for ind in k.inds
     log['  `ind.name`: `legends_of[views.indicator_legends[k, ind, last]]`']
 
 
---- ---- moving it as TradingView's chart moves ----
+--- ---- moving it ----
 
 log['--- moving it']
 --- (a press, then moves across and down: the bars follow the pointer,
@@ -240,7 +240,7 @@ log['the pointer over bar `at`: `legends_of[views.candle_legends[k, at]]`']
 --- ---- drawing tools ----
 
 log['--- drawing tools']
-log['`len[kite.tools[]]` tools, as klinecharts has them']
+log['`len[kite.tools[]]` tools built in']
 a = kite.point[k, t0 + 250.0 * 60000.0, 101.0]
 z = kite.point[k, t0 + 290.0 * 60000.0, 103.0]
 k = kite.overlay[k, 'segment', [a, z], 'candle_pane', '']

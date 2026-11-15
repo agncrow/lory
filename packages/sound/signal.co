@@ -1,10 +1,8 @@
---- Signals: a parameter's value over time, scheduled as Tone's Param and
---- Signal schedule it, and the arithmetic Tone's signal operators do to
---- samples. A parameter is a list of changes in time order: a value set at
+--- Signals: a parameter's value over time, scheduled change by change,
+--- and the arithmetic signal operators do to samples. A parameter is a list of changes in time order: a value set at
 --- once, a straight or exponential ramp that ends at a time, an approach
 --- toward a value with a time constant. Its value at any time is answered
---- as Tone's own `getValueAtTime` answers it (held to it number for
---- number), and rendered sample by sample as the page's audio thread
+--- exactly, and rendered sample by sample as the page's audio thread
 --- renders the same changes.
 ---
 ---     p = signal.param[1.0]
@@ -25,8 +23,7 @@ struct Point [at, how, value, constant]
 --- there instead)
 struct Param [initial, points, least]
 
---- (times within a microsecond are the same time, as Tone's timelines
---- compare them)
+--- (times within a microsecond are the same time)
 fn _near[]
     0.000001
 
@@ -65,8 +62,7 @@ fn _added[p, point]
     p.points = concat[push[slice[p.points, 0, i + 1], point], slice[p.points, i + 1, len[p.points]]]
     p
 
---- the changes from `t` on taken away (one at `t` too), as Tone's
---- `cancelScheduledValues` takes them
+--- the changes from `t` on taken away (one at `t` too)
 fn cancelled[p, t]
     n = len[p.points]
     if n eq 1
@@ -103,8 +99,7 @@ fn _value_before[p, i]
         return p.initial
     p.points[i - 1].value
 
---- the parameter's value at a time (before 0 as at 0), as Tone's
---- `getValueAtTime` answers it
+--- the parameter's value at a time (before 0 as at 0)
 fn value_at[p, at_time]
     t = max[at_time, 0.0]
     i = _search[p, t]
@@ -157,7 +152,7 @@ fn target_at[p, value, t, constant]
     _added[p, Point[0.0 + t, 'target', 0.0 + value, 0.0 + constant]]
 
 --- the changes after `t` taken away and the value it had at `t` held from
---- there, as Tone's `cancelAndHoldAtTime` holds it
+--- there
 fn held_at[p, t]
     v = value_at[p, t]
     i = _search[p, t]
@@ -195,8 +190,7 @@ fn exponential_to[p, value, ramp, t]
     exponential_at[ramp_point[p, t], value, t + ramp]
 
 --- an approach to `value` from `t` that arrives in `ramp` seconds: an
---- exponential approach for nine tenths of it, a straight line the rest,
---- as Tone's `exponentialApproachValueAtTime` makes it
+--- exponential approach for nine tenths of it, a straight line the rest
 fn approach_at[p, value, t, ramp]
     constant = ln[ramp + 1.0] / ln[200.0]
     p = target_at[p, value, t, constant]
@@ -265,44 +259,44 @@ fn rendered[p, rate, from, n]
 
 --- ---- signal arithmetic ----
 
---- samples from 0 to 1 laid between `low` and `high` (Tone's Scale)
+--- samples from 0 to 1 laid between `low` and `high`
 fn scale[xs, low, high]
     xs * (high - low) + low
 
---- each sample's size raised to a power (Tone's Pow, which takes the size)
+--- each sample's size raised to a power (the size, so a sign is lost)
 fn power[xs, exponent]
     abs[xs] .^ exponent
 
 --- samples from 0 to 1 bent by a power, then laid between `low` and
---- `high` (Tone's ScaleExp)
+--- `high`
 fn scale_exp[xs, low, high, exponent]
     scale[power[xs, exponent], low, high]
 
---- each sample's sign turned over (Tone's Negate)
+--- each sample's sign turned over
 fn negated[xs]
     0.0 - xs
 
---- the curve Tone's Abs lays (1024 points from -1 to 1):
+--- the curve that gives a sample's size (1024 points from -1 to 1):
 --- each point's size, and nothing within a thousandth of nothing
 fn _size_curve[]
     ramp = abs[(0.0 + range[1024]) / 1023.0 * 2.0 - 1.0]
     where[ramp lt 0.001, 0.0 * ramp, ramp]
 
---- each sample's size (Tone's Abs, read through its curve, so what is
+--- each sample's size (read through a curve, so what is
 --- near nothing comes out a little small)
 fn size_of[xs]
     waveshaped[xs, _size_curve[]]
 
---- 1 where a sample is above `value`, 0 elsewhere (Tone's GreaterThan)
+--- 1 where a sample is above `value`, 0 elsewhere
 fn greater_than[xs, value]
     where[xs gt value, 0.0 * xs + 1.0, 0.0 * xs]
 
---- samples from -1 to 1 made gains from 0 to 1 (Tone's AudioToGain)
+--- samples from -1 to 1 made gains from 0 to 1
 fn audio_to_gain[xs]
     (xs + 1.0) * 0.5
 
---- gains from 0 to 1 made samples from -1 to 1 (Tone's GainToAudio: a
---- gain's size, doubled, less one)
+--- gains from 0 to 1 made samples from -1 to 1 (a gain's
+--- size, doubled, less one)
 fn gain_to_audio[xs]
     ramp = (0.0 + range[1024]) / 1023.0 * 2.0 - 1.0
     waveshaped[xs, abs[ramp] * 2.0 - 1.0]
@@ -319,7 +313,7 @@ fn waveshaped[xs, curve]
     (1.0 - f) .* curve[k] + f .* curve[k + 1.0]
 
 --- a curve of `n` points from a power of each point's place (a waveshaper
---- made by a rule: Tone's Pow lays 8192 of them)
+--- made by a rule; a power bends best through 8192)
 fn power_curve[exponent, n]
     x = (0.0 + range[n]) / (n - 1.0) * 2.0 - 1.0
     abs[x] .^ exponent
@@ -363,7 +357,7 @@ test a_render_is_the_value_at_each_sample[]
         i = i + 1
     worst lt 0.000000001
 
-test the_arithmetic_is_tones[]
+test the_arithmetic_scales_bends_and_shapes_samples[]
     scale[[0.0, 0.5, 1.0], 100.0, 200.0] eq [100.0, 150.0, 200.0]
     audio_to_gain[[-1.0, 0.0, 1.0]] eq [0.0, 0.5, 1.0]
     g = gain_to_audio[[0.0, 0.5, 1.0]]
